@@ -27,8 +27,7 @@ pub async fn analyze_portfolio(
 
     // Fetch market context
     let snapshot = crate::modules::market_data::service::fetch_snapshot(&state.http, &state.config)
-        .await
-        .map_err(anyhow::Error::from)?;
+        .await?;
 
     // Run risk engine
     let risk = crate::modules::risk_engine::evaluate(&allocations, &snapshot.assets);
@@ -102,8 +101,7 @@ If no rebalancing is needed, return an empty trades array.",
             content: prompt,
         },
     ])
-    .await
-    .map_err(anyhow::Error::from)?;
+    .await?;
 
     #[derive(Deserialize)]
     struct AiResponse {
