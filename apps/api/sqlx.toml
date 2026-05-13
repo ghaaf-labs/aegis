@@ -1,0 +1,5 @@
+[database]
+# When DATABASE_URL is not available (e.g. in CI without a DB),
+# run: cargo sqlx prepare --workspace
+# to generate .sqlx/ offline query cache.
+offline = false
