@@ -27,8 +27,7 @@ impl Config {
                 .parse()
                 .context("API_PORT must be a number")?,
             openai_api_key: required("OPENAI_API_KEY")?,
-            openai_model: std::env::var("OPENAI_MODEL")
-                .unwrap_or_else(|_| "gpt-4o".into()),
+            openai_model: std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o".into()),
             coingecko_api_key: std::env::var("COINGECKO_API_KEY").ok(),
         })
     }

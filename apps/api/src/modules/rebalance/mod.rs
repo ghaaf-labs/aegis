@@ -1,8 +1,11 @@
-use axum::{extract::{Path, State}, Extension, Json};
+use axum::{
+    extract::{Path, State},
+    Extension, Json,
+};
 use uuid::Uuid;
 
-use crate::{middleware::auth::Claims, router::AppState};
 use crate::modules::agent::{models::AnalyzeRequest, service::analyze_portfolio};
+use crate::{middleware::auth::Claims, router::AppState};
 
 pub mod handlers {
     use super::*;
@@ -21,7 +24,9 @@ pub mod handlers {
         .await?;
 
         if !exists {
-            return Err(crate::error::AppError::NotFound(format!("portfolio {portfolio_id}")));
+            return Err(crate::error::AppError::NotFound(format!(
+                "portfolio {portfolio_id}"
+            )));
         }
 
         let decision = analyze_portfolio(&state, AnalyzeRequest { portfolio_id }).await?;

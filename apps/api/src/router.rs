@@ -1,16 +1,16 @@
 use axum::{
-    routing::{get, post, put, delete},
+    routing::{delete, get, post, put},
     Router,
 };
 use std::sync::Arc;
 use tower_http::{
+    compression::CompressionLayer,
     cors::{Any, CorsLayer},
     trace::TraceLayer,
-    compression::CompressionLayer,
 };
 
+use crate::modules::{agent, auth, market_data, portfolio, rebalance, websocket};
 use crate::{config::Config, db::Db};
-use crate::modules::{auth, portfolio, market_data, agent, rebalance, websocket};
 
 pub type AppState = Arc<AppStateInner>;
 
@@ -43,14 +43,28 @@ pub async fn build(db: Db, config: Config) -> Router {
         .route("/auth/login", post(auth::handlers::login))
         .route("/auth/me", get(auth::handlers::me))
         // Portfolios
-        .route("/portfolios", get(portfolio::handlers::list).post(portfolio::handlers::create))
-        .route("/portfolios/:id", get(portfolio::handlers::get).put(portfolio::handlers::update).delete(portfolio::handlers::delete))
-        .route("/portfolios/:id/rebalance", post(rebalance::handlers::trigger))
+        .route(
+            "/portfolios",
+            get(portfolio::handlers::list).post(portfolio::handlers::create),
+        )
+        .route(
+            "/portfolios/:id",
+            get(portfolio::handlers::get)
+                .put(portfolio::handlers::update)
+                .delete(portfolio::handlers::delete),
+        )
+        .route(
+            "/portfolios/:id/rebalance",
+            post(rebalance::handlers::trigger),
+        )
         // Market data
         .route("/market/snapshot", get(market_data::handlers::snapshot))
         .route("/market/prices", get(market_data::handlers::prices))
         // Agent
-        .route("/agent/decisions/:portfolio_id", get(agent::handlers::decisions))
+        .route(
+            "/agent/decisions/:portfolio_id",
+            get(agent::handlers::decisions),
+        )
         .route("/agent/analyze", post(agent::handlers::analyze))
         // WebSocket
         .route("/ws", get(websocket::handler))
