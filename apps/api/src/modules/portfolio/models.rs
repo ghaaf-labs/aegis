@@ -50,5 +50,6 @@ pub struct AllocationInput {
 #[derive(Debug, Deserialize)]
 pub struct UpdatePortfolioRequest {
     pub name: Option<String>,
+    #[allow(dead_code)]
     pub allocations: Option<Vec<AllocationInput>>,
 }
