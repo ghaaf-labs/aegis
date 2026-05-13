@@ -53,7 +53,7 @@ jobs:
 
       - run: cargo fmt --check
       - run: cargo clippy -- -D warnings
-      - run: cargo test --lib
+      - run: cargo test
 
   # ── Docker ────────────────────────────────────────────────────────────────
   docker:
