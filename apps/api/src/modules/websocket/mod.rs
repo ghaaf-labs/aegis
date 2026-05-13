@@ -17,7 +17,7 @@ pub async fn handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> imp
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }
 
-async fn handle_socket(socket: WebSocket, state: AppState) {
+async fn handle_socket(socket: WebSocket, _state: AppState) {
     let (mut sender, mut receiver) = socket.split();
     let mut tick = interval(Duration::from_secs(5));
 
@@ -33,19 +33,16 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                     "timestamp": Utc::now().to_rfc3339()
                 });
 
-                if sender.send(Message::Text(msg.to_string().into())).await.is_err() {
+                if sender.send(Message::Text(msg.to_string())).await.is_err() {
                     break;
                 }
             }
             msg = receiver.next() => {
                 match msg {
-                    Some(Ok(Message::Text(text))) => {
-                        // Echo ping/pong
-                        if text.contains("ping") {
-                            let _ = sender.send(Message::Text(
-                                json!({ "type": "pong", "timestamp": Utc::now().to_rfc3339() }).to_string().into()
-                            )).await;
-                        }
+                    Some(Ok(Message::Text(text))) if text.contains("ping") => {
+                        let _ = sender.send(Message::Text(
+                            json!({ "type": "pong", "timestamp": Utc::now().to_rfc3339() }).to_string()
+                        )).await;
                     }
                     Some(Ok(Message::Close(_))) | None => break,
                     _ => {}

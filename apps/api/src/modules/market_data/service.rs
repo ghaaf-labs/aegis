@@ -30,7 +30,7 @@ pub async fn fetch_prices(client: &Client, cfg: &Config) -> anyhow::Result<Vec<A
     let ids: Vec<&str> = COINGECKO_IDS.iter().map(|(_, id)| *id).collect();
     let ids_str = ids.join(",");
 
-    let mut url = format!(
+    let url = format!(
         "https://api.coingecko.com/api/v3/simple/price?ids={}&vs_currencies=usd&include_24hr_change=true&include_7d_change=true&include_market_cap=true&include_24hr_vol=true",
         ids_str
     );

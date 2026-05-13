@@ -1,5 +1,5 @@
 use axum::{
-    routing::{delete, get, post, put},
+    routing::{get, post},
     Router,
 };
 use std::sync::Arc;
