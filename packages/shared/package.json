@@ -1,0 +1,12 @@
+{
+  "name": "@aegis/shared",
+  "version": "0.1.0",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "devDependencies": {
+    "@aegis/config": "workspace:*",
+    "typescript": "^5.7.3"
+  }
+}
