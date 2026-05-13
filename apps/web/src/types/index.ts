@@ -1,0 +1,16 @@
+export type {
+  Asset,
+  AssetPrice,
+  Allocation,
+  Portfolio,
+  UserProfile,
+  AgentDecision,
+  RebalanceRecommendation,
+  ProposedTrade,
+  MarketSnapshot,
+  RiskTolerance,
+  WsMessage,
+  WsMessageType,
+  ApiResponse,
+  ApiError,
+} from "@aegis/shared";
