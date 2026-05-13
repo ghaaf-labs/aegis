@@ -1,0 +1,55 @@
+[package]
+name = "aegis-api"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "aegis-api"
+path = "src/main.rs"
+
+[dependencies]
+# Web framework
+axum = { version = "0.7", features = ["ws", "macros", "multipart"] }
+tower = { version = "0.5", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+futures-util = "0.3"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Database
+sqlx = { version = "0.8", features = [
+  "postgres",
+  "runtime-tokio-rustls",
+  "uuid",
+  "chrono",
+  "json",
+] }
+
+# Auth
+jsonwebtoken = "9"
+argon2 = "0.5"
+
+# HTTP client (OpenAI, market data)
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# Logging & tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Utils
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+dotenvy = "0.15"
+validator = { version = "0.18", features = ["derive"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
