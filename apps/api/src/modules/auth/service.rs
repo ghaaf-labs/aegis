@@ -1,15 +1,19 @@
 use anyhow::Context;
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use argon2::password_hash::{rand_core::OsRng, SaltString};
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use chrono::Utc;
 use jsonwebtoken::{encode, EncodingKey, Header};
 use uuid::Uuid;
 
-use crate::{config::Config, db::Db, error::AppError};
-use crate::middleware::auth::Claims;
 use super::models::{AuthResponse, LoginRequest, RegisterRequest, User, UserPublic};
+use crate::middleware::auth::Claims;
+use crate::{config::Config, db::Db, error::AppError};
 
-pub async fn register(db: &Db, req: RegisterRequest, cfg: &Config) -> crate::error::Result<AuthResponse> {
+pub async fn register(
+    db: &Db,
+    req: RegisterRequest,
+    cfg: &Config,
+) -> crate::error::Result<AuthResponse> {
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)")
         .bind(&req.email)
         .fetch_one(db)
@@ -40,7 +44,10 @@ pub async fn register(db: &Db, req: RegisterRequest, cfg: &Config) -> crate::err
     .await?;
 
     let token = mint_token(&user, cfg)?;
-    Ok(AuthResponse { token, user: to_public(user) })
+    Ok(AuthResponse {
+        token,
+        user: to_public(user),
+    })
 }
 
 pub async fn login(db: &Db, req: LoginRequest, cfg: &Config) -> crate::error::Result<AuthResponse> {
@@ -59,7 +66,10 @@ pub async fn login(db: &Db, req: LoginRequest, cfg: &Config) -> crate::error::Re
         .map_err(|_| AppError::Unauthorized("invalid credentials".into()))?;
 
     let token = mint_token(&user, cfg)?;
-    Ok(AuthResponse { token, user: to_public(user) })
+    Ok(AuthResponse {
+        token,
+        user: to_public(user),
+    })
 }
 
 fn mint_token(user: &User, cfg: &Config) -> crate::error::Result<String> {
@@ -79,5 +89,9 @@ fn mint_token(user: &User, cfg: &Config) -> crate::error::Result<String> {
 }
 
 fn to_public(u: User) -> UserPublic {
-    UserPublic { id: u.id, email: u.email, risk_tolerance: u.risk_tolerance }
+    UserPublic {
+        id: u.id,
+        email: u.email,
+        risk_tolerance: u.risk_tolerance,
+    }
 }

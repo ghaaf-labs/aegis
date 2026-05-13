@@ -1,8 +1,11 @@
-use axum::{extract::State, Extension, Json};
 use axum::http::StatusCode;
+use axum::{extract::State, Extension, Json};
 
+use super::{
+    models::{LoginRequest, RegisterRequest, UserPublic},
+    service,
+};
 use crate::{middleware::auth::Claims, router::AppState};
-use super::{models::{LoginRequest, RegisterRequest, UserPublic}, service};
 
 pub async fn register(
     State(state): State<AppState>,
@@ -20,9 +23,7 @@ pub async fn login(
     Ok(Json(resp))
 }
 
-pub async fn me(
-    Extension(claims): Extension<Claims>,
-) -> Json<UserPublic> {
+pub async fn me(Extension(claims): Extension<Claims>) -> Json<UserPublic> {
     Json(UserPublic {
         id: claims.sub,
         email: claims.email,

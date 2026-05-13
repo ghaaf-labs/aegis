@@ -63,9 +63,17 @@ pub async fn fetch_prices(client: &Client, cfg: &Config) -> anyhow::Result<Vec<A
 pub async fn fetch_snapshot(client: &Client, cfg: &Config) -> anyhow::Result<MarketSnapshot> {
     let assets = fetch_prices(client, cfg).await?;
 
-    let btc_cap = assets.iter().find(|a| a.symbol == "BTC").map(|a| a.market_cap).unwrap_or(0.0);
+    let btc_cap = assets
+        .iter()
+        .find(|a| a.symbol == "BTC")
+        .map(|a| a.market_cap)
+        .unwrap_or(0.0);
     let total_cap: f64 = assets.iter().map(|a| a.market_cap).sum();
-    let btc_dominance = if total_cap > 0.0 { (btc_cap / total_cap) * 100.0 } else { 0.0 };
+    let btc_dominance = if total_cap > 0.0 {
+        (btc_cap / total_cap) * 100.0
+    } else {
+        0.0
+    };
 
     Ok(MarketSnapshot {
         assets,

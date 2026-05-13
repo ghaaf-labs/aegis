@@ -2,8 +2,8 @@
 // Portfolio CRUD is currently handled inline in handlers.rs for hackathon speed.
 // Extract complex business logic here as it grows.
 
-use crate::{db::Db, error::Result};
 use super::models::Portfolio;
+use crate::{db::Db, error::Result};
 use uuid::Uuid;
 
 pub async fn recalculate_value(db: &Db, portfolio_id: Uuid) -> Result<Portfolio> {

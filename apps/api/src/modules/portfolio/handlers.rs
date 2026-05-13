@@ -1,12 +1,12 @@
 use axum::{
     extract::{Path, State},
-    Extension, Json,
     http::StatusCode,
+    Extension, Json,
 };
 use uuid::Uuid;
 
-use crate::{middleware::auth::Claims, router::AppState};
 use super::models::*;
+use crate::{middleware::auth::Claims, router::AppState};
 
 pub async fn list(
     State(state): State<AppState>,
@@ -27,23 +27,24 @@ pub async fn get(
     Extension(claims): Extension<Claims>,
     Path(id): Path<Uuid>,
 ) -> crate::error::Result<Json<PortfolioWithAllocations>> {
-    let portfolio = sqlx::query_as::<_, Portfolio>(
-        "SELECT * FROM portfolios WHERE id = $1 AND user_id = $2",
-    )
-    .bind(id)
-    .bind(claims.sub)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| crate::error::AppError::NotFound(format!("portfolio {id}")))?;
+    let portfolio =
+        sqlx::query_as::<_, Portfolio>("SELECT * FROM portfolios WHERE id = $1 AND user_id = $2")
+            .bind(id)
+            .bind(claims.sub)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_else(|| crate::error::AppError::NotFound(format!("portfolio {id}")))?;
 
-    let allocations = sqlx::query_as::<_, Allocation>(
-        "SELECT * FROM allocations WHERE portfolio_id = $1",
-    )
-    .bind(id)
-    .fetch_all(&state.db)
-    .await?;
+    let allocations =
+        sqlx::query_as::<_, Allocation>("SELECT * FROM allocations WHERE portfolio_id = $1")
+            .bind(id)
+            .fetch_all(&state.db)
+            .await?;
 
-    Ok(Json(PortfolioWithAllocations { portfolio, allocations }))
+    Ok(Json(PortfolioWithAllocations {
+        portfolio,
+        allocations,
+    }))
 }
 
 pub async fn create(
@@ -102,13 +103,11 @@ pub async fn delete(
     Extension(claims): Extension<Claims>,
     Path(id): Path<Uuid>,
 ) -> crate::error::Result<StatusCode> {
-    let result = sqlx::query(
-        "DELETE FROM portfolios WHERE id = $1 AND user_id = $2",
-    )
-    .bind(id)
-    .bind(claims.sub)
-    .execute(&state.db)
-    .await?;
+    let result = sqlx::query("DELETE FROM portfolios WHERE id = $1 AND user_id = $2")
+        .bind(id)
+        .bind(claims.sub)
+        .execute(&state.db)
+        .await?;
 
     if result.rows_affected() == 0 {
         return Err(crate::error::AppError::NotFound(format!("portfolio {id}")));

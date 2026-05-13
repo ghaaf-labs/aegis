@@ -4,8 +4,11 @@ use axum::{
 };
 use uuid::Uuid;
 
+use super::{
+    models::{AgentDecision, AnalyzeRequest},
+    service,
+};
 use crate::{middleware::auth::Claims, router::AppState};
-use super::{models::{AgentDecision, AnalyzeRequest}, service};
 
 pub async fn decisions(
     State(state): State<AppState>,

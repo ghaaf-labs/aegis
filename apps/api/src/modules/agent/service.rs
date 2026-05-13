@@ -1,10 +1,13 @@
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::{router::AppState, modules::ai::OpenAiClient};
 use super::models::{AgentDecision, AnalyzeRequest};
+use crate::{modules::ai::OpenAiClient, router::AppState};
 
-pub async fn analyze_portfolio(state: &AppState, req: AnalyzeRequest) -> crate::error::Result<AgentDecision> {
+pub async fn analyze_portfolio(
+    state: &AppState,
+    req: AnalyzeRequest,
+) -> crate::error::Result<AgentDecision> {
     // Fetch portfolio
     let portfolio = sqlx::query_as::<_, crate::modules::portfolio::models::Portfolio>(
         "SELECT * FROM portfolios WHERE id = $1",
@@ -30,10 +33,15 @@ pub async fn analyze_portfolio(state: &AppState, req: AnalyzeRequest) -> crate::
     // Run risk engine
     let risk = crate::modules::risk_engine::evaluate(&allocations, &snapshot.assets);
 
-    let alloc_summary: Vec<String> = allocations.iter().map(|a| {
-        format!("  {} {:.4} units (target: {:.1}%, current: {:.1}%, value: ${:.2})",
-            a.asset_symbol, a.quantity, a.target_weight, a.current_weight, a.value_usd)
-    }).collect();
+    let alloc_summary: Vec<String> = allocations
+        .iter()
+        .map(|a| {
+            format!(
+                "  {} {:.4} units (target: {:.1}%, current: {:.1}%, value: ${:.2})",
+                a.asset_symbol, a.quantity, a.target_weight, a.current_weight, a.value_usd
+            )
+        })
+        .collect();
 
     let prompt = format!(
         "You are an AI crypto portfolio manager. Analyze this portfolio and provide a rebalancing recommendation.
@@ -104,8 +112,11 @@ If no rebalancing is needed, return an empty trades array.",
         recommendation: serde_json::Value,
     }
 
-    let parsed: AiResponse = serde_json::from_str(response.trim())
-        .map_err(|e| crate::error::AppError::Internal(anyhow::anyhow!("failed to parse AI response: {e}\nraw: {response}")))?;
+    let parsed: AiResponse = serde_json::from_str(response.trim()).map_err(|e| {
+        crate::error::AppError::Internal(anyhow::anyhow!(
+            "failed to parse AI response: {e}\nraw: {response}"
+        ))
+    })?;
 
     let decision = sqlx::query_as::<_, AgentDecision>(
         "INSERT INTO agent_decisions (id, portfolio_id, reasoning, recommendation, confidence, triggered_by)
