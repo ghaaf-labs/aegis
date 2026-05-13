@@ -26,8 +26,8 @@ pub async fn analyze_portfolio(
     .await?;
 
     // Fetch market context
-    let snapshot = crate::modules::market_data::service::fetch_snapshot(&state.http, &state.config)
-        .await?;
+    let snapshot =
+        crate::modules::market_data::service::fetch_snapshot(&state.http, &state.config).await?;
 
     // Run risk engine
     let risk = crate::modules::risk_engine::evaluate(&allocations, &snapshot.assets);
