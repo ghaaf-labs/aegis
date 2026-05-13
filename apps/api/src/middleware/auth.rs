@@ -17,6 +17,7 @@ pub struct Claims {
     pub iat: usize,
 }
 
+#[allow(dead_code)]
 pub async fn require_auth(
     State(state): State<AppState>,
     mut req: Request,

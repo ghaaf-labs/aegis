@@ -6,6 +6,7 @@ use super::models::Portfolio;
 use crate::{db::Db, error::Result};
 use uuid::Uuid;
 
+#[allow(dead_code)]
 pub async fn recalculate_value(db: &Db, portfolio_id: Uuid) -> Result<Portfolio> {
     let portfolio = sqlx::query_as::<_, Portfolio>(
         r#"

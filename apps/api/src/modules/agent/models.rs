@@ -13,6 +13,7 @@ pub struct AgentDecision {
     pub created_at: DateTime<Utc>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Recommendation {
     pub summary: String,
@@ -20,6 +21,7 @@ pub struct Recommendation {
     pub expected_impact: ExpectedImpact,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ProposedTrade {
     pub symbol: String,
@@ -29,6 +31,7 @@ pub struct ProposedTrade {
     pub reason: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ExpectedImpact {
     pub risk_delta: f64,

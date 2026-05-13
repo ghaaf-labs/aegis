@@ -30,6 +30,7 @@ pub struct Allocation {
 pub struct PortfolioWithAllocations {
     #[serde(flatten)]
     pub portfolio: Portfolio,
+    #[allow(dead_code)]
     pub allocations: Vec<Allocation>,
 }
 

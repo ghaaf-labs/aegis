@@ -1,6 +1,7 @@
 use crate::modules::market_data::AssetPrice;
 use crate::modules::portfolio::models::Allocation;
 
+#[allow(dead_code)]
 pub struct RiskReport {
     pub score: u8,
     pub concentration_risk: f64,
