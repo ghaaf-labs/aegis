@@ -9,8 +9,8 @@ use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLay
 
 use crate::middleware::auth::require_auth;
 use crate::modules::{
-    agent, ai, analytics, backtest, diary, digest, faucet, fx, gateway, market_data, paymaster,
-    portfolio, rebalance, scheduler,
+    agent, ai, analytics, backtest, billing, diary, digest, faucet, fx, gateway, market_data,
+    paymaster, portfolio, rebalance, scheduler,
     sse::{self, SseSender},
     tax, treasury, trustability, wallet,
 };
@@ -111,6 +111,7 @@ pub async fn build(db: Db, config: Config) -> Router {
         .route("/agent/analyze", post(agent::handlers::analyze))
         .route("/backtest/preview", post(backtest::handlers::preview))
         .route("/trustability/me", get(trustability::handlers::me))
+        .route("/billing/referrals", get(billing::handlers::list_referrals))
         .route_layer(from_fn_with_state(state.clone(), require_auth));
 
     Router::new()
