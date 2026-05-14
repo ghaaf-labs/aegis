@@ -19,15 +19,18 @@ use serde_json::json;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
+use super::memory;
 use super::models::{AgentDecision, AnalyzeRequest};
 use crate::config::ModelRoute;
 use crate::modules::ai::{Message, OpenRouterClient, PromptKey};
+use crate::modules::fx;
 use crate::modules::market_data::MarketSnapshot;
 use crate::modules::portfolio::models::{Allocation, Portfolio};
 use crate::modules::risk_engine::{self, RegimeClassification};
 use crate::modules::sse::{
     AgentDecisionPayload, RegimeFlip, RegimeSignals as SseRegimeSignals, SseEvent,
 };
+use crate::modules::treasury;
 use crate::router::AppState;
 
 const ABSTAIN_CONFIDENCE_THRESHOLD: f64 = 0.5;
@@ -88,8 +91,19 @@ pub async fn analyze_portfolio(
     // 3. Risk engine — concentration + vol + drift; orthogonal to regime.
     let risk = risk_engine::evaluate(&allocations, &snapshot.assets);
 
+    // 3b. Personalization signals: per-user memory, USYC rate, EURC basis.
+    let memory_block = memory::build_memory_block(&state.db, req.portfolio_id).await?;
+    let usyc_rate = treasury::service::rate(&state.http, &state.config)
+        .await
+        .map(|r| r.annualized_yield)
+        .unwrap_or(0.0510);
+    let eurc_basis = fx::service::usdc_eurc_basis(&state.http, &state.config)
+        .await
+        .map(|b| b.mid_rate)
+        .unwrap_or(0.92);
+
     // 4. Strategist proposal.
-    let strategist_ctx = build_strategist_context(
+    let mut strategist_ctx = build_strategist_context(
         &portfolio,
         &allocations,
         &user_profile,
@@ -97,6 +111,10 @@ pub async fn analyze_portfolio(
         &regime,
         &risk,
     );
+    strategist_ctx.insert("memory", memory_block);
+    strategist_ctx.insert("usyc_rate", format!("{:.4}", usyc_rate));
+    strategist_ctx.insert("usdc_eurc_basis", format!("{:.4}", eurc_basis));
+    strategist_ctx.insert("goal_block", format_goal_block(&portfolio.goal));
     let strategist_prompt = state.prompts.render(PromptKey::Strategist, &strategist_ctx);
     let strategist = ai
         .chat(
@@ -325,6 +343,52 @@ fn build_critic_context(
     ctx
 }
 
+/// Render the user's goal block for the strategist prompt. Empty goals
+/// (legacy portfolios) get a "(no goal set)" line — the strategist still
+/// has the rest of the context.
+fn format_goal_block(goal: &serde_json::Value) -> String {
+    if goal.is_null() || goal == &serde_json::json!({}) {
+        return "(no goal set yet — strategist should suggest a starter allocation)".into();
+    }
+    let name = goal
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("(unnamed)");
+    let horizon = goal.get("horizon").and_then(|v| v.as_str()).unwrap_or("?");
+    let risk = goal
+        .get("riskTolerance")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let monthly = goal
+        .get("monthlyContributionUsd")
+        .and_then(|v| v.as_f64())
+        .map(|v| format!(" · monthly +${:.0}", v))
+        .unwrap_or_default();
+    let usyc = goal
+        .get("includeUsyc")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let eurc = goal
+        .get("includeEurc")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let allocations = goal
+        .get("targetAllocation")
+        .and_then(|v| v.as_object())
+        .map(|m| {
+            let mut pairs: Vec<String> = m
+                .iter()
+                .map(|(k, v)| format!("{k} {:.0}%", v.as_f64().unwrap_or(0.0)))
+                .collect();
+            pairs.sort();
+            pairs.join(", ")
+        })
+        .unwrap_or_default();
+    format!(
+        "{name} · horizon {horizon} · risk {risk}{monthly} · USYC opt-in: {usyc} · EURC opt-in: {eurc} · targets: {allocations}"
+    )
+}
+
 fn format_allocations(allocations: &[Allocation]) -> String {
     if allocations.is_empty() {
         return "(empty portfolio)".into();
@@ -478,6 +542,7 @@ mod tests {
             total_pnl_usd: 234.50,
             total_pnl_pct: 1.9,
             risk_score: 50,
+            goal: serde_json::json!({}),
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -559,13 +624,28 @@ mod tests {
     #[test]
     fn strategist_prompt_renders_without_unresolved_placeholders() {
         let reg = PromptRegistry::embedded();
-        let ctx = build_strategist_context(
+        let mut ctx = build_strategist_context(
             &sample_portfolio(),
             &sample_allocs(),
             &sample_user(),
             &sample_snapshot(),
             &sample_regime(),
             &sample_risk(),
+        );
+        // Sprint 2 placeholders: memory, usyc_rate, usdc_eurc_basis, goal_block
+        ctx.insert("memory", "- (no prior decisions yet)".into());
+        ctx.insert("usyc_rate", "0.0510".into());
+        ctx.insert("usdc_eurc_basis", "0.9217".into());
+        ctx.insert(
+            "goal_block",
+            format_goal_block(&serde_json::json!({
+                "name": "Retirement",
+                "horizon": "5y",
+                "riskTolerance": "moderate",
+                "targetAllocation": { "BTC": 50, "ETH": 30, "USYC": 20 },
+                "includeUsyc": true,
+                "includeEurc": false
+            })),
         );
         let rendered = reg.render(PromptKey::Strategist, &ctx);
         assert!(

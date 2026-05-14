@@ -45,6 +45,29 @@ pub struct Config {
     /// Cadence (seconds) for the SSE price ticker. Lower = more "realtime"
     /// feel; higher = friendlier to upstream rate limits.
     pub sse_price_tick_secs: u64,
+
+    // ── Circle (Wallets, Gateway, Paymaster, USYC, StableFX) ──────────────
+    pub circle_api_key: String,
+    pub circle_base_url: String,
+    #[allow(dead_code)]
+    pub circle_env: String,
+    /// When true, the wallet module uses an in-process mock provider instead
+    /// of hitting Circle WaaS. Keeps local dev moving when the sandbox is
+    /// unreachable or when running CI without a key.
+    pub circle_mock: bool,
+
+    #[allow(dead_code)]
+    pub arc_rpc_url: String,
+    #[allow(dead_code)]
+    pub base_rpc_url: String,
+
+    /// Cadence for the Gateway unified-balance ticker. Read by S2.6.
+    #[allow(dead_code)]
+    pub gateway_poll_secs: u64,
+
+    /// 24h USDC faucet rate limit per wallet. Read by S2.4.
+    #[allow(dead_code)]
+    pub faucet_max_usdc_per_day: f64,
 }
 
 impl Config {
@@ -77,6 +100,22 @@ impl Config {
             coingecko_api_key: std::env::var("COINGECKO_API_KEY").ok(),
 
             sse_price_tick_secs: parse_or("SSE_PRICE_TICK_SECS", 5)?,
+
+            // Circle is optional in dev (covered by MOCK_CIRCLE) so we don't
+            // require it. Production env enforces it via deployment config.
+            circle_api_key: std::env::var("CIRCLE_API_KEY").unwrap_or_default(),
+            circle_base_url: std::env::var("CIRCLE_BASE_URL")
+                .unwrap_or_else(|_| "https://api.circle.com".into()),
+            circle_env: std::env::var("CIRCLE_ENV").unwrap_or_else(|_| "sandbox".into()),
+            circle_mock: parse_or("MOCK_CIRCLE", true)?,
+
+            arc_rpc_url: std::env::var("ARC_RPC_URL")
+                .unwrap_or_else(|_| "https://testnet.arc.network".into()),
+            base_rpc_url: std::env::var("BASE_RPC_URL")
+                .unwrap_or_else(|_| "https://sepolia.base.org".into()),
+
+            gateway_poll_secs: parse_or("GATEWAY_POLL_SECS", 10)?,
+            faucet_max_usdc_per_day: parse_or("FAUCET_MAX_USDC_PER_DAY", 100.0)?,
         })
     }
 
@@ -130,6 +169,14 @@ mod tests {
             openrouter_app_url: None,
             coingecko_api_key: None,
             sse_price_tick_secs: 5,
+            circle_api_key: "circle-key".into(),
+            circle_base_url: "https://api.circle.com".into(),
+            circle_env: "sandbox".into(),
+            circle_mock: true,
+            arc_rpc_url: "https://testnet.arc.network".into(),
+            base_rpc_url: "https://sepolia.base.org".into(),
+            gateway_poll_secs: 10,
+            faucet_max_usdc_per_day: 100.0,
         }
     }
 

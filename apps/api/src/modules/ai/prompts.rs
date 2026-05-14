@@ -196,6 +196,11 @@ mod tests {
                 ("concentration_risk", "0.4"),
                 ("volatility_score", "0.5"),
                 ("drift_score", "0.1"),
+                // Sprint 2 placeholders:
+                ("goal_block", "(no goal set yet)"),
+                ("memory", "- no prior decisions"),
+                ("usyc_rate", "0.0510"),
+                ("usdc_eurc_basis", "0.9217"),
             ]),
         );
         // No unresolved placeholders should remain.

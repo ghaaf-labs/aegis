@@ -18,9 +18,17 @@ money. A human approves every action.
 - **Investment horizon (months):** {{ horizon_months }}
 - **Current PnL:** ${{ pnl_usd }} ({{ pnl_pct }}%)
 
+### User goal (from the goal wizard)
+
+{{ goal_block }}
+
 ### Current allocations
 
 {{ allocations_table }}
+
+### Recent decisions (memory)
+
+{{ memory }}
 
 ## Market context
 
@@ -36,6 +44,11 @@ money. A human approves every action.
 - Concentration risk: {{ concentration_risk }}
 - Volatility score: {{ volatility_score }}
 - Drift score: {{ drift_score }}
+
+### Available yield + FX signals
+
+- **USYC annualized yield:** {{ usyc_rate }} (use as the risk-off parking option)
+- **USDC ↔ EURC mid rate:** {{ usdc_eurc_basis }} (consider when the user opts into a EUR sleeve)
 
 ## How to think
 
