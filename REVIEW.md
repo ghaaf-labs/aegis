@@ -67,16 +67,14 @@ The strategist prompt asks for camelCase keys (`valueUsd`, `expectedImpact`, `ri
 
 **Q1. Conventional commits enforced.**
 
-- `commitlint.config.cjs` extends `@commitlint/config-conventional`.
-- `@commitlint/cli` + `Lefthook` + `lint-staged` added to root `package.json` devDeps.
-- `.Lefthook/commit-msg` runs `commitlint` locally on every commit.
-- `.Lefthook/pre-commit` runs `lint-staged` (prettier on staged files).
+- `commitlint.config.cjs` extends `@commitlint/config-conventional` with this repo's scope allowlist.
+- Lefthook `commit-msg` hook runs `commitlint --edit {1}` locally on every commit.
 - CI gate `commitlint` job rejects PRs with non-conforming commits.
 
 **Q2. Conventional branch names enforced.**
 
 - `scripts/check-branch-name.sh` validates the regex `^(feat|fix|docs|chore|refactor|ci|test|perf|build)/[a-z0-9][a-z0-9-]{1,59}$`.
-- `.Lefthook/pre-push` runs it locally.
+- Lefthook `pre-push` hook runs it locally.
 - CI gate `branch-name` job runs it on PRs.
 
 **Q3. Dependency hygiene.**
