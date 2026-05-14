@@ -1,28 +1,48 @@
 {
   "$schema": "https://unpkg.com/knip@5/schema.json",
   "workspaces": {
+    ".": {
+      "ignoreBinaries": ["scripts/check-branch-name.sh"]
+    },
     "apps/web": {
       "entry": [
         "src/app/**/{page,layout,route,error,not-found}.{ts,tsx}",
+        "src/lib/api.ts",
+        "src/lib/sse.ts",
+        "src/lib/utils.ts",
+        "src/lib/explore-data.ts",
+        "src/types/index.ts",
+        "src/stores/portfolio.ts",
+        "src/components/wallet/faucet-button.tsx",
         "next.config.{js,ts,mjs}",
         "tailwind.config.{ts,js}",
-        "postcss.config.{js,mjs}",
-        "vitest.config.ts"
+        "postcss.config.{js,mjs}"
       ],
       "project": ["src/**/*.{ts,tsx}"],
-      "ignore": ["src/**/*.d.ts"],
-      "ignoreDependencies": ["tailwindcss-animate", "@types/node"]
+      "ignore": ["src/components/ui/**/*.tsx"],
+      "ignoreDependencies": ["tailwindcss-animate"]
     },
     "packages/shared": {
-      "entry": ["src/index.ts"],
-      "project": ["src/**/*.{ts,tsx}"]
+      "project": ["src/**/*.{ts,tsx}"],
+      "ignoreDependencies": ["@aegis/config"]
     },
     "packages/ui": {
-      "entry": ["src/index.ts"],
-      "project": ["src/**/*.{ts,tsx}"]
+      "project": ["src/**/*.{ts,tsx}"],
+      "ignoreDependencies": [
+        "@aegis/config",
+        "@radix-ui/react-slot",
+        "class-variance-authority"
+      ]
     },
     "packages/config": {
-      "entry": ["index.ts", "**/index.{ts,js}"]
+      "entry": ["index.ts", "tailwind.js", "eslint.js"],
+      "ignoreDependencies": [
+        "@typescript-eslint/eslint-plugin",
+        "@typescript-eslint/parser",
+        "eslint-config-next",
+        "eslint-plugin-react",
+        "eslint-plugin-react-hooks"
+      ]
     }
   }
 }
