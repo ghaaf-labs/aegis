@@ -1,0 +1,112 @@
+# Production-ish docker-compose for Aegis.
+#
+# Mirrors the k3s manifests under `infra/k3s/` but is single-node and easier
+# to spin up on a dedicated VPS. Caddy fronts the API + web with TLS.
+#
+# Required env:
+#   AEGIS_DOMAIN              — e.g. aegis.example.com
+#   DATABASE_URL              — postgres URL (use the postgres service below)
+#   JWT_SECRET, DIGEST_SECRET — long random strings (rotate before launch)
+#   OPENROUTER_API_KEY        — required
+#   CIRCLE_API_KEY            — when MOCK_CIRCLE=false
+#   CHAIN_PRIVATE_KEY_ARC, CHAIN_PRIVATE_KEY_BASE — when EXECUTION_MOCK=false
+#   RESEND_API_KEY            — if the daily digest sends real email
+#   NEXT_PUBLIC_API_URL       — set to https://${AEGIS_DOMAIN}/api on web build
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: aegis
+      POSTGRES_USER: aegis
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?postgres password required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aegis -d aegis"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://aegis:${POSTGRES_PASSWORD}@postgres:5432/aegis
+      API_HOST: 0.0.0.0
+      API_PORT: 8080
+      JWT_SECRET: ${JWT_SECRET:?jwt secret required}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?openrouter required}
+      OPENROUTER_BASE_URL: https://openrouter.ai/api/v1
+      # Per-route model slugs. Override for cost/quality tuning without redeploys.
+      MODEL_REGIME: anthropic/claude-haiku-4-5
+      MODEL_STRATEGIST: anthropic/claude-opus-4-7
+      MODEL_CRITIC: openai/gpt-5
+      MODEL_TAX: anthropic/claude-sonnet-4-6
+      MODEL_COMMENTARY: google/gemini-2.5-flash
+      # Circle
+      MOCK_CIRCLE: ${MOCK_CIRCLE:-true}
+      CIRCLE_API_KEY: ${CIRCLE_API_KEY:-}
+      CIRCLE_BASE_URL: https://api.circle.com
+      ARC_RPC_URL: ${ARC_RPC_URL:-https://testnet.arc.network}
+      BASE_RPC_URL: ${BASE_RPC_URL:-https://sepolia.base.org}
+      # CCTP
+      EXECUTION_MOCK: ${EXECUTION_MOCK:-true}
+      CHAIN_PRIVATE_KEY_ARC: ${CHAIN_PRIVATE_KEY_ARC:-}
+      CHAIN_PRIVATE_KEY_BASE: ${CHAIN_PRIVATE_KEY_BASE:-}
+      CCTP_ATTESTATION_URL: https://iris-api-sandbox.circle.com
+      # Scheduler + digest
+      SCHEDULER_TICK_SECS: 300
+      SCHEDULER_COOLDOWN_SECS: 1800
+      DIGEST_HOUR_UTC: 13
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      DIGEST_FROM: ${DIGEST_FROM:-Aegis <noreply@aegis.app>}
+      DIGEST_SECRET: ${DIGEST_SECRET:?digest secret required}
+      # Public URLs
+      PUBLIC_BASE_URL: https://${AEGIS_DOMAIN:?aegis domain required}
+      API_BASE_URL: https://${AEGIS_DOMAIN}/api
+      # CORS + cookies
+      CORS_ALLOW_ORIGIN: https://${AEGIS_DOMAIN}
+      SESSION_COOKIE_NAME: aegis_jwt
+      SESSION_COOKIE_SECURE: "true"
+    expose:
+      - "8080"
+
+  web:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.web
+      args:
+        NEXT_PUBLIC_API_URL: https://${AEGIS_DOMAIN}/api
+        NEXT_PUBLIC_SSE_URL: https://${AEGIS_DOMAIN}/api/sse
+        NEXT_PUBLIC_APP_URL: https://${AEGIS_DOMAIN}
+    restart: unless-stopped
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - api
+      - web
+    environment:
+      AEGIS_DOMAIN: ${AEGIS_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
