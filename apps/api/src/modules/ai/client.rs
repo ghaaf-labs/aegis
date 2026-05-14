@@ -1,5 +1,6 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::time::Instant;
 
 use crate::config::{Config, ModelRoute};
@@ -151,6 +152,151 @@ impl<'a> OpenRouterClient<'a> {
             latency_ms,
         })
     }
+
+    /// Tool-aware variant for the agentic loop. Caller passes the message
+    /// trail as `serde_json::Value` dicts (richer than `Message` because
+    /// assistant turns can carry `tool_calls` and tool turns have a
+    /// `tool_call_id`). Returns either the final assistant content or the
+    /// list of tool calls the model asked the agent to execute.
+    ///
+    /// `force_final = true` disables tool selection on the last iteration so
+    /// the loop is guaranteed to terminate with a parseable proposal.
+    pub async fn chat_with_tools(
+        &self,
+        route: ModelRoute,
+        messages: &[Value],
+        tools: &[Value],
+        force_final: bool,
+    ) -> anyhow::Result<ChatToolResult> {
+        let requested_slug = self.config.model_for(route);
+        let url = format!("{}/chat/completions", self.config.openrouter_base_url);
+
+        let mut body = json!({
+            "model": requested_slug,
+            "messages": messages,
+            "temperature": 0.3,
+            "max_tokens": 1500,
+        });
+        if !force_final && !tools.is_empty() {
+            body["tools"] = Value::Array(tools.to_vec());
+            body["tool_choice"] = Value::String("auto".into());
+        } else {
+            // Last iteration: force JSON object output for parseability and
+            // strip tools so the model emits a proposal.
+            body["response_format"] = json!({ "type": "json_object" });
+        }
+
+        let start = Instant::now();
+        let mut builder = self
+            .http
+            .post(&url)
+            .bearer_auth(&self.config.openrouter_api_key)
+            .header("X-Title", &self.config.openrouter_app_name)
+            .json(&body);
+        if let Some(referer) = &self.config.openrouter_app_url {
+            builder = builder.header("HTTP-Referer", referer);
+        }
+
+        let resp = builder.send().await?.error_for_status()?;
+        let raw: Value = resp.json().await?;
+        let latency_ms = start.elapsed().as_millis() as u64;
+
+        let model_slug = raw
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| requested_slug.to_string());
+        let prompt_tokens = raw
+            .pointer("/usage/prompt_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+        let completion_tokens = raw
+            .pointer("/usage/completion_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+
+        let message = raw
+            .pointer("/choices/0/message")
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("OpenRouter response missing choices[0].message"))?;
+        let tool_calls = message
+            .get("tool_calls")
+            .and_then(|v| v.as_array())
+            .cloned();
+
+        if let Some(calls) = tool_calls.filter(|a| !a.is_empty()) {
+            let parsed: Vec<ToolCall> = calls
+                .iter()
+                .filter_map(|c| {
+                    let id = c.get("id")?.as_str()?.to_string();
+                    let func = c.get("function")?;
+                    let name = func.get("name")?.as_str()?.to_string();
+                    let arguments = func.get("arguments")?.as_str()?.to_string();
+                    Some(ToolCall {
+                        id,
+                        name,
+                        arguments,
+                    })
+                })
+                .collect();
+            return Ok(ChatToolResult::Calls {
+                calls: parsed,
+                assistant_message: message,
+                model_slug,
+                prompt_tokens,
+                completion_tokens,
+                latency_ms,
+            });
+        }
+
+        let content = message
+            .get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        Ok(ChatToolResult::Final {
+            content,
+            model_slug,
+            prompt_tokens,
+            completion_tokens,
+            latency_ms,
+        })
+    }
+}
+
+/// One tool invocation the model wants to run.
+#[derive(Debug, Clone)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    /// Arguments as the literal JSON string the model emitted. The dispatcher
+    /// parses it; we don't pre-validate so the dispatcher's error message
+    /// reaches the model on the next turn.
+    pub arguments: String,
+}
+
+/// Either the model finished and emitted final content, or it asked the
+/// agent to run one or more tools.
+#[derive(Debug, Clone)]
+pub enum ChatToolResult {
+    Final {
+        content: String,
+        model_slug: String,
+        prompt_tokens: u32,
+        completion_tokens: u32,
+        latency_ms: u64,
+    },
+    Calls {
+        calls: Vec<ToolCall>,
+        /// The raw assistant turn the model emitted — including `tool_calls`.
+        /// Push this back into `messages` before appending each tool result
+        /// so the next call has the full conversation trail.
+        assistant_message: Value,
+        model_slug: String,
+        prompt_tokens: u32,
+        completion_tokens: u32,
+        latency_ms: u64,
+    },
 }
 
 #[cfg(test)]

@@ -30,6 +30,14 @@ pub enum SseEvent {
     /// Strategist flagged an open lot as harvestable. Sprint 3+.
     #[allow(dead_code)]
     TaxHarvestProposed(TaxHarvestPayload),
+    /// Strategist mid-decision tool call — surfaced in the reasoning feed so
+    /// users see which signals the agent looked at before deciding. Sprint 4+.
+    #[allow(dead_code)]
+    AgentToolInvoked(AgentToolInvokedPayload),
+    /// Strategist's confidence was below threshold; no trades recommended.
+    /// Sprint 4+.
+    #[allow(dead_code)]
+    AgentAbstained(AgentAbstainedPayload),
 }
 
 impl SseEvent {
@@ -46,6 +54,8 @@ impl SseEvent {
             Self::RebalancePlanCreated(_) => "rebalance.plan.created",
             Self::RebalanceLegUpdate(_) => "rebalance.leg.update",
             Self::TaxHarvestProposed(_) => "tax.harvest.proposed",
+            Self::AgentToolInvoked(_) => "agent.tool.invoked",
+            Self::AgentAbstained(_) => "agent.abstained",
         }
     }
 
@@ -63,6 +73,8 @@ impl SseEvent {
             Self::RebalancePlanCreated(p) => Some(p.user_id),
             Self::RebalanceLegUpdate(p) => Some(p.user_id),
             Self::TaxHarvestProposed(p) => Some(p.user_id),
+            Self::AgentToolInvoked(p) => Some(p.user_id),
+            Self::AgentAbstained(p) => Some(p.user_id),
         }
     }
 }
@@ -181,6 +193,32 @@ pub struct TaxHarvestPayload {
     pub symbol: String,
     pub unrealized_loss_usd: f64,
     pub proposed_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentToolInvokedPayload {
+    #[serde(skip)]
+    pub user_id: Uuid,
+    pub portfolio_id: Uuid,
+    pub tool_name: String,
+    /// Short JSON-stringified summary of the result so the UI can render a
+    /// one-line breadcrumb without re-fetching.
+    pub result_preview: String,
+    pub latency_ms: i32,
+    pub invoked_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentAbstainedPayload {
+    #[serde(skip)]
+    pub user_id: Uuid,
+    pub portfolio_id: Uuid,
+    /// Strategist's stated confidence (0..1) — below the abstain threshold.
+    pub confidence: f64,
+    pub reason: String,
+    pub decided_at: DateTime<Utc>,
 }
 
 #[cfg(test)]
