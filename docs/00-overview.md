@@ -8,22 +8,22 @@ A goal-based crypto portfolio manager that reads market regime, proposes rebalan
 
 ## The constraint
 
-Humans steer. Agents execute. The agent never moves money on its own — every rebalance is a proposal that lands in a one-screen approval flow. The agent's autonomy lives in *what to consider, when to act, and how confident to be* — not in custody.
+Humans steer. Agents execute. The agent never moves money on its own — every rebalance is a proposal that lands in a one-screen approval flow. The agent's autonomy lives in _what to consider, when to act, and how confident to be_ — not in custody.
 
 ## The rails
 
-| Layer | Choice | Why |
-|---|---|---|
-| Settlement | **Arc** (primary) + **Base** (cross-chain) | USDC-native gas + sub-second finality; Base for CCTP V2 Fast Transfer + Hooks |
-| Wallets | **Circle Wallets** (modular MSCA) | One API, paymaster-aware, no seed phrases |
-| Cross-chain | **Gateway** + **CCTP V2** | Unified USDC balance; atomic burn-mint with destination-chain Hooks |
-| Yield | **USYC** | Tokenized US T-bills as the risk-off sleeve |
-| FX | **Arc StableFX** | Native USDC↔EURC for multi-currency portfolios |
-| Fees | **Circle Paymaster** + **Nanopayments** | Users pay in USDC; protocol fees are sub-cent |
-| AI | **OpenRouter** with per-task model routing | Right brain for each job; not locked to one provider |
-| Realtime | **SSE** (`/sse`) | Server→client only; native `EventSource`; trivial proxying |
+| Layer       | Choice                                     | Why                                                                           |
+| ----------- | ------------------------------------------ | ----------------------------------------------------------------------------- |
+| Settlement  | **Arc** (primary) + **Base** (cross-chain) | USDC-native gas + sub-second finality; Base for CCTP V2 Fast Transfer + Hooks |
+| Wallets     | **Circle Wallets** (modular MSCA)          | One API, paymaster-aware, no seed phrases                                     |
+| Cross-chain | **Gateway** + **CCTP V2**                  | Unified USDC balance; atomic burn-mint with destination-chain Hooks           |
+| Yield       | **USYC**                                   | Tokenized US T-bills as the risk-off sleeve                                   |
+| FX          | **Arc StableFX**                           | Native USDC↔EURC for multi-currency portfolios                                |
+| Fees        | **Circle Paymaster** + **Nanopayments**    | Users pay in USDC; protocol fees are sub-cent                                 |
+| AI          | **OpenRouter** with per-task model routing | Right brain for each job; not locked to one provider                          |
+| Realtime    | **SSE** (`/sse`)                           | Server→client only; native `EventSource`; trivial proxying                    |
 
-## What we are *not* building
+## What we are _not_ building
 
 - A custodian. Circle Wallets hold keys; we hold preferences.
 - A trading desk. There is no leverage, no perps, no shorting.

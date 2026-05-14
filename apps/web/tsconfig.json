@@ -7,28 +7,15 @@
       }
     ],
     "paths": {
-      "@/*": [
-        "./src/*"
-      ],
-      "@aegis/shared": [
-        "../../packages/shared/src/index.ts"
-      ],
-      "@aegis/ui": [
-        "../../packages/ui/src/index.ts"
-      ]
+      "@/*": ["./src/*"],
+      "@aegis/shared": ["../../packages/shared/src/index.ts"],
+      "@aegis/ui": ["../../packages/ui/src/index.ts"]
     },
     "allowJs": true,
     "incremental": true,
     "esModuleInterop": true,
     "jsx": "preserve"
   },
-  "include": [
-    "next-env.d.ts",
-    "**/*.ts",
-    "**/*.tsx",
-    ".next/types/**/*.ts"
-  ],
-  "exclude": [
-    "node_modules"
-  ]
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
 }

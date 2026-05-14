@@ -82,12 +82,19 @@ export default function LandingPage() {
         </div>
         <div className="flex items-center gap-3">
           <Link href="/dashboard">
-            <Button variant="ghost" size="sm" className="text-gray-400 hover:text-white">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-gray-400 hover:text-white"
+            >
               Sign in
             </Button>
           </Link>
           <Link href="/onboarding">
-            <Button size="sm" className="bg-blue-600 hover:bg-blue-500 text-white">
+            <Button
+              size="sm"
+              className="bg-blue-600 hover:bg-blue-500 text-white"
+            >
               Get started
             </Button>
           </Link>
@@ -129,8 +136,8 @@ export default function LandingPage() {
           className="text-xl text-gray-400 max-w-2xl mx-auto mb-10 leading-relaxed"
         >
           Aegis autonomously monitors market conditions, evaluates your risk
-          exposure, and rebalances your portfolio — then explains every
-          decision in plain English.
+          exposure, and rebalances your portfolio — then explains every decision
+          in plain English.
         </motion.p>
 
         <motion.div
@@ -248,9 +255,12 @@ export default function LandingPage() {
           viewport={{ once: true }}
           className="p-12 rounded-3xl border border-white/10 bg-gradient-to-b from-blue-600/10 to-violet-600/5"
         >
-          <h2 className="text-4xl font-bold mb-4">Ready to let AI manage your portfolio?</h2>
+          <h2 className="text-4xl font-bold mb-4">
+            Ready to let AI manage your portfolio?
+          </h2>
           <p className="text-gray-400 mb-8">
-            Set your risk tolerance. Connect your portfolio. Let Aegis do the rest.
+            Set your risk tolerance. Connect your portfolio. Let Aegis do the
+            rest.
           </p>
           <Link href="/onboarding">
             <Button

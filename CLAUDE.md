@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guidance for Claude Code when working on Aegis. **Read [`docs/`](./docs/) first.**
+Guidance for Claude Code when working on Aegis. **Read [`docs/`](./docs/) first** — especially [`docs/06-harness.md`](./docs/06-harness.md) for how this repo uses Claude Code's skills, subagents, and hooks. For branch / commit / CI / coverage details, see [`CONTRIBUTING.md`](./CONTRIBUTING.md).
 
 ## What this is
 
@@ -10,16 +10,16 @@ Repository is a **Turborepo monorepo** with a Next.js 15 frontend (`apps/web`) a
 
 ## Locked-in decisions (do not silently change)
 
-| Decision | Rationale | Doc |
-|---|---|---|
-| **OpenRouter** as the AI gateway (not OpenAI direct) | Per-task model routing — Haiku/Opus/Sonnet/Gemini Flash/GPT-5 | [`docs/02-agent-design.md`](./docs/02-agent-design.md) |
-| **Arc + Base** as the two settlement chains (≥2 required) | Arc for native USDC gas; Base for CCTP V2 + Hooks | [`docs/00-overview.md`](./docs/00-overview.md) |
-| **SSE** for realtime (`/sse`), not WebSocket | Server→client only; native `EventSource`; trivial proxying | [`docs/01-architecture.md`](./docs/01-architecture.md) |
-| **Circle stack**: Wallets · Gateway · CCTP V2 · USYC · Paymaster · StableFX · Nanopayments | All required for Circle Tool Usage judging | [`docs/03-circle-stack.md`](./docs/03-circle-stack.md) |
-| **EURC sleeve** via Arc StableFX | Multi-currency portfolio with native FX rails | [`docs/03-circle-stack.md`](./docs/03-circle-stack.md) |
-| **Dark neo-brutalism** UI with **dual-accent** (green = money, cyan = agent) | Premium fintech feel; strict separation rule | [`docs/04-design-system.md`](./docs/04-design-system.md) |
-| **Real users** (not simulated) for the Traction judging dimension | 30% of the score | [Plan](#) |
-| **Project docs** in OpenAI "harness engineering" style, condensed (~1.5–2.5k words) | Communicates engineering rigor to judges | [`docs/`](./docs/) |
+| Decision                                                                                   | Rationale                                                     | Doc                                                      |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------- | -------------------------------------------------------- |
+| **OpenRouter** as the AI gateway (not OpenAI direct)                                       | Per-task model routing — Haiku/Opus/Sonnet/Gemini Flash/GPT-5 | [`docs/02-agent-design.md`](./docs/02-agent-design.md)   |
+| **Arc + Base** as the two settlement chains (≥2 required)                                  | Arc for native USDC gas; Base for CCTP V2 + Hooks             | [`docs/00-overview.md`](./docs/00-overview.md)           |
+| **SSE** for realtime (`/sse`), not WebSocket                                               | Server→client only; native `EventSource`; trivial proxying    | [`docs/01-architecture.md`](./docs/01-architecture.md)   |
+| **Circle stack**: Wallets · Gateway · CCTP V2 · USYC · Paymaster · StableFX · Nanopayments | All required for Circle Tool Usage judging                    | [`docs/03-circle-stack.md`](./docs/03-circle-stack.md)   |
+| **EURC sleeve** via Arc StableFX                                                           | Multi-currency portfolio with native FX rails                 | [`docs/03-circle-stack.md`](./docs/03-circle-stack.md)   |
+| **Dark neo-brutalism** UI with **dual-accent** (green = money, cyan = agent)               | Premium fintech feel; strict separation rule                  | [`docs/04-design-system.md`](./docs/04-design-system.md) |
+| **Real users** (not simulated) for the Traction judging dimension                          | 30% of the score                                              | [Plan](#)                                                |
+| **Project docs** in OpenAI "harness engineering" style, condensed (~1.5–2.5k words)        | Communicates engineering rigor to judges                      | [`docs/`](./docs/)                                       |
 
 ## Workspace layout
 
@@ -72,7 +72,21 @@ forge test
 
 > `pnpm dev` only starts the Next.js frontend. The Rust API is not a pnpm workspace and must be started separately with `cargo run` from `apps/api/`.
 
-CI gates: `next lint` · `tsc --noEmit` · `cargo fmt --check` · `cargo clippy -- -D warnings` · `cargo test`.
+## Quality gates
+
+| Layer       | Local pre-commit (Lefthook)       | CI (blocking)                                                                                  | CI (advisory)                    |
+| ----------- | --------------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------- |
+| Format      | `prettier --write {staged_files}` | `prettier --check`                                                                             | —                                |
+| Frontend    | —                                 | `next lint` · `tsc --noEmit` · `vitest run` · `next build`                                     | `vitest run --coverage` · `knip` |
+| Backend     | —                                 | `cargo fmt --check` · `cargo clippy --all-targets -- -D warnings` · `cargo test --all-targets` | `cargo llvm-cov`                 |
+| Deps        | —                                 | `cargo-audit` · `cargo-deny check` · `cargo-machete`                                           | —                                |
+| Spelling    | —                                 | `typos` (crate-ci/typos action)                                                                | —                                |
+| Commit msg  | `commitlint --edit {1}`           | `commitlint` job on PRs                                                                        | —                                |
+| Branch name | `scripts/check-branch-name.sh`    | `branch-name` job on PRs                                                                       | —                                |
+
+Tooling stack: **Lefthook** (hooks runner) · **commitlint** · **Prettier** · **Vitest** + **@vitest/coverage-v8** · **knip** (unused TS) · **typos** (spell check) · **cargo-llvm-cov** (Rust coverage) · **cargo-audit** · **cargo-deny** (config: `apps/api/deny.toml`) · **cargo-machete** (unused deps).
+
+Bypass any local hook: `git commit --no-verify` or `git push --no-verify` — use sparingly.
 
 ## Architecture
 
@@ -136,6 +150,7 @@ Trigger (user · scheduler · drift · regime flip)
 ### Database
 
 Migrations:
+
 - `0001_initial.sql` — users, portfolios, allocations, assets, agent_decisions, rebalance_events, market_snapshots
 - `0002_cost_basis_and_wallets.sql` — `wallet_id` + `arc_address` + `base_address` on users; `cost_basis_lots`; `agent_memory`; extended `agent_decisions` with `model_slug` + `prompt_tokens` + `latency_ms`; `strategies` (conditional)
 
@@ -147,16 +162,10 @@ Migrations:
 
 ## Git workflow
 
-### Branches
+Branch naming, commit format, and PR checklist live in [`CONTRIBUTING.md`](./CONTRIBUTING.md). In short:
 
-Type-prefixed slugs off `main`: `feat/`, `fix/`, `docs/`, `chore/`.
-
-### Commits
-
-Conventional Commits: `type[(scope)]: imperative description`
-
-- **Types:** `feat`, `fix`, `docs`, `refactor`, `chore`, `ci`
-- **Scope (optional):** `web`, `api`, `shared`, `agent`, `portfolio`, `auth`, `wallet`, `gateway`, `cctp`, `yield`, `fx`, `tax`, `sse`, `docs`, `ui`, `contracts`
+- Branches: `feat/<slug>` · `fix/<slug>` · `docs/<slug>` · `chore/<slug>` · `refactor/<slug>` · `ci/<slug>` · `test/<slug>` · `perf/<slug>` · `build/<slug>`. Enforced locally by Lefthook `pre-push` and in CI by `branch-name` job.
+- Commits: **Conventional Commits**. Enforced by Lefthook `commit-msg` and in CI by `commitlint` job. Config: [`commitlint.config.cjs`](./commitlint.config.cjs).
 - **Do not** add `Co-authored-by:` trailers for AI tools or `Made-with:` footers anywhere.
 
 ```

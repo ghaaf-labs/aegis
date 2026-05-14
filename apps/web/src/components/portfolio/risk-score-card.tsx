@@ -41,8 +41,8 @@ export function RiskScoreCard() {
           <span>High</span>
         </div>
         <p className="text-[11px] text-gray-500 mt-3 leading-relaxed">
-          Your portfolio risk is within your target range. The AI agent will alert you if
-          market conditions push this above 65.
+          Your portfolio risk is within your target range. The AI agent will
+          alert you if market conditions push this above 65.
         </p>
       </CardContent>
     </Card>

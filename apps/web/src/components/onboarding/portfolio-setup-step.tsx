@@ -4,7 +4,10 @@ import { Plus, Minus } from "lucide-react";
 import { SUPPORTED_ASSETS } from "@aegis/shared";
 import { cn } from "@/lib/utils";
 
-interface Alloc { symbol: string; weight: number }
+interface Alloc {
+  symbol: string;
+  weight: number;
+}
 
 const DEFAULT_ALLOCATIONS: Alloc[] = [
   { symbol: "BTC", weight: 40 },
@@ -38,7 +41,9 @@ export function PortfolioSetupStep({ allocations, onChange }: Props) {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-white mb-1">Build your target allocation</h2>
+        <h2 className="text-xl font-bold text-white mb-1">
+          Build your target allocation
+        </h2>
         <p className="text-sm text-gray-400">
           Set target weights. Aegis will maintain these automatically.
         </p>
@@ -50,7 +55,11 @@ export function PortfolioSetupStep({ allocations, onChange }: Props) {
         <span
           className={cn(
             "text-sm font-bold",
-            total === 100 ? "text-emerald-400" : total > 100 ? "text-red-400" : "text-yellow-400"
+            total === 100
+              ? "text-emerald-400"
+              : total > 100
+                ? "text-red-400"
+                : "text-yellow-400",
           )}
         >
           {total}% / 100%
@@ -67,14 +76,16 @@ export function PortfolioSetupStep({ allocations, onChange }: Props) {
               key={asset.symbol}
               className={cn(
                 "flex items-center gap-3 p-3 rounded-xl border transition-all",
-                selected ? "border-blue-500/30 bg-blue-500/5" : "border-white/5 bg-white/2"
+                selected
+                  ? "border-blue-500/30 bg-blue-500/5"
+                  : "border-white/5 bg-white/2",
               )}
             >
               <button
                 onClick={() => toggle(asset.symbol)}
                 className={cn(
                   "w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-all",
-                  selected ? "border-blue-500 bg-blue-500" : "border-gray-600"
+                  selected ? "border-blue-500 bg-blue-500" : "border-gray-600",
                 )}
               >
                 {selected && <div className="w-2 h-2 rounded-sm bg-white" />}
@@ -90,7 +101,12 @@ export function PortfolioSetupStep({ allocations, onChange }: Props) {
               {selected && (
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => setWeight(asset.symbol, Math.max(0, (alloc?.weight ?? 0) - 5))}
+                    onClick={() =>
+                      setWeight(
+                        asset.symbol,
+                        Math.max(0, (alloc?.weight ?? 0) - 5),
+                      )
+                    }
                     className="w-6 h-6 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center"
                   >
                     <Minus className="w-3 h-3 text-gray-400" />
@@ -99,7 +115,12 @@ export function PortfolioSetupStep({ allocations, onChange }: Props) {
                     {alloc?.weight ?? 0}%
                   </span>
                   <button
-                    onClick={() => setWeight(asset.symbol, Math.min(100, (alloc?.weight ?? 0) + 5))}
+                    onClick={() =>
+                      setWeight(
+                        asset.symbol,
+                        Math.min(100, (alloc?.weight ?? 0) + 5),
+                      )
+                    }
                     className="w-6 h-6 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center"
                   >
                     <Plus className="w-3 h-3 text-gray-400" />
