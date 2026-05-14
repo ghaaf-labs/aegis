@@ -29,7 +29,14 @@ pub mod handlers {
             )));
         }
 
-        let decision = analyze_portfolio(&state, AnalyzeRequest { portfolio_id }).await?;
+        let decision = analyze_portfolio(
+            &state,
+            AnalyzeRequest {
+                portfolio_id,
+                triggered_by: Some("user_request".into()),
+            },
+        )
+        .await?;
         Ok(Json(decision))
     }
 }

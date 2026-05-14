@@ -4,21 +4,32 @@
 
 ## Multi-model routing
 
-We use **OpenRouter** as the single AI gateway. Each named task resolves to a model:
+We use **OpenRouter** as the single AI gateway. Each named task resolves to a model — and **every slug is env-driven, never hardcoded in Rust**. The `ModelRoute` enum is *intent*; `Config::model_for(route)` resolves intent → slug:
 
-| Route | Default model | Why this model |
+| `ModelRoute` | Env var | Default slug | Why this model |
+|---|---|---|---|
+| `RegimeClassify` | `MODEL_REGIME` | `anthropic/claude-haiku-4-5` | Cheap, fast, reliable JSON output for a 1-of-3 label |
+| `RebalanceReason` | `MODEL_STRATEGIST` | `anthropic/claude-opus-4-7` | Highest reasoning quality on the user-facing decision |
+| `TaxExplain` | `MODEL_TAX` | `anthropic/claude-sonnet-4-6` | Good prose, lower cost than Opus, plenty for explanations |
+| `MarketCommentary` | `MODEL_COMMENTARY` | `google/gemini-2.5-flash` | Cheap daily-digest writer, long context for many assets |
+| `CritiqueAgent` | `MODEL_CRITIC` | `openai/gpt-5` | Different family from strategist → genuine adversarial diversity |
+
+Switching providers requires zero code changes — change the env var, restart the server. Every persisted decision records `model_slug` (the resolved slug, not the route name), `prompt_tokens`, `completion_tokens`, and `latency_ms`. The slug is rendered next to the decision in the UI.
+
+## Prompts live in markdown files
+
+All prompts ship as **on-disk markdown** in `apps/api/prompts/`, not as Rust string literals. Iteration is edit-the-file-and-restart, not edit-recompile-deploy. Templates use `{{ placeholder }}` substitution via a tiny `PromptRegistry` loaded into `AppState` at boot, with `include_str!` embedded fallbacks for production builds.
+
+| File | Used by | Purpose |
 |---|---|---|
-| `RegimeClassify` | `anthropic/claude-haiku-4-5` | Cheap, fast, reliable JSON output for a 1-of-3 label |
-| `RebalanceReason` | `anthropic/claude-opus-4-7` | Highest reasoning quality on the user-facing decision |
-| `TaxExplain` | `anthropic/claude-sonnet-4-6` | Good prose, lower cost than Opus, plenty for explanations |
-| `MarketCommentary` | `google/gemini-2.5-flash` | Cheap daily-digest writer, long context for many assets |
-| `CritiqueAgent` | `openai/gpt-5` | Different family from strategist → genuine adversarial diversity |
-
-Every persisted decision records `model_slug`, `prompt_tokens`, `completion_tokens`, and `latency_ms`. The slug is rendered next to the decision in the UI.
+| `apps/api/prompts/strategist.md` | Strategist (Opus) | The main rebalance proposal |
+| `apps/api/prompts/critic.md` | Critic (GPT-5) | Adversarial pass on the strategist's proposal |
+| `apps/api/prompts/regime.md` | Regime classifier (Haiku) | Labels precomputed statistical features as `RiskOn`/`Neutral`/`RiskOff` |
+| `apps/api/prompts/revision.md` | Strategist (Opus, second call) | Revises the proposal in light of the critic's notes |
 
 ## The strategist prompt
 
-A strict system prompt with five sections, in this order:
+A strict system prompt with five sections, in this order (see `apps/api/prompts/strategist.md` for the live template):
 
 1. **Role and constraints** — what the agent can propose and what it cannot (no leverage, no shorting, USDC-denominated).
 2. **Goal** — the user's horizon, risk tolerance, target allocation, and any constraints from the goal wizard.
