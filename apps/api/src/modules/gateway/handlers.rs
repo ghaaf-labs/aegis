@@ -14,6 +14,6 @@ pub async fn balance(
         .as_deref()
         .ok_or_else(|| AppError::BadRequest("user has no wallet".into()))?;
     let balance = fetch_balance(&state.http, &state.config, wallet_id).await?;
-    broadcast(&state.sse, &balance);
+    broadcast(&state.sse, claims.sub, &balance);
     Ok(Json(balance))
 }

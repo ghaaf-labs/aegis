@@ -89,6 +89,12 @@ export interface UserProfile {
   createdAt: string;
 }
 
+/** Helper: SSE event payloads scoped to a specific user. The API filters
+ * these server-side; clients with a different JWT subject never see them. */
+export interface UserScopedSseEvent {
+  userId: UserId;
+}
+
 /** Result of a Circle Wallet create. JWT is set in an httpOnly cookie. */
 export interface WalletInfo {
   walletId: string;
@@ -118,6 +124,9 @@ export interface CriticVerdict {
 export interface AgentDecision {
   id: string;
   portfolioId: PortfolioId;
+  /** Set on SSE-delivered decisions so server-side audience filtering can
+   * be verified; absent on REST responses where auth has already gated. */
+  userId?: UserId;
   reasoning: string;
   recommendation: RebalanceRecommendation;
   /** Strategist's confidence (0..1). */
@@ -241,7 +250,7 @@ export interface RebalanceStatus {
   updatedAt: string;
 }
 
-export interface GatewayBalance {
+export interface GatewayBalance extends UserScopedSseEvent {
   unifiedUsdc: number;
   perChain: Record<string, number>;
   observedAt: string;

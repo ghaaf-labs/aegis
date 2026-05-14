@@ -80,9 +80,10 @@ fn mock_balance(wallet_id: &str) -> GatewayBalance {
     }
 }
 
-/// Broadcast a fetched balance over SSE.
-pub fn broadcast(sse: &SseSender, balance: &GatewayBalance) {
+/// Broadcast a fetched balance over SSE, scoped to a specific user.
+pub fn broadcast(sse: &SseSender, user_id: uuid::Uuid, balance: &GatewayBalance) {
     let _ = sse.send(SseEvent::GatewayBalance(SseGatewayBalance {
+        user_id,
         unified_usdc: balance.unified_usdc,
         per_chain: balance.per_chain.clone(),
         observed_at: Utc::now(),

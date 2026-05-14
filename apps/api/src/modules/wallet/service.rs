@@ -69,6 +69,7 @@ impl<'a> WalletService<'a> {
         let _ = self
             .sse
             .send(SseEvent::WalletCreated(super::sse::WalletCreatedPayload {
+                user_id: user.id,
                 wallet_id: info.wallet_id.clone(),
                 arc_address: info.arc_address.clone(),
                 base_address: info.base_address.clone(),
@@ -135,6 +136,7 @@ impl<'a> WalletService<'a> {
             let _ = self
                 .sse
                 .send(SseEvent::WalletCreated(super::sse::WalletCreatedPayload {
+                    user_id: user.id,
                     wallet_id: info.wallet_id.clone(),
                     arc_address: info.arc_address.clone(),
                     base_address: info.base_address.clone(),

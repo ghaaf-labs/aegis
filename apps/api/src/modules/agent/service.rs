@@ -220,6 +220,7 @@ pub async fn analyze_portfolio(
         .send(SseEvent::AgentDecision(AgentDecisionPayload {
             id: decision.id,
             portfolio_id: decision.portfolio_id,
+            user_id: portfolio.user_id,
             reasoning: decision.reasoning.clone(),
             recommendation: decision.recommendation.clone(),
             confidence: decision.confidence,
