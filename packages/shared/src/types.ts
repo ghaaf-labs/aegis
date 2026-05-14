@@ -209,6 +209,9 @@ export type SseEvent =
   | { type: "regime.flip"; data: RegimeFlip }
   | { type: "agent.decision"; data: AgentDecision }
   | { type: "rebalance.status"; data: RebalanceStatus }
+  | { type: "rebalance.plan.created"; data: RebalancePlan }
+  | { type: "rebalance.leg.update"; data: RebalanceLeg }
+  | { type: "tax.harvest.proposed"; data: HarvestableLoss }
   | { type: "gateway.balance"; data: GatewayBalance }
   | { type: "wallet.created"; data: WalletInfo };
 
@@ -254,4 +257,124 @@ export interface GatewayBalance extends UserScopedSseEvent {
   unifiedUsdc: number;
   perChain: Record<string, number>;
   observedAt: string;
+}
+
+// ── Cross-chain rebalance execution (Sprint 3) ─────────────────────────────
+
+export type ChainKey = "arc" | "base";
+
+export type LegKind =
+  | "local_swap"
+  | "cross_chain_burn"
+  | "cross_chain_mint"
+  | "park_usyc"
+  | "redeem_usyc"
+  | "fx_stablefx";
+
+export type LegStatus = "pending" | "submitted" | "confirmed" | "failed";
+
+export type RebalanceLifecycle =
+  | "planned"
+  | "approved"
+  | "executing"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface RebalanceLeg {
+  id: string;
+  rebalanceId: string;
+  legIndex: number;
+  kind: LegKind;
+  srcChain?: ChainKey;
+  destChain?: ChainKey;
+  srcSymbol?: AssetSymbol;
+  destSymbol?: AssetSymbol;
+  amountUsdc: number;
+  minOut?: number;
+  status: LegStatus;
+  txHash?: string;
+  cctpMessageHash?: string;
+  failureReason?: string;
+  submittedAt?: string;
+  confirmedAt?: string;
+  createdAt: string;
+}
+
+export interface RebalancePlan {
+  id: string;
+  portfolioId: PortfolioId;
+  decisionId: string;
+  status: RebalanceLifecycle;
+  totalLegs: number;
+  completedLegs: number;
+  totalGasUsdc: number | null;
+  failureReason?: string;
+  approvedAt?: string;
+  completedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  legs: RebalanceLeg[];
+}
+
+export interface CrossChainRoute {
+  srcChain: ChainKey;
+  destChain: ChainKey;
+  amountUsdc: number;
+  hookTarget: string;
+  estimatedSeconds: number;
+  estimatedFeeUsdc: number;
+}
+
+export interface HarvestableLoss {
+  portfolioId: PortfolioId;
+  allocationId: string;
+  symbol: AssetSymbol;
+  unrealizedLossUsd: number;
+  /** Open lots that are currently sitting at a loss vs current price. */
+  lots: HarvestableLot[];
+  /** Set by the strategist when it explicitly recommends realizing this. */
+  proposedAt?: string;
+}
+
+export interface HarvestableLot {
+  lotId: string;
+  acquiredAt: string;
+  quantity: number;
+  basisUsd: number;
+  currentValueUsd: number;
+}
+
+export interface DigestSubscription {
+  email: string;
+  subscribedAt: string;
+  lastSentAt?: string;
+}
+
+export interface DiaryEntry {
+  decisionId: string;
+  portfolioId: PortfolioId;
+  walletAddress: string;
+  regime: MarketRegime;
+  modelSlug: string;
+  confidence: number;
+  recommendationSummary: string;
+  createdAt: string;
+  outcome?: DiaryOutcome;
+}
+
+export interface DiaryOutcome {
+  /** What the portfolio actually did in the 24 hours after the decision. */
+  realizedPctChange: number;
+  /** What it *would* have done had the recommendation been executed. */
+  counterfactualPctChange: number;
+  compressedSummary: string;
+  recordedAt: string;
+}
+
+export interface CounterfactualReplay {
+  decisionId: string;
+  realizedPct: number;
+  counterfactualPct: number;
+  deltaPct: number;
 }

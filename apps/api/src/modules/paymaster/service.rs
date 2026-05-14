@@ -99,6 +99,20 @@ mod tests {
             cors_allow_origin: "http://localhost:3000".into(),
             session_cookie_name: "aegis_jwt".into(),
             session_cookie_secure: false,
+            cctp_attestation_url: "https://iris-api-sandbox.circle.com".into(),
+            cctp_attestation_timeout_secs: 180,
+            chain_private_key_arc: String::new(),
+            chain_private_key_base: String::new(),
+            execution_mock: true,
+            scheduler_tick_secs: 300,
+            scheduler_cooldown_secs: 1800,
+            harvest_threshold_usd: 50.0,
+            digest_hour_utc: 8,
+            resend_api_key: String::new(),
+            digest_from: "x".into(),
+            digest_secret: "x".into(),
+            public_base_url: "http://localhost:3000".into(),
+            api_base_url: "http://localhost:8080".into(),
         }
     }
 

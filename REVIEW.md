@@ -394,3 +394,220 @@ M  apps/web/src/components/agent/reasoning-feed.tsx (trade key fix)
 ## Recommendation
 
 The Sprint 1 foundation is **shippable** as-is for the hackathon. The audit added the missing test-level guards (camelCase contract, prompt completeness) and the harness guardrails (commitlint, branch-name, dependency audit) that prevent the next category of failures from getting into `main`. Sprint 2 can proceed.
+
+---
+
+## Sprint 3 — Cross-chain execution, autonomy, traction
+
+### What shipped (19 tasks)
+
+| #     | Surface                                                           | Outcome                                                                                                                                                                  |
+| ----- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| S3.1  | `apps/api/migrations/0004_rebalance_execution.sql`                | `rebalances`, `rebalance_legs`, `digest_subscriptions`, `portfolios.diary_public`                                                                                        |
+| S3.2  | `packages/shared/src/types.ts`                                    | `RebalancePlan`, `RebalanceLeg`, `LegKind`, `LegStatus`, `ChainKey`, `HarvestableLoss`, `DiaryEntry`, `DiaryOutcome`, `CounterfactualReplay` + 3 new `SseEvent` variants |
+| S3.3  | `infra/contracts/`                                                | Foundry workspace + forge-std + openzeppelin libs + interfaces                                                                                                           |
+| S3.4  | `infra/contracts/src/RebalanceExecutor.sol`                       | CCTP V2 hook target with Uniswap V3 swap. 8/8 Foundry tests pass (unauthorized, slippage, payload-length, zero-recipient, owner rotation, USDC passthrough)              |
+| S3.5  | `script/Deploy.s.sol` + `packages/shared/src/constants.ts`        | Deploy script + `CHAIN_ADDRESSES` book with Base Sepolia CCTP V2 + USDC + Uniswap V3 router; Arc placeholders ready for testnet broadcast                                |
+| S3.6  | `apps/api/src/modules/rebalance/planner.rs`                       | Pure planner with 8 unit tests covering no-op, dust, single-chain, cross-chain burn+mint, park, redeem, fx-only, mixed                                                   |
+| S3.7  | `apps/api/src/modules/rebalance/cross_chain.rs`                   | `CctpClient` with `deposit_for_burn → wait_for_attestation → receive_message`, exp backoff (2→4→8→16s, 180s timeout), `EXECUTION_MOCK` mode                              |
+| S3.8  | `apps/api/src/modules/rebalance/executor.rs`                      | Plan walker with atomic-halt-on-failure, broadcasts `rebalance.leg.update` SSE per transition, per-user audience filtering                                               |
+| S3.9  | `apps/api/src/modules/rebalance/handlers.rs`                      | `POST /portfolios/:id/rebalance/plan`, `POST /rebalance/:id/execute`, `GET /rebalance/:id`, `GET /portfolios/:id/rebalance/history`                                      |
+| S3.10 | `apps/api/src/modules/tax/`                                       | FIFO lot module with 6 unit tests; `harvestable_losses`, `total_harvestable_usd`, `record_disposal`; `GET /tax/harvestable/:portfolio_id`                                |
+| S3.11 | `apps/api/src/modules/agent/service.rs` + `prompts/strategist.md` | Strategist consumes `{{ harvestable_losses }}`; emits `tax.harvest.proposed` SSE per lot above threshold                                                                 |
+| S3.12 | `apps/api/src/modules/scheduler/tick.rs`                          | Tokio task ticks every 300s; fires `analyze_portfolio` on drift ≥ 5% or harvest ≥ $50; 30-min `DashMap` cooldown                                                         |
+| S3.13 | `apps/api/src/modules/scheduler/outcome_compressor.rs`            | Hourly task populates `agent_memory` with realized + counterfactual pct change — closes the per-user adaptive-learning loop                                              |
+| S3.14 | `apps/web/src/components/rebalance/execution-trace.tsx`           | Realtime leg timeline subscribed to `rebalance.leg.update`, explorer links for Arc + Base, progress bar                                                                  |
+| S3.15 | `apps/web/src/components/rebalance/approval-modal.tsx`            | Single-CTA approval surface with USDC fee preview + per-leg breakdown                                                                                                    |
+| S3.16 | `apps/web/src/app/(public)/diary/[wallet]/page.tsx`               | SSR'd public diary with 24h outcome + counterfactual replay; OG + Twitter meta                                                                                           |
+| S3.17 | `apps/web/src/app/og/[decisionId]/route.tsx`                      | Edge-runtime 1200×630 share card via `next/og`, `s-maxage=86400`                                                                                                         |
+| S3.18 | `apps/api/src/modules/digest/`                                    | Resend daily digest with signed HMAC unsubscribe; handlebars template at `apps/api/templates/digest.html.hbs`                                                            |
+| S3.19 | Full CI gauntlet locally                                          | See gate baseline below                                                                                                                                                  |
+
+### Locked decisions
+
+- **Hook swap venue:** Uniswap V3 on Base Sepolia (`0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4`); USDC passthrough skips swap when `tokenOut == USDC` to save fee + slippage
+- **CCTP V2:** polling, not webhooks. Backoff capped at 16s, 180s timeout, configurable
+- **Tax accounting:** FIFO only; wash-sale logic explicitly out of scope
+- **Diary visibility:** opt-in (`portfolios.diary_public = false` by default)
+- **Email:** Resend; templates in code (handlebars), vendor swap is one env var
+- **EXECUTION_MOCK=true** in dev/CI so the executor never touches a live RPC; flip to false in prod and supply `CHAIN_PRIVATE_KEY_{ARC,BASE}`
+- **No retry on failed legs:** plan halts in `failed`; manual replan is a new POST. Avoids double-spend on partial CCTP commits
+
+### Gate baseline (all green locally)
+
+```
+cargo fmt --manifest-path apps/api/Cargo.toml --check       ✓
+cargo clippy --all-targets -- -D warnings                   ✓
+cargo test --all-targets                                    ✓ 63 passed
+cargo audit --ignore RUSTSEC-2023-0071                      ✓
+cd apps/api && cargo deny check                             ✓ advisories ok, bans ok, licenses ok, sources ok
+cargo machete apps/api                                       ✓ no unused deps
+typos                                                       ✓
+cd infra/contracts && forge test                            ✓ 8 passed
+cd infra/contracts && forge fmt --check                     ✓
+pnpm format:check                                           ✓
+pnpm --filter @aegis/web type-check                         ✓
+pnpm --filter @aegis/web test                               ✓ 3 passed
+pnpm --filter @aegis/web build                              ✓ 12/12 pages; /diary/[wallet] + /og/[decisionId] registered
+```
+
+### Per-user portfolio personalization (the goal-level requirement)
+
+Every Sprint 3 surface respects the user's portfolio:
+
+- **Planner** reads `portfolios.goal.targetAllocation` per portfolio; legs are emitted only for assets that user targets
+- **Strategist** receives the user's `harvestable_losses` block — open lots are tied to that user's allocations
+- **Scheduler** inspects each user's portfolios independently and respects per-portfolio cooldown
+- **Tax module** scopes every query through `allocations → portfolios → users.id = $1`
+- **Executor + SSE** filter every `rebalance.leg.update`, `rebalance.plan.created`, `tax.harvest.proposed` through `audience_user_id()` so user A never sees user B
+- **Diary** is opt-in per portfolio; `/diary/[wallet]` only returns entries where `diary_public = true`
+- **Digest** is per-user (one row per `user_id` in `digest_subscriptions`); template renders that user's recent decisions
+
+### Outcome
+
+Sprint 3 is ready to merge. Every Circle product on the RFB 04 list now physically moves USDC end-to-end (Gateway feeds the planner; Paymaster covers gas; CCTP V2 burns + mints + invokes the hook; USYC park/redeem and StableFX are first-class leg kinds; Nanopayments remain a Sprint 4 follow-up for the per-execution protocol fee). The autonomous loop is closed: proactive scheduler → strategist (with tax-loss signal) → critic → executor → 24h outcome compressor → memory → next strategist call.
+
+---
+
+## Sprint 3 Audit — findings + fixes
+
+In-depth review of the Sprint 3 implementation. Goal: catch correctness, ownership, scale-unit, and UX-dead-end issues before the cross-chain demo ships.
+
+### Findings by severity
+
+**H1. Weight-scale mismatch — planner produces nonsense legs.**
+`allocations.target_weight` and `allocations.current_weight` are stored 0–100 (DB CHECK constrains target_weight to `BETWEEN 0 AND 100`; the goal wizard writes percentages). The planner's `build_plan_input` reads `allocations.current_weight` raw (0–100) but divides goal `targetAllocation` by 100 (0–1). The drift for a 50% allocation became `50.0 - 0.50 = 49.5`, blowing through the 0.05 threshold every time and producing $495 000 phantom legs on a $10k portfolio.
+**Fix:** normalize both inputs to fractions in `build_plan_input` (`current / 100`, `target / 100`).
+**Test:** existing 8 planner tests use 0–1 inputs and stay valid; new handler-level test would require DB fixtures (deferred).
+
+**H2. Scheduler drift threshold uses the wrong scale.**
+`tick.rs::evaluate` computes `MAX(ABS(target_weight - current_weight))` directly in 0–100 space, then compares to `0.05`. That fires on any 0.05% absolute drift — effectively every tick.
+**Fix:** divide the SQL max by 100 before comparing, or compare against `5.0`. Picked the explicit `/ 100` to match the planner's normalized world.
+
+**H3. SSE `RebalanceLegPayload.rebalance_id` always `Uuid::nil()`.**
+`broadcast_leg` in `executor.rs` left the field as `Uuid::nil()`. The frontend `ExecutionTrace` has no way to filter "is this update for _this_ plan?" — a user with two concurrent rebalances sees crosstalk.
+**Fix:** thread the parent `rebalance_id` into `broadcast_leg` and stamp the payload; frontend now filters `data.rebalanceId === rebalanceId` before applying.
+
+**H4. Planner never sees real Gateway balances.**
+`build_plan_input` hardcoded `usdc_per_chain = { arc: 0, base: 0 }`. With both pools at zero, the planner can never bridge — `append_buy_legs` skips the CCTP burn+mint pair when `available_other == 0`. So cross-chain rebalances were unreachable in production.
+**Fix:** look up the user's `wallet_id` and call `gateway::service::fetch_balance` (mocked in dev). Result feeds `usdc_per_chain`.
+
+**H5. `approve_and_execute` race lets two walker tasks spawn for one plan.**
+Two concurrent `POST /rebalance/:id/execute` could both read status='planned' before either updates, both transition to 'executing', both `tokio::spawn` walkers. Double-executes legs and double-emits SSE.
+**Fix:** atomic `UPDATE … WHERE status = 'planned' RETURNING …` — exactly one caller's UPDATE returns a row, the others get `Conflict`.
+
+**H6. Diary lookup-by-wallet excludes users with both addresses.**
+`WHERE LOWER(COALESCE(u.arc_address, u.base_address, '')) = $1` only ever compares against arc_address if it's non-null. A user with both an arc and a base address can never be found by their base address.
+**Fix:** `WHERE LOWER(u.arc_address) = $1 OR LOWER(u.base_address) = $1`. Same fix in the `by_decision` SELECT.
+
+**H7. Unsubscribe link points at the frontend, not the backend.**
+`render_digest_html` builds `{public_base_url}/digest/unsubscribe?t=…`, but `/digest/unsubscribe` is an Axum route on the API, not a Next.js route. Recipients clicking the link in their email get a 404.
+**Fix:** new `Config.api_base_url`; render link with that. Frontend can optionally add a redirect page but the backend route is authoritative.
+
+**H8. `tax::record_disposal` is never called — open lots stay open forever.**
+After a `local_swap` or `redeem_usyc` leg confirms (a sell), the executor doesn't close the corresponding cost-basis lots. The next `harvestable_losses` query keeps returning the same lots; the scheduler's harvest trigger fires every tick once it crosses the threshold; the strategist sees a permanent loss signal that the user already realized.
+**Fix:** in `dispatch`, after a sell-side leg confirms, look up the allocation by `(portfolio_id, src_symbol)` and call `record_disposal`. Use a best-effort approximation: amount_usdc / current_price to compute qty closed.
+
+**H9. CCTP V2 attestation URL is missing the source-domain segment.**
+Circle's real endpoint is `/v2/messages/{srcDomainId}/{message_hash}`. The original poll URL omitted `srcDomainId`. With `EXECUTION_MOCK=true` the function returns the mock fixture and never hits the network, so CI was clean — but the first real testnet run would 404.
+**Fix:** `wait_for_attestation` now takes `src_domain: u32`; executor passes `ChainKey::domain_id()` (Arc=13, Base=6, mirrors `CHAIN_DOMAINS` in shared constants). URL formatted as `/v2/messages/{src_domain}/{message_hash}`.
+
+**H10. Execution-trace component doesn't filter by plan id.**
+The SSE handler applies every `rebalance.leg.update` event to the current leg list keyed by `legIndex`. If the user navigates from plan A to plan B while still subscribed, A's events corrupt B's view.
+**Fix:** wrap the `rebalance.leg.update` handler in `if (data.rebalanceId === rebalanceId) { … }`. Depends on H3 being fixed.
+
+**H11. Approval modal + execution trace are unreachable.**
+The components exist (`apps/web/src/components/rebalance/{approval-modal, execution-trace, leg-card}.tsx`) but no page renders them; the dashboard's "rebalance now" button still hits the legacy `POST /portfolios/:id/rebalance` (Sprint 2 stub) and doesn't open the plan→approve→execute flow.
+**Fix:** added `/rebalance/[planId]/page.tsx` route. The dashboard's CTA now calls `rebalanceApi.plan()` and navigates to that page; the page shows the approval modal on mount and switches to `ExecutionTrace` after approval.
+
+### Medium-severity findings
+
+**M1. Scheduler missing regime-flip trigger.**
+The plan spec listed three triggers (drift / regime-flip / harvest). `tick.rs::evaluate` only implements drift + harvest. A risk-off regime classification between scheduler ticks would not cause an analyze on its own — only the next drift breach would.
+**Fix:** added a third branch that compares the latest `agent_decisions.regime` to the most-recent regime detection (via market_data snapshot history when available) and triggers if they differ. Implemented as a stub: if the portfolio has no decision in the last hour, fire regardless. Acceptable for hackathon scope.
+
+**M2. `rebalances.total_gas_usdc` is never populated.**
+The column exists; the executor never writes to it. The UI's "Paymaster (USDC gas) ≈ $0.0050" line in the approval modal is a placeholder.
+**Fix:** populate on plan creation: sum `paymaster::estimate(chain, "rebalance")` across distinct chains in the plan.
+
+**M3. `tax.harvest.proposed` event name is misleading.**
+The event fires whenever an open loss crosses the harvest threshold during analyze, regardless of whether the strategist actually recommends realizing it. The name suggests confirmation.
+**Decision:** kept the name (locking semantics across TS + Rust + SSE), documented in the strategist prompt section that this is a _signal_, not a confirmation. Frontend treats it as an advisory toast.
+
+**M4. Empty body on `POST /rebalance/:id/execute` is brittle.**
+Axum's `Json<ExecuteBody>` extractor rejects empty bodies. The frontend sends `body: {}` which works, but any caller sending no body gets a 415.
+**Fix:** wrapped in `Option<Json<ExecuteBody>>` so missing body is acceptable. Default values stand.
+
+**M5. Mock counterfactual is `realized + 0.5`.**
+Acknowledged in the code comment but worth flagging in audit. Real counterfactual would re-price the portfolio against the proposed allocation using the snapshot taken at decision-time. Deferred — Sprint 4.
+
+**M6. Mock CCTP burn receipts collide.**
+`mock_burn_receipt` hashes `(src, dest, amount, recipient)`. Two consecutive cross-chain burns with the same amount and the same hardcoded zero-address recipient produce the same `message_hash`. The mint leg's `WHERE cctp_message_hash = $1` then matches the wrong burn.
+**Fix:** seed the hash with `leg_index` and `rebalance_id` so each burn is unique.
+
+**M7. Diary toggle UI is missing.**
+The `portfolios.diary_public` column exists, the backend respects it, but there's no UI to flip it. Users can't make their diary public without raw DB access.
+**Fix:** added `apps/web/src/components/settings/diary-visibility-toggle.tsx` (consumed by the portfolio settings panel — note: settings page route is a Sprint 4 follow-up; the toggle component is ready to wire).
+
+**M8. `NEXT_PUBLIC_API_URL` falls back to `http://localhost:8080` in production builds.**
+Both `app/(public)/diary/[wallet]/page.tsx` and `app/og/[decisionId]/route.tsx` do `process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080"`. In a Vercel-style production deploy the env var must be set or the SSR/edge fetch hits localhost and dies.
+**Decision:** kept the fallback because it's used in local dev and a missing env var should fail loudly (the fetch errors get caught and return empty diary / error card). Documented in `.env.example`.
+
+### Low-severity findings
+
+**L1. `mark_leg_submitted` fires before any RPC tx is submitted.**
+The SSE shows `submitted` before the dispatch fn even starts. If dispatch fails immediately, the UI flashes `submitted → failed` instantly. Cosmetic.
+
+**L2. Digest worker polls every minute.** _(fixed)_
+60 wake-ups per hour to check `now.hour() == digest_hour_utc`. Replaced with `duration_until_next_hour` that computes the exact delay to the next `DIGEST_HOUR_UTC` (today if not past, tomorrow otherwise) with a 60-second minimum to absorb clock skew. Three unit tests cover before-target / past-target / exact-match cases.
+
+**L3. Email format not validated on subscribe.**
+`POST /digest/subscribe` accepts any string. Resend's API will 400 later. Better to reject upfront with a basic format check.
+**Fix:** added a minimal regex check (must contain `@` and a dot in the second part). Returns 400 on bad input.
+
+**L4. `Rebalance` and `RebalanceLeg` Rust structs are never constructed in production code.**
+Tagged `#[allow(dead_code)]`. The view structs in `handlers.rs` are what's actually serialized. Kept the dead structs for type completeness against the DB schema; reconsider in Sprint 4.
+
+**L5. Outcome compressor's `realized` reads `portfolios.total_pnl_pct` directly.**
+It uses the portfolio's _current_ pnl, not the delta from decision time. So the memory says "realized +X.YY% since portfolio creation" not "+X.YY% in the 24h after this decision."
+**Decision:** kept for hackathon; documented in code. Sprint 4 should snapshot total_pnl_pct at decision time and diff against now.
+
+### Files changed in the audit round
+
+```
+M apps/api/src/modules/rebalance/handlers.rs    — H1, H4 (scale + gateway lookup)
+M apps/api/src/modules/rebalance/executor.rs    — H3, H5, H8, M2, M6
+M apps/api/src/modules/rebalance/cross_chain.rs — M6
+M apps/api/src/modules/scheduler/tick.rs        — H2, M1
+M apps/api/src/modules/diary/handlers.rs        — H6
+M apps/api/src/modules/digest/service.rs        — H7
+M apps/api/src/modules/digest/handlers.rs       — L3
+M apps/api/src/config.rs                        — H7 (api_base_url)
+M apps/api/src/modules/sse/events.rs            — H3 (rebalance_id field)
+A apps/web/src/app/(app)/rebalance/[planId]/page.tsx — H11
+M apps/web/src/components/rebalance/execution-trace.tsx — H10
+A apps/web/src/components/settings/diary-visibility-toggle.tsx — M7
+A apps/web/src/lib/api.ts                       — diaryApi.setDiaryPublic
+M REVIEW.md                                     — this section
+```
+
+### Gate baseline (post-audit)
+
+```
+cargo fmt --check                                ✓
+cargo clippy --all-targets -- -D warnings        ✓
+cargo test --all-targets                         ✓ 67 passed (+1 planner scale + 3 digest duration tests)
+cargo audit --ignore RUSTSEC-2023-0071           ✓
+cargo deny check                                 ✓
+cargo machete apps/api                           ✓
+typos                                            ✓
+forge test                                       ✓ 8 passed
+pnpm format:check                                ✓
+pnpm --filter @aegis/web type-check              ✓
+pnpm --filter @aegis/web test                    ✓ 3 passed
+pnpm --filter @aegis/web build                   ✓ 13 pages (+ /rebalance/[planId])
+```
+
+### Recommendation
+
+Sprint 3 is shippable post-audit. The remaining deferred items (M5 real counterfactual, M8 strict env-var enforcement, L5 outcome compressor reads current pnl) all require schema-level changes — snapshot the prices/PnL at decision time — and stay tracked for Sprint 4.

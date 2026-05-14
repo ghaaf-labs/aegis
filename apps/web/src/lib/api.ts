@@ -1,5 +1,7 @@
 import type {
   AgentDecision,
+  DiaryEntry,
+  HarvestableLoss,
   MarketSnapshot,
   Portfolio,
   PortfolioGoal,
@@ -180,6 +182,112 @@ export const agentApi = {
       body: { portfolioId, triggeredBy: "user_request" },
       authed: true,
     }),
+};
+
+// ── Rebalance ──────────────────────────────────────────────────────────────
+
+export interface RebalancePlanResponse {
+  rebalanceId: string;
+  decisionId: string;
+  totalLegs: number;
+  legs: Array<{
+    legIndex: number;
+    kind: string;
+    srcChain: string | null;
+    destChain: string | null;
+    srcSymbol: string | null;
+    destSymbol: string | null;
+    amountUsdc: number;
+  }>;
+}
+
+export const rebalanceApi = {
+  plan: (portfolioId: string) =>
+    request<RebalancePlanResponse>(
+      `/portfolios/${portfolioId}/rebalance/plan`,
+      {
+        method: "POST",
+        authed: true,
+      },
+    ),
+  execute: (rebalanceId: string) =>
+    request<void>(`/rebalance/${rebalanceId}/execute`, {
+      method: "POST",
+      body: {},
+      authed: true,
+    }),
+  get: (rebalanceId: string) =>
+    request<{
+      id: string;
+      portfolioId: string;
+      decisionId: string;
+      status: string;
+      totalLegs: number;
+      completedLegs: number;
+      totalGasUsdc: number | null;
+      failureReason: string | null;
+      approvedAt: string | null;
+      completedAt: string | null;
+      createdAt: string;
+      updatedAt: string;
+      legs: Array<{
+        id: string;
+        rebalanceId: string;
+        legIndex: number;
+        kind: string;
+        srcChain: string | null;
+        destChain: string | null;
+        srcSymbol: string | null;
+        destSymbol: string | null;
+        amountUsdc: number;
+        status: string;
+        txHash: string | null;
+        failureReason: string | null;
+        submittedAt: string | null;
+        confirmedAt: string | null;
+      }>;
+    }>(`/rebalance/${rebalanceId}`, { authed: true }),
+  history: (portfolioId: string) =>
+    request<
+      Array<{
+        id: string;
+        status: string;
+        totalLegs: number;
+        completedLegs: number;
+        createdAt: string;
+      }>
+    >(`/portfolios/${portfolioId}/rebalance/history`, { authed: true }),
+};
+
+// ── Tax ────────────────────────────────────────────────────────────────────
+
+export const taxApi = {
+  harvestable: (portfolioId: string) =>
+    request<HarvestableLoss[]>(`/tax/harvestable/${portfolioId}`, {
+      authed: true,
+    }),
+};
+
+// ── Diary (public — no auth) ───────────────────────────────────────────────
+
+export const diaryApi = {
+  byWallet: (wallet: string) =>
+    request<DiaryEntry[]>(`/diary/wallet/${wallet}`),
+  byDecision: (decisionId: string) =>
+    request<DiaryEntry>(`/diary/decision/${decisionId}`),
+};
+
+// ── Digest ─────────────────────────────────────────────────────────────────
+
+export const digestApi = {
+  subscribe: (email: string) =>
+    request<{ unsubscribeToken: string }>("/digest/subscribe", {
+      method: "POST",
+      body: { email },
+      authed: true,
+    }),
+  unsubscribe: () =>
+    request<void>("/digest/subscribe", { method: "DELETE", authed: true }),
 };
 
 // ── Rates ──────────────────────────────────────────────────────────────────

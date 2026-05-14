@@ -9,9 +9,10 @@ use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLay
 
 use crate::middleware::auth::require_auth;
 use crate::modules::{
-    agent, ai, analytics, faucet, fx, gateway, market_data, paymaster, portfolio, rebalance,
+    agent, ai, analytics, diary, digest, faucet, fx, gateway, market_data, paymaster, portfolio,
+    rebalance, scheduler,
     sse::{self, SseSender},
-    treasury, wallet,
+    tax, treasury, wallet,
 };
 use crate::{config::Config, db::Db};
 
@@ -46,6 +47,12 @@ pub async fn build(db: Db, config: Config) -> Router {
     sse::spawn_price_ticker(http.clone(), Arc::new(config.clone()), sse_tx.clone());
     gateway::spawn_balance_ticker(db, http, Arc::new(config.clone()), sse_tx);
 
+    // Long-running schedulers (cancelled when the process shuts down).
+    let cancel = tokio_util::sync::CancellationToken::new();
+    scheduler::spawn_portfolio_scheduler(state.clone(), cancel.clone());
+    scheduler::spawn_outcome_compressor(state.clone(), cancel.clone());
+    digest::spawn_digest_worker(state.clone(), cancel);
+
     // CORS — must list specific origin(s) when sending credentials. The
     // wildcard isn't legal alongside `Access-Control-Allow-Credentials: true`.
     let cors = build_cors(&config);
@@ -71,6 +78,27 @@ pub async fn build(db: Db, config: Config) -> Router {
         .route(
             "/portfolios/:id/rebalance",
             post(rebalance::handlers::trigger),
+        )
+        .route(
+            "/portfolios/:id/rebalance/plan",
+            post(rebalance::handlers::create),
+        )
+        .route(
+            "/portfolios/:id/rebalance/history",
+            get(rebalance::handlers::history),
+        )
+        .route("/rebalance/:rebalance_id", get(rebalance::handlers::get))
+        .route(
+            "/rebalance/:rebalance_id/execute",
+            post(rebalance::handlers::execute),
+        )
+        .route(
+            "/tax/harvestable/:portfolio_id",
+            get(tax::handlers::harvestable),
+        )
+        .route(
+            "/digest/subscribe",
+            post(digest::handlers::create).delete(digest::handlers::delete),
         )
         .route(
             "/agent/decisions/:portfolio_id",
@@ -102,6 +130,16 @@ pub async fn build(db: Db, config: Config) -> Router {
         )
         .route("/treasury/usyc/rate", get(treasury::handlers::usyc_rate))
         .route("/fx/usdc-eurc", get(fx::handlers::basis))
+        // Public diary + share-card data + unsubscribe — no auth.
+        .route("/diary/wallet/:wallet", get(diary::handlers::by_wallet))
+        .route(
+            "/diary/decision/:decision_id",
+            get(diary::handlers::by_decision),
+        )
+        .route(
+            "/digest/unsubscribe",
+            get(digest::handlers::unsubscribe_public),
+        )
         .merge(authed)
         .layer(cors)
         .layer(TraceLayer::new_for_http())

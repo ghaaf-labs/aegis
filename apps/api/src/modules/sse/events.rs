@@ -20,6 +20,16 @@ pub enum SseEvent {
     /// Emitted when Circle Wallets create succeeds — lets the UI swap to
     /// authed state without polling. Sprint 2+.
     WalletCreated(crate::modules::wallet::sse::WalletCreatedPayload),
+    /// A rebalance plan was created and is awaiting user approval.
+    /// Sprint 3+ — companion to `RebalanceStatus`.
+    #[allow(dead_code)]
+    RebalancePlanCreated(RebalancePlanPayload),
+    /// Per-leg state transition during plan execution. Sprint 3+.
+    #[allow(dead_code)]
+    RebalanceLegUpdate(RebalanceLegPayload),
+    /// Strategist flagged an open lot as harvestable. Sprint 3+.
+    #[allow(dead_code)]
+    TaxHarvestProposed(TaxHarvestPayload),
 }
 
 impl SseEvent {
@@ -33,6 +43,9 @@ impl SseEvent {
             Self::RebalanceStatus(_) => "rebalance.status",
             Self::GatewayBalance(_) => "gateway.balance",
             Self::WalletCreated(_) => "wallet.created",
+            Self::RebalancePlanCreated(_) => "rebalance.plan.created",
+            Self::RebalanceLegUpdate(_) => "rebalance.leg.update",
+            Self::TaxHarvestProposed(_) => "tax.harvest.proposed",
         }
     }
 
@@ -47,6 +60,9 @@ impl SseEvent {
             Self::AgentDecision(p) => Some(p.user_id),
             Self::GatewayBalance(p) => Some(p.user_id),
             Self::WalletCreated(p) => Some(p.user_id),
+            Self::RebalancePlanCreated(p) => Some(p.user_id),
+            Self::RebalanceLegUpdate(p) => Some(p.user_id),
+            Self::TaxHarvestProposed(p) => Some(p.user_id),
         }
     }
 }
@@ -118,6 +134,53 @@ pub struct GatewayBalance {
     pub unified_usdc: f64,
     pub per_chain: std::collections::HashMap<String, f64>,
     pub observed_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RebalancePlanPayload {
+    #[serde(skip)]
+    pub user_id: Uuid,
+    pub id: Uuid,
+    pub portfolio_id: Uuid,
+    pub decision_id: Uuid,
+    pub status: String,
+    pub total_legs: i32,
+    pub completed_legs: i32,
+    pub total_gas_usdc: Option<f64>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RebalanceLegPayload {
+    #[serde(skip)]
+    pub user_id: Uuid,
+    pub id: Uuid,
+    pub rebalance_id: Uuid,
+    pub leg_index: i32,
+    pub kind: String,
+    pub src_chain: Option<String>,
+    pub dest_chain: Option<String>,
+    pub src_symbol: Option<String>,
+    pub dest_symbol: Option<String>,
+    pub amount_usdc: f64,
+    pub status: String,
+    pub tx_hash: Option<String>,
+    pub failure_reason: Option<String>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaxHarvestPayload {
+    #[serde(skip)]
+    pub user_id: Uuid,
+    pub portfolio_id: Uuid,
+    pub allocation_id: Uuid,
+    pub symbol: String,
+    pub unrealized_loss_usd: f64,
+    pub proposed_at: DateTime<Utc>,
 }
 
 #[cfg(test)]

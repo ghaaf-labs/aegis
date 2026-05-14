@@ -201,6 +201,8 @@ mod tests {
                 ("memory", "- no prior decisions"),
                 ("usyc_rate", "0.0510"),
                 ("usdc_eurc_basis", "0.9217"),
+                // Sprint 3 placeholder:
+                ("harvestable_losses", "(none)"),
             ]),
         );
         // No unresolved placeholders should remain.

@@ -1,42 +1,16 @@
-use axum::{
-    extract::{Path, State},
-    Extension, Json,
-};
-use uuid::Uuid;
+//! Cross-chain rebalance execution (Sprint 3).
+//!
+//! The planner is pure; the executor orchestrates a plan, dispatching legs
+//! (`local_swap`, `cross_chain_burn`, `cross_chain_mint`, `park_usyc`,
+//! `redeem_usyc`, `fx_stablefx`), updating DB state, and broadcasting
+//! per-leg SSE events. Handlers expose the user-facing
+//! `plan → review → execute → poll` flow.
 
-use crate::modules::agent::{models::AnalyzeRequest, service::analyze_portfolio};
-use crate::{middleware::auth::Claims, router::AppState};
+pub mod cross_chain;
+pub mod executor;
+pub mod handlers;
+pub mod models;
+pub mod planner;
 
-pub mod handlers {
-    use super::*;
-
-    pub async fn trigger(
-        State(state): State<AppState>,
-        Extension(claims): Extension<Claims>,
-        Path(portfolio_id): Path<Uuid>,
-    ) -> crate::error::Result<Json<crate::modules::agent::models::AgentDecision>> {
-        let exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM portfolios WHERE id = $1 AND user_id = $2)",
-        )
-        .bind(portfolio_id)
-        .bind(claims.sub)
-        .fetch_one(&state.db)
-        .await?;
-
-        if !exists {
-            return Err(crate::error::AppError::NotFound(format!(
-                "portfolio {portfolio_id}"
-            )));
-        }
-
-        let decision = analyze_portfolio(
-            &state,
-            AnalyzeRequest {
-                portfolio_id,
-                triggered_by: Some("user_request".into()),
-            },
-        )
-        .await?;
-        Ok(Json(decision))
-    }
-}
+#[allow(unused_imports)]
+pub use models::{ChainKey, LegKind, PlanInput, PlannedLeg, Rebalance, RebalanceLeg};
