@@ -68,6 +68,18 @@ pub struct Config {
     /// 24h USDC faucet rate limit per wallet. Read by S2.4.
     #[allow(dead_code)]
     pub faucet_max_usdc_per_day: f64,
+
+    /// Comma-separated list of allowed CORS origins. HttpOnly-cookie auth
+    /// requires a specific origin (browsers reject `*` with credentials),
+    /// so production deploys must set this.
+    pub cors_allow_origin: String,
+
+    /// Cookie name for the JWT.
+    pub session_cookie_name: String,
+
+    /// When true, the `Secure` flag is set on the auth cookie. Default true
+    /// in production; flip to false for `http://localhost` dev.
+    pub session_cookie_secure: bool,
 }
 
 impl Config {
@@ -116,6 +128,12 @@ impl Config {
 
             gateway_poll_secs: parse_or("GATEWAY_POLL_SECS", 10)?,
             faucet_max_usdc_per_day: parse_or("FAUCET_MAX_USDC_PER_DAY", 100.0)?,
+
+            cors_allow_origin: std::env::var("CORS_ALLOW_ORIGIN")
+                .unwrap_or_else(|_| "http://localhost:3000".into()),
+            session_cookie_name: std::env::var("SESSION_COOKIE_NAME")
+                .unwrap_or_else(|_| "aegis_jwt".into()),
+            session_cookie_secure: parse_or("SESSION_COOKIE_SECURE", false)?,
         })
     }
 
@@ -177,6 +195,9 @@ mod tests {
             base_rpc_url: "https://sepolia.base.org".into(),
             gateway_poll_secs: 10,
             faucet_max_usdc_per_day: 100.0,
+            cors_allow_origin: "http://localhost:3000".into(),
+            session_cookie_name: "aegis_jwt".into(),
+            session_cookie_secure: false,
         }
     }
 

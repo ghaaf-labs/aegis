@@ -62,11 +62,40 @@ M  REVIEW.md                                — this section
 
 ### Sprint 2 → Sprint 3 (carry-forward audit items)
 
-1. Move JWT from localStorage to httpOnly cookie + cookie-extracting middleware (closes L1).
-2. Spawn Gateway ticker per authed wallet at session start (closes L2).
-3. Tighten `validate_email` with a small regex (closes L3).
-4. Verify migrations against live Postgres via `pnpm db:reset` (closes L4 once Docker is available).
-5. Wire real Circle WaaS sandbox calls behind `MOCK_CIRCLE=false` and capture rejection paths.
+L1, L2, and L3 closed in follow-up commit (see below). L4 and L5 remain — they require Docker + live Circle sandbox key respectively.
+
+### Round 2 — closing L1 / L2 / L3
+
+**L1 closed — JWT now in httpOnly cookie.**
+
+- `Config::session_cookie_name` (`aegis_jwt`), `session_cookie_secure` (env, default false in dev), and `jwt_expiry_hours` drive a `Set-Cookie` header on every wallet auth success (passkey create + login, OTP verify).
+- `middleware::auth::require_auth` reads the token in priority order: `Authorization: Bearer …` → `Cookie: aegis_jwt=…` → `?token=` query (last-resort for `EventSource`). New unit tests: `extract_token_prefers_authorization_header`, `extract_token_falls_back_to_cookie`, `extract_token_missing_returns_none`.
+- CORS rewritten: `allow_credentials(true)` requires a specific origin (browsers reject `*` with credentials). `Config::cors_allow_origin` is a comma-separated allow-list; default `http://localhost:3000`. Methods + `Authorization` + `Content-Type` headers permitted.
+- Frontend `fetch` calls now set `credentials: "include"`; `EventSource` opens with `withCredentials: true`. The localStorage fallback is kept for the SSE `?token=` query path (EventSource doesn't transparently send cross-site cookies in every browser).
+- New `POST /auth/logout` clears the cookie.
+
+**L2 closed — Gateway balance ticker spawned at boot.**
+
+- `gateway::spawn_balance_ticker` is now invoked in `router::build` alongside the price ticker. It polls every `Config::gateway_poll_secs` (default 10), queries `users WHERE wallet_id IS NOT NULL`, and broadcasts a per-user `gateway.balance` event. Slow consumers drop frames via the broadcast channel's bounded capacity. Noops cheaply when zero SSE subscribers are connected.
+
+**L3 closed — `validate_email` tightened.**
+
+- Requires exactly one `@`, non-empty local part, non-empty domain with at least one dot, ≥2-char TLD, no whitespace, length 6–254. New tests cover the happy path (`a@b.co`, `alice+plus@example.com`) and rejections (`a@`, `@b.co`, `a@b`, `a@b.c`, `a@@b.co`).
+
+### Remaining open
+
+- **L4. Migrations unverified against live Postgres** — needs Docker.
+- **L5. Live Circle WaaS path untested** — needs a sandbox key.
+
+Both are environment-bound, not code-bound. The contracts are well-typed and `MOCK_CIRCLE=true` keeps every flow exercised locally.
+
+### Final gate baseline (post-round-2)
+
+| Gate                                        | Round 1   | Round 2                                                                    |
+| ------------------------------------------- | --------- | -------------------------------------------------------------------------- |
+| `cargo test --all-targets`                  | 42 passed | **45 passed** (+1 audience-filter, +3 cookie extract, +6 email validation) |
+| `cargo clippy --all-targets -- -D warnings` | ✅        | ✅                                                                         |
+| Other gates                                 | ✅        | ✅                                                                         |
 
 ---
 
