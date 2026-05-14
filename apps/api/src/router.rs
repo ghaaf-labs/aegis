@@ -9,10 +9,10 @@ use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLay
 
 use crate::middleware::auth::require_auth;
 use crate::modules::{
-    agent, ai, analytics, diary, digest, faucet, fx, gateway, market_data, paymaster, portfolio,
-    rebalance, scheduler,
+    agent, ai, analytics, backtest, diary, digest, faucet, fx, gateway, market_data, paymaster,
+    portfolio, rebalance, scheduler,
     sse::{self, SseSender},
-    tax, treasury, wallet,
+    tax, treasury, trustability, wallet,
 };
 use crate::{config::Config, db::Db};
 
@@ -109,6 +109,8 @@ pub async fn build(db: Db, config: Config) -> Router {
             get(agent::handlers::decisions),
         )
         .route("/agent/analyze", post(agent::handlers::analyze))
+        .route("/backtest/preview", post(backtest::handlers::preview))
+        .route("/trustability/me", get(trustability::handlers::me))
         .route_layer(from_fn_with_state(state.clone(), require_auth));
 
     Router::new()
@@ -134,6 +136,8 @@ pub async fn build(db: Db, config: Config) -> Router {
         )
         .route("/treasury/usyc/rate", get(treasury::handlers::usyc_rate))
         .route("/fx/usdc-eurc", get(fx::handlers::basis))
+        // Public leaderboard — anonymous handles, no auth required.
+        .route("/leaderboard", get(trustability::handlers::leaderboard))
         // Public diary + share-card data + unsubscribe — no auth.
         .route("/diary/wallet/:wallet", get(diary::handlers::by_wallet))
         .route(

@@ -27,6 +27,7 @@ export default function RebalancePage({ params }: PageProps) {
   const [estimatedFee, setEstimatedFee] = useState(0);
   const [feeFetchedAt, setFeeFetchedAt] = useState<Date | null>(null);
   const [feeSource, setFeeSource] = useState<"plan" | "paymaster">("plan");
+  const [portfolioId, setPortfolioId] = useState<string | null>(null);
   const [plan, setPlan] = useState<{
     rebalanceId: string;
     decisionId: string;
@@ -50,6 +51,7 @@ export default function RebalancePage({ params }: PageProps) {
       .get(planId)
       .then((detail) => {
         if (cancelled) return;
+        setPortfolioId(detail.portfolioId);
         // Pre-approval: render the approval modal.
         setPlan({
           rebalanceId: detail.id,
@@ -133,6 +135,7 @@ export default function RebalancePage({ params }: PageProps) {
         <ApprovalModal
           open={showApproval && plan !== null}
           plan={plan}
+          portfolioId={portfolioId}
           estimatedFeeUsdc={estimatedFee}
           feeFetchedAt={feeFetchedAt}
           feeSource={feeSource}

@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { rebalanceApi, type RebalancePlanResponse } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { BacktestPreview } from "@/components/rebalance/backtest-preview";
 
 function formatRelativeSeconds(at: Date): string {
   const secs = Math.max(0, Math.round((Date.now() - at.getTime()) / 1000));
@@ -15,6 +16,8 @@ function formatRelativeSeconds(at: Date): string {
 export interface ApprovalModalProps {
   open: boolean;
   plan: RebalancePlanResponse | null;
+  /** Drives the inline backtest preview. Defaults to no preview when null. */
+  portfolioId?: string | null;
   estimatedFeeUsdc: number;
   /** When the fee number was fetched. Drives the provenance line. */
   feeFetchedAt?: Date | null;
@@ -39,6 +42,7 @@ const KIND_LABEL: Record<string, string> = {
 export function ApprovalModal({
   open,
   plan,
+  portfolioId,
   estimatedFeeUsdc,
   feeFetchedAt,
   feeSource = "plan",
@@ -119,6 +123,8 @@ export function ApprovalModal({
               </li>
             ))}
           </ol>
+
+          <BacktestPreview portfolioId={portfolioId ?? null} />
 
           <div className="bg-black/40 border border-white/5 p-3 text-xs font-mono mb-4">
             <div className="flex justify-between text-gray-400">
