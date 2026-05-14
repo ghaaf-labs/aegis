@@ -2,6 +2,8 @@
 name = "aegis-api"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+publish = false
 
 [[bin]]
 name = "aegis-api"
@@ -22,13 +24,17 @@ futures-util = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# Database
-sqlx = { version = "0.8", features = [
+# Database — `default-features = false` keeps `sqlx-mysql` + `sqlite` out of
+# the dep tree (closes RUSTSEC-2023-0071, the rsa Marvin Attack pulled in by
+# sqlx-mysql). We only target PostgreSQL.
+sqlx = { version = "0.8", default-features = false, features = [
   "postgres",
   "runtime-tokio-rustls",
   "uuid",
   "chrono",
   "json",
+  "macros",
+  "migrate",
 ] }
 
 # Auth
@@ -50,7 +56,6 @@ thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
-validator = { version = "0.18", features = ["derive"] }
 serde_urlencoded = "0.7.1"
 
 [dev-dependencies]
