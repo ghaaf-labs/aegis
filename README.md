@@ -1,255 +1,262 @@
-# Aegis — AI-Powered Adaptive Crypto Portfolio Manager
+# Aegis — Adaptive Portfolio Harness for Stablecoin-Native Finance
 
-> Autonomously monitors market conditions, evaluates risk, rebalances your portfolio, and explains every decision in plain English.
+> **The user steers, the agent executes.** A goal-based crypto portfolio manager that reads market regime, proposes rebalances, and settles them across **Arc + Base** in **USDC** through Circle's stack. Every decision is approved by a human in one screen.
+
+> **Hackathon:** RFB 04 — Adaptive Portfolio Manager · [Canteen × Circle Agora Agents](https://agora.thecanteenapp.com/) · May 11–25, 2026.
 
 ```
-                        ┌─────────────────────────────────┐
-                        │         Market Signals          │
-                        │  (CoinGecko · Fear/Greed · WS)  │
-                        └──────────────┬──────────────────┘
-                                       │
-                        ┌──────────────▼──────────────────┐
-                        │         Risk Engine              │
-                        │  Drift · Concentration · Vol    │
-                        └──────────────┬──────────────────┘
-                                       │
-                        ┌──────────────▼──────────────────┐
-                        │         AI Agent (GPT-4o)        │
-                        │  Reasoning · Recommendation     │
-                        └──────────────┬──────────────────┘
-                                       │
-                        ┌──────────────▼──────────────────┐
-                        │       Portfolio Decision         │
-                        │  User approves → Execute        │
-                        └─────────────────────────────────┘
+              ┌──────────────────────────────────────────────┐
+              │  TRIGGERS  user · scheduler · drift · regime │
+              └────────────────────┬─────────────────────────┘
+                                   │
+              ┌────────────────────▼─────────────────────────┐
+              │  REGIME CLASSIFIER  (haiku-4-5)              │
+              │  vol · correlation · drawdown                │
+              │  → RiskOn / Neutral / RiskOff                │
+              └────────────────────┬─────────────────────────┘
+                                   │
+              ┌────────────────────▼─────────────────────────┐
+              │  STRATEGIST  (opus-4-7)                       │
+              │  goal + regime + memory + prices + tax       │
+              │  + USYC rate + EURC basis → proposal         │
+              └────────────────────┬─────────────────────────┘
+                                   │
+              ┌────────────────────▼─────────────────────────┐
+              │  CRITIC  (gpt-5)                             │
+              │  adversarial pass → revisions                │
+              └────────────────────┬─────────────────────────┘
+                                   │
+              ┌────────────────────▼─────────────────────────┐
+              │  HUMAN APPROVES  one screen, USDC fee preview│
+              └────────────────────┬─────────────────────────┘
+                                   │
+              ┌────────────────────▼─────────────────────────┐
+              │  EXECUTOR  Gateway → CCTP V2 + Hook swaps    │
+              │  Paymaster pays gas in USDC                  │
+              └──────────────────────────────────────────────┘
 ```
 
 ## Stack
 
-| Layer     | Tech                                                  |
-|-----------|-------------------------------------------------------|
-| Frontend  | Next.js 15 · TypeScript · Tailwind · shadcn/ui · Zustand · React Query · Framer Motion |
-| Backend   | Rust · Axum · Tokio · SQLx · PostgreSQL · WebSocket  |
-| AI        | OpenAI GPT-4o · modular agent layer                  |
-| Infra     | Turborepo · pnpm workspaces · Docker · GitHub Actions |
+| Layer | Choice |
+|---|---|
+| Frontend | Next.js 15 · TypeScript · Tailwind · neo-brutalism dark · Zustand · React Query · `EventSource` |
+| Backend | Rust · Axum · Tokio · SQLx · PostgreSQL · **SSE** |
+| AI | **OpenRouter** with per-task model routing (Opus / Sonnet / Haiku / Gemini Flash / GPT-5) |
+| Settlement | **Arc** (primary) + **Base** (CCTP V2 cross-chain) |
+| Wallets | **Circle Wallets** (modular MSCA — no seed phrase) |
+| Cross-chain | **Gateway** unified balance + **CCTP V2** Fast Transfer + Hooks |
+| Yield | **USYC** (tokenized US T-bills) — risk-off sleeve |
+| FX | **Arc StableFX** — USDC↔EURC for the EUR sleeve |
+| Fees | **Circle Paymaster** (gas in USDC) + **Nanopayments** (protocol fees) |
+| Infra | Turborepo · pnpm · Docker · GitHub Actions |
 
-## Monorepo Structure
+## Project docs
+
+The engineering writeup lives in [`docs/`](./docs/) — six short essays in the OpenAI "harness engineering" style:
+
+1. [`00-overview.md`](./docs/00-overview.md) — what Aegis is and the constraint
+2. [`01-architecture.md`](./docs/01-architecture.md) — the agent loop and module map
+3. [`02-agent-design.md`](./docs/02-agent-design.md) — multi-model routing, prompt structure, the "map not manual" rule
+4. [`03-circle-stack.md`](./docs/03-circle-stack.md) — how each Circle product earns its place
+5. [`04-design-system.md`](./docs/04-design-system.md) — neo-brutalism tokens and the two-accent rule
+6. [`05-open-questions.md`](./docs/05-open-questions.md) — the honest unsolved list
+
+## Monorepo
 
 ```
 aegis/
 ├── apps/
-│   ├── web/                    # Next.js 15 frontend
+│   ├── web/                       # Next.js 15 frontend
 │   │   └── src/
-│   │       ├── app/            # App Router pages
-│   │       ├── components/     # UI components
-│   │       ├── lib/            # API client, mock data, utils
-│   │       ├── hooks/          # Custom hooks (WebSocket, etc.)
-│   │       └── stores/         # Zustand stores
-│   └── api/                    # Rust Axum backend
-│       ├── src/
-│       │   ├── modules/        # auth · portfolio · agent · market_data
-│       │   │                   # rebalance · websocket · ai · risk_engine
-│       │   ├── middleware/     # JWT auth
-│       │   ├── router.rs       # Axum router
-│       │   ├── config.rs       # Env config
-│       │   └── error.rs        # Unified error type
-│       └── migrations/         # PostgreSQL migrations
+│   │       ├── app/               # App Router (incl. /explore demo mode, /diary/[wallet])
+│   │       ├── components/        # dashboard · agent · portfolio · onboarding · ui
+│   │       ├── lib/               # api client, sse hook, mock data
+│   │       └── stores/            # Zustand
+│   └── api/                       # Rust Axum backend
+│       └── src/modules/
+│           ├── ai/                # OpenRouter client + ModelRoute
+│           ├── agent/             # strategist + critic pipeline + memory
+│           ├── risk_engine/       # concentration · vol · drift · regime.rs
+│           ├── wallet/            # Circle Wallets (modular MSCA)
+│           ├── gateway/           # Unified USDC balance
+│           ├── rebalance/         # cross_chain.rs (CCTP V2 + Hooks)
+│           ├── yield/             # USYC park / redeem
+│           ├── fx/                # Arc StableFX (USDC↔EURC)
+│           ├── tax/               # Cost-basis lots, harvestable losses
+│           ├── sse/               # /sse event stream
+│           └── strategies/        # (conditional) marketplace
 ├── packages/
-│   ├── shared/                 # Shared TypeScript types
-│   ├── ui/                     # Shared UI primitives
-│   └── config/                 # ESLint · TypeScript · Tailwind configs
+│   ├── shared/                    # Shared TS types + chain constants
+│   ├── ui/                        # Neo-brutalism primitives
+│   └── config/                    # ESLint · TS · Tailwind
 ├── infra/
-│   └── docker/                 # Dockerfiles for API and web
-├── .github/workflows/          # CI/CD
-├── docker-compose.yml          # Local dev: postgres + redis + api
-└── .env.example
+│   ├── contracts/                 # RebalanceExecutor.sol (Foundry)
+│   └── docker/                    # Dockerfiles
+└── docs/                          # Project documentation (see above)
 ```
 
-## Quick Start
+## Quick start
 
-### Prerequisites
+### Prereqs
 
-- Node.js 20+
-- pnpm 9+
-- Rust 1.82+
+- Node 20+, pnpm 9+
+- Rust 1.88+
 - Docker + Docker Compose
-- An OpenAI API key
+- An **OpenRouter** API key
+- A **Circle developer** API key (Wallets, Gateway, USYC, Paymaster)
 
-### 1. Install
+### Install + run
 
 ```bash
 cp .env.example .env
-# Edit .env — set OPENAI_API_KEY and JWT_SECRET at minimum
+# Set at minimum: DATABASE_URL · JWT_SECRET · OPENROUTER_API_KEY · CIRCLE_API_KEY
 pnpm install
-```
 
-### 2. Start infrastructure
-
-```bash
 docker compose up -d postgres redis
+
+cd apps/api && cargo sqlx migrate run && cd ../..
+
+pnpm dev          # Next.js (3000) — Rust API runs separately:
+# in another shell:
+cd apps/api && cargo run     # Axum on 8080
 ```
 
-### 3. Run migrations
+| Service | URL |
+|---|---|
+| Frontend | http://localhost:3000 |
+| API | http://localhost:8080 |
+| SSE | http://localhost:8080/sse |
+| Health | http://localhost:8080/health |
+
+### Demo mode (no wallet, no backend)
 
 ```bash
-cd apps/api
-cargo sqlx migrate run
+cd apps/web && pnpm dev
 ```
 
-### 4. Start development servers
+Visit http://localhost:3000/explore — the dashboard hydrates from `mock-data.ts` so you can navigate the UI without onboarding.
 
-```bash
-# From root — starts both Next.js and Rust via Turbo
-pnpm dev
-```
-
-| Service  | URL                    |
-|----------|------------------------|
-| Frontend | http://localhost:3000  |
-| API      | http://localhost:8080  |
-| WS       | ws://localhost:8080/ws |
-| Health   | http://localhost:8080/health |
-
-### 5. Demo mode
-
-The frontend ships with a complete mock data layer — no backend required to explore the UI:
-
-```bash
-cd apps/web
-pnpm dev
-```
-
-Visit http://localhost:3000 — the dashboard is fully functional with mock portfolio data, AI decisions, and price feeds.
-
-## API Reference
+## API surface
 
 ```
-GET  /health                          # Service health check
-POST /auth/register                   # Register user
-POST /auth/login                      # Login
-GET  /auth/me                         # Current user (auth required)
+GET  /health
+POST /auth/wallet/create              # Create Circle Wallet for new user
+POST /auth/wallet/login               # Passkey login
 
 GET  /portfolios                      # List portfolios
-POST /portfolios                      # Create portfolio
-GET  /portfolios/:id                  # Get portfolio with allocations
-PUT  /portfolios/:id                  # Update portfolio
-DEL  /portfolios/:id                  # Delete portfolio
-POST /portfolios/:id/rebalance        # Trigger AI rebalance analysis
+POST /portfolios                      # Create portfolio (with goal)
+GET  /portfolios/:id                  # Portfolio + allocations + Gateway balance
+PUT  /portfolios/:id                  # Update goal / allocation targets
+DEL  /portfolios/:id
 
-GET  /market/snapshot                 # Full market snapshot
-GET  /market/prices                   # Asset prices
+POST /portfolios/:id/analyze          # Trigger agent (regime + strategist + critic)
+POST /portfolios/:id/approve/:decisionId  # Execute approved rebalance
 
-GET  /agent/decisions/:portfolio_id   # Decision history
-POST /agent/analyze                   # Run AI analysis
+GET  /agent/decisions/:portfolio_id   # Decision history (with model + confidence)
+GET  /agent/diary/:wallet             # Public agent diary
 
-WS   /ws                              # Real-time price + agent events
+GET  /market/snapshot
+GET  /market/prices
+GET  /yield/usyc/rate
+GET  /fx/usdc-eurc
+
+GET  /sse                             # Server-sent events stream
+                                      # events: price.tick · regime.flip
+                                      # · agent.decision · rebalance.status
+                                      # · gateway.balance
 ```
 
-## Agent Decision Flow
+## Agent flow
 
-```
-1. Trigger (drift · market · scheduled · user)
-      │
-2. Fetch current portfolio + allocations
-      │
-3. Fetch live market snapshot (CoinGecko)
-      │
-4. Risk Engine scores: concentration + volatility + drift
-      │
-5. Build structured prompt → GPT-4o
-      │
-6. Parse JSON response: reasoning + trades + confidence
-      │
-7. Store in agent_decisions table
-      │
-8. Push to frontend via WebSocket
-      │
-9. User reviews → approves → rebalance_events created
-```
+See [`docs/01-architecture.md`](./docs/01-architecture.md) for the full diagram. In short:
 
-## Database Schema
+1. **Trigger** — user, scheduler (5 min), drift > θ, or regime flip.
+2. **Regime** — Haiku classifier turns vol + correlation + drawdown into `RiskOn` / `Neutral` / `RiskOff`.
+3. **Strategist** — Opus reads goal + regime + memory + prices + tax + USYC + EURC → proposal.
+4. **Critic** — GPT-5 challenges the proposal; strategist gets one revision.
+5. **Approve** — single user-facing modal with USDC fee preview and model slug.
+6. **Execute** — Gateway delta plan → CCTP V2 + Hook swaps → Paymaster.
+7. **Observe** — `agent_decisions`, `rebalance_events`, `agent_memory`; SSE pushes every step.
+
+## Database schema (after `0002_cost_basis_and_wallets.sql`)
 
 ```sql
-users               -- email, password_hash, risk_tolerance
-portfolios          -- user_id, total_value_usd, risk_score
-assets              -- symbol, name, coingecko_id
+users               -- email, wallet_id, arc_address, base_address, risk_tolerance
+portfolios          -- user_id, goal (JSONB), total_value_usd, risk_score
+assets              -- symbol, name, coingecko_id, chain
 allocations         -- portfolio_id, symbol, quantity, target_weight, current_weight
-agent_decisions     -- portfolio_id, reasoning, recommendation (JSONB), confidence
-rebalance_events    -- portfolio_id, decision_id, status, trades (JSONB)
-market_snapshots    -- assets (JSONB), fear_greed_index, btc_dominance
+cost_basis_lots     -- allocation_id, acquired_at, quantity, basis_usd
+agent_decisions     -- portfolio_id, model_slug, prompt_tokens, latency_ms,
+                    -- regime, confidence, reasoning, recommendation (JSONB)
+agent_memory        -- portfolio_id, decision_id, outcome_24h (JSONB)
+rebalance_events    -- decision_id, status, chain, tx_hash (per leg)
+market_snapshots    -- assets (JSONB), fear_greed_index, btc_dominance, regime
+strategies          -- (conditional) author, name, rules (JSONB), royalty_bps
 ```
 
-## Environment Variables
+## Environment variables
 
-See `.env.example` for all variables. Required:
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `JWT_SECRET` | Secret for signing JWTs (32+ chars) |
+| `OPENROUTER_API_KEY` | OpenRouter API key (replaces `OPENAI_API_KEY`) |
+| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` |
+| `CIRCLE_API_KEY` | Circle developer key (Wallets, Gateway, USYC) |
+| `CIRCLE_ENV` | `sandbox` (default) or `production` |
+| `ARC_RPC_URL` | Arc testnet RPC |
+| `BASE_RPC_URL` | Base Sepolia RPC |
+| `POSTHOG_KEY` | Traction analytics |
 
-| Variable        | Description                          |
-|-----------------|--------------------------------------|
-| `DATABASE_URL`  | PostgreSQL connection string         |
-| `JWT_SECRET`    | Secret for signing JWTs (32+ chars)  |
-| `OPENAI_API_KEY`| Your OpenAI API key                  |
+See `.env.example` for the full list.
 
-## Development Commands
+## Development
 
 ```bash
-pnpm dev              # Start all services
+pnpm dev              # Next.js (Rust API runs separately via cargo run)
 pnpm build            # Build all apps
-pnpm lint             # Lint all apps
-pnpm type-check       # TypeScript check all apps
-pnpm clean            # Clean all build artifacts
+pnpm lint             # ESLint
+pnpm type-check       # tsc --noEmit
+pnpm clean            # Clean build artifacts
 
 # Database
 docker compose up -d postgres
-cargo sqlx migrate run    # from apps/api/
-cargo sqlx migrate revert # rollback last migration
+cd apps/api && cargo sqlx migrate run
 
-# Add shadcn/ui components (from apps/web/)
-pnpm dlx shadcn@latest add <component>
+# shadcn/ui (replaced by neo-brutalism primitives in packages/ui — use sparingly)
+cd apps/web && pnpm dlx shadcn@latest add <component>
 
 # Rust
-cargo check           # Fast type check (from apps/api/)
-cargo clippy          # Linting
-cargo test            # Run tests
+cd apps/api
+cargo check
+cargo clippy -- -D warnings
+cargo fmt --all
+cargo test
+
+# Solidity (RebalanceExecutor)
+cd infra/contracts && forge build && forge test
 ```
 
 ## Deployment
 
-**Frontend → Vercel**
+**Frontend → Vercel.** Set `NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_SSE_URL`.
+
+**Backend → Railway / Fly.io / Docker.**
 
 ```bash
-cd apps/web
-vercel deploy
-```
-
-Set env vars in Vercel dashboard: `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_WS_URL`
-
-**Backend → Railway / Fly.io / Docker**
-
-```bash
-# Docker
 docker build -f infra/docker/Dockerfile.api -t aegis-api apps/api/
 docker run -p 8080:8080 --env-file .env aegis-api
-
-# Railway: connect repo, set root to apps/api/, set env vars
-# Fly.io: fly launch --dockerfile infra/docker/Dockerfile.api
 ```
 
-## Recommended VS Code Extensions
+**Contracts → Arc testnet + Base Sepolia.**
 
-```json
-{
-  "recommendations": [
-    "rust-lang.rust-analyzer",
-    "bradlc.vscode-tailwindcss",
-    "esbenp.prettier-vscode",
-    "ms-vscode.vscode-typescript-next",
-    "biomejs.biome",
-    "tamasfe.even-better-toml",
-    "usernamehw.errorlens"
-  ]
-}
+```bash
+cd infra/contracts
+forge script script/Deploy.s.sol --rpc-url $ARC_RPC_URL --broadcast
+forge script script/Deploy.s.sol --rpc-url $BASE_RPC_URL --broadcast
 ```
 
 ---
 
-Built for hackathon velocity. Scale what works, cut what doesn't.
+Built for hackathon velocity. Scale what works, cut what doesn't. **Read [`docs/`](./docs/) before contributing.**
