@@ -81,16 +81,16 @@ export default function LandingPage() {
           <span className="font-bold text-lg tracking-tight">Aegis</span>
         </div>
         <div className="flex items-center gap-3">
-          <Link href="/dashboard">
+          <Link href="/explore">
             <Button
               variant="ghost"
               size="sm"
               className="text-gray-400 hover:text-white"
             >
-              Sign in
+              Explore demo
             </Button>
           </Link>
-          <Link href="/onboarding">
+          <Link href="/signup">
             <Button
               size="sm"
               className="bg-blue-600 hover:bg-blue-500 text-white"
@@ -147,7 +147,7 @@ export default function LandingPage() {
           custom={3}
           className="flex items-center justify-center gap-4"
         >
-          <Link href="/onboarding">
+          <Link href="/signup">
             <Button
               size="lg"
               className="bg-blue-600 hover:bg-blue-500 text-white h-12 px-8 text-base font-medium"
@@ -156,7 +156,7 @@ export default function LandingPage() {
               <ArrowRight className="ml-2 w-4 h-4" />
             </Button>
           </Link>
-          <Link href="/dashboard">
+          <Link href="/explore">
             <Button
               variant="outline"
               size="lg"
@@ -262,7 +262,7 @@ export default function LandingPage() {
             Set your risk tolerance. Connect your portfolio. Let Aegis do the
             rest.
           </p>
-          <Link href="/onboarding">
+          <Link href="/signup">
             <Button
               size="lg"
               className="bg-blue-600 hover:bg-blue-500 text-white h-12 px-10 text-base"

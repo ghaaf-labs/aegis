@@ -55,7 +55,9 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-feature-settings: "rlig" 1, "calt" 1;
+    font-feature-settings:
+      "rlig" 1,
+      "calt" 1;
   }
 }
 
@@ -73,7 +75,8 @@
   }
 
   .gradient-border {
-    background: linear-gradient(var(--background), var(--background)) padding-box,
+    background:
+      linear-gradient(var(--background), var(--background)) padding-box,
       linear-gradient(135deg, hsl(var(--primary)), #7c3aed) border-box;
     border: 1px solid transparent;
   }

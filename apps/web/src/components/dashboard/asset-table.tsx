@@ -3,7 +3,7 @@
 import { TrendingUp, TrendingDown, ArrowUpDown } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { usePortfolioStore } from "@/stores/portfolio";
+import { useActivePortfolio } from "@/stores/portfolio";
 import {
   formatCurrency,
   formatPercent,
@@ -17,7 +17,7 @@ interface Props {
 }
 
 export function AssetTable({ showActions = false }: Props) {
-  const portfolio = usePortfolioStore((s) => s.portfolio);
+  const portfolio = useActivePortfolio();
 
   if (!portfolio) return null;
 

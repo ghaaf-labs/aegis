@@ -2,7 +2,7 @@
 
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { usePortfolioStore } from "@/stores/portfolio";
+import { useActivePortfolio } from "@/stores/portfolio";
 import { formatPercent } from "@/lib/utils";
 
 const COLORS = [
@@ -19,7 +19,7 @@ interface Props {
 }
 
 export function AllocationChart({ compact = false }: Props) {
-  const portfolio = usePortfolioStore((s) => s.portfolio);
+  const portfolio = useActivePortfolio();
 
   if (!portfolio) return null;
 

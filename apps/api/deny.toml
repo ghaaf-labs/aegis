@@ -9,7 +9,14 @@ version = 2
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
-ignore = []
+# RUSTSEC-2023-0071 (rsa Marvin Attack) — pulled in transitively via
+# sqlx-mysql, which is a non-optional dep of sqlx-macros-core 0.8.6 (so
+# `default-features = false` alone cannot eliminate it from Cargo.lock).
+# We do not enable the `mysql` feature on sqlx, so sqlx-mysql + rsa are
+# present in the lockfile but never compiled into the binary or executed
+# at runtime. Re-evaluate when sqlx ships a release that fixes the
+# unconditional macros-core dep on every backend.
+ignore = ["RUSTSEC-2023-0071"]
 
 [bans]
 multiple-versions = "warn"
@@ -38,6 +45,9 @@ allow = [
     "Zlib",
     "MPL-2.0",
     "CC0-1.0",
+    # Linux Foundation permissive license — used by webpki-roots and some
+    # other CA-bundle crates.
+    "CDLA-Permissive-2.0",
     "OpenSSL", # transitive ring dep; we don't link openssl ourselves
 ]
 exceptions = []

@@ -2,6 +2,8 @@
 name = "aegis-api"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+publish = false
 
 [[bin]]
 name = "aegis-api"
@@ -10,7 +12,6 @@ path = "src/main.rs"
 [dependencies]
 # Web framework
 axum = { version = "0.7", features = ["macros", "multipart"] }
-tower = { version = "0.5", features = ["full"] }
 tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip"] }
 
 # Async runtime
@@ -22,18 +23,26 @@ futures-util = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# Database
-sqlx = { version = "0.8", features = [
+# Database — `default-features = false` drops `any`. The `macros` feature is
+# required for `#[derive(FromRow)]`. sqlx-macros-core 0.8.6 declares
+# sqlx-{postgres,mysql,sqlite} as non-optional deps so all three appear in
+# Cargo.lock — none are actually compiled into the binary, but they cause
+# cargo-audit to flag RUSTSEC-2023-0071 (rsa via sqlx-mysql). Suppressed in
+# deny.toml + audit.toml with the rationale that the affected code path
+# is not reachable from this binary.
+sqlx = { version = "0.8", default-features = false, features = [
   "postgres",
   "runtime-tokio-rustls",
   "uuid",
   "chrono",
   "json",
+  "macros",
+  "migrate",
 ] }
 
 # Auth
 jsonwebtoken = "9"
-argon2 = "0.5"
+async-trait = "0.1"
 
 # HTTP client (OpenAI, market data)
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
@@ -50,7 +59,7 @@ thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
-validator = { version = "0.18", features = ["derive"] }
+serde_urlencoded = "0.7.1"
 
 [dev-dependencies]
 tokio-test = "0.4"

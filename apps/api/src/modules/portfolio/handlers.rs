@@ -52,12 +52,14 @@ pub async fn create(
     Extension(claims): Extension<Claims>,
     Json(body): Json<CreatePortfolioRequest>,
 ) -> crate::error::Result<(StatusCode, Json<Portfolio>)> {
+    let goal_value = body.goal.clone().unwrap_or(serde_json::json!({}));
     let portfolio = sqlx::query_as::<_, Portfolio>(
-        "INSERT INTO portfolios (id, user_id, name) VALUES ($1, $2, $3) RETURNING *",
+        "INSERT INTO portfolios (id, user_id, name, goal) VALUES ($1, $2, $3, $4) RETURNING *",
     )
     .bind(Uuid::new_v4())
     .bind(claims.sub)
     .bind(&body.name)
+    .bind(&goal_value)
     .fetch_one(&state.db)
     .await?;
 

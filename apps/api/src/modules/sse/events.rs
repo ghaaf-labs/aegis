@@ -17,6 +17,9 @@ pub enum SseEvent {
     /// Emitted from Sprint 2 onward (Gateway unified balance polling).
     #[allow(dead_code)]
     GatewayBalance(GatewayBalance),
+    /// Emitted when Circle Wallets create succeeds — lets the UI swap to
+    /// authed state without polling. Sprint 2+.
+    WalletCreated(crate::modules::wallet::sse::WalletCreatedPayload),
 }
 
 impl SseEvent {
@@ -29,6 +32,21 @@ impl SseEvent {
             Self::AgentDecision(_) => "agent.decision",
             Self::RebalanceStatus(_) => "rebalance.status",
             Self::GatewayBalance(_) => "gateway.balance",
+            Self::WalletCreated(_) => "wallet.created",
+        }
+    }
+
+    /// User the event is addressed to, or `None` if the event is public
+    /// (e.g. market price ticks, regime flips visible to everyone).
+    ///
+    /// The SSE handler uses this to filter the per-user stream — a subscriber
+    /// authenticated as user X never receives an event addressed to user Y.
+    pub fn audience_user_id(&self) -> Option<Uuid> {
+        match self {
+            Self::PriceTick(_) | Self::RegimeFlip(_) | Self::RebalanceStatus(_) => None,
+            Self::AgentDecision(p) => Some(p.user_id),
+            Self::GatewayBalance(p) => Some(p.user_id),
+            Self::WalletCreated(p) => Some(p.user_id),
         }
     }
 }
@@ -66,6 +84,8 @@ pub struct RegimeSignals {
 pub struct AgentDecisionPayload {
     pub id: Uuid,
     pub portfolio_id: Uuid,
+    /// Audience filter — `/sse` only forwards this event to the matching user.
+    pub user_id: Uuid,
     pub reasoning: String,
     pub recommendation: serde_json::Value,
     pub confidence: f64,
@@ -93,6 +113,8 @@ pub struct RebalanceStatus {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GatewayBalance {
+    /// Audience filter.
+    pub user_id: Uuid,
     pub unified_usdc: f64,
     pub per_chain: std::collections::HashMap<String, f64>,
     pub observed_at: DateTime<Utc>,
@@ -161,6 +183,7 @@ mod contract_tests {
         let payload = AgentDecisionPayload {
             id: uuid::Uuid::nil(),
             portfolio_id: uuid::Uuid::nil(),
+            user_id: uuid::Uuid::nil(),
             reasoning: "r".into(),
             recommendation: serde_json::json!({
                 "summary": "x",
@@ -185,6 +208,7 @@ mod contract_tests {
         for key in [
             "id",
             "portfolioId",
+            "userId",
             "reasoning",
             "recommendation",
             "confidence",
@@ -218,6 +242,56 @@ mod contract_tests {
         };
         let envelope = SseEvent::PriceTick(inner.clone());
         assert_eq!(json(&envelope), json(&inner));
+    }
+
+    #[test]
+    fn audience_user_id_filters_user_events() {
+        let me = uuid::Uuid::new_v4();
+        let other = uuid::Uuid::new_v4();
+
+        let agent_for_me = SseEvent::AgentDecision(AgentDecisionPayload {
+            id: uuid::Uuid::nil(),
+            portfolio_id: uuid::Uuid::nil(),
+            user_id: me,
+            reasoning: "r".into(),
+            recommendation: serde_json::json!({}),
+            confidence: 0.0,
+            triggered_by: "x".into(),
+            created_at: ts(),
+            model_slug: None,
+            regime: None,
+            prompt_tokens: None,
+            completion_tokens: None,
+            latency_ms: None,
+            critic_verdict: None,
+        });
+        let agent_for_other = SseEvent::AgentDecision(AgentDecisionPayload {
+            id: uuid::Uuid::nil(),
+            portfolio_id: uuid::Uuid::nil(),
+            user_id: other,
+            reasoning: "r".into(),
+            recommendation: serde_json::json!({}),
+            confidence: 0.0,
+            triggered_by: "x".into(),
+            created_at: ts(),
+            model_slug: None,
+            regime: None,
+            prompt_tokens: None,
+            completion_tokens: None,
+            latency_ms: None,
+            critic_verdict: None,
+        });
+        let public_event = SseEvent::PriceTick(PriceTick {
+            symbol: "BTC".into(),
+            price_usd: 0.0,
+            change_24h: 0.0,
+            source: "x".into(),
+            fetched_at: ts(),
+        });
+
+        assert_eq!(agent_for_me.audience_user_id(), Some(me));
+        assert_eq!(agent_for_other.audience_user_id(), Some(other));
+        assert_eq!(public_event.audience_user_id(), None);
     }
 
     #[test]

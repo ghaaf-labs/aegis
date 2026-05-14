@@ -45,12 +45,6 @@ export function timeAgo(dateStr: string): string {
   return `${Math.floor(seconds / 86400)}d ago`;
 }
 
-export function riskColor(score: number): string {
-  if (score < 30) return "text-emerald-400";
-  if (score < 60) return "text-yellow-400";
-  return "text-red-400";
-}
-
 export function changeColor(value: number): string {
   return value >= 0 ? "text-emerald-400" : "text-red-400";
 }

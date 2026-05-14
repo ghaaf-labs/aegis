@@ -2,11 +2,13 @@ import { create } from "zustand";
 import { devtools } from "zustand/middleware";
 import type {
   Portfolio,
+  PortfolioId,
   AgentDecision,
   MarketSnapshot,
   MarketRegime,
   RegimeSignals,
   PriceTick,
+  WalletInfo,
 } from "@/types";
 import {
   MOCK_PORTFOLIO,
@@ -23,7 +25,9 @@ export interface RegimeState {
 }
 
 interface PortfolioState {
-  portfolio: Portfolio | null;
+  /** All portfolios for the logged-in user. */
+  portfolios: Portfolio[];
+  activePortfolioId: PortfolioId | null;
   decisions: AgentDecision[];
   marketSnapshot: MarketSnapshot | null;
   regime: RegimeState;
@@ -32,13 +36,20 @@ interface PortfolioState {
   isRebalancing: boolean;
   selectedDecisionId: string | null;
   sseConnected: boolean;
+  /** Wallet info from Circle Wallets create / login. */
+  wallet: WalletInfo | null;
+  unifiedUsdc: number;
 
-  setPortfolio: (p: Portfolio) => void;
+  setPortfolios: (p: Portfolio[]) => void;
+  addPortfolio: (p: Portfolio) => void;
+  setActivePortfolio: (id: PortfolioId | null) => void;
   setDecisions: (d: AgentDecision[]) => void;
   addDecision: (d: AgentDecision) => void;
   setMarketSnapshot: (s: MarketSnapshot) => void;
   setRegime: (next: Partial<RegimeState>) => void;
   applyPriceTick: (tick: PriceTick) => void;
+  setUnifiedUsdc: (v: number) => void;
+  setWallet: (w: WalletInfo | null) => void;
   setIsRebalancing: (v: boolean) => void;
   selectDecision: (id: string | null) => void;
   setSseConnected: (v: boolean) => void;
@@ -56,7 +67,8 @@ const DEFAULT_REGIME: RegimeState = {
 export const usePortfolioStore = create<PortfolioState>()(
   devtools(
     (set) => ({
-      portfolio: null,
+      portfolios: [],
+      activePortfolioId: null,
       decisions: [],
       marketSnapshot: null,
       regime: DEFAULT_REGIME,
@@ -64,12 +76,27 @@ export const usePortfolioStore = create<PortfolioState>()(
       isRebalancing: false,
       selectedDecisionId: null,
       sseConnected: false,
+      wallet: null,
+      unifiedUsdc: 0,
 
-      setPortfolio: (portfolio) => set({ portfolio }),
+      setPortfolios: (portfolios) =>
+        set((state) => ({
+          portfolios,
+          activePortfolioId:
+            state.activePortfolioId ?? portfolios[0]?.id ?? null,
+        })),
+      addPortfolio: (portfolio) =>
+        set((state) => ({
+          portfolios: [
+            ...state.portfolios.filter((p) => p.id !== portfolio.id),
+            portfolio,
+          ],
+          activePortfolioId: portfolio.id,
+        })),
+      setActivePortfolio: (activePortfolioId) => set({ activePortfolioId }),
       setDecisions: (decisions) => set({ decisions }),
       addDecision: (decision) =>
         set((state) => ({
-          // Deduplicate by id so a re-fired SSE event doesn't double-insert.
           decisions: [
             decision,
             ...state.decisions.filter((d) => d.id !== decision.id),
@@ -82,13 +109,16 @@ export const usePortfolioStore = create<PortfolioState>()(
         set((state) => ({
           livePrices: { ...state.livePrices, [tick.symbol]: tick },
         })),
+      setUnifiedUsdc: (unifiedUsdc) => set({ unifiedUsdc }),
+      setWallet: (wallet) => set({ wallet }),
       setIsRebalancing: (isRebalancing) => set({ isRebalancing }),
       selectDecision: (selectedDecisionId) => set({ selectedDecisionId }),
       setSseConnected: (sseConnected) => set({ sseConnected }),
 
       initMockData: () =>
         set({
-          portfolio: MOCK_PORTFOLIO,
+          portfolios: [MOCK_PORTFOLIO],
+          activePortfolioId: MOCK_PORTFOLIO.id,
           decisions: MOCK_AGENT_DECISIONS,
           marketSnapshot: MOCK_MARKET_SNAPSHOT,
         }),
@@ -96,3 +126,10 @@ export const usePortfolioStore = create<PortfolioState>()(
     { name: "aegis-portfolio" },
   ),
 );
+
+/** Helper to read the active portfolio (or null). */
+export function useActivePortfolio(): Portfolio | null {
+  const portfolios = usePortfolioStore((s) => s.portfolios);
+  const active = usePortfolioStore((s) => s.activePortfolioId);
+  return portfolios.find((p) => p.id === active) ?? null;
+}
