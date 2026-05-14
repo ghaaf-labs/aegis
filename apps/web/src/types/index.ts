@@ -39,4 +39,6 @@ export type {
   DiaryEntry,
   DiaryOutcome,
   CounterfactualReplay,
+  AgentToolInvoked,
+  AgentAbstained,
 } from "@aegis/shared";

@@ -4,7 +4,9 @@ import { useCallback, useEffect } from "react";
 import { useEventSource, defaultSseUrl } from "@/lib/sse";
 import { usePortfolioStore } from "@/stores/portfolio";
 import type {
+  AgentAbstained,
   AgentDecision,
+  AgentToolInvoked,
   GatewayBalance,
   MarketRegime,
   PriceTick,
@@ -31,6 +33,8 @@ export function RealtimeBridge() {
   const setUnifiedUsdc = usePortfolioStore((s) => s.setUnifiedUsdc);
   const setWallet = usePortfolioStore((s) => s.setWallet);
   const setSseConnected = usePortfolioStore((s) => s.setSseConnected);
+  const pushToolInvocation = usePortfolioStore((s) => s.pushToolInvocation);
+  const pushAbstain = usePortfolioStore((s) => s.pushAbstain);
 
   // The EventSource API doesn't support custom headers, so we put the token
   // in a query param. The handler in the server-side router could also read
@@ -71,6 +75,16 @@ export function RealtimeBridge() {
     [setWallet],
   );
 
+  const onAgentToolInvoked = useCallback(
+    (data: AgentToolInvoked) => pushToolInvocation(data),
+    [pushToolInvocation],
+  );
+
+  const onAgentAbstained = useCallback(
+    (data: AgentAbstained) => pushAbstain(data),
+    [pushAbstain],
+  );
+
   const { connected } = useEventSource(
     url,
     {
@@ -79,6 +93,8 @@ export function RealtimeBridge() {
       "agent.decision": onAgentDecision,
       "gateway.balance": onGatewayBalance,
       "wallet.created": onWalletCreated,
+      "agent.tool.invoked": onAgentToolInvoked,
+      "agent.abstained": onAgentAbstained,
     },
     { enabled },
   );

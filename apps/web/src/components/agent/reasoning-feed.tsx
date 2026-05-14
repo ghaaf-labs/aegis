@@ -10,6 +10,8 @@ import {
   Cpu,
   Wifi,
   WifiOff,
+  Wrench,
+  HandIcon,
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -17,7 +19,9 @@ import { Button } from "@/components/ui/button";
 import { usePortfolioStore } from "@/stores/portfolio";
 import { timeAgo } from "@/lib/utils";
 import type {
+  AgentAbstained,
   AgentDecision,
+  AgentToolInvoked,
   AgentTrigger,
   CriticVerdict,
   MarketRegime,
@@ -61,6 +65,8 @@ const REGIME_CLASS: Record<MarketRegime, string> = {
 export function AgentReasoningFeed() {
   const decisions = usePortfolioStore((s) => s.decisions);
   const sseConnected = usePortfolioStore((s) => s.sseConnected);
+  const toolInvocations = usePortfolioStore((s) => s.toolInvocations);
+  const abstains = usePortfolioStore((s) => s.abstains);
 
   return (
     <Card className="flex flex-col">
@@ -93,6 +99,12 @@ export function AgentReasoningFeed() {
         </div>
       </CardHeader>
       <CardContent className="flex-1 p-0 overflow-hidden">
+        {(toolInvocations.length > 0 || abstains.length > 0) && (
+          <LiveActivityStrip
+            toolInvocations={toolInvocations.slice(0, 4)}
+            abstains={abstains.slice(0, 2)}
+          />
+        )}
         <div className="overflow-y-auto max-h-[480px] scrollbar-thin">
           <AnimatePresence initial={false}>
             {decisions.map((decision, i) => (
@@ -102,6 +114,65 @@ export function AgentReasoningFeed() {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Above-the-fold realtime strip — every `agent.tool.invoked` / `agent.abstained`
+ * SSE event lands here within the same animation frame the backend emits it.
+ * Capped so it can't push the decisions list off-screen.
+ */
+function LiveActivityStrip({
+  toolInvocations,
+  abstains,
+}: {
+  toolInvocations: AgentToolInvoked[];
+  abstains: AgentAbstained[];
+}) {
+  return (
+    <div className="px-5 py-3 border-b border-white/4 bg-white/2">
+      <p className="text-[10px] font-mono uppercase tracking-wider text-cyan-300/70 mb-2">
+        Live agent activity
+      </p>
+      <div className="space-y-1.5">
+        <AnimatePresence initial={false}>
+          {abstains.map((a) => (
+            <motion.div
+              key={a.decidedAt}
+              initial={{ opacity: 0, x: -8 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0 }}
+              className="flex items-center gap-2 text-[11px] font-mono text-amber-300/90"
+            >
+              <HandIcon className="w-3 h-3 shrink-0" />
+              <span className="opacity-75">Abstained</span>
+              <span className="opacity-50">·</span>
+              <span className="truncate">{a.reason}</span>
+              <span className="ml-auto text-[10px] opacity-50 shrink-0">
+                {Math.round(a.confidence * 100)}%
+              </span>
+            </motion.div>
+          ))}
+          {toolInvocations.map((t) => (
+            <motion.div
+              key={`${t.invokedAt}-${t.toolName}`}
+              initial={{ opacity: 0, x: -8 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0 }}
+              className="flex items-center gap-2 text-[11px] font-mono text-cyan-200/90"
+            >
+              <Wrench className="w-3 h-3 shrink-0" />
+              <span className="opacity-75">{t.toolName}</span>
+              <span className="opacity-50">·</span>
+              <span className="truncate opacity-60">{t.resultPreview}</span>
+              <span className="ml-auto text-[10px] opacity-50 shrink-0">
+                {t.latencyMs}ms
+              </span>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
+    </div>
   );
 }
 

@@ -8,5 +8,5 @@ pub mod client;
 pub mod prompts;
 
 #[allow(unused_imports)]
-pub use client::{ChatResponse, Message, OpenRouterClient};
+pub use client::{ChatResponse, ChatToolResult, Message, OpenRouterClient, ToolCall};
 pub use prompts::{PromptKey, PromptRegistry};
