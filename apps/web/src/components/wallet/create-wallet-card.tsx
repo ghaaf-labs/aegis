@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Mail, Fingerprint } from "lucide-react";
 import {
   BrutalButton,
@@ -25,6 +25,8 @@ type Mode = "passkey" | "otp-start" | "otp-verify";
  */
 export function CreateWalletCard() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const referrerHandle = searchParams?.get("ref")?.trim().toLowerCase();
   const setWallet = usePortfolioStore((s) => s.setWallet);
 
   const [email, setEmail] = useState("");
@@ -49,13 +51,26 @@ export function CreateWalletCard() {
         kind: "webauthn",
         platform: window.navigator?.userAgent ?? "unknown",
       };
-      const resp = await walletApi.createPasskey(email.trim(), passkey);
+      const resp = await walletApi.createPasskey(
+        email.trim(),
+        passkey,
+        referrerHandle || undefined,
+      );
       setToken(resp.token);
       setWallet(resp.wallet);
-      await analyticsApi.track("wallet.created", { method: "passkey" });
+      await analyticsApi.track("wallet.created", {
+        method: "passkey",
+        referrerHandle: referrerHandle || null,
+      });
       router.push("/onboarding");
     } catch (e) {
-      setError((e as Error).message);
+      // If the passkey path fails (user cancellation, sandbox hiccup, server
+      // rejection), drop into the OTP flow with the same email instead of
+      // dead-ending. The user still completes onboarding in one session.
+      const msg = (e as Error).message;
+      setError(`${msg} — switched to email code as a fallback.`);
+      setMode("otp-start");
+      void analyticsApi.track("wallet.passkey_fallback", { reason: msg });
     } finally {
       setSubmitting(false);
     }
@@ -78,10 +93,17 @@ export function CreateWalletCard() {
     setSubmitting(true);
     setError(null);
     try {
-      const resp = await walletApi.verifyOtp(email.trim(), code.trim());
+      const resp = await walletApi.verifyOtp(
+        email.trim(),
+        code.trim(),
+        referrerHandle || undefined,
+      );
       setToken(resp.token);
       setWallet(resp.wallet);
-      await analyticsApi.track("wallet.created", { method: "otp" });
+      await analyticsApi.track("wallet.created", {
+        method: "otp",
+        referrerHandle: referrerHandle || null,
+      });
       router.push("/onboarding");
     } catch (e) {
       setError((e as Error).message);
@@ -186,13 +208,25 @@ export function CreateWalletCard() {
             </>
           )}
           {mode === "otp-verify" && (
-            <BrutalButton
-              variant="pnl"
-              onClick={() => void verifyOtp()}
-              disabled={code.length !== 6 || submitting}
-            >
-              {submitting ? "Verifying…" : "Verify & create wallet"}
-            </BrutalButton>
+            <>
+              <BrutalButton
+                variant="pnl"
+                onClick={() => void verifyOtp()}
+                disabled={code.length !== 6 || submitting}
+              >
+                {submitting ? "Verifying…" : "Verify & create wallet"}
+              </BrutalButton>
+              <BrutalButton
+                variant="ghost"
+                onClick={() => {
+                  setCode("");
+                  void startOtp();
+                }}
+                disabled={submitting}
+              >
+                Resend code
+              </BrutalButton>
+            </>
           )}
         </div>
       </BrutalCardBody>

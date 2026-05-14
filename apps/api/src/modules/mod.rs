@@ -1,6 +1,8 @@
 pub mod agent;
 pub mod ai;
 pub mod analytics;
+pub mod backtest;
+pub mod billing;
 pub mod diary;
 pub mod digest;
 pub mod faucet;
@@ -15,4 +17,5 @@ pub mod scheduler;
 pub mod sse;
 pub mod tax;
 pub mod treasury;
+pub mod trustability;
 pub mod wallet;

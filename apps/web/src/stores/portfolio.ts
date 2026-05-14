@@ -4,6 +4,8 @@ import type {
   Portfolio,
   PortfolioId,
   AgentDecision,
+  AgentToolInvoked,
+  AgentAbstained,
   MarketSnapshot,
   MarketRegime,
   RegimeSignals,
@@ -39,6 +41,10 @@ interface PortfolioState {
   /** Wallet info from Circle Wallets create / login. */
   wallet: WalletInfo | null;
   unifiedUsdc: number;
+  /** Most-recent strategist tool invocations (capped at 20). */
+  toolInvocations: AgentToolInvoked[];
+  /** Most-recent abstain events (capped at 10). */
+  abstains: AgentAbstained[];
 
   setPortfolios: (p: Portfolio[]) => void;
   addPortfolio: (p: Portfolio) => void;
@@ -53,6 +59,8 @@ interface PortfolioState {
   setIsRebalancing: (v: boolean) => void;
   selectDecision: (id: string | null) => void;
   setSseConnected: (v: boolean) => void;
+  pushToolInvocation: (t: AgentToolInvoked) => void;
+  pushAbstain: (a: AgentAbstained) => void;
   initMockData: () => void;
 }
 
@@ -78,6 +86,8 @@ export const usePortfolioStore = create<PortfolioState>()(
       sseConnected: false,
       wallet: null,
       unifiedUsdc: 0,
+      toolInvocations: [],
+      abstains: [],
 
       setPortfolios: (portfolios) =>
         set((state) => ({
@@ -114,6 +124,14 @@ export const usePortfolioStore = create<PortfolioState>()(
       setIsRebalancing: (isRebalancing) => set({ isRebalancing }),
       selectDecision: (selectedDecisionId) => set({ selectedDecisionId }),
       setSseConnected: (sseConnected) => set({ sseConnected }),
+      pushToolInvocation: (invocation) =>
+        set((state) => ({
+          toolInvocations: [invocation, ...state.toolInvocations].slice(0, 20),
+        })),
+      pushAbstain: (abstain) =>
+        set((state) => ({
+          abstains: [abstain, ...state.abstains].slice(0, 10),
+        })),
 
       initMockData: () =>
         set({

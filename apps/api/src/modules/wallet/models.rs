@@ -52,6 +52,11 @@ pub struct RegisterPasskeyRequest {
     /// to Circle WaaS which validates the WebAuthn ceremony.
     #[serde(default)]
     pub passkey_attestation: serde_json::Value,
+    /// Optional 8-char user handle of the referrer (matches the `handle`
+    /// column on `v_trustability_per_user`). Drives the referral payout
+    /// loop in `billing::record_referral`.
+    #[serde(default, rename = "referrerHandle")]
+    pub referrer_handle: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -71,6 +76,9 @@ pub struct OtpStartRequest {
 pub struct OtpVerifyRequest {
     pub email: String,
     pub code: String,
+    /// Referrer handle — same semantics as `RegisterPasskeyRequest`.
+    #[serde(default, rename = "referrerHandle")]
+    pub referrer_handle: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

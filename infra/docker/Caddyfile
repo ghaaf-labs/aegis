@@ -1,0 +1,22 @@
+{$AEGIS_DOMAIN} {
+    encode zstd gzip
+
+    # SSE — long-lived, no buffering, keepalive-friendly.
+    handle_path /api/sse* {
+        reverse_proxy api:8080 {
+            flush_interval -1
+            transport http {
+                response_header_timeout 0
+                read_timeout 0
+            }
+        }
+    }
+
+    handle_path /api/* {
+        reverse_proxy api:8080
+    }
+
+    handle {
+        reverse_proxy web:3000
+    }
+}

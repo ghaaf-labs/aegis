@@ -208,6 +208,8 @@ export type SseEvent =
   | { type: "price.tick"; data: PriceTick }
   | { type: "regime.flip"; data: RegimeFlip }
   | { type: "agent.decision"; data: AgentDecision }
+  | { type: "agent.tool.invoked"; data: AgentToolInvoked }
+  | { type: "agent.abstained"; data: AgentAbstained }
   | { type: "rebalance.status"; data: RebalanceStatus }
   | { type: "rebalance.plan.created"; data: RebalancePlan }
   | { type: "rebalance.leg.update"; data: RebalanceLeg }
@@ -251,6 +253,34 @@ export interface RebalanceStatus {
   txHash?: string;
   status: "pending" | "submitted" | "confirmed" | "failed";
   updatedAt: string;
+}
+
+/**
+ * Strategist mid-decision tool invocation. The reasoning feed shows each
+ * call as a single breadcrumb row so users see what the agent looked at.
+ */
+export interface AgentToolInvoked {
+  portfolioId: PortfolioId;
+  toolName:
+    | "fetch_news"
+    | "fetch_onchain_metric"
+    | "fetch_correlation"
+    | string;
+  /** Truncated JSON-stringified preview of the tool's result. */
+  resultPreview: string;
+  latencyMs: number;
+  invokedAt: string;
+}
+
+/**
+ * Confidence-based abstain — the strategist concluded no action was justified.
+ * UI surfaces this as a "agent held off" card with the stated reason.
+ */
+export interface AgentAbstained {
+  portfolioId: PortfolioId;
+  confidence: number;
+  reason: string;
+  decidedAt: string;
 }
 
 export interface GatewayBalance extends UserScopedSseEvent {

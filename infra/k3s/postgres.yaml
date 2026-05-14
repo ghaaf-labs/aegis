@@ -1,0 +1,60 @@
+# Single-node Postgres for k3s. Production-grade clusters should use an
+# external managed Postgres or a CloudNativePG operator; this manifest is
+# sized for the hackathon submission demo.
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: aegis-postgres-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector: { matchLabels: { app: postgres } }
+  template:
+    metadata:
+      labels: { app: postgres }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - { name: POSTGRES_DB, value: aegis }
+            - { name: POSTGRES_USER, value: aegis }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                { secretKeyRef: { name: aegis-postgres, key: password } }
+          readinessProbe:
+            exec: { command: [pg_isready, -U, aegis] }
+            periodSeconds: 5
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: 1000m, memory: 2Gi }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: aegis-postgres-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector: { app: postgres }
+  ports:
+    - port: 5432
+      targetPort: 5432
+  clusterIP: None

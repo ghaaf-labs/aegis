@@ -100,6 +100,56 @@ pub async fn update(
     Ok(Json(portfolio))
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiaryPublicRequest {
+    pub diary_public: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiaryPublicResponse {
+    pub id: Uuid,
+    pub diary_public: bool,
+}
+
+pub async fn get_diary_public(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(id): Path<Uuid>,
+) -> crate::error::Result<Json<DiaryPublicResponse>> {
+    let row: Option<(Uuid, bool)> =
+        sqlx::query_as("SELECT id, diary_public FROM portfolios WHERE id = $1 AND user_id = $2")
+            .bind(id)
+            .bind(claims.sub)
+            .fetch_optional(&state.db)
+            .await?;
+    let (id, diary_public) =
+        row.ok_or_else(|| crate::error::AppError::NotFound(format!("portfolio {id}")))?;
+    Ok(Json(DiaryPublicResponse { id, diary_public }))
+}
+
+pub async fn set_diary_public(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<DiaryPublicRequest>,
+) -> crate::error::Result<Json<DiaryPublicResponse>> {
+    let row: Option<(Uuid, bool)> = sqlx::query_as(
+        "UPDATE portfolios SET diary_public = $1, updated_at = NOW()
+         WHERE id = $2 AND user_id = $3
+         RETURNING id, diary_public",
+    )
+    .bind(body.diary_public)
+    .bind(id)
+    .bind(claims.sub)
+    .fetch_optional(&state.db)
+    .await?;
+    let (id, diary_public) =
+        row.ok_or_else(|| crate::error::AppError::NotFound(format!("portfolio {id}")))?;
+    Ok(Json(DiaryPublicResponse { id, diary_public }))
+}
+
 pub async fn delete(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,

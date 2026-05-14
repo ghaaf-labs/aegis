@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 
 import { useEventSource } from "@/lib/sse";
-import { rebalanceApi } from "@/lib/api";
+import { rebalanceApi, analyticsApi } from "@/lib/api";
+import { buildShareIntent } from "@/lib/share";
 import type { LegStatus } from "@/types";
 
 import { LegCard } from "./leg-card";
@@ -38,6 +39,7 @@ export function ExecutionTrace({ rebalanceId, sseUrl }: ExecutionTraceProps) {
   const [status, setStatus] = useState<string>("loading…");
   const [completed, setCompleted] = useState<number>(0);
   const [total, setTotal] = useState<number>(0);
+  const [decisionId, setDecisionId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -46,6 +48,7 @@ export function ExecutionTrace({ rebalanceId, sseUrl }: ExecutionTraceProps) {
       setStatus(plan.status);
       setTotal(plan.totalLegs);
       setCompleted(plan.completedLegs);
+      setDecisionId(plan.decisionId);
       setLegs(
         plan.legs.map((l) => ({
           id: l.id,
@@ -152,6 +155,41 @@ export function ExecutionTrace({ rebalanceId, sseUrl }: ExecutionTraceProps) {
             ))
         )}
       </div>
+      {status === "completed" && decisionId && (
+        <ShareBlock decisionId={decisionId} />
+      )}
     </section>
+  );
+}
+
+function ShareBlock({ decisionId }: { decisionId: string }) {
+  const handle = () => {
+    const { intentUrl } = buildShareIntent({
+      decisionId,
+      summary: "rebalance executed",
+      realizedPct: null,
+    });
+    void analyticsApi.track("share.opened", { decisionId });
+    window.open(intentUrl, "_blank", "noopener,noreferrer");
+  };
+  return (
+    <div className="mt-4 border-2 border-emerald-500/30 bg-emerald-500/5 p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <div>
+        <p className="text-xs font-semibold text-emerald-200">
+          Rebalance complete
+        </p>
+        <p className="text-[11px] text-emerald-200/70 mt-0.5">
+          Share what the agent did — the OG card pulls the regime + outcome
+          automatically.
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={handle}
+        className="self-start sm:self-auto px-3 py-1.5 text-xs font-semibold border-2 border-emerald-300 bg-emerald-500 text-black hover:bg-emerald-400 transition-colors"
+      >
+        Share to X
+      </button>
+    </div>
   );
 }

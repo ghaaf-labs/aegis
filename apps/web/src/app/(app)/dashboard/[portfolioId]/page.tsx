@@ -10,6 +10,9 @@ import { AgentReasoningFeed } from "@/components/agent/reasoning-feed";
 import { PerformanceChart } from "@/components/dashboard/performance-chart";
 import { MarketOverview } from "@/components/dashboard/market-overview";
 import { DiaryVisibilityToggle } from "@/components/settings/diary-visibility-toggle";
+import { DigestOptIn } from "@/components/settings/digest-opt-in";
+import { TrustabilityCard } from "@/components/dashboard/trustability-card";
+import { portfolioApi } from "@/lib/api";
 import { usePortfolioStore } from "@/stores/portfolio";
 
 const stagger = { visible: { transition: { staggerChildren: 0.08 } } };
@@ -32,6 +35,23 @@ export default function PortfolioDashboardPage() {
   useEffect(() => {
     if (params?.portfolioId) setActive(params.portfolioId);
   }, [params?.portfolioId, setActive]);
+
+  useEffect(() => {
+    if (!params?.portfolioId) return;
+    let cancelled = false;
+    portfolioApi
+      .getDiaryPublic(params.portfolioId)
+      .then((r) => {
+        if (!cancelled) setDiaryPublic(r.diaryPublic);
+      })
+      .catch(() => {
+        // Best-effort hydration; the toggle still works against the PATCH route
+        // and we don't want a stale token to crash the dashboard.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [params?.portfolioId]);
 
   return (
     <motion.div
@@ -56,6 +76,10 @@ export default function PortfolioDashboardPage() {
       </motion.div>
 
       <motion.div variants={fadeUp}>
+        <TrustabilityCard />
+      </motion.div>
+
+      <motion.div variants={fadeUp}>
         <PerformanceChart />
       </motion.div>
 
@@ -67,14 +91,25 @@ export default function PortfolioDashboardPage() {
         <AgentReasoningFeed />
       </motion.div>
 
+      <motion.div
+        variants={fadeUp}
+        className="grid grid-cols-1 md:grid-cols-2 gap-4"
+      >
+        <DigestOptIn />
+        <div /> {/* spacer to keep grid alignment until more settings land */}
+      </motion.div>
+
       <motion.div variants={fadeUp}>
         <DiaryVisibilityToggle
+          key={`diary-${params?.portfolioId}-${diaryPublic}`}
           initialPublic={diaryPublic}
           onChange={async (next) => {
-            // Backend wiring lands in Sprint 4 (settings PATCH route).
-            // Component is rendered here so the surface is reachable and
-            // the diary opt-in flow is discoverable from the dashboard.
-            setDiaryPublic(next);
+            if (!params?.portfolioId) return;
+            const res = await portfolioApi.setDiaryPublic(
+              params.portfolioId,
+              next,
+            );
+            setDiaryPublic(res.diaryPublic);
           }}
         />
       </motion.div>
