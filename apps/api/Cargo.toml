@@ -61,5 +61,18 @@ chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
 serde_urlencoded = "0.7.1"
 
+# Crypto utils used by the digest unsubscribe token + CCTP hook hashing.
+sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
+subtle = "2"
+
+# Concurrency primitives used by the proactive scheduler.
+dashmap = "6"
+tokio-util = { version = "0.7", features = ["rt"] }
+
+# HTML rendering for the daily digest.
+handlebars = "6"
+
 [dev-dependencies]
 tokio-test = "0.4"
