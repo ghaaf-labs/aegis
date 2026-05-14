@@ -27,7 +27,11 @@ export default function PortfolioPage() {
           </p>
         </div>
         <div className="flex gap-3">
-          <Button variant="outline" size="sm" className="border-white/10 text-gray-300 hover:bg-white/5">
+          <Button
+            variant="outline"
+            size="sm"
+            className="border-white/10 text-gray-300 hover:bg-white/5"
+          >
             <Plus className="w-4 h-4 mr-2" />
             Add asset
           </Button>
@@ -52,7 +56,10 @@ export default function PortfolioPage() {
         </div>
       </div>
 
-      <RebalanceModal open={rebalanceOpen} onClose={() => setRebalanceOpen(false)} />
+      <RebalanceModal
+        open={rebalanceOpen}
+        onClose={() => setRebalanceOpen(false)}
+      />
     </motion.div>
   );
 }

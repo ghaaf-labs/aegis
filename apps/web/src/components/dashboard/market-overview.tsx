@@ -14,19 +14,19 @@ export function MarketOverview() {
     snapshot.fearGreedIndex < 25
       ? "Extreme Fear"
       : snapshot.fearGreedIndex < 45
-      ? "Fear"
-      : snapshot.fearGreedIndex < 55
-      ? "Neutral"
-      : snapshot.fearGreedIndex < 75
-      ? "Greed"
-      : "Extreme Greed";
+        ? "Fear"
+        : snapshot.fearGreedIndex < 55
+          ? "Neutral"
+          : snapshot.fearGreedIndex < 75
+            ? "Greed"
+            : "Extreme Greed";
 
   const fearColor =
     snapshot.fearGreedIndex < 45
       ? "text-red-400"
       : snapshot.fearGreedIndex < 55
-      ? "text-yellow-400"
-      : "text-emerald-400";
+        ? "text-yellow-400"
+        : "text-emerald-400";
 
   return (
     <Card>
@@ -57,14 +57,25 @@ export function MarketOverview() {
           {snapshot.assets.slice(0, 4).map((asset) => {
             const positive = asset.change24h >= 0;
             return (
-              <div key={asset.symbol} className="flex items-center justify-between">
-                <span className="text-xs font-mono text-gray-400">{asset.symbol}</span>
+              <div
+                key={asset.symbol}
+                className="flex items-center justify-between"
+              >
+                <span className="text-xs font-mono text-gray-400">
+                  {asset.symbol}
+                </span>
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-white font-medium">
                     {formatCurrency(asset.priceUsd, { compact: true })}
                   </span>
-                  <span className={`text-[10px] flex items-center gap-0.5 ${changeColor(asset.change24h)}`}>
-                    {positive ? <TrendingUp className="w-2.5 h-2.5" /> : <TrendingDown className="w-2.5 h-2.5" />}
+                  <span
+                    className={`text-[10px] flex items-center gap-0.5 ${changeColor(asset.change24h)}`}
+                  >
+                    {positive ? (
+                      <TrendingUp className="w-2.5 h-2.5" />
+                    ) : (
+                      <TrendingDown className="w-2.5 h-2.5" />
+                    )}
                     {formatPercent(asset.change24h)}
                   </span>
                 </div>

@@ -38,29 +38,30 @@
 
 ## Stack
 
-| Layer | Choice |
-|---|---|
-| Frontend | Next.js 15 · TypeScript · Tailwind · neo-brutalism dark · Zustand · React Query · `EventSource` |
-| Backend | Rust · Axum · Tokio · SQLx · PostgreSQL · **SSE** |
-| AI | **OpenRouter** with per-task model routing (Opus / Sonnet / Haiku / Gemini Flash / GPT-5) |
-| Settlement | **Arc** (primary) + **Base** (CCTP V2 cross-chain) |
-| Wallets | **Circle Wallets** (modular MSCA — no seed phrase) |
-| Cross-chain | **Gateway** unified balance + **CCTP V2** Fast Transfer + Hooks |
-| Yield | **USYC** (tokenized US T-bills) — risk-off sleeve |
-| FX | **Arc StableFX** — USDC↔EURC for the EUR sleeve |
-| Fees | **Circle Paymaster** (gas in USDC) + **Nanopayments** (protocol fees) |
-| Infra | Turborepo · pnpm · Docker · GitHub Actions |
+| Layer       | Choice                                                                                          |
+| ----------- | ----------------------------------------------------------------------------------------------- |
+| Frontend    | Next.js 15 · TypeScript · Tailwind · neo-brutalism dark · Zustand · React Query · `EventSource` |
+| Backend     | Rust · Axum · Tokio · SQLx · PostgreSQL · **SSE**                                               |
+| AI          | **OpenRouter** with per-task model routing (Opus / Sonnet / Haiku / Gemini Flash / GPT-5)       |
+| Settlement  | **Arc** (primary) + **Base** (CCTP V2 cross-chain)                                              |
+| Wallets     | **Circle Wallets** (modular MSCA — no seed phrase)                                              |
+| Cross-chain | **Gateway** unified balance + **CCTP V2** Fast Transfer + Hooks                                 |
+| Yield       | **USYC** (tokenized US T-bills) — risk-off sleeve                                               |
+| FX          | **Arc StableFX** — USDC↔EURC for the EUR sleeve                                                 |
+| Fees        | **Circle Paymaster** (gas in USDC) + **Nanopayments** (protocol fees)                           |
+| Infra       | Turborepo · pnpm · Docker · GitHub Actions                                                      |
 
 ## Project docs
 
-The engineering writeup lives in [`docs/`](./docs/) — six short essays in the OpenAI "harness engineering" style:
+The engineering writeup lives in [`docs/`](./docs/) — seven short essays in the OpenAI "harness engineering" style:
 
 1. [`00-overview.md`](./docs/00-overview.md) — what Aegis is and the constraint
 2. [`01-architecture.md`](./docs/01-architecture.md) — the agent loop and module map
-3. [`02-agent-design.md`](./docs/02-agent-design.md) — multi-model routing, prompt structure, the "map not manual" rule
+3. [`02-agent-design.md`](./docs/02-agent-design.md) — multi-model routing, prompt files, the "map not manual" rule
 4. [`03-circle-stack.md`](./docs/03-circle-stack.md) — how each Circle product earns its place
 5. [`04-design-system.md`](./docs/04-design-system.md) — neo-brutalism tokens and the two-accent rule
 6. [`05-open-questions.md`](./docs/05-open-questions.md) — the honest unsolved list
+7. [`06-harness.md`](./docs/06-harness.md) — Claude Code harness setup for this repo (skills, subagents, hooks)
 
 ## Monorepo
 
@@ -122,12 +123,12 @@ pnpm dev          # Next.js (3000) — Rust API runs separately:
 cd apps/api && cargo run     # Axum on 8080
 ```
 
-| Service | URL |
-|---|---|
-| Frontend | http://localhost:3000 |
-| API | http://localhost:8080 |
-| SSE | http://localhost:8080/sse |
-| Health | http://localhost:8080/health |
+| Service  | URL                          |
+| -------- | ---------------------------- |
+| Frontend | http://localhost:3000        |
+| API      | http://localhost:8080        |
+| SSE      | http://localhost:8080/sse    |
+| Health   | http://localhost:8080/health |
 
 ### Demo mode (no wallet, no backend)
 
@@ -197,17 +198,17 @@ strategies          -- (conditional) author, name, rules (JSONB), royalty_bps
 
 ## Environment variables
 
-| Variable | Description |
-|---|---|
-| `DATABASE_URL` | PostgreSQL connection string |
-| `JWT_SECRET` | Secret for signing JWTs (32+ chars) |
-| `OPENROUTER_API_KEY` | OpenRouter API key (replaces `OPENAI_API_KEY`) |
-| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` |
-| `CIRCLE_API_KEY` | Circle developer key (Wallets, Gateway, USYC) |
-| `CIRCLE_ENV` | `sandbox` (default) or `production` |
-| `ARC_RPC_URL` | Arc testnet RPC |
-| `BASE_RPC_URL` | Base Sepolia RPC |
-| `POSTHOG_KEY` | Traction analytics |
+| Variable              | Description                                    |
+| --------------------- | ---------------------------------------------- |
+| `DATABASE_URL`        | PostgreSQL connection string                   |
+| `JWT_SECRET`          | Secret for signing JWTs (32+ chars)            |
+| `OPENROUTER_API_KEY`  | OpenRouter API key (replaces `OPENAI_API_KEY`) |
+| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1`                 |
+| `CIRCLE_API_KEY`      | Circle developer key (Wallets, Gateway, USYC)  |
+| `CIRCLE_ENV`          | `sandbox` (default) or `production`            |
+| `ARC_RPC_URL`         | Arc testnet RPC                                |
+| `BASE_RPC_URL`        | Base Sepolia RPC                               |
+| `POSTHOG_KEY`         | Traction analytics                             |
 
 See `.env.example` for the full list.
 

@@ -38,16 +38,31 @@ export function PerformanceChart() {
               margin={{ top: 4, right: 4, left: 0, bottom: 0 }}
             >
               <defs>
-                <linearGradient id="portfolioGradient" x1="0" y1="0" x2="0" y2="1">
+                <linearGradient
+                  id="portfolioGradient"
+                  x1="0"
+                  y1="0"
+                  x2="0"
+                  y2="1"
+                >
                   <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2} />
                   <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
                 </linearGradient>
-                <linearGradient id="benchmarkGradient" x1="0" y1="0" x2="0" y2="1">
+                <linearGradient
+                  id="benchmarkGradient"
+                  x1="0"
+                  y1="0"
+                  x2="0"
+                  y2="1"
+                >
                   <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.1} />
                   <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke="rgba(255,255,255,0.04)"
+              />
               <XAxis
                 dataKey="date"
                 tick={{ fill: "#6b7280", fontSize: 10 }}
@@ -59,7 +74,9 @@ export function PerformanceChart() {
                 tick={{ fill: "#6b7280", fontSize: 10 }}
                 axisLine={false}
                 tickLine={false}
-                tickFormatter={(v: number) => formatCurrency(v, { compact: true })}
+                tickFormatter={(v: number) =>
+                  formatCurrency(v, { compact: true })
+                }
                 width={56}
               />
               <Tooltip

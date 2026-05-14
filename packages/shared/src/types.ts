@@ -54,14 +54,43 @@ export interface UserProfile {
   createdAt: string;
 }
 
+// ── Agent decisions ────────────────────────────────────────────────────────
+
+export type MarketRegime = "risk_on" | "neutral" | "risk_off";
+
+export type ModelRoute =
+  | "regime_classify"
+  | "rebalance_reason"
+  | "tax_explain"
+  | "market_commentary"
+  | "critique_agent";
+
+export interface CriticVerdict {
+  demandsRevision: boolean;
+  notes: string;
+  /** Confidence the critic has that the strategist's proposal is sound (0..1). */
+  confidence: number;
+}
+
 export interface AgentDecision {
   id: string;
   portfolioId: PortfolioId;
   reasoning: string;
   recommendation: RebalanceRecommendation;
+  /** Strategist's confidence (0..1). */
   confidence: number;
   triggeredBy: AgentTrigger;
   createdAt: string;
+
+  // Telemetry — present from migration 0002 onwards. Optional for back-compat
+  // with rows persisted before the rewrite.
+  /** Resolved OpenRouter model slug (e.g. `anthropic/claude-opus-4-7`). */
+  modelSlug?: string;
+  regime?: MarketRegime;
+  promptTokens?: number;
+  completionTokens?: number;
+  latencyMs?: number;
+  criticVerdict?: CriticVerdict;
 }
 
 export type AgentTrigger =
@@ -69,7 +98,9 @@ export type AgentTrigger =
   | "drift_threshold"
   | "risk_breach"
   | "scheduled"
-  | "user_request";
+  | "user_request"
+  | "regime_flip"
+  | "abstain";
 
 export interface RebalanceRecommendation {
   summary: string;
@@ -115,18 +146,59 @@ export interface ApiError {
   details?: Record<string, unknown>;
 }
 
-// ── WebSocket message types ────────────────────────────────────────────────
+// ── Server-Sent Events ─────────────────────────────────────────────────────
+//
+// One discriminated union for every event the API streams over `/sse`. The
+// backend names each event via the `event:` field; the `data` payload is JSON
+// matching the shape below.
 
-export type WsMessageType =
-  | "price_update"
-  | "agent_decision"
-  | "rebalance_proposed"
-  | "portfolio_updated"
-  | "ping"
-  | "pong";
+export type SseEvent =
+  | { type: "price.tick"; data: PriceTick }
+  | { type: "regime.flip"; data: RegimeFlip }
+  | { type: "agent.decision"; data: AgentDecision }
+  | { type: "rebalance.status"; data: RebalanceStatus }
+  | { type: "gateway.balance"; data: GatewayBalance };
 
-export interface WsMessage<T = unknown> {
-  type: WsMessageType;
-  payload: T;
-  timestamp: string;
+export type SseEventType = SseEvent["type"];
+
+/** Map from event type name to its data payload. */
+export type SseEventMap = {
+  [K in SseEventType]: Extract<SseEvent, { type: K }>["data"];
+};
+
+export interface PriceTick {
+  symbol: AssetSymbol;
+  priceUsd: number;
+  change24h: number;
+  source: string;
+  fetchedAt: string;
+}
+
+export interface RegimeFlip {
+  from: MarketRegime | null;
+  to: MarketRegime;
+  confidence: number;
+  signals: RegimeSignals;
+  classifiedAt: string;
+}
+
+export interface RegimeSignals {
+  btcVol30d: number;
+  corr90d: number;
+  maxDrawdown: number;
+}
+
+export interface RebalanceStatus {
+  id: string;
+  step: string;
+  chain?: string;
+  txHash?: string;
+  status: "pending" | "submitted" | "confirmed" | "failed";
+  updatedAt: string;
+}
+
+export interface GatewayBalance {
+  unifiedUsdc: number;
+  perChain: Record<string, number>;
+  observedAt: string;
 }

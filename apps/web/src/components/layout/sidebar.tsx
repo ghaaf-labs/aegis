@@ -30,7 +30,9 @@ export function Sidebar() {
         <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center shrink-0">
           <Shield className="w-3.5 h-3.5 text-white" />
         </div>
-        <span className="font-bold text-white text-sm tracking-tight">Aegis</span>
+        <span className="font-bold text-white text-sm tracking-tight">
+          Aegis
+        </span>
         <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 font-medium">
           AI
         </span>
@@ -48,7 +50,7 @@ export function Sidebar() {
                 "flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all",
                 active
                   ? "bg-blue-600/15 text-blue-400 font-medium"
-                  : "text-gray-500 hover:text-gray-300 hover:bg-white/5"
+                  : "text-gray-500 hover:text-gray-300 hover:bg-white/5",
               )}
             >
               <Icon className="w-4 h-4 shrink-0" />
@@ -62,7 +64,9 @@ export function Sidebar() {
       <div className="px-4 py-4 border-t border-white/5">
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-500/5 border border-emerald-500/15">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="text-xs text-emerald-400 font-medium">Agent active</span>
+          <span className="text-xs text-emerald-400 font-medium">
+            Agent active
+          </span>
         </div>
       </div>
     </aside>
