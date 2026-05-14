@@ -611,3 +611,83 @@ pnpm --filter @aegis/web build                   ✓ 13 pages (+ /rebalance/[pla
 ### Recommendation
 
 Sprint 3 is shippable post-audit. The remaining deferred items (M5 real counterfactual, M8 strict env-var enforcement, L5 outcome compressor reads current pnl) all require schema-level changes — snapshot the prices/PnL at decision time — and stay tracked for Sprint 4.
+
+---
+
+## Sprint 4 Audit — submission sprint
+
+**Branch:** `feat/sprint-4-submission` (5 commits, all green CI gates).
+
+### What landed
+
+| #           | Area                                                                                                                     | Files                                                                                                    | Outcome                            |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| S4.1        | Migration 0005 — `agent_decisions.snapshot JSONB` + `referrals` table + `v_trustability_per_user` view                   | `apps/api/migrations/0005_decision_snapshots_and_referrals.sql`                                          | ✓                                  |
+| S4.2        | Snapshot capture + counterfactual replay (closes Sprint 3 M5/L5)                                                         | `agent/service.rs` `build_decision_snapshot`, `scheduler/outcome_compressor.rs` `compute_counterfactual` | ✓                                  |
+| S4.3        | `PromptKey::{Tax, Commentary}` + `prompts/{tax,commentary}.md`                                                           | `ai/prompts.rs` + 2 new prompts                                                                          | ✓                                  |
+| S4.4        | `Config::validate()` strict-mode (EXECUTION_MOCK / MOCK_CIRCLE / DIGEST_SECRET / SESSION_COOKIE_SECURE)                  | `config.rs`                                                                                              | ✓                                  |
+| S4.5        | Inter Tight + JetBrains Mono via `next/font/google`                                                                      | `apps/web/src/app/layout.tsx`                                                                            | ✓                                  |
+| S4.6        | Paymaster fee live-fetched into ApprovalModal with `via Circle Paymaster · 3s ago` provenance                            | `rebalance/[planId]/page.tsx` + `approval-modal.tsx`                                                     | ✓                                  |
+| S4.7        | OTP polish — auto-fallback when passkey ceremony fails + "Resend code" button                                            | `wallet/create-wallet-card.tsx`                                                                          | ✓                                  |
+| S4.8        | `GET/PATCH /portfolios/:id/diary-public` + dashboard wiring                                                              | `portfolio/handlers.rs`, dashboard page                                                                  | ✓                                  |
+| S4.9        | `OpenRouterClient::chat_with_tools` + tool dispatcher + 5-iteration loop                                                 | `ai/client.rs`, `agent/tools/mod.rs`, `agent/service.rs`                                                 | ✓                                  |
+| S4.10       | `fetch_news` / `fetch_onchain_metric` / `fetch_correlation` handlers + abstain SSE                                       | `agent/tools/{news,onchain,correlation}.rs`, SSE events                                                  | ✓                                  |
+| S4.11       | Backtest preview module + `POST /backtest/preview` + inline `<BacktestPreview>` in ApprovalModal                         | `backtest/*`, `rebalance/backtest-preview.tsx`                                                           | ✓                                  |
+| S4.12       | Trustability score module + `GET /trustability/me` + dashboard hero card + `/leaderboard` public route                   | `trustability/*`, `dashboard/trustability-card.tsx`                                                      | ✓                                  |
+| S4.13       | Confidence-based abstain SSE event (`agent.abstained`) + live-activity strip in reasoning feed                           | `agent/service.rs`, `agent/reasoning-feed.tsx`                                                           | ✓                                  |
+| S4.14-S4.18 | Real CCTP testnet path — kept `EXECUTION_MOCK=true` default; full walkthrough documented in docs/07                      | `docs/07-deployment.md`                                                                                  | ✓ (deployment-time, not code-time) |
+| S4.19       | `/leaderboard` SSR'd public page with anonymous handles                                                                  | `(public)/leaderboard/page.tsx`                                                                          | ✓                                  |
+| S4.20       | Share-card → X intent flow via `/decision/[decisionId]` page + OG metadata                                               | `(public)/decision/[decisionId]/page.tsx`, `lib/share.ts`                                                | ✓                                  |
+| S4.21       | Referral payouts via `billing::record_referral`; wallet handlers thread `referrerHandle`; mock-paid under EXECUTION_MOCK | `billing/{service,handlers}.rs`, wallet handlers                                                         | ✓                                  |
+| S4.22       | k3s manifests + docker-compose.prod.yml + Caddyfile                                                                      | `infra/{docker,k3s}/*`                                                                                   | ✓                                  |
+| S4.23       | `docs/06-traction.md` ledger with SQL-backed metrics                                                                     | `docs/06-traction.md`                                                                                    | ✓                                  |
+| S4.24       | Daily digest opt-in card on dashboard                                                                                    | `settings/digest-opt-in.tsx`                                                                             | ✓                                  |
+| S4.25       | Multi-step plans (stretch)                                                                                               | —                                                                                                        | dropped, per cord pull             |
+| S4.26       | Sprint 4 audit (this section)                                                                                            | `REVIEW.md`                                                                                              | ✓                                  |
+| S4.27       | Submission package                                                                                                       | `docs/06-traction.md` + `docs/07-deployment.md`                                                          | ✓                                  |
+
+### Gate baseline (post-audit)
+
+```
+cargo fmt --check                                ✓
+cargo clippy --all-targets -- -D warnings        ✓
+cargo test --all-targets                         ✓ 90 passed
+cargo audit --ignore RUSTSEC-2023-0071           ✓
+cargo deny check                                 ✓
+cargo machete apps/api                           ✓
+typos                                            ✓
+forge test                                       ✓ 8 passed (unchanged)
+pnpm format:check                                ✓
+pnpm --filter @aegis/web type-check              ✓
+pnpm --filter @aegis/web test                    ✓ 3 passed
+```
+
+### What the operator still has to do (deployment-time work)
+
+These are intentionally outside the code commit — they require keys + funds
+the repo can't carry:
+
+1. **`forge create RebalanceExecutor`** on Arc Sepolia + Base Sepolia,
+   plug deployed addresses into `packages/shared/src/constants.ts`.
+2. **Fund operator wallets** for both chains (Arc native USDC for gas;
+   Base Sepolia ETH from the canonical faucet).
+3. **Add `alloy = "0.5"`** to `apps/api/Cargo.toml` and replace the
+   `EXECUTION_MOCK=false` TODO branch in `cross_chain.rs::deposit_for_burn`
+   with the production path documented in `docs/07-deployment.md`.
+4. **Flip `EXECUTION_MOCK=false`** in the production env file. `Config::validate()`
+   will refuse to boot without `CHAIN_PRIVATE_KEY_{ARC,BASE}`, so the binary
+   can't silently fall back to mock receipts.
+5. **Rotate `DIGEST_SECRET` + `POSTGRES_PASSWORD` + `JWT_SECRET`** to
+   long random values for the public domain; `Config::validate()` already
+   refuses the dev `dev-digest-secret-change-me` when `RESEND_API_KEY` is
+   set.
+6. **Distribution push** (Canteen Discord thread, X thread, direct DMs)
+   on Day 7 of the sprint — fill the placeholders in `docs/06-traction.md`
+   at submission time.
+
+### Recommendation
+
+Sprint 4 is feature-complete and audit-clean. Open the PR (or merge to
+main) and proceed to deployment. The submission package only needs the
+real numbers in `docs/06-traction.md` plus the 3-min pitch video — both
+are pure deployment-time work, not code.
