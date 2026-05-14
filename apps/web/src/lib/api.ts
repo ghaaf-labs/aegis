@@ -68,10 +68,14 @@ export interface WalletAuthResponse {
 }
 
 export const walletApi = {
-  createPasskey: (email: string, passkeyAttestation: unknown) =>
+  createPasskey: (
+    email: string,
+    passkeyAttestation: unknown,
+    referrerHandle?: string,
+  ) =>
     request<WalletAuthResponse>("/auth/wallet/create", {
       method: "POST",
-      body: { email, passkeyAttestation },
+      body: { email, passkeyAttestation, referrerHandle },
     }),
   loginPasskey: (email: string, passkeyAssertion: unknown) =>
     request<WalletAuthResponse>("/auth/wallet/login", {
@@ -83,10 +87,10 @@ export const walletApi = {
       "/auth/wallet/otp/start",
       { method: "POST", body: { email } },
     ),
-  verifyOtp: (email: string, code: string) =>
+  verifyOtp: (email: string, code: string, referrerHandle?: string) =>
     request<WalletAuthResponse>("/auth/wallet/otp/verify", {
       method: "POST",
-      body: { email, code },
+      body: { email, code, referrerHandle },
     }),
   me: () =>
     request<{ id: string; email: string; riskTolerance: string }>("/auth/me", {

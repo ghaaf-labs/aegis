@@ -55,6 +55,7 @@ pub async fn create_passkey(
         svc.create_with_passkey(&body.email, &body.passkey_attestation)
             .await?
     };
+    maybe_credit_referral(&state, body.referrer_handle.as_deref(), &resp).await;
     Ok(auth_response(&state.config, StatusCode::CREATED, resp).into_response())
 }
 
@@ -105,7 +106,36 @@ pub async fn verify_otp(
         let svc = WalletService::new(&state.db, &p, &state.config, &state.sse);
         svc.verify_otp(&body.email, &body.code).await?
     };
+    maybe_credit_referral(&state, body.referrer_handle.as_deref(), &resp).await;
     Ok(auth_response(&state.config, StatusCode::OK, resp).into_response())
+}
+
+/// Best-effort referral attribution. Never fails the wallet-create response;
+/// logs and moves on. New-user-only — `record_referral` is idempotent so a
+/// re-login by the same email doesn't re-credit.
+async fn maybe_credit_referral(
+    state: &AppState,
+    referrer_handle: Option<&str>,
+    resp: &WalletAuthResponse,
+) {
+    let Some(handle) = referrer_handle else {
+        return;
+    };
+    let handle = handle.trim().to_ascii_lowercase();
+    if handle.is_empty() {
+        return;
+    }
+    if let Err(e) = crate::modules::billing::service::record_referral(
+        &state.db,
+        &state.config,
+        &state.sse,
+        &handle,
+        resp.user.id,
+    )
+    .await
+    {
+        tracing::warn!(error=%e, "referral attribution failed");
+    }
 }
 
 pub async fn me(

@@ -10,6 +10,7 @@ import { AgentReasoningFeed } from "@/components/agent/reasoning-feed";
 import { PerformanceChart } from "@/components/dashboard/performance-chart";
 import { MarketOverview } from "@/components/dashboard/market-overview";
 import { DiaryVisibilityToggle } from "@/components/settings/diary-visibility-toggle";
+import { DigestOptIn } from "@/components/settings/digest-opt-in";
 import { TrustabilityCard } from "@/components/dashboard/trustability-card";
 import { portfolioApi } from "@/lib/api";
 import { usePortfolioStore } from "@/stores/portfolio";
@@ -88,6 +89,14 @@ export default function PortfolioDashboardPage() {
       >
         <AssetTable />
         <AgentReasoningFeed />
+      </motion.div>
+
+      <motion.div
+        variants={fadeUp}
+        className="grid grid-cols-1 md:grid-cols-2 gap-4"
+      >
+        <DigestOptIn />
+        <div /> {/* spacer to keep grid alignment until more settings land */}
       </motion.div>
 
       <motion.div variants={fadeUp}>

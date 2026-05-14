@@ -38,6 +38,10 @@ pub enum SseEvent {
     /// Sprint 4+.
     #[allow(dead_code)]
     AgentAbstained(AgentAbstainedPayload),
+    /// Referral attribution succeeded and (optionally) Nanopayment paid.
+    /// Sprint 4+. Audience = the referrer.
+    #[allow(dead_code)]
+    ReferralCredited(crate::modules::billing::service::ReferralCreditedPayload),
 }
 
 impl SseEvent {
@@ -56,6 +60,7 @@ impl SseEvent {
             Self::TaxHarvestProposed(_) => "tax.harvest.proposed",
             Self::AgentToolInvoked(_) => "agent.tool.invoked",
             Self::AgentAbstained(_) => "agent.abstained",
+            Self::ReferralCredited(_) => "referral.credited",
         }
     }
 
@@ -75,6 +80,7 @@ impl SseEvent {
             Self::TaxHarvestProposed(p) => Some(p.user_id),
             Self::AgentToolInvoked(p) => Some(p.user_id),
             Self::AgentAbstained(p) => Some(p.user_id),
+            Self::ReferralCredited(p) => Some(p.referrer_user_id),
         }
     }
 }
