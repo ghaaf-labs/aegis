@@ -15,8 +15,8 @@ pub mod ticker;
 // public surface complete for downstream consumers.
 #[allow(unused_imports)]
 pub use events::{
-    AgentDecisionPayload, GatewayBalance, PriceTick, RebalanceStatus, RegimeFlip, RegimeSignals,
-    SseEvent,
+    AgentDecisionPayload, GatewayBalance, PriceTick, RebalanceLegPayload, RebalancePlanPayload,
+    RebalanceStatus, RegimeFlip, RegimeSignals, SseEvent, TaxHarvestPayload,
 };
 pub use handler::handler;
 pub use ticker::spawn_price_ticker;

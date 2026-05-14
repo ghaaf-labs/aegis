@@ -50,6 +50,16 @@ money. A human approves every action.
 - **USYC annualized yield:** {{ usyc_rate }} (use as the risk-off parking option)
 - **USDC ↔ EURC mid rate:** {{ usdc_eurc_basis }} (consider when the user opts into a EUR sleeve)
 
+### Tax-loss harvesting (per-user)
+
+The following allocations on this user's portfolio are currently sitting at an
+unrealized loss vs market. Realizing a loss-leg as part of this rebalance can
+offset gains elsewhere; explicitly call it out in a trade `reason` when it
+applies. Skip when the loss is below the threshold or the user is in
+`aggressive` mode and has no offsetting gains in the same year.
+
+{{ harvestable_losses }}
+
 ## How to think
 
 Use the regime + risk report to decide _whether_ to act. In `risk_off` regimes,

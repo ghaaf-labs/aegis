@@ -115,6 +115,35 @@ pub async fn analyze_portfolio(
     strategist_ctx.insert("usyc_rate", format!("{:.4}", usyc_rate));
     strategist_ctx.insert("usdc_eurc_basis", format!("{:.4}", eurc_basis));
     strategist_ctx.insert("goal_block", format_goal_block(&portfolio.goal));
+    let harvestable = crate::modules::tax::service::harvestable_losses(
+        state,
+        portfolio.user_id,
+        req.portfolio_id,
+    )
+    .await
+    .unwrap_or_default();
+    strategist_ctx.insert(
+        "harvestable_losses",
+        format_harvestable_losses(&harvestable),
+    );
+    // Per-user signal: broadcast a tax.harvest.proposed event for any open
+    // loss above the configured threshold so the UI surfaces it ahead of the
+    // strategist's full reasoning.
+    let threshold = state.config.harvest_threshold_usd;
+    for loss in &harvestable {
+        if loss.unrealized_loss_usd >= threshold {
+            let _ = state.sse.send(SseEvent::TaxHarvestProposed(
+                crate::modules::sse::TaxHarvestPayload {
+                    user_id: portfolio.user_id,
+                    portfolio_id: req.portfolio_id,
+                    allocation_id: loss.allocation_id,
+                    symbol: loss.symbol.clone(),
+                    unrealized_loss_usd: loss.unrealized_loss_usd,
+                    proposed_at: chrono::Utc::now(),
+                },
+            ));
+        }
+    }
     let strategist_prompt = state.prompts.render(PromptKey::Strategist, &strategist_ctx);
     let strategist = ai
         .chat(
@@ -460,6 +489,25 @@ fn json_string<T: serde::Serialize>(value: &T) -> crate::error::Result<String> {
         .map_err(|e| crate::error::AppError::Internal(anyhow::anyhow!("serialize: {e}")))
 }
 
+/// Render harvestable losses as a human-readable block the strategist can
+/// reason over. Empty list collapses to "(none)" so the placeholder still
+/// resolves.
+fn format_harvestable_losses(losses: &[crate::modules::tax::HarvestableLoss]) -> String {
+    if losses.is_empty() {
+        return "(none)".to_string();
+    }
+    let mut out = String::new();
+    for l in losses {
+        out.push_str(&format!(
+            "- {symbol}: ${loss:.2} unrealized loss across {n} open lot(s)\n",
+            symbol = l.symbol,
+            loss = l.unrealized_loss_usd,
+            n = l.lots.len()
+        ));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -648,6 +696,7 @@ mod tests {
                 "includeEurc": false
             })),
         );
+        ctx.insert("harvestable_losses", "(none)".into());
         let rendered = reg.render(PromptKey::Strategist, &ctx);
         assert!(
             !rendered.contains("{{"),
