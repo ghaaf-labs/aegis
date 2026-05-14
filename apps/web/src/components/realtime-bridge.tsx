@@ -5,10 +5,13 @@ import { useEventSource, defaultSseUrl } from "@/lib/sse";
 import { usePortfolioStore } from "@/stores/portfolio";
 import type {
   AgentDecision,
+  GatewayBalance,
   MarketRegime,
   PriceTick,
   RegimeFlip,
+  WalletInfo,
 } from "@/types";
+import { getToken } from "@/lib/api";
 
 /**
  * Bridges the SSE channel into the Zustand store.
@@ -17,12 +20,24 @@ import type {
  * read state via `usePortfolioStore`; this bridge is the only SSE subscriber.
  * Centralizing the subscription keeps the connection count at one regardless
  * of how many cards listen for live data.
+ *
+ * `/sse` is authenticated — the EventSource only opens once a JWT is in
+ * localStorage. On the public landing page the hook stays dormant.
  */
 export function RealtimeBridge() {
   const addDecision = usePortfolioStore((s) => s.addDecision);
   const setRegime = usePortfolioStore((s) => s.setRegime);
   const applyPriceTick = usePortfolioStore((s) => s.applyPriceTick);
+  const setUnifiedUsdc = usePortfolioStore((s) => s.setUnifiedUsdc);
+  const setWallet = usePortfolioStore((s) => s.setWallet);
   const setSseConnected = usePortfolioStore((s) => s.setSseConnected);
+
+  // The EventSource API doesn't support custom headers, so we put the token
+  // in a query param. The handler in the server-side router could also read
+  // it from a cookie — left as future hardening.
+  const token = typeof window !== "undefined" ? getToken() : null;
+  const enabled = !!token;
+  const url = `${defaultSseUrl()}${token ? `?token=${encodeURIComponent(token)}` : ""}`;
 
   const onPriceTick = useCallback(
     (data: PriceTick) => applyPriceTick(data),
@@ -46,14 +61,28 @@ export function RealtimeBridge() {
     [addDecision],
   );
 
-  const { connected } = useEventSource(defaultSseUrl(), {
-    "price.tick": onPriceTick,
-    "regime.flip": onRegimeFlip,
-    "agent.decision": onAgentDecision,
-  });
+  const onGatewayBalance = useCallback(
+    (data: GatewayBalance) => setUnifiedUsdc(data.unifiedUsdc),
+    [setUnifiedUsdc],
+  );
 
-  // Mirror connection state into the store so the UI can render a status dot.
-  // useEffect — never write state during render.
+  const onWalletCreated = useCallback(
+    (data: WalletInfo) => setWallet(data),
+    [setWallet],
+  );
+
+  const { connected } = useEventSource(
+    url,
+    {
+      "price.tick": onPriceTick,
+      "regime.flip": onRegimeFlip,
+      "agent.decision": onAgentDecision,
+      "gateway.balance": onGatewayBalance,
+      "wallet.created": onWalletCreated,
+    },
+    { enabled },
+  );
+
   useEffect(() => {
     setSseConnected(connected);
   }, [connected, setSseConnected]);

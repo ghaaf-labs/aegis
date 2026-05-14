@@ -58,6 +58,8 @@ pub async fn build(db: Db, config: Config) -> Router {
         .route("/faucet/usdc", post(faucet::handlers::claim_usdc))
         .route("/gateway/balance", get(gateway::handlers::balance))
         .route("/analytics/event", post(analytics::handlers::track))
+        // SSE is authed — events are filtered server-side by audience_user_id.
+        .route("/sse", get(sse::handler))
         .route(
             "/portfolios",
             get(portfolio::handlers::list).post(portfolio::handlers::create),
@@ -102,8 +104,8 @@ pub async fn build(db: Db, config: Config) -> Router {
         )
         .route("/treasury/usyc/rate", get(treasury::handlers::usyc_rate))
         .route("/fx/usdc-eurc", get(fx::handlers::basis))
-        // SSE — public so /explore can read price ticks without auth.
-        .route("/sse", get(sse::handler))
+        // /sse moved to the authed router so user-scoped events can be
+        // filtered server-side by audience_user_id.
         .merge(authed)
         .layer(cors)
         .layer(TraceLayer::new_for_http())

@@ -1,5 +1,75 @@
 # Aegis — Sprint Reviews
 
+## Sprint 2 Audit — findings + fixes
+
+> In-depth review of the Sprint 2 implementation (commit `c830b85`). Goal: confirm the agent loop still works end-to-end with the new wallet, gateway, treasury, fx, and analytics surfaces wired in, and catch correctness, contract, and **privacy** issues before they ship to demo.
+
+### Findings by severity
+
+**H1. SSE privacy leak — events visible to every connected client.**
+The Sprint 1 SSE handler broadcasts every event via a single `tokio::sync::broadcast::Sender<SseEvent>` to every subscriber. Sprint 2 added `agent.decision`, `wallet.created`, and `gateway.balance` — all user-specific payloads — to that channel, but kept `/sse` **public** (no JWT required) for `/explore` price ticks. A logged-in user A's `agent.decision` was therefore readable by any connected client.
+**Fix:** added `audience_user_id(): Option<Uuid>` to `SseEvent`. Public variants (price.tick, regime.flip, rebalance.status) return `None`; user-scoped variants (agent.decision, wallet.created, gateway.balance) return `Some(user_id)`. Handler now requires auth (moved to the `authed` router), reads `Claims.sub`, and filters the per-client stream: public events go to all authed subscribers, user-scoped events go only to the matching subscriber. `/explore` doesn't use SSE so the auth requirement doesn't regress demo UX.
+**Test:** new `audience_user_id_filters_user_events` contract test in `modules/sse/events.rs`.
+
+**M1. `RealtimeBridge` didn't subscribe to `gateway.balance` or `wallet.created`.**
+The two new SSE event types fired server-side but the frontend bridge had handlers only for the Sprint 1 events. The UI's unified USDC value only refreshed on the initial `GET /gateway/balance`; new-wallet state didn't surface live.
+**Fix:** added `onGatewayBalance` (updates `unifiedUsdc` in Zustand) and `onWalletCreated` (stores `WalletInfo`) handlers. Bridge now gates the EventSource on JWT presence so it doesn't spam unauth'd `/sse` calls.
+
+**M2. EventSource can't send `Authorization` headers.**
+With `/sse` now authenticated, the standard browser `EventSource` constructor can't add a bearer header. Bridge passes the JWT as a `?token=` query param. Future hardening: read the token from an httpOnly cookie server-side and let the cookie middleware extract it. Documented as a follow-up.
+
+**M3. Faucet rate-limit query swallowed DB errors.**
+`fetch_optional(db).await.unwrap_or(Some(0.0))` silently fell back to 0 used-USDC if the analytics_events query errored — meaning a transient DB hiccup would let a user claim past the 100/24h cap. Same anti-pattern Sprint 1 already audited in `previous_regime`.
+**Fix:** explicit `match`; `tracing::warn!` on error before defaulting to 0. Behavior preserved (don't fail the claim on transient analytics issues) but visibility added.
+
+### Lower-severity findings (noted, deferred)
+
+**L1. Token in localStorage** — XSS-vulnerable. Acceptable hackathon-scale; Sprint 3 should move to httpOnly cookies and read on the server side.
+**L2. Gateway ticker not spawned** — `gateway.balance` only fires when a client hits `GET /gateway/balance`. A Tokio task per authed wallet polling Circle every `GATEWAY_POLL_SECS` would make the unified balance number tick live without manual refresh. Sprint 3 polish.
+**L3. `validate_email` is permissive** — accepts `a@` and `@b`. Circle WaaS validates more strictly downstream, but a tighter regex here would return a 400 earlier.
+**L4. Migration 0003 unverified against live Postgres** — same caveat as Sprint 1; no Docker in audit env. Syntax reviewed.
+**L5. Treasury + FX modules return mock-deterministic numbers** — by design (S2 stub policy; on-chain execution is Sprint 3), but the live API path is also untested.
+
+### Gate baseline (post-audit)
+
+| Gate                                        | Before audit               | After audit                                     |
+| ------------------------------------------- | -------------------------- | ----------------------------------------------- |
+| `cargo test --all-targets`                  | 41 passed                  | **42 passed** (+ audience-filter contract test) |
+| `cargo clippy --all-targets -- -D warnings` | ✅                         | ✅                                              |
+| `cargo fmt --check`                         | ✅                         | ✅                                              |
+| `pnpm type-check`                           | ✅                         | ✅                                              |
+| `pnpm test` (Vitest)                        | 3 passed                   | 3 passed                                        |
+| `pnpm format:check`                         | ✅                         | ✅                                              |
+| `typos`                                     | ✅                         | ✅                                              |
+| `pnpm lint`                                 | only pre-existing warnings | only pre-existing warnings                      |
+
+### Files added or changed in audit
+
+```
+M  apps/api/src/modules/sse/events.rs       — audience_user_id() + user_id field on user-scoped payloads + filter test
+M  apps/api/src/modules/sse/handler.rs      — requires Claims, filters by audience_user_id == claims.sub
+M  apps/api/src/modules/wallet/sse.rs       — user_id field on WalletCreatedPayload
+M  apps/api/src/modules/wallet/service.rs   — populate user_id on both passkey + OTP wallet.created broadcasts
+M  apps/api/src/modules/agent/service.rs    — populate user_id on agent.decision broadcast
+M  apps/api/src/modules/gateway/service.rs  — broadcast() takes user_id; populate on push
+M  apps/api/src/modules/gateway/handlers.rs — pass claims.sub to broadcast
+M  apps/api/src/modules/faucet/service.rs   — explicit match + warn! on rate-limit query error
+M  apps/api/src/router.rs                   — /sse moved to authed router
+M  apps/web/src/components/realtime-bridge.tsx — wires gateway.balance + wallet.created; gates SSE on JWT
+M  packages/shared/src/types.ts             — UserScopedSseEvent + userId on AgentDecision/GatewayBalance/WalletInfo
+M  REVIEW.md                                — this section
+```
+
+### Sprint 2 → Sprint 3 (carry-forward audit items)
+
+1. Move JWT from localStorage to httpOnly cookie + cookie-extracting middleware (closes L1).
+2. Spawn Gateway ticker per authed wallet at session start (closes L2).
+3. Tighten `validate_email` with a small regex (closes L3).
+4. Verify migrations against live Postgres via `pnpm db:reset` (closes L4 once Docker is available).
+5. Wire real Circle WaaS sandbox calls behind `MOCK_CIRCLE=false` and capture rejection paths.
+
+---
+
 ## Sprint 2 — Usable product
 
 > Audit of `feat/sprint-2-usable-product` stacked on Sprint 1. Goal: from landing to first agent decision in <60s passkey / <90s OTP, multi-portfolio dashboard, neo-brutalism design system, /explore demo, self-hosted analytics.
