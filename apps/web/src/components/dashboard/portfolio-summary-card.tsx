@@ -33,7 +33,9 @@ export function PortfolioSummaryCard() {
         <p className="text-3xl font-bold text-white mb-1">
           {formatCurrency(portfolio.totalValueUsd)}
         </p>
-        <div className={`flex items-center gap-1.5 text-sm ${changeColor(portfolio.totalPnlUsd)}`}>
+        <div
+          className={`flex items-center gap-1.5 text-sm ${changeColor(portfolio.totalPnlUsd)}`}
+        >
           <TrendIcon className="w-3.5 h-3.5" />
           <span className="font-medium">
             {formatCurrency(portfolio.totalPnlUsd, { compact: true })}
@@ -52,7 +54,9 @@ export function PortfolioSummaryCard() {
           </div>
           <div className="p-3 rounded-lg bg-white/3 border border-white/5">
             <p className="text-xs text-gray-500 mb-1">Risk Score</p>
-            <p className={`text-sm font-semibold ${portfolio.riskScore < 40 ? "text-emerald-400" : portfolio.riskScore < 65 ? "text-yellow-400" : "text-red-400"}`}>
+            <p
+              className={`text-sm font-semibold ${portfolio.riskScore < 40 ? "text-emerald-400" : portfolio.riskScore < 65 ? "text-yellow-400" : "text-red-400"}`}
+            >
               {portfolio.riskScore}/100
             </p>
           </div>

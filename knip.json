@@ -1,0 +1,28 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "workspaces": {
+    "apps/web": {
+      "entry": [
+        "src/app/**/{page,layout,route,error,not-found}.{ts,tsx}",
+        "next.config.{js,ts,mjs}",
+        "tailwind.config.{ts,js}",
+        "postcss.config.{js,mjs}",
+        "vitest.config.ts"
+      ],
+      "project": ["src/**/*.{ts,tsx}"],
+      "ignore": ["src/**/*.d.ts"],
+      "ignoreDependencies": ["tailwindcss-animate", "@types/node"]
+    },
+    "packages/shared": {
+      "entry": ["src/index.ts"],
+      "project": ["src/**/*.{ts,tsx}"]
+    },
+    "packages/ui": {
+      "entry": ["src/index.ts"],
+      "project": ["src/**/*.{ts,tsx}"]
+    },
+    "packages/config": {
+      "entry": ["index.ts", "**/index.{ts,js}"]
+    }
+  }
+}

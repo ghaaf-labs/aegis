@@ -4,7 +4,12 @@ import { TrendingUp, TrendingDown, ArrowUpDown } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { usePortfolioStore } from "@/stores/portfolio";
-import { formatCurrency, formatPercent, formatNumber, changeColor } from "@/lib/utils";
+import {
+  formatCurrency,
+  formatPercent,
+  formatNumber,
+  changeColor,
+} from "@/lib/utils";
 import { MOCK_PRICES } from "@/lib/mock-data";
 
 interface Props {
@@ -27,7 +32,14 @@ export function AssetTable({ showActions = false }: Props) {
         <table className="w-full">
           <thead>
             <tr className="border-b border-white/5">
-              {["Asset", "Price", "24h", "Holdings", "Value", "Weight vs Target"].map((h) => (
+              {[
+                "Asset",
+                "Price",
+                "24h",
+                "Holdings",
+                "Value",
+                "Weight vs Target",
+              ].map((h) => (
                 <th
                   key={h}
                   className="px-5 py-3 text-left text-[11px] font-medium text-gray-500 uppercase tracking-wider"
@@ -67,7 +79,9 @@ export function AssetTable({ showActions = false }: Props) {
                   </td>
                   <td className="px-5 py-3.5">
                     {price && (
-                      <span className={`text-xs flex items-center gap-1 ${changeColor(price.change24h)}`}>
+                      <span
+                        className={`text-xs flex items-center gap-1 ${changeColor(price.change24h)}`}
+                      >
                         {price.change24h >= 0 ? (
                           <TrendingUp className="w-3 h-3" />
                         ) : (
@@ -99,7 +113,8 @@ export function AssetTable({ showActions = false }: Props) {
                           variant={driftAbs > 10 ? "danger" : "warning"}
                           className="text-[10px] px-1.5 py-0"
                         >
-                          {drift > 0 ? "+" : ""}{drift.toFixed(1)}%
+                          {drift > 0 ? "+" : ""}
+                          {drift.toFixed(1)}%
                         </Badge>
                       )}
                     </div>

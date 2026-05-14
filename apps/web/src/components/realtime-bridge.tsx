@@ -1,9 +1,14 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 import { useEventSource, defaultSseUrl } from "@/lib/sse";
 import { usePortfolioStore } from "@/stores/portfolio";
-import type { AgentDecision, MarketRegime, PriceTick, RegimeFlip } from "@/types";
+import type {
+  AgentDecision,
+  MarketRegime,
+  PriceTick,
+  RegimeFlip,
+} from "@/types";
 
 /**
  * Bridges the SSE channel into the Zustand store.
@@ -21,7 +26,7 @@ export function RealtimeBridge() {
 
   const onPriceTick = useCallback(
     (data: PriceTick) => applyPriceTick(data),
-    [applyPriceTick]
+    [applyPriceTick],
   );
 
   const onRegimeFlip = useCallback(
@@ -33,12 +38,12 @@ export function RealtimeBridge() {
         signals: data.signals,
         classifiedAt: data.classifiedAt,
       }),
-    [setRegime]
+    [setRegime],
   );
 
   const onAgentDecision = useCallback(
     (data: AgentDecision) => addDecision(data),
-    [addDecision]
+    [addDecision],
   );
 
   const { connected } = useEventSource(defaultSseUrl(), {
@@ -47,12 +52,11 @@ export function RealtimeBridge() {
     "agent.decision": onAgentDecision,
   });
 
-  // Reflect connection state into the store so the UI can show a status dot.
-  // We don't subscribe in render — `useEventSource` only changes `connected`
-  // on real transitions, so this effect is safe to fire from a callback.
-  if (typeof window !== "undefined") {
-    queueMicrotask(() => setSseConnected(connected));
-  }
+  // Mirror connection state into the store so the UI can render a status dot.
+  // useEffect — never write state during render.
+  useEffect(() => {
+    setSseConnected(connected);
+  }, [connected, setSseConnected]);
 
   return null;
 }

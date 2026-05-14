@@ -54,8 +54,8 @@ export default function OnboardingPage() {
                   i === step
                     ? "bg-blue-600 text-white"
                     : i < step
-                    ? "bg-blue-600/20 text-blue-400"
-                    : "bg-white/5 text-gray-500"
+                      ? "bg-blue-600/20 text-blue-400"
+                      : "bg-white/5 text-gray-500"
                 }`}
               >
                 <span
@@ -96,7 +96,9 @@ export default function OnboardingPage() {
               {step === 1 && (
                 <PortfolioSetupStep
                   allocations={formData.initialAllocations}
-                  onChange={(allocations) => update({ initialAllocations: allocations })}
+                  onChange={(allocations) =>
+                    update({ initialAllocations: allocations })
+                  }
                 />
               )}
               {step === 2 && <ReviewStep formData={formData} />}

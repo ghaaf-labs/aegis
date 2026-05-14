@@ -1,0 +1,34 @@
+# Lefthook — single-binary Git hooks runner.
+#
+# Replaces husky + lint-staged: faster (parallel) and the staged-file glob
+# is built in. Install hooks once after cloning:
+#
+#   pnpm install
+#
+# The `postinstall` script in package.json runs `lefthook install`
+# automatically.
+#
+# Bypass any hook for a single command with --no-verify (use sparingly).
+
+# Lint the commit message against commitlint conventional rules.
+commit-msg:
+  commands:
+    commitlint:
+      run: pnpm exec commitlint --edit {1}
+
+# Format staged files in place. Lefthook's `{staged_files}` only invokes
+# prettier on files actually about to be committed, so the hook stays cheap
+# regardless of repo size.
+pre-commit:
+  parallel: true
+  commands:
+    prettier:
+      glob: "*.{ts,tsx,js,jsx,md,json,yml,yaml,css}"
+      run: pnpm exec prettier --write {staged_files}
+      stage_fixed: true
+
+# Validate the branch name before push.
+pre-push:
+  commands:
+    branch-name:
+      run: scripts/check-branch-name.sh

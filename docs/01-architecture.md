@@ -53,19 +53,19 @@
 
 ## Module map
 
-| Concern | Path | Notes |
-|---|---|---|
-| AI client | `apps/api/src/modules/ai/` | OpenRouter + `ModelRoute` enum |
-| Strategist + critic | `apps/api/src/modules/agent/` | Decision pipeline + memory retrieval |
-| Regime classifier | `apps/api/src/modules/risk_engine/regime.rs` | Statistical + LLM hybrid |
-| Risk scoring | `apps/api/src/modules/risk_engine/mod.rs` | Concentration · vol · drift · regime |
-| Wallets | `apps/api/src/modules/wallet/` | Circle Wallets REST wrapper |
-| Cross-chain | `apps/api/src/modules/{gateway,rebalance/cross_chain}.rs` | Gateway + CCTP V2 + Hooks |
-| Yield | `apps/api/src/modules/yield/` | USDC↔USYC |
-| FX | `apps/api/src/modules/fx/` | Arc StableFX (USDC↔EURC) |
-| Tax | `apps/api/src/modules/tax/` | Cost-basis lots, harvestable losses |
-| Realtime | `apps/api/src/modules/sse/` | `/sse` event stream |
-| Strategy marketplace (cond.) | `apps/api/src/modules/strategies/` | Publish · clone · royalty |
+| Concern                      | Path                                                      | Notes                                |
+| ---------------------------- | --------------------------------------------------------- | ------------------------------------ |
+| AI client                    | `apps/api/src/modules/ai/`                                | OpenRouter + `ModelRoute` enum       |
+| Strategist + critic          | `apps/api/src/modules/agent/`                             | Decision pipeline + memory retrieval |
+| Regime classifier            | `apps/api/src/modules/risk_engine/regime.rs`              | Statistical + LLM hybrid             |
+| Risk scoring                 | `apps/api/src/modules/risk_engine/mod.rs`                 | Concentration · vol · drift · regime |
+| Wallets                      | `apps/api/src/modules/wallet/`                            | Circle Wallets REST wrapper          |
+| Cross-chain                  | `apps/api/src/modules/{gateway,rebalance/cross_chain}.rs` | Gateway + CCTP V2 + Hooks            |
+| Yield                        | `apps/api/src/modules/yield/`                             | USDC↔USYC                            |
+| FX                           | `apps/api/src/modules/fx/`                                | Arc StableFX (USDC↔EURC)             |
+| Tax                          | `apps/api/src/modules/tax/`                               | Cost-basis lots, harvestable losses  |
+| Realtime                     | `apps/api/src/modules/sse/`                               | `/sse` event stream                  |
+| Strategy marketplace (cond.) | `apps/api/src/modules/strategies/`                        | Publish · clone · royalty            |
 
 ## Data flow
 
@@ -80,13 +80,13 @@
 
 `GET /sse` returns an `EventSource` stream with named events:
 
-| Event | Payload |
-|---|---|
-| `price.tick` | `{ symbol, price_usd, change_24h, source, fetched_at }` |
-| `regime.flip` | `{ from, to, confidence, signals }` |
-| `agent.decision` | `{ id, portfolio_id, model, confidence, summary }` |
-| `rebalance.status` | `{ id, step, chain, tx_hash?, status }` |
-| `gateway.balance` | `{ unified_usdc, per_chain }` |
+| Event              | Payload                                                 |
+| ------------------ | ------------------------------------------------------- |
+| `price.tick`       | `{ symbol, price_usd, change_24h, source, fetched_at }` |
+| `regime.flip`      | `{ from, to, confidence, signals }`                     |
+| `agent.decision`   | `{ id, portfolio_id, model, confidence, summary }`      |
+| `rebalance.status` | `{ id, step, chain, tx_hash?, status }`                 |
+| `gateway.balance`  | `{ unified_usdc, per_chain }`                           |
 
 `KeepAlive::default()` prevents intermediate proxies from closing idle streams; clients reconnect with `retry: 3000`.
 

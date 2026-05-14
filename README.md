@@ -38,18 +38,18 @@
 
 ## Stack
 
-| Layer | Choice |
-|---|---|
-| Frontend | Next.js 15 · TypeScript · Tailwind · neo-brutalism dark · Zustand · React Query · `EventSource` |
-| Backend | Rust · Axum · Tokio · SQLx · PostgreSQL · **SSE** |
-| AI | **OpenRouter** with per-task model routing (Opus / Sonnet / Haiku / Gemini Flash / GPT-5) |
-| Settlement | **Arc** (primary) + **Base** (CCTP V2 cross-chain) |
-| Wallets | **Circle Wallets** (modular MSCA — no seed phrase) |
-| Cross-chain | **Gateway** unified balance + **CCTP V2** Fast Transfer + Hooks |
-| Yield | **USYC** (tokenized US T-bills) — risk-off sleeve |
-| FX | **Arc StableFX** — USDC↔EURC for the EUR sleeve |
-| Fees | **Circle Paymaster** (gas in USDC) + **Nanopayments** (protocol fees) |
-| Infra | Turborepo · pnpm · Docker · GitHub Actions |
+| Layer       | Choice                                                                                          |
+| ----------- | ----------------------------------------------------------------------------------------------- |
+| Frontend    | Next.js 15 · TypeScript · Tailwind · neo-brutalism dark · Zustand · React Query · `EventSource` |
+| Backend     | Rust · Axum · Tokio · SQLx · PostgreSQL · **SSE**                                               |
+| AI          | **OpenRouter** with per-task model routing (Opus / Sonnet / Haiku / Gemini Flash / GPT-5)       |
+| Settlement  | **Arc** (primary) + **Base** (CCTP V2 cross-chain)                                              |
+| Wallets     | **Circle Wallets** (modular MSCA — no seed phrase)                                              |
+| Cross-chain | **Gateway** unified balance + **CCTP V2** Fast Transfer + Hooks                                 |
+| Yield       | **USYC** (tokenized US T-bills) — risk-off sleeve                                               |
+| FX          | **Arc StableFX** — USDC↔EURC for the EUR sleeve                                                 |
+| Fees        | **Circle Paymaster** (gas in USDC) + **Nanopayments** (protocol fees)                           |
+| Infra       | Turborepo · pnpm · Docker · GitHub Actions                                                      |
 
 ## Project docs
 
@@ -123,12 +123,12 @@ pnpm dev          # Next.js (3000) — Rust API runs separately:
 cd apps/api && cargo run     # Axum on 8080
 ```
 
-| Service | URL |
-|---|---|
-| Frontend | http://localhost:3000 |
-| API | http://localhost:8080 |
-| SSE | http://localhost:8080/sse |
-| Health | http://localhost:8080/health |
+| Service  | URL                          |
+| -------- | ---------------------------- |
+| Frontend | http://localhost:3000        |
+| API      | http://localhost:8080        |
+| SSE      | http://localhost:8080/sse    |
+| Health   | http://localhost:8080/health |
 
 ### Demo mode (no wallet, no backend)
 
@@ -198,17 +198,17 @@ strategies          -- (conditional) author, name, rules (JSONB), royalty_bps
 
 ## Environment variables
 
-| Variable | Description |
-|---|---|
-| `DATABASE_URL` | PostgreSQL connection string |
-| `JWT_SECRET` | Secret for signing JWTs (32+ chars) |
-| `OPENROUTER_API_KEY` | OpenRouter API key (replaces `OPENAI_API_KEY`) |
-| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` |
-| `CIRCLE_API_KEY` | Circle developer key (Wallets, Gateway, USYC) |
-| `CIRCLE_ENV` | `sandbox` (default) or `production` |
-| `ARC_RPC_URL` | Arc testnet RPC |
-| `BASE_RPC_URL` | Base Sepolia RPC |
-| `POSTHOG_KEY` | Traction analytics |
+| Variable              | Description                                    |
+| --------------------- | ---------------------------------------------- |
+| `DATABASE_URL`        | PostgreSQL connection string                   |
+| `JWT_SECRET`          | Secret for signing JWTs (32+ chars)            |
+| `OPENROUTER_API_KEY`  | OpenRouter API key (replaces `OPENAI_API_KEY`) |
+| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1`                 |
+| `CIRCLE_API_KEY`      | Circle developer key (Wallets, Gateway, USYC)  |
+| `CIRCLE_ENV`          | `sandbox` (default) or `production`            |
+| `ARC_RPC_URL`         | Arc testnet RPC                                |
+| `BASE_RPC_URL`        | Base Sepolia RPC                               |
+| `POSTHOG_KEY`         | Traction analytics                             |
 
 See `.env.example` for the full list.
 

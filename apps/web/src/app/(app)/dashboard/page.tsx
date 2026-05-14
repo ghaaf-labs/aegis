@@ -27,10 +27,15 @@ export default function DashboardPage() {
     >
       {/* Top stats row */}
       <motion.div variants={fadeUp}>
-        <h1 className="text-2xl font-bold mb-6 text-white">Portfolio Overview</h1>
+        <h1 className="text-2xl font-bold mb-6 text-white">
+          Portfolio Overview
+        </h1>
       </motion.div>
 
-      <motion.div variants={fadeUp} className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <motion.div
+        variants={fadeUp}
+        className="grid grid-cols-1 md:grid-cols-3 gap-4"
+      >
         <PortfolioSummaryCard />
         <AllocationChart />
         <MarketOverview />
@@ -42,7 +47,10 @@ export default function DashboardPage() {
       </motion.div>
 
       {/* Assets + AI feed */}
-      <motion.div variants={fadeUp} className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-6">
+      <motion.div
+        variants={fadeUp}
+        className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-6"
+      >
         <AssetTable />
         <AgentReasoningFeed />
       </motion.div>

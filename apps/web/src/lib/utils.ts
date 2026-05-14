@@ -7,7 +7,7 @@ export function cn(...inputs: ClassValue[]) {
 
 export function formatCurrency(
   value: number,
-  opts: { compact?: boolean; decimals?: number } = {}
+  opts: { compact?: boolean; decimals?: number } = {},
 ): string {
   const { compact = false, decimals = 2 } = opts;
   if (compact && Math.abs(value) >= 1_000_000) {

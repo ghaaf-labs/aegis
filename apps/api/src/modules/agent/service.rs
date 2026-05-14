@@ -133,7 +133,7 @@ pub async fn analyze_portfolio(
         warn!("critic parse failed, treating as approved: {e}");
         CriticOutput {
             demands_revision: false,
-            notes: "(critic output unparseable)".into(),
+            notes: "(critic output unparsable)".into(),
             confidence: 0.0,
         }
     });
@@ -241,7 +241,7 @@ async fn fetch_user_profile(state: &AppState, user_id: Uuid) -> crate::error::Re
 }
 
 async fn previous_regime(state: &AppState, portfolio_id: Uuid) -> Option<String> {
-    sqlx::query_scalar::<_, Option<String>>(
+    match sqlx::query_scalar::<_, Option<String>>(
         "SELECT regime FROM agent_decisions
          WHERE portfolio_id = $1 AND regime IS NOT NULL
          ORDER BY created_at DESC LIMIT 1",
@@ -249,9 +249,15 @@ async fn previous_regime(state: &AppState, portfolio_id: Uuid) -> Option<String>
     .bind(portfolio_id)
     .fetch_optional(&state.db)
     .await
-    .ok()
-    .flatten()
-    .flatten()
+    {
+        Ok(row) => row.flatten(),
+        Err(e) => {
+            // Don't fail the whole analysis if the lookahead query stumbles;
+            // log so the omission is visible and continue with `from: None`.
+            warn!("previous_regime query failed: {e}");
+            None
+        }
+    }
 }
 
 fn build_strategist_context(
@@ -446,5 +452,198 @@ mod tests {
     #[test]
     fn format_allocations_handles_empty() {
         assert_eq!(format_allocations(&[]), "(empty portfolio)");
+    }
+
+    // ── Contract tests: prompts ↔ context builders ────────────────────────
+    //
+    // The risk in a template-driven prompt system is silent drift: someone
+    // adds `{{ new_key }}` to a `.md` template and forgets to populate it
+    // from Rust. The model then receives a literal `{{ new_key }}` and the
+    // failure mode is "the agent is subtly worse" — not a compile error.
+    //
+    // These tests render each prompt with the production context builders
+    // against realistic inputs and assert no unresolved `{{` remains.
+
+    use crate::modules::ai::{PromptKey, PromptRegistry};
+    use crate::modules::market_data::AssetPrice;
+    use crate::modules::risk_engine::{MarketRegime, RegimeClassification, RegimeSignals};
+    use chrono::Utc;
+
+    fn sample_portfolio() -> Portfolio {
+        Portfolio {
+            id: Uuid::nil(),
+            user_id: Uuid::nil(),
+            name: "Retirement".into(),
+            total_value_usd: 12_345.67,
+            total_pnl_usd: 234.50,
+            total_pnl_pct: 1.9,
+            risk_score: 50,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    fn sample_allocs() -> Vec<Allocation> {
+        vec![
+            Allocation {
+                id: Uuid::nil(),
+                portfolio_id: Uuid::nil(),
+                asset_symbol: "BTC".into(),
+                quantity: 0.5,
+                target_weight: 60.0,
+                current_weight: 55.0,
+                value_usd: 33_000.0,
+            },
+            Allocation {
+                id: Uuid::nil(),
+                portfolio_id: Uuid::nil(),
+                asset_symbol: "ETH".into(),
+                quantity: 4.0,
+                target_weight: 40.0,
+                current_weight: 45.0,
+                value_usd: 14_000.0,
+            },
+        ]
+    }
+
+    fn sample_snapshot() -> MarketSnapshot {
+        MarketSnapshot {
+            assets: vec![AssetPrice {
+                symbol: "BTC".into(),
+                price_usd: 67_000.0,
+                change_24h: -3.5,
+                change_7d: -1.0,
+                market_cap: 1.3e12,
+                volume_24h: 4e10,
+                updated_at: Utc::now(),
+            }],
+            fear_greed_index: 28,
+            total_market_cap_usd: 2.5e12,
+            btc_dominance: 52.4,
+            captured_at: Utc::now(),
+        }
+    }
+
+    fn sample_regime() -> RegimeClassification {
+        RegimeClassification {
+            regime: MarketRegime::RiskOff,
+            confidence: 0.78,
+            signals: RegimeSignals {
+                btc_vol_30d: 0.6,
+                corr_90d: 0.85,
+                max_drawdown: 0.18,
+                fear_greed: 28,
+                btc_dominance: 52.4,
+            },
+            rationale: "high vol + correlation spike".into(),
+        }
+    }
+
+    fn sample_user() -> UserProfile {
+        UserProfile {
+            risk_tolerance: "conservative".into(),
+            investment_horizon_months: 60,
+        }
+    }
+
+    fn sample_risk() -> crate::modules::risk_engine::RiskReport {
+        crate::modules::risk_engine::RiskReport {
+            score: 65,
+            concentration_risk: 0.55,
+            volatility_score: 0.7,
+            drift_score: 0.05,
+            summary: "elevated".into(),
+        }
+    }
+
+    #[test]
+    fn strategist_prompt_renders_without_unresolved_placeholders() {
+        let reg = PromptRegistry::embedded();
+        let ctx = build_strategist_context(
+            &sample_portfolio(),
+            &sample_allocs(),
+            &sample_user(),
+            &sample_snapshot(),
+            &sample_regime(),
+            &sample_risk(),
+        );
+        let rendered = reg.render(PromptKey::Strategist, &ctx);
+        assert!(
+            !rendered.contains("{{"),
+            "strategist prompt has unresolved placeholder(s):\n{rendered}"
+        );
+        // Per-portfolio personalization signal: the user's actual values
+        // appear in the rendered prompt.
+        assert!(rendered.contains("Retirement"));
+        assert!(rendered.contains("conservative"));
+        assert!(rendered.contains("60"));
+        assert!(rendered.contains("BTC"));
+    }
+
+    #[test]
+    fn critic_prompt_renders_without_unresolved_placeholders() {
+        let reg = PromptRegistry::embedded();
+        let proposal = StrategistProposal {
+            reasoning: "trim BTC".into(),
+            confidence: 0.7,
+            recommendation: json!({"summary": "Trim BTC", "trades": [], "expectedImpact": {}}),
+        };
+        let ctx = build_critic_context(
+            &proposal,
+            &sample_allocs(),
+            &sample_user(),
+            &sample_regime(),
+            &sample_risk(),
+        );
+        let rendered = reg.render(PromptKey::Critic, &ctx);
+        assert!(
+            !rendered.contains("{{"),
+            "critic prompt has unresolved placeholder(s):\n{rendered}"
+        );
+        assert!(rendered.contains("conservative"));
+    }
+
+    #[test]
+    fn revision_prompt_renders_without_unresolved_placeholders() {
+        let reg = PromptRegistry::embedded();
+        // Revision context = strategist context + 2 extras.
+        let mut ctx = build_strategist_context(
+            &sample_portfolio(),
+            &sample_allocs(),
+            &sample_user(),
+            &sample_snapshot(),
+            &sample_regime(),
+            &sample_risk(),
+        );
+        ctx.insert("original_proposal_json", "{\"x\":1}".into());
+        ctx.insert("critic_verdict_json", "{\"y\":2}".into());
+        let rendered = reg.render(PromptKey::Revision, &ctx);
+        assert!(
+            !rendered.contains("{{"),
+            "revision prompt has unresolved placeholder(s):\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn strategist_proposal_round_trips_through_serde_value() {
+        // The strategist returns JSON we deserialize into StrategistProposal,
+        // then re-serialize into the `recommendation` JSONB column. This test
+        // locks the round trip so adding a field doesn't silently break it.
+        let raw = r#"{
+            "reasoning": "hold steady",
+            "confidence": 0.62,
+            "recommendation": {
+                "summary": "Hold",
+                "trades": [
+                    {"symbol":"BTC","action":"sell","quantity":0.05,"valueUsd":3000.0,"reason":"reduce concentration"}
+                ],
+                "expectedImpact": {"riskDelta": -0.04, "diversificationScore": 0.71}
+            }
+        }"#;
+        let p = parse_proposal(raw).unwrap();
+        let v = serde_json::to_value(&p.recommendation).unwrap();
+        assert_eq!(v["summary"], "Hold");
+        assert_eq!(v["trades"][0]["valueUsd"], 3000.0);
+        assert_eq!(v["expectedImpact"]["riskDelta"], -0.04);
     }
 }
