@@ -1,6 +1,17 @@
 // ── Core domain types shared between frontend and backend ──────────────────
 
-export type AssetSymbol = string;
+export type AssetSymbol =
+  | "BTC"
+  | "ETH"
+  | "SOL"
+  | "BNB"
+  | "AVAX"
+  | "LINK"
+  | "UNI"
+  | "MATIC"
+  | "USYC"
+  | "EURC"
+  | (string & {});
 export type UserId = string;
 export type PortfolioId = string;
 
@@ -40,17 +51,49 @@ export interface Portfolio {
   totalPnlPct: number;
   allocations: Allocation[];
   riskScore: number;
+  /** Set when the user completes the goal wizard. Null for legacy portfolios. */
+  goal: PortfolioGoal | null;
   createdAt: string;
   updatedAt: string;
 }
 
 export type RiskTolerance = "conservative" | "moderate" | "aggressive";
 
+export type GoalHorizon = "1y" | "3y" | "5y" | "10y" | "20y+";
+
+export interface PortfolioGoal {
+  /** Human label, e.g. "Retirement", "Treasury", "Speculative". */
+  name: string;
+  horizon: GoalHorizon;
+  riskTolerance: RiskTolerance;
+  /** Target weights per symbol; values sum to 100. Sparse — symbols not
+   * listed default to 0%. */
+  targetAllocation: Partial<Record<AssetSymbol, number>>;
+  /** Optional recurring contribution. */
+  monthlyContributionUsd?: number;
+  /** Always available; default 0 in `targetAllocation`. */
+  includeUsyc: boolean;
+  /** Always available; default 0 in `targetAllocation`. */
+  includeEurc: boolean;
+  createdAt: string;
+}
+
 export interface UserProfile {
   id: UserId;
   email: string;
   riskTolerance: RiskTolerance;
   investmentHorizonMonths: number;
+  walletId?: string;
+  arcAddress?: string;
+  baseAddress?: string;
+  createdAt: string;
+}
+
+/** Result of a Circle Wallet create. JWT is set in an httpOnly cookie. */
+export interface WalletInfo {
+  walletId: string;
+  arcAddress: string;
+  baseAddress: string;
   createdAt: string;
 }
 
@@ -157,7 +200,8 @@ export type SseEvent =
   | { type: "regime.flip"; data: RegimeFlip }
   | { type: "agent.decision"; data: AgentDecision }
   | { type: "rebalance.status"; data: RebalanceStatus }
-  | { type: "gateway.balance"; data: GatewayBalance };
+  | { type: "gateway.balance"; data: GatewayBalance }
+  | { type: "wallet.created"; data: WalletInfo };
 
 export type SseEventType = SseEvent["type"];
 

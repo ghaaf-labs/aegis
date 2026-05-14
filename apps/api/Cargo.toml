@@ -33,7 +33,7 @@ sqlx = { version = "0.8", features = [
 
 # Auth
 jsonwebtoken = "9"
-argon2 = "0.5"
+async-trait = "0.1"
 
 # HTTP client (OpenAI, market data)
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }

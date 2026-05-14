@@ -13,6 +13,9 @@ use crate::{error::AppError, router::AppState};
 pub struct Claims {
     pub sub: Uuid,
     pub email: String,
+    /// Set once the user has a Circle Wallet (Sprint 2+).
+    #[serde(default)]
+    pub wallet_id: Option<String>,
     pub exp: usize,
     pub iat: usize,
 }

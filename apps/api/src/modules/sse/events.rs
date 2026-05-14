@@ -17,6 +17,9 @@ pub enum SseEvent {
     /// Emitted from Sprint 2 onward (Gateway unified balance polling).
     #[allow(dead_code)]
     GatewayBalance(GatewayBalance),
+    /// Emitted when Circle Wallets create succeeds — lets the UI swap to
+    /// authed state without polling. Sprint 2+.
+    WalletCreated(crate::modules::wallet::sse::WalletCreatedPayload),
 }
 
 impl SseEvent {
@@ -29,6 +32,7 @@ impl SseEvent {
             Self::AgentDecision(_) => "agent.decision",
             Self::RebalanceStatus(_) => "rebalance.status",
             Self::GatewayBalance(_) => "gateway.balance",
+            Self::WalletCreated(_) => "wallet.created",
         }
     }
 }

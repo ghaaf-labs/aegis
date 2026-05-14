@@ -1,4 +1,5 @@
 use axum::{
+    middleware::from_fn_with_state,
     routing::{get, post},
     Router,
 };
@@ -9,9 +10,11 @@ use tower_http::{
     trace::TraceLayer,
 };
 
+use crate::middleware::auth::require_auth;
 use crate::modules::{
-    agent, ai, auth, market_data, portfolio, rebalance,
+    agent, ai, analytics, faucet, fx, gateway, market_data, paymaster, portfolio, rebalance,
     sse::{self, SseSender},
+    treasury, wallet,
 };
 use crate::{config::Config, db::Db};
 
@@ -42,8 +45,6 @@ pub async fn build(db: Db, config: Config) -> Router {
         prompts,
     });
 
-    // Spawn the price ticker once the channel exists. It runs for the
-    // process lifetime; if no clients are subscribed it noops cheaply.
     sse::spawn_price_ticker(http, Arc::new(config), sse_tx);
 
     let cors = CorsLayer::new()
@@ -51,14 +52,12 @@ pub async fn build(db: Db, config: Config) -> Router {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    Router::new()
-        // Health
-        .route("/health", get(health))
-        // Auth
-        .route("/auth/register", post(auth::handlers::register))
-        .route("/auth/login", post(auth::handlers::login))
-        .route("/auth/me", get(auth::handlers::me))
-        // Portfolios
+    // Routes that require an authenticated wallet.
+    let authed = Router::new()
+        .route("/auth/me", get(wallet::handlers::me))
+        .route("/faucet/usdc", post(faucet::handlers::claim_usdc))
+        .route("/gateway/balance", get(gateway::handlers::balance))
+        .route("/analytics/event", post(analytics::handlers::track))
         .route(
             "/portfolios",
             get(portfolio::handlers::list).post(portfolio::handlers::create),
@@ -73,18 +72,39 @@ pub async fn build(db: Db, config: Config) -> Router {
             "/portfolios/:id/rebalance",
             post(rebalance::handlers::trigger),
         )
-        // Market data
-        .route("/market/snapshot", get(market_data::handlers::snapshot))
-        .route("/market/prices", get(market_data::handlers::prices))
-        // Agent
         .route(
             "/agent/decisions/:portfolio_id",
             get(agent::handlers::decisions),
         )
         .route("/agent/analyze", post(agent::handlers::analyze))
-        // SSE
+        .route_layer(from_fn_with_state(state.clone(), require_auth));
+
+    Router::new()
+        .route("/health", get(health))
+        // Wallet auth — public (no JWT required to create or login).
+        .route(
+            "/auth/wallet/create",
+            post(wallet::handlers::create_passkey),
+        )
+        .route("/auth/wallet/login", post(wallet::handlers::login_passkey))
+        .route("/auth/wallet/otp/start", post(wallet::handlers::start_otp))
+        .route(
+            "/auth/wallet/otp/verify",
+            post(wallet::handlers::verify_otp),
+        )
+        // Market data — public for now (dashboard renders snapshots on landing).
+        .route("/market/snapshot", get(market_data::handlers::snapshot))
+        .route("/market/prices", get(market_data::handlers::prices))
+        // Public rate endpoints — used by /explore and the goal wizard.
+        .route(
+            "/paymaster/estimate",
+            get(paymaster::handlers::estimate_fee),
+        )
+        .route("/treasury/usyc/rate", get(treasury::handlers::usyc_rate))
+        .route("/fx/usdc-eurc", get(fx::handlers::basis))
+        // SSE — public so /explore can read price ticks without auth.
         .route("/sse", get(sse::handler))
-        // Layers
+        .merge(authed)
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .layer(CompressionLayer::new())

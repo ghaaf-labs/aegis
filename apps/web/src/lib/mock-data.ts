@@ -70,6 +70,15 @@ export const MOCK_PORTFOLIO: Portfolio = {
   totalPnlUsd: 6_840.3,
   totalPnlPct: 16.5,
   riskScore: 42,
+  goal: {
+    name: "Main Portfolio",
+    horizon: "5y",
+    riskTolerance: "moderate",
+    targetAllocation: { BTC: 40, ETH: 30, SOL: 15, LINK: 10, USYC: 5, EURC: 0 },
+    includeUsyc: true,
+    includeEurc: true,
+    createdAt: "2024-01-15T00:00:00Z",
+  },
   createdAt: "2024-01-15T00:00:00Z",
   updatedAt: new Date().toISOString(),
   allocations: [

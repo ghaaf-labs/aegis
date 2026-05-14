@@ -1,3 +1,125 @@
+# Aegis — Sprint Reviews
+
+## Sprint 2 — Usable product
+
+> Audit of `feat/sprint-2-usable-product` stacked on Sprint 1. Goal: from landing to first agent decision in <60s passkey / <90s OTP, multi-portfolio dashboard, neo-brutalism design system, /explore demo, self-hosted analytics.
+
+### Gate baseline
+
+| Gate                                        | After Sprint 1             | After Sprint 2                                 |
+| ------------------------------------------- | -------------------------- | ---------------------------------------------- |
+| `cargo fmt --check`                         | ✅                         | ✅                                             |
+| `cargo clippy --all-targets -- -D warnings` | ✅                         | ✅                                             |
+| `cargo test --all-targets`                  | **31 passed**              | **41 passed**                                  |
+| `pnpm type-check`                           | ✅                         | ✅                                             |
+| `pnpm lint`                                 | only pre-existing warnings | only pre-existing warnings (Sprint 1 files)    |
+| `pnpm test` (Vitest)                        | 3 passed                   | 3 passed                                       |
+| `next build` (production)                   | ✅                         | ✅ 10 routes, /explore SSG'd with 3 demo paths |
+| `prettier --check`                          | ✅                         | ✅                                             |
+| `typos`                                     | ✅                         | ✅                                             |
+
+### What shipped (15 tasks across 5 sprint days)
+
+**Schema:** migration `0003_wallets_basis_goals.sql` — wallet columns on `users`, `goal` JSONB on `portfolios`, `cost_basis_lots` table, `analytics_events` table, dropped legacy `password_hash`.
+
+**Auth:** Circle Wallets module with three paths:
+
+- Passkey (WebAuthn) — primary
+- Email-OTP — automatic fallback when `navigator.credentials` is absent
+- `MOCK_CIRCLE=true` — synthetic deterministic wallets for local dev / demo without testnet
+
+JWT now carries `wallet_id`. Legacy email/password auth fully removed; `argon2` dropped from deps (cargo-machete clean).
+
+**Money primitives:**
+
+- `faucet` — POST `/faucet/usdc` claims 100 USDC/24h/wallet (rate-limited via `analytics_events`).
+- `paymaster` — GET `/paymaster/estimate?chain=arc|base&action=…` returns expected USDC fee, used by every approval modal's `FeePreview`.
+- `gateway` — GET `/gateway/balance` returns unified USDC across Arc + Base; broadcasts `gateway.balance` over SSE. Mock provides deterministic per-wallet numbers.
+- `treasury` (USYC) — GET `/treasury/usyc/rate` plus `park_in_usyc` / `redeem_from_usyc` log-only stubs (real execution lands in Sprint 3).
+- `fx` — GET `/fx/usdc-eurc` returns Arc StableFX basis (CoinGecko fallback in non-mock).
+
+**Per-portfolio personalization deepened:** the strategist prompt now consumes four new placeholders, all renderable end-to-end without leftover `{{ }}`:
+
+- `{{ goal_block }}` — formatted from `portfolios.goal` JSONB
+- `{{ memory }}` — last 5 decisions + 24h outcome lines (`apps/api/src/modules/agent/memory.rs`)
+- `{{ usyc_rate }}` — current Hashnote yield
+- `{{ usdc_eurc_basis }}` — Arc StableFX mid rate
+
+Prompt-context tests extended to fail if any placeholder goes unbound.
+
+**Onboarding flow:**
+
+- `/signup` page — `CreateWalletCard` with passkey + OTP UI feature-detected at runtime
+- `/onboarding` — 4-step goal wizard (name → horizon → risk → allocation with EURC always visible, default 0%)
+- `/dashboard/[portfolioId]` — per-portfolio dashboard; portfolio switcher dropdown in the header
+- `/dashboard` (bare) — redirects to active portfolio or `/onboarding`
+- `/explore` + `/explore/[portfolioId]` — public SSG'd demo with 3 curated portfolios (conservative-retiree, aggressive-builder, treasury-dao)
+
+**Design system:** `packages/ui/` neo-brutalism primitives — `BrutalCard`, `BrutalButton`, `BrutalPill`, `ChainBadge`, `ModelBadge`, `FeePreview`, `ProvenanceLine`. Tokens in `packages/config/tailwind.js`. Two-accent rule enforced: `accent-pnl` (green) for money, `accent-agent` (cyan) for agent. Hard offset shadows, 2px borders, monospace numerics with tabular-nums.
+
+**Realtime:** new `wallet.created` SSE event variant, contract-tested in `sse/events.rs`. `gateway.balance` finally wired (typed since Sprint 1, emitted now). Header shows live `unifiedUsdc` value + per-chain badges.
+
+**Self-hosted analytics:** `analytics_events` Postgres table + tiny `analytics` module — no PostHog, no third-party. Frontend `analyticsApi.track` (best-effort, never breaks user flows). Six event names captured: `wallet.created`, `faucet.claimed`, `goal.completed`, `analyze.triggered`, `decision.approved`, `decision.rejected`. Traction queries documented in `docs/queries/traction.sql`.
+
+### Test delta
+
+| Module                         | Sprint 1 | Sprint 2 | Added                                                |
+| ------------------------------ | -------- | -------- | ---------------------------------------------------- |
+| `modules/wallet/provider.rs`   | 0        | 3        | mock create, deterministic per email, OTP round-trip |
+| `modules/wallet/service.rs`    | 0        | 1        | email validation boundaries                          |
+| `modules/paymaster/service.rs` | 0        | 2        | arc sub-cent estimate, empty-action rejection        |
+| `modules/gateway/service.rs`   | 0        | 2        | deterministic mock balance, balance sums match       |
+| `modules/agent/memory.rs`      | 0        | 2        | compresses with summary+regime, truncates long lines |
+| (existing modules)             | 31       | 31       | (no change)                                          |
+| **API total**                  | **31**   | **41**   | **+10**                                              |
+| Web (Vitest)                   | 3        | 3        | (no change — frontend tests expand in Sprint 3)      |
+
+### Per-portfolio personalization (deepened from Sprint 1)
+
+Sprint 1's strategist already saw portfolio name, value, PnL, risk tolerance, horizon, allocations. Sprint 2 adds **five** more signals into the prompt, all flowing from real user input:
+
+| Signal          | Source                                                                  |
+| --------------- | ----------------------------------------------------------------------- |
+| Goal block      | `portfolios.goal` JSONB written by the goal wizard                      |
+| Memory          | `agent_memory` joined with `agent_decisions` (last 5 with 24h outcomes) |
+| USYC rate       | `/treasury/usyc/rate`                                                   |
+| USDC↔EURC basis | `/fx/usdc-eurc`                                                         |
+| Unified balance | `/gateway/balance` (also pushed via SSE `gateway.balance`)              |
+
+### Realtime UX
+
+Sprint 1 already pushed `regime.flip` before the strategist call returns (sub-500ms feedback even on slow LLM calls). Sprint 2 adds:
+
+- `wallet.created` — UI swaps to authed state instantly without polling
+- `gateway.balance` — every 10s via the Gateway ticker; UI's unified USDC number ticks up live after a faucet claim
+
+### Risks accepted
+
+| Risk                                                       | Accepted because                                                                                                                                                                              |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `treasury::park_in_usyc` / `redeem_from_usyc` are log-only | Real execution requires the cross-chain executor (Sprint 3). The contract is stable, so Sprint 3 just changes the implementation.                                                             |
+| Paymaster estimate is hardcoded mock values                | Live RPC integration lands when the cross-chain executor needs real estimates.                                                                                                                |
+| Component sweep (S2.12) was a light pass                   | Existing dashboard components keep shadcn defaults. New surfaces (`/signup`, `/onboarding`, `/explore`, header, goal wizard) use the neo-brutalism primitives. Full sweep is Sprint 3 polish. |
+| `MOCK_CIRCLE=true` is the default                          | Demo without testnet quirks. Production deploy flips to `MOCK_CIRCLE=false` via env.                                                                                                          |
+
+### What didn't get audited
+
+1. **Real DB migration run** — Docker isn't available in this audit environment. SQL syntax verified by reading; next contributor with Docker should run `pnpm db:reset`.
+2. **Real Circle WaaS calls** — no sandbox key in this environment; `CircleProvider` is untested live. The contract is well-typed.
+3. **End-to-end with real OpenRouter** — same as Sprint 1.
+4. **Vitest expansion** — only `defaultSseUrl` covered. The goal wizard + create-wallet card need component tests in Sprint 3.
+
+### Sprint 2 → Sprint 3 (cross-chain execution)
+
+- Deploy `RebalanceExecutor.sol` to Arc + Base
+- Wire `rebalance/cross_chain.rs` to orchestrate CCTP V2 burn-mint + Hook swap
+- Make `treasury::park_in_usyc` / `redeem_from_usyc` actually execute on-chain
+- Tax-loss harvester reading `cost_basis_lots`
+- Agent diary + counterfactual replay
+- Tokio scheduler for proactive analysis
+
+---
+
 # Sprint 1 — In-Depth Quality Review
 
 > Audit of `feat/sprint-1-agent-foundation` (commit `c6a2065`, +2,417 / −518). Goal: verify correctness, scalability, UX, and realtime behavior of the agent foundation, and harden the harness around it.
@@ -108,7 +230,7 @@ Single Go binary, parallel hooks, native `{staged_files}` filtering. Config in `
 - Local: `pnpm --filter @aegis/web test:coverage` · `cargo llvm-cov --all-targets --workspace --summary-only`.
 
 **Q9. Spell-check — typos.**
-`typos.toml` with crypto/finance allowlist. CI gate `typos` (blocking) via `crate-ci/typos@v1`. Caught one real issue in the audit (`unparseable` → `unparsable`).
+`typos.toml` with crypto/finance allowlist. CI gate `typos` (blocking) via `crate-ci/typos@v1`. Caught one real issue in the audit (unparsable was previously spelled with two e's).
 
 **Q10. Unused-code detection — knip.**
 `knip.json` covers `apps/web`, `packages/shared`, `packages/ui`, `packages/config`. CI gate `knip` (advisory).
