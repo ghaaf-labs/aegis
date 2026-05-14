@@ -76,6 +76,10 @@ pub async fn build(db: Db, config: Config) -> Router {
                 .delete(portfolio::handlers::delete),
         )
         .route(
+            "/portfolios/:id/diary-public",
+            get(portfolio::handlers::get_diary_public).patch(portfolio::handlers::set_diary_public),
+        )
+        .route(
             "/portfolios/:id/rebalance",
             post(rebalance::handlers::trigger),
         )

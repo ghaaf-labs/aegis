@@ -157,6 +157,16 @@ export const portfolioApi = {
       method: "POST",
       authed: true,
     }),
+  getDiaryPublic: (id: string) =>
+    request<{ id: string; diaryPublic: boolean }>(
+      `/portfolios/${id}/diary-public`,
+      { authed: true },
+    ),
+  setDiaryPublic: (id: string, diaryPublic: boolean) =>
+    request<{ id: string; diaryPublic: boolean }>(
+      `/portfolios/${id}/diary-public`,
+      { method: "PATCH", body: { diaryPublic }, authed: true },
+    ),
 };
 
 // ── Market ─────────────────────────────────────────────────────────────────
