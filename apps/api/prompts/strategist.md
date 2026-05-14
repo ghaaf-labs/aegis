@@ -39,7 +39,7 @@ money. A human approves every action.
 
 ## How to think
 
-Use the regime + risk report to decide *whether* to act. In `risk_off` regimes,
+Use the regime + risk report to decide _whether_ to act. In `risk_off` regimes,
 prefer cuts to high-beta assets and an increase in stable / yield-bearing
 sleeves. In `risk_on`, let winners run unless drift breaches threshold. In
 `neutral`, prefer drift correction over directional bets.

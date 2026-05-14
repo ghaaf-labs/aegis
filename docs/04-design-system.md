@@ -52,17 +52,17 @@ When in doubt: ask "is this number money or signal?" Money → green/magenta. Si
 
 ## Components (in `packages/ui/`)
 
-| Primitive | Notes |
-|---|---|
-| `Card` | `2px` border, `--shadow` on hover, no gradient backgrounds |
-| `Button` (primary) | Solid `--accent-pnl` for approvals; solid `--text-hi` for neutrals; `--shadow-sm` |
-| `Button` (agent) | Solid `--accent-agent` for "ask agent" / "rerun analysis" |
-| `Pill` (regime) | `RISK-ON` solid green, `NEUTRAL` solid white, `RISK-OFF` solid magenta — text always black, monospace |
-| `DataTable` | Dense rows (28px), monospace numerics, right-aligned numbers |
-| `ModelBadge` | `[opus-4-7]` style chip, cyan border, monospace |
-| `ChainBadge` | `ARC` / `BASE` / `AVAX` chip with chain accent stripe |
-| `FeePreview` | Always shows `~$0.0123 USDC` with `via Paymaster` provenance |
-| `ProvenanceLine` | `via CoinGecko · 2.1s ago` muted text under any fetched value |
+| Primitive          | Notes                                                                                                 |
+| ------------------ | ----------------------------------------------------------------------------------------------------- |
+| `Card`             | `2px` border, `--shadow` on hover, no gradient backgrounds                                            |
+| `Button` (primary) | Solid `--accent-pnl` for approvals; solid `--text-hi` for neutrals; `--shadow-sm`                     |
+| `Button` (agent)   | Solid `--accent-agent` for "ask agent" / "rerun analysis"                                             |
+| `Pill` (regime)    | `RISK-ON` solid green, `NEUTRAL` solid white, `RISK-OFF` solid magenta — text always black, monospace |
+| `DataTable`        | Dense rows (28px), monospace numerics, right-aligned numbers                                          |
+| `ModelBadge`       | `[opus-4-7]` style chip, cyan border, monospace                                                       |
+| `ChainBadge`       | `ARC` / `BASE` / `AVAX` chip with chain accent stripe                                                 |
+| `FeePreview`       | Always shows `~$0.0123 USDC` with `via Paymaster` provenance                                          |
+| `ProvenanceLine`   | `via CoinGecko · 2.1s ago` muted text under any fetched value                                         |
 
 ## Trust signals (mandatory on every screen)
 
@@ -74,15 +74,15 @@ When in doubt: ask "is this number money or signal?" Money → green/magenta. Si
 
 ## Do / Don't
 
-| Do | Don't |
-|---|---|
-| Hard 4px offset shadows | Soft blurred shadows |
-| Solid colored regime pills with black text | Outline pills with colored text |
-| Tabular monospace numbers | Proportional digits in numerics |
-| Two-accent semantic separation | Mixing green and cyan in one component |
-| Border radius 2–4px | `rounded-full`, `rounded-2xl` |
-| Black canvas, white focus borders | Slate gray "dark mode" |
-| One emphasis per card | Multiple competing accents |
+| Do                                         | Don't                                  |
+| ------------------------------------------ | -------------------------------------- |
+| Hard 4px offset shadows                    | Soft blurred shadows                   |
+| Solid colored regime pills with black text | Outline pills with colored text        |
+| Tabular monospace numbers                  | Proportional digits in numerics        |
+| Two-accent semantic separation             | Mixing green and cyan in one component |
+| Border radius 2–4px                        | `rounded-full`, `rounded-2xl`          |
+| Black canvas, white focus borders          | Slate gray "dark mode"                 |
+| One emphasis per card                      | Multiple competing accents             |
 
 ## Responsive
 

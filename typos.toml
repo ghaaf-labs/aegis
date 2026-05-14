@@ -1,0 +1,33 @@
+# typos — spell-checker for source, comments, and docs.
+#
+# Run locally:
+#   cargo install typos-cli   # or: brew install typos-cli
+#   typos
+#
+# CI runs the same command via crate-ci/typos@v1.
+
+[default]
+# Skip a fixed list of crypto/finance acronyms when the identifier splitter
+# breaks them up (e.g. `PnL` → `Pn` + `L`).
+extend-ignore-re = [
+    "PnL",
+    "pnl",
+    "pnL",
+    "USDC",
+    "EURC",
+    "USYC",
+    "CCTP",
+    "MSCA",
+    "stETH",
+]
+
+[files]
+extend-exclude = [
+    "apps/api/Cargo.lock",
+    "pnpm-lock.yaml",
+    "target/",
+    "node_modules/",
+    ".next/",
+    "*.svg",
+    "*.png",
+]

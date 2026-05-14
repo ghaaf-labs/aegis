@@ -1,13 +1,27 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
-import { Brain, RefreshCw, ChevronRight, Zap, ShieldAlert, Cpu, Wifi, WifiOff } from "lucide-react";
+import {
+  Brain,
+  RefreshCw,
+  ChevronRight,
+  Zap,
+  ShieldAlert,
+  Cpu,
+  Wifi,
+  WifiOff,
+} from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { usePortfolioStore } from "@/stores/portfolio";
 import { timeAgo } from "@/lib/utils";
-import type { AgentDecision, AgentTrigger, CriticVerdict, MarketRegime } from "@/types";
+import type {
+  AgentDecision,
+  AgentTrigger,
+  CriticVerdict,
+  MarketRegime,
+} from "@/types";
 
 const TRIGGER_LABELS: Record<AgentTrigger, string> = {
   drift_threshold: "Drift Alert",
@@ -65,7 +79,9 @@ export function AgentReasoningFeed() {
             ) : (
               <WifiOff className="w-3 h-3 text-gray-500" />
             )}
-            <span className="font-mono">{sseConnected ? "LIVE" : "OFFLINE"}</span>
+            <span className="font-mono">
+              {sseConnected ? "LIVE" : "OFFLINE"}
+            </span>
           </span>
           <Button
             variant="ghost"
@@ -89,7 +105,13 @@ export function AgentReasoningFeed() {
   );
 }
 
-function DecisionRow({ decision, index }: { decision: AgentDecision; index: number }) {
+function DecisionRow({
+  decision,
+  index,
+}: {
+  decision: AgentDecision;
+  index: number;
+}) {
   const trigger: AgentTrigger = decision.triggeredBy;
   const triggerVariant = TRIGGER_VARIANTS[trigger] ?? "secondary";
   const triggerLabel = TRIGGER_LABELS[trigger] ?? trigger;
@@ -142,9 +164,11 @@ function DecisionRow({ decision, index }: { decision: AgentDecision; index: numb
 
       {decision.recommendation.trades.length > 0 && (
         <div className="mt-3 space-y-1.5">
-          {decision.recommendation.trades.map((trade) => (
+          {decision.recommendation.trades.map((trade, ti) => (
             <div
-              key={`${trade.assetId}-${trade.symbol}`}
+              // Real agent output doesn't carry assetId — fall back to
+              // symbol+index for a stable, unique key.
+              key={`${decision.id}-${trade.symbol ?? "x"}-${ti}`}
               className="flex items-center gap-2 text-[11px]"
             >
               <span
@@ -180,11 +204,20 @@ function DecisionRow({ decision, index }: { decision: AgentDecision; index: numb
 function ConfidencePill({ confidence }: { confidence: number }) {
   const pct = Math.round(confidence * 100);
   const tone =
-    pct >= 75 ? "text-emerald-300" : pct >= 50 ? "text-yellow-400" : "text-gray-400";
+    pct >= 75
+      ? "text-emerald-300"
+      : pct >= 50
+        ? "text-yellow-400"
+        : "text-gray-400";
   return (
-    <div className="flex items-center gap-1 shrink-0" title="Strategist confidence">
+    <div
+      className="flex items-center gap-1 shrink-0"
+      title="Strategist confidence"
+    >
       <Zap className={`w-3 h-3 ${tone}`} />
-      <span className={`text-[10px] font-mono font-medium ${tone}`}>{pct}%</span>
+      <span className={`text-[10px] font-mono font-medium ${tone}`}>
+        {pct}%
+      </span>
     </div>
   );
 }
@@ -199,7 +232,9 @@ function CriticLine({ verdict }: { verdict: CriticVerdict }) {
     >
       <ShieldAlert className="w-3 h-3 mt-0.5 shrink-0" />
       <span className="font-mono">
-        <span className="opacity-70">Critic ({Math.round(verdict.confidence * 100)}%):</span>{" "}
+        <span className="opacity-70">
+          Critic ({Math.round(verdict.confidence * 100)}%):
+        </span>{" "}
         {verdict.demandsRevision ? "Revision requested — " : "Approved — "}
         <span className="opacity-90">{verdict.notes || "(no notes)"}</span>
       </span>

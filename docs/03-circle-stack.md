@@ -4,15 +4,15 @@
 
 ## Product → file map
 
-| Circle product | Used for | Module |
-|---|---|---|
-| **Circle Wallets** (modular MSCA) | One wallet per user, no seed phrase | `apps/api/src/modules/wallet/` |
-| **Gateway** | Single USDC balance across Arc + Base | `apps/api/src/modules/gateway/` |
-| **CCTP V2** | Cross-chain rebalances (Fast Transfer + Hooks) | `apps/api/src/modules/rebalance/cross_chain.rs` |
-| **USYC** | Risk-off allocation; tokenized US T-bills | `apps/api/src/modules/yield/` |
-| **Paymaster** | USDC-denominated gas on Arc + Base | configured per chain in `apps/api/src/modules/wallet/` |
-| **StableFX** (Arc-native) | USDC↔EURC for the EUR sleeve | `apps/api/src/modules/fx/` |
-| **Nanopayments** | Protocol fee per executed rebalance + referral payouts | `apps/api/src/modules/billing/` |
+| Circle product                    | Used for                                               | Module                                                 |
+| --------------------------------- | ------------------------------------------------------ | ------------------------------------------------------ |
+| **Circle Wallets** (modular MSCA) | One wallet per user, no seed phrase                    | `apps/api/src/modules/wallet/`                         |
+| **Gateway**                       | Single USDC balance across Arc + Base                  | `apps/api/src/modules/gateway/`                        |
+| **CCTP V2**                       | Cross-chain rebalances (Fast Transfer + Hooks)         | `apps/api/src/modules/rebalance/cross_chain.rs`        |
+| **USYC**                          | Risk-off allocation; tokenized US T-bills              | `apps/api/src/modules/yield/`                          |
+| **Paymaster**                     | USDC-denominated gas on Arc + Base                     | configured per chain in `apps/api/src/modules/wallet/` |
+| **StableFX** (Arc-native)         | USDC↔EURC for the EUR sleeve                           | `apps/api/src/modules/fx/`                             |
+| **Nanopayments**                  | Protocol fee per executed rebalance + referral payouts | `apps/api/src/modules/billing/`                        |
 
 Chain config and contract addresses live in `packages/shared/src/constants.ts`.
 

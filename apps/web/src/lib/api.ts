@@ -1,4 +1,9 @@
-import type { ApiResponse, Portfolio, AgentDecision, MarketSnapshot } from "@/types";
+import type {
+  ApiResponse,
+  Portfolio,
+  AgentDecision,
+  MarketSnapshot,
+} from "@/types";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
@@ -21,16 +26,30 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 // ── Auth ───────────────────────────────────────────────────────────────────
 
-export interface LoginPayload { email: string; password: string }
-export interface AuthResponse { token: string; user: { id: string; email: string } }
+export interface LoginPayload {
+  email: string;
+  password: string;
+}
+export interface AuthResponse {
+  token: string;
+  user: { id: string; email: string };
+}
 
 export const authApi = {
   login: (payload: LoginPayload) =>
-    request<AuthResponse>("/auth/login", { method: "POST", body: JSON.stringify(payload) }),
+    request<AuthResponse>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   register: (payload: LoginPayload & { riskTolerance: string }) =>
-    request<AuthResponse>("/auth/register", { method: "POST", body: JSON.stringify(payload) }),
+    request<AuthResponse>("/auth/register", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   me: (token: string) =>
-    request<AuthResponse["user"]>("/auth/me", { headers: { Authorization: `Bearer ${token}` } }),
+    request<AuthResponse["user"]>("/auth/me", {
+      headers: { Authorization: `Bearer ${token}` },
+    }),
 };
 
 // ── Portfolio ──────────────────────────────────────────────────────────────
@@ -39,7 +58,10 @@ export const portfolioApi = {
   list: () => request<ApiResponse<Portfolio[]>>("/portfolios"),
   get: (id: string) => request<Portfolio>(`/portfolios/${id}`),
   create: (payload: Partial<Portfolio>) =>
-    request<Portfolio>("/portfolios", { method: "POST", body: JSON.stringify(payload) }),
+    request<Portfolio>("/portfolios", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   rebalance: (id: string) =>
     request<AgentDecision>(`/portfolios/${id}/rebalance`, { method: "POST" }),
 };
@@ -50,7 +72,7 @@ export const marketApi = {
   snapshot: () => request<MarketSnapshot>("/market/snapshot"),
   prices: (symbols?: string[]) =>
     request<MarketSnapshot["assets"]>(
-      `/market/prices${symbols ? `?symbols=${symbols.join(",")}` : ""}`
+      `/market/prices${symbols ? `?symbols=${symbols.join(",")}` : ""}`,
     ),
 };
 

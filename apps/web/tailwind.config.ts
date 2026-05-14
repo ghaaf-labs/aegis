@@ -3,10 +3,7 @@ import baseConfig from "@aegis/config/tailwind";
 
 const config: Config = {
   ...baseConfig,
-  content: [
-    "./src/**/*.{ts,tsx}",
-    "../../packages/ui/src/**/*.{ts,tsx}",
-  ],
+  content: ["./src/**/*.{ts,tsx}", "../../packages/ui/src/**/*.{ts,tsx}"],
 };
 
 export default config;

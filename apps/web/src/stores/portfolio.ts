@@ -8,7 +8,11 @@ import type {
   RegimeSignals,
   PriceTick,
 } from "@/types";
-import { MOCK_PORTFOLIO, MOCK_AGENT_DECISIONS, MOCK_MARKET_SNAPSHOT } from "@/lib/mock-data";
+import {
+  MOCK_PORTFOLIO,
+  MOCK_AGENT_DECISIONS,
+  MOCK_MARKET_SNAPSHOT,
+} from "@/lib/mock-data";
 
 export interface RegimeState {
   current: MarketRegime;
@@ -66,10 +70,10 @@ export const usePortfolioStore = create<PortfolioState>()(
       addDecision: (decision) =>
         set((state) => ({
           // Deduplicate by id so a re-fired SSE event doesn't double-insert.
-          decisions: [decision, ...state.decisions.filter((d) => d.id !== decision.id)].slice(
-            0,
-            100
-          ),
+          decisions: [
+            decision,
+            ...state.decisions.filter((d) => d.id !== decision.id),
+          ].slice(0, 100),
         })),
       setMarketSnapshot: (marketSnapshot) => set({ marketSnapshot }),
       setRegime: (next) =>
@@ -89,6 +93,6 @@ export const usePortfolioStore = create<PortfolioState>()(
           marketSnapshot: MOCK_MARKET_SNAPSHOT,
         }),
     }),
-    { name: "aegis-portfolio" }
-  )
+    { name: "aegis-portfolio" },
+  ),
 );

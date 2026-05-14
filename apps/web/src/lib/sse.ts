@@ -36,7 +36,7 @@ type Handlers = Partial<{
 export function useEventSource(
   url: string,
   handlers: Handlers,
-  options: UseEventSourceOptions = {}
+  options: UseEventSourceOptions = {},
 ): UseEventSourceResult {
   const { enabled = true, reconnectDelayMs = 3000 } = options;
   const [connected, setConnected] = useState(false);

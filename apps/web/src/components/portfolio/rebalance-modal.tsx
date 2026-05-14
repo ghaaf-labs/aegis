@@ -1,7 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Loader2, RefreshCw, TrendingUp, TrendingDown, AlertTriangle } from "lucide-react";
+import {
+  Loader2,
+  RefreshCw,
+  TrendingUp,
+  TrendingDown,
+  AlertTriangle,
+} from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -108,7 +114,9 @@ export function RebalanceModal({ open, onClose }: Props) {
                   Risk delta: {recommendation?.expectedImpact.riskDelta}
                 </Badge>
                 <Badge variant="default">
-                  Confidence: {Math.round((MOCK_AGENT_DECISIONS[0]?.confidence ?? 0) * 100)}%
+                  Confidence:{" "}
+                  {Math.round((MOCK_AGENT_DECISIONS[0]?.confidence ?? 0) * 100)}
+                  %
                 </Badge>
               </div>
             </div>
@@ -138,8 +146,12 @@ export function RebalanceModal({ open, onClose }: Props) {
                       {trade.action.toUpperCase()}
                     </span>
                     <div>
-                      <p className="text-sm font-semibold text-white font-mono">{trade.symbol}</p>
-                      <p className="text-[11px] text-gray-500">{trade.quantity} units</p>
+                      <p className="text-sm font-semibold text-white font-mono">
+                        {trade.symbol}
+                      </p>
+                      <p className="text-[11px] text-gray-500">
+                        {trade.quantity} units
+                      </p>
                     </div>
                   </div>
                   <span className="text-sm font-medium text-white">

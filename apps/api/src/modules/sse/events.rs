@@ -97,3 +97,160 @@ pub struct GatewayBalance {
     pub per_chain: std::collections::HashMap<String, f64>,
     pub observed_at: DateTime<Utc>,
 }
+
+#[cfg(test)]
+mod contract_tests {
+    //! Lock the on-the-wire JSON shape against the TypeScript types in
+    //! `packages/shared/src/types.ts`. Any rename here without a matching
+    //! TS change is a contract break.
+
+    use super::*;
+    use chrono::TimeZone;
+    use serde_json::Value;
+
+    fn ts() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 5, 14, 12, 0, 0).unwrap()
+    }
+
+    fn json(value: &impl Serialize) -> Value {
+        serde_json::to_value(value).expect("serialize")
+    }
+
+    #[test]
+    fn price_tick_keys_are_camel_case() {
+        let v = json(&PriceTick {
+            symbol: "BTC".into(),
+            price_usd: 1.0,
+            change_24h: 2.0,
+            source: "coingecko".into(),
+            fetched_at: ts(),
+        });
+        for key in ["symbol", "priceUsd", "change24h", "source", "fetchedAt"] {
+            assert!(v.get(key).is_some(), "missing key {key} in {v}");
+        }
+        assert!(v.get("price_usd").is_none(), "snake_case leaked");
+    }
+
+    #[test]
+    fn regime_flip_keys_match_frontend() {
+        let v = json(&RegimeFlip {
+            from: None,
+            to: "risk_off".into(),
+            confidence: 0.8,
+            signals: RegimeSignals {
+                btc_vol_30d: 0.5,
+                corr_90d: 0.6,
+                max_drawdown: 0.1,
+            },
+            classified_at: ts(),
+        });
+        for key in ["from", "to", "confidence", "signals", "classifiedAt"] {
+            assert!(v.get(key).is_some(), "regime.flip missing {key}");
+        }
+        let signals = v.get("signals").and_then(Value::as_object).unwrap();
+        for key in ["btcVol30d", "corr90d", "maxDrawdown"] {
+            assert!(
+                signals.contains_key(key),
+                "regime.flip.signals missing {key}"
+            );
+        }
+    }
+
+    #[test]
+    fn agent_decision_keys_are_camel_case() {
+        let payload = AgentDecisionPayload {
+            id: uuid::Uuid::nil(),
+            portfolio_id: uuid::Uuid::nil(),
+            reasoning: "r".into(),
+            recommendation: serde_json::json!({
+                "summary": "x",
+                "trades": [],
+                "expectedImpact": { "riskDelta": 0.0, "diversificationScore": 0.0 }
+            }),
+            confidence: 0.7,
+            triggered_by: "user_request".into(),
+            created_at: ts(),
+            model_slug: Some("anthropic/claude-opus-4-7".into()),
+            regime: Some("neutral".into()),
+            prompt_tokens: Some(123),
+            completion_tokens: Some(456),
+            latency_ms: Some(789),
+            critic_verdict: Some(serde_json::json!({
+                "demandsRevision": false,
+                "notes": "OK",
+                "confidence": 0.9
+            })),
+        };
+        let v = json(&payload);
+        for key in [
+            "id",
+            "portfolioId",
+            "reasoning",
+            "recommendation",
+            "confidence",
+            "triggeredBy",
+            "createdAt",
+            "modelSlug",
+            "regime",
+            "promptTokens",
+            "completionTokens",
+            "latencyMs",
+            "criticVerdict",
+        ] {
+            assert!(v.get(key).is_some(), "AgentDecision missing key {key}");
+        }
+        assert!(
+            v.get("portfolio_id").is_none(),
+            "AgentDecision leaked snake_case key"
+        );
+    }
+
+    #[test]
+    fn untagged_envelope_serializes_to_inner_payload() {
+        // The Rust `SseEvent` is `#[serde(untagged)]` — the JSON body is the
+        // inner payload only. The `event:` SSE field carries discrimination.
+        let inner = PriceTick {
+            symbol: "ETH".into(),
+            price_usd: 3500.0,
+            change_24h: 1.5,
+            source: "coingecko".into(),
+            fetched_at: ts(),
+        };
+        let envelope = SseEvent::PriceTick(inner.clone());
+        assert_eq!(json(&envelope), json(&inner));
+    }
+
+    #[test]
+    fn event_names_match_typescript_discriminators() {
+        // Event names are exactly what the frontend hook subscribes to.
+        let cases: &[(&str, SseEvent)] = &[
+            (
+                "price.tick",
+                SseEvent::PriceTick(PriceTick {
+                    symbol: "BTC".into(),
+                    price_usd: 0.0,
+                    change_24h: 0.0,
+                    source: "x".into(),
+                    fetched_at: ts(),
+                }),
+            ),
+            (
+                "regime.flip",
+                SseEvent::RegimeFlip(RegimeFlip {
+                    from: None,
+                    to: "neutral".into(),
+                    confidence: 0.0,
+                    signals: RegimeSignals {
+                        btc_vol_30d: 0.0,
+                        corr_90d: 0.0,
+                        max_drawdown: 0.0,
+                    },
+                    classified_at: ts(),
+                }),
+            ),
+        ];
+        for (expected, ev) in cases {
+            assert_eq!(ev.event_name(), *expected);
+        }
+    }
+}
