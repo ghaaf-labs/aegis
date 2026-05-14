@@ -26,6 +26,9 @@ pub enum AppError {
 
     #[error("internal error: {0}")]
     Internal(#[from] anyhow::Error),
+
+    #[error("serialization error: {0}")]
+    Serde(#[from] serde_json::Error),
 }
 
 impl IntoResponse for AppError {
@@ -42,6 +45,10 @@ impl IntoResponse for AppError {
             AppError::Internal(e) => {
                 tracing::error!("internal error: {e}");
                 (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR")
+            }
+            AppError::Serde(e) => {
+                tracing::error!("serde error: {e}");
+                (StatusCode::INTERNAL_SERVER_ERROR, "SERDE_ERROR")
             }
         };
 

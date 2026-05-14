@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guidance for Claude Code when working on Aegis. **Read [`docs/`](./docs/) first.**
+Guidance for Claude Code when working on Aegis. **Read [`docs/`](./docs/) first** — especially [`docs/06-harness.md`](./docs/06-harness.md) for how this repo uses Claude Code's skills, subagents, and hooks.
 
 ## What this is
 

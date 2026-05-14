@@ -5,4 +5,4 @@ pub mod market_data;
 pub mod portfolio;
 pub mod rebalance;
 pub mod risk_engine;
-pub mod websocket;
+pub mod sse;

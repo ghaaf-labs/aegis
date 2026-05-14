@@ -1,3 +1,8 @@
+pub mod regime;
+
+#[allow(unused_imports)]
+pub use regime::{classify, compute_signals, MarketRegime, RegimeClassification, RegimeSignals};
+
 use crate::modules::market_data::AssetPrice;
 use crate::modules::portfolio::models::Allocation;
 

@@ -53,14 +53,15 @@
 
 ## Project docs
 
-The engineering writeup lives in [`docs/`](./docs/) — six short essays in the OpenAI "harness engineering" style:
+The engineering writeup lives in [`docs/`](./docs/) — seven short essays in the OpenAI "harness engineering" style:
 
 1. [`00-overview.md`](./docs/00-overview.md) — what Aegis is and the constraint
 2. [`01-architecture.md`](./docs/01-architecture.md) — the agent loop and module map
-3. [`02-agent-design.md`](./docs/02-agent-design.md) — multi-model routing, prompt structure, the "map not manual" rule
+3. [`02-agent-design.md`](./docs/02-agent-design.md) — multi-model routing, prompt files, the "map not manual" rule
 4. [`03-circle-stack.md`](./docs/03-circle-stack.md) — how each Circle product earns its place
 5. [`04-design-system.md`](./docs/04-design-system.md) — neo-brutalism tokens and the two-accent rule
 6. [`05-open-questions.md`](./docs/05-open-questions.md) — the honest unsolved list
+7. [`06-harness.md`](./docs/06-harness.md) — Claude Code harness setup for this repo (skills, subagents, hooks)
 
 ## Monorepo
 

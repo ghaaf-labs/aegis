@@ -9,7 +9,10 @@ use tower_http::{
     trace::TraceLayer,
 };
 
-use crate::modules::{agent, auth, market_data, portfolio, rebalance, websocket};
+use crate::modules::{
+    agent, ai, auth, market_data, portfolio, rebalance,
+    sse::{self, SseSender},
+};
 use crate::{config::Config, db::Db};
 
 pub type AppState = Arc<AppStateInner>;
@@ -18,17 +21,30 @@ pub struct AppStateInner {
     pub db: Db,
     pub config: Config,
     pub http: reqwest::Client,
+    pub sse: SseSender,
+    pub prompts: Arc<ai::PromptRegistry>,
 }
 
 pub async fn build(db: Db, config: Config) -> Router {
+    let http = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .expect("failed to build HTTP client");
+
+    let sse_tx = sse::new_channel();
+    let prompts = Arc::new(ai::PromptRegistry::load().await);
+
     let state = Arc::new(AppStateInner {
         db,
-        config,
-        http: reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .expect("failed to build HTTP client"),
+        config: config.clone(),
+        http: http.clone(),
+        sse: sse_tx.clone(),
+        prompts,
     });
+
+    // Spawn the price ticker once the channel exists. It runs for the
+    // process lifetime; if no clients are subscribed it noops cheaply.
+    sse::spawn_price_ticker(http, Arc::new(config), sse_tx);
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -66,8 +82,8 @@ pub async fn build(db: Db, config: Config) -> Router {
             get(agent::handlers::decisions),
         )
         .route("/agent/analyze", post(agent::handlers::analyze))
-        // WebSocket
-        .route("/ws", get(websocket::handler))
+        // SSE
+        .route("/sse", get(sse::handler))
         // Layers
         .layer(cors)
         .layer(TraceLayer::new_for_http())
