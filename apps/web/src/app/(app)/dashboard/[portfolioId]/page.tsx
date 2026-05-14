@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useParams } from "next/navigation";
 import { PortfolioSummaryCard } from "@/components/dashboard/portfolio-summary-card";
@@ -9,6 +9,7 @@ import { AssetTable } from "@/components/dashboard/asset-table";
 import { AgentReasoningFeed } from "@/components/agent/reasoning-feed";
 import { PerformanceChart } from "@/components/dashboard/performance-chart";
 import { MarketOverview } from "@/components/dashboard/market-overview";
+import { DiaryVisibilityToggle } from "@/components/settings/diary-visibility-toggle";
 import { usePortfolioStore } from "@/stores/portfolio";
 
 const stagger = { visible: { transition: { staggerChildren: 0.08 } } };
@@ -26,6 +27,7 @@ const fadeUp = {
 export default function PortfolioDashboardPage() {
   const params = useParams<{ portfolioId: string }>();
   const setActive = usePortfolioStore((s) => s.setActivePortfolio);
+  const [diaryPublic, setDiaryPublic] = useState(false);
 
   useEffect(() => {
     if (params?.portfolioId) setActive(params.portfolioId);
@@ -63,6 +65,18 @@ export default function PortfolioDashboardPage() {
       >
         <AssetTable />
         <AgentReasoningFeed />
+      </motion.div>
+
+      <motion.div variants={fadeUp}>
+        <DiaryVisibilityToggle
+          initialPublic={diaryPublic}
+          onChange={async (next) => {
+            // Backend wiring lands in Sprint 4 (settings PATCH route).
+            // Component is rendered here so the surface is reachable and
+            // the diary opt-in flow is discoverable from the dashboard.
+            setDiaryPublic(next);
+          }}
+        />
       </motion.div>
     </motion.div>
   );
