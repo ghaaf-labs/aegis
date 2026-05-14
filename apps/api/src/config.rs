@@ -80,6 +80,53 @@ pub struct Config {
     /// When true, the `Secure` flag is set on the auth cookie. Default true
     /// in production; flip to false for `http://localhost` dev.
     pub session_cookie_secure: bool,
+
+    // ── Sprint 3: cross-chain execution ───────────────────────────────────
+    /// Circle CCTP V2 attestation API base URL.
+    #[allow(dead_code)]
+    pub cctp_attestation_url: String,
+    /// Max wall-clock seconds we'll wait for a CCTP attestation. Default 180.
+    #[allow(dead_code)]
+    pub cctp_attestation_timeout_secs: u64,
+    /// EOA private key (hex, 0x-prefixed) used to submit transactions on Arc.
+    /// Empty in mock mode.
+    #[allow(dead_code)]
+    pub chain_private_key_arc: String,
+    /// EOA private key for Base Sepolia transactions.
+    #[allow(dead_code)]
+    pub chain_private_key_base: String,
+    /// When true, the executor / cross-chain client skip real RPC calls and
+    /// return deterministic mock receipts. Defaults to true so CI is hermetic.
+    pub execution_mock: bool,
+
+    // ── Sprint 3: scheduler ───────────────────────────────────────────────
+    /// Tick cadence (seconds) for the per-portfolio drift watcher.
+    pub scheduler_tick_secs: u64,
+    /// Per-portfolio cooldown (seconds) — no decision emitted within this
+    /// window after one already landed.
+    pub scheduler_cooldown_secs: u64,
+    /// Harvestable-losses threshold (USD). Below this, no harvest signal.
+    pub harvest_threshold_usd: f64,
+
+    // ── Sprint 3: digest ──────────────────────────────────────────────────
+    /// Hour of day (UTC) when the digest worker fires. 0–23.
+    #[allow(dead_code)]
+    pub digest_hour_utc: u32,
+    /// Resend API key. Empty disables email sends.
+    #[allow(dead_code)]
+    pub resend_api_key: String,
+    /// Sender address (must be verified in Resend).
+    #[allow(dead_code)]
+    pub digest_from: String,
+    /// HMAC secret for digest unsubscribe tokens.
+    pub digest_secret: String,
+    /// Base URL used when building unsubscribe links. Usually the public
+    /// frontend URL.
+    #[allow(dead_code)]
+    pub public_base_url: String,
+    /// Base URL of this API service — used in emails so unsubscribe links
+    /// resolve to the backend route, not the frontend.
+    pub api_base_url: String,
 }
 
 impl Config {
@@ -134,6 +181,28 @@ impl Config {
             session_cookie_name: std::env::var("SESSION_COOKIE_NAME")
                 .unwrap_or_else(|_| "aegis_jwt".into()),
             session_cookie_secure: parse_or("SESSION_COOKIE_SECURE", false)?,
+
+            cctp_attestation_url: std::env::var("CCTP_ATTESTATION_URL")
+                .unwrap_or_else(|_| "https://iris-api-sandbox.circle.com".into()),
+            cctp_attestation_timeout_secs: parse_or("CCTP_ATTESTATION_TIMEOUT_SECS", 180)?,
+            chain_private_key_arc: std::env::var("CHAIN_PRIVATE_KEY_ARC").unwrap_or_default(),
+            chain_private_key_base: std::env::var("CHAIN_PRIVATE_KEY_BASE").unwrap_or_default(),
+            execution_mock: parse_or("EXECUTION_MOCK", true)?,
+
+            scheduler_tick_secs: parse_or("SCHEDULER_TICK_SECS", 300)?,
+            scheduler_cooldown_secs: parse_or("SCHEDULER_COOLDOWN_SECS", 1800)?,
+            harvest_threshold_usd: parse_or("HARVEST_THRESHOLD_USD", 50.0)?,
+
+            digest_hour_utc: parse_or("DIGEST_HOUR_UTC", 8)?,
+            resend_api_key: std::env::var("RESEND_API_KEY").unwrap_or_default(),
+            digest_from: std::env::var("DIGEST_FROM")
+                .unwrap_or_else(|_| "Aegis <noreply@aegis.local>".into()),
+            digest_secret: std::env::var("DIGEST_SECRET")
+                .unwrap_or_else(|_| "dev-digest-secret-change-me".into()),
+            public_base_url: std::env::var("PUBLIC_BASE_URL")
+                .unwrap_or_else(|_| "http://localhost:3000".into()),
+            api_base_url: std::env::var("API_BASE_URL")
+                .unwrap_or_else(|_| "http://localhost:8080".into()),
         })
     }
 
@@ -198,6 +267,20 @@ mod tests {
             cors_allow_origin: "http://localhost:3000".into(),
             session_cookie_name: "aegis_jwt".into(),
             session_cookie_secure: false,
+            cctp_attestation_url: "https://iris-api-sandbox.circle.com".into(),
+            cctp_attestation_timeout_secs: 180,
+            chain_private_key_arc: String::new(),
+            chain_private_key_base: String::new(),
+            execution_mock: true,
+            scheduler_tick_secs: 300,
+            scheduler_cooldown_secs: 1800,
+            harvest_threshold_usd: 50.0,
+            digest_hour_utc: 8,
+            resend_api_key: String::new(),
+            digest_from: "Aegis <noreply@aegis.local>".into(),
+            digest_secret: "test-secret".into(),
+            public_base_url: "http://localhost:3000".into(),
+            api_base_url: "http://localhost:8080".into(),
         }
     }
 
