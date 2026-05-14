@@ -328,6 +328,65 @@ export const ratesApi = {
     ),
 };
 
+// ── Backtest preview ──────────────────────────────────────────────────────
+
+export interface BacktestLegMetrics {
+  totalReturnPct: number;
+  sharpe: number;
+  maxDrawdownPct: number;
+  observations: number;
+}
+
+export interface BacktestResponse {
+  current: BacktestLegMetrics;
+  proposed: BacktestLegMetrics;
+  deltaTotalReturnPct: number;
+  windowDays: number;
+  reliable: boolean;
+}
+
+export const backtestApi = {
+  preview: (
+    portfolioId: string,
+    proposed?: Array<{ symbol: string; targetWeight: number }>,
+  ) =>
+    request<BacktestResponse>("/backtest/preview", {
+      method: "POST",
+      body: proposed ? { portfolioId, proposed } : { portfolioId },
+      authed: true,
+    }),
+};
+
+// ── Trustability + leaderboard ────────────────────────────────────────────
+
+export interface TrustabilityRow {
+  userId: string;
+  handle: string;
+  decisionsExecuted: number;
+  distinctModels: number;
+  avg7dReturn: number;
+  trustabilityDelta: number;
+  lastDecisionAt: string | null;
+}
+
+export interface TrustabilityResponse {
+  row: TrustabilityRow | null;
+  label: "excellent" | "strong" | "stable" | "shaky" | "underperforming" | null;
+}
+
+export const trustabilityApi = {
+  me: () => request<TrustabilityResponse>("/trustability/me", { authed: true }),
+};
+
+export interface LeaderboardEntry extends TrustabilityRow {
+  label: "excellent" | "strong" | "stable" | "shaky" | "underperforming";
+}
+
+export const leaderboardApi = {
+  top: (limit = 50) =>
+    request<LeaderboardEntry[]>(`/leaderboard?limit=${limit}`),
+};
+
 // ── Analytics (best-effort) ───────────────────────────────────────────────
 
 export const analyticsApi = {

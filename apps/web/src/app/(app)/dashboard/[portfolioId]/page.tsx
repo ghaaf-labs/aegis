@@ -10,6 +10,7 @@ import { AgentReasoningFeed } from "@/components/agent/reasoning-feed";
 import { PerformanceChart } from "@/components/dashboard/performance-chart";
 import { MarketOverview } from "@/components/dashboard/market-overview";
 import { DiaryVisibilityToggle } from "@/components/settings/diary-visibility-toggle";
+import { TrustabilityCard } from "@/components/dashboard/trustability-card";
 import { portfolioApi } from "@/lib/api";
 import { usePortfolioStore } from "@/stores/portfolio";
 
@@ -71,6 +72,10 @@ export default function PortfolioDashboardPage() {
         <PortfolioSummaryCard />
         <AllocationChart />
         <MarketOverview />
+      </motion.div>
+
+      <motion.div variants={fadeUp}>
+        <TrustabilityCard />
       </motion.div>
 
       <motion.div variants={fadeUp}>
