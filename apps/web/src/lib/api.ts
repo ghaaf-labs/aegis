@@ -37,6 +37,11 @@ async function request<T>(path: string, opts: FetchOptions = {}): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     method: opts.method ?? "GET",
     headers,
+    // `credentials: 'include'` ensures the httpOnly auth cookie set by the
+    // wallet endpoints rides on every cross-origin request. Backend CORS
+    // enables `Access-Control-Allow-Credentials` with a specific origin
+    // allow-list (no wildcard).
+    credentials: "include",
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   });
   if (!res.ok) {

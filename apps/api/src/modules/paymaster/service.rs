@@ -96,6 +96,9 @@ mod tests {
             base_rpc_url: "x".into(),
             gateway_poll_secs: 10,
             faucet_max_usdc_per_day: 100.0,
+            cors_allow_origin: "http://localhost:3000".into(),
+            session_cookie_name: "aegis_jwt".into(),
+            session_cookie_secure: false,
         }
     }
 
