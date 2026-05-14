@@ -55,7 +55,13 @@ export function CreateWalletCard() {
       await analyticsApi.track("wallet.created", { method: "passkey" });
       router.push("/onboarding");
     } catch (e) {
-      setError((e as Error).message);
+      // If the passkey path fails (user cancellation, sandbox hiccup, server
+      // rejection), drop into the OTP flow with the same email instead of
+      // dead-ending. The user still completes onboarding in one session.
+      const msg = (e as Error).message;
+      setError(`${msg} — switched to email code as a fallback.`);
+      setMode("otp-start");
+      void analyticsApi.track("wallet.passkey_fallback", { reason: msg });
     } finally {
       setSubmitting(false);
     }
@@ -186,13 +192,25 @@ export function CreateWalletCard() {
             </>
           )}
           {mode === "otp-verify" && (
-            <BrutalButton
-              variant="pnl"
-              onClick={() => void verifyOtp()}
-              disabled={code.length !== 6 || submitting}
-            >
-              {submitting ? "Verifying…" : "Verify & create wallet"}
-            </BrutalButton>
+            <>
+              <BrutalButton
+                variant="pnl"
+                onClick={() => void verifyOtp()}
+                disabled={code.length !== 6 || submitting}
+              >
+                {submitting ? "Verifying…" : "Verify & create wallet"}
+              </BrutalButton>
+              <BrutalButton
+                variant="ghost"
+                onClick={() => {
+                  setCode("");
+                  void startOtp();
+                }}
+                disabled={submitting}
+              >
+                Resend code
+              </BrutalButton>
+            </>
           )}
         </div>
       </BrutalCardBody>

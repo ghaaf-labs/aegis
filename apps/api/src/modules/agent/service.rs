@@ -219,13 +219,14 @@ pub async fn analyze_portfolio(
     let latency_ms = start.elapsed().as_millis() as i32;
     let recommendation_value = serde_json::to_value(&proposal.recommendation)?;
     let critic_value = serde_json::to_value(&verdict)?;
+    let snapshot_value = build_decision_snapshot(&portfolio, &allocations, &snapshot);
 
     let decision: AgentDecision = sqlx::query_as(
         r#"INSERT INTO agent_decisions
            (id, portfolio_id, reasoning, recommendation, confidence,
             triggered_by, model_slug, regime, prompt_tokens,
-            completion_tokens, latency_ms, critic_verdict)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            completion_tokens, latency_ms, critic_verdict, snapshot)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
            RETURNING *"#,
     )
     .bind(Uuid::new_v4())
@@ -240,6 +241,7 @@ pub async fn analyze_portfolio(
     .bind(completion_tokens as i32)
     .bind(latency_ms)
     .bind(&critic_value)
+    .bind(&snapshot_value)
     .fetch_one(&state.db)
     .await?;
 
@@ -417,6 +419,52 @@ fn format_goal_block(goal: &serde_json::Value) -> String {
     format!(
         "{name} · horizon {horizon} · risk {risk}{monthly} · USYC opt-in: {usyc} · EURC opt-in: {eurc} · targets: {allocations}"
     )
+}
+
+/// Snapshot the portfolio's holdings + per-asset prices at the moment of the
+/// decision. Persisted on `agent_decisions.snapshot` so the outcome compressor
+/// can compute *real* 24h deltas (vs. cumulative PnL) and the diary can render
+/// a counterfactual ("what if we'd done what we proposed?") instead of the
+/// Sprint 3 `realized + 0.5` placeholder.
+fn build_decision_snapshot(
+    portfolio: &Portfolio,
+    allocations: &[Allocation],
+    market: &MarketSnapshot,
+) -> serde_json::Value {
+    let mut price_by_symbol: HashMap<String, f64> = HashMap::with_capacity(market.assets.len());
+    for a in &market.assets {
+        price_by_symbol.insert(a.symbol.clone(), a.price_usd);
+    }
+
+    let holdings: Vec<serde_json::Value> = allocations
+        .iter()
+        .map(|a| {
+            // Prefer the market snapshot price; fall back to value/qty for
+            // assets the market data feed doesn't cover (e.g., USDC, USYC).
+            let price = price_by_symbol
+                .get(&a.asset_symbol)
+                .copied()
+                .unwrap_or_else(|| {
+                    if a.quantity.abs() > f64::EPSILON {
+                        a.value_usd / a.quantity
+                    } else {
+                        0.0
+                    }
+                });
+            json!({
+                "symbol": a.asset_symbol,
+                "quantity": a.quantity,
+                "priceUsd": price,
+                "valueUsd": a.value_usd,
+            })
+        })
+        .collect();
+
+    json!({
+        "capturedAt": market.captured_at,
+        "totalValueUsd": portfolio.total_value_usd,
+        "holdings": holdings,
+    })
 }
 
 fn format_allocations(allocations: &[Allocation]) -> String {

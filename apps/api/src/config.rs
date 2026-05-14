@@ -131,7 +131,7 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
-        Ok(Self {
+        let cfg = Self {
             database_url: required("DATABASE_URL")?,
             jwt_secret: required("JWT_SECRET")?,
             jwt_expiry_hours: parse_or("JWT_EXPIRY_HOURS", 24)?,
@@ -203,7 +203,56 @@ impl Config {
                 .unwrap_or_else(|_| "http://localhost:3000".into()),
             api_base_url: std::env::var("API_BASE_URL")
                 .unwrap_or_else(|_| "http://localhost:8080".into()),
-        })
+        };
+
+        cfg.validate()
+            .context("Config::from_env post-construction validation failed")?;
+        Ok(cfg)
+    }
+
+    /// Production-readiness checks: blow up at boot if a mock flag is OFF but
+    /// the required real-world credential is empty. Keeps dev/test ergonomic
+    /// while preventing a deploy from silently running with placeholder keys.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if !self.execution_mock {
+            if self.chain_private_key_arc.trim().is_empty() {
+                anyhow::bail!(
+                    "EXECUTION_MOCK=false but CHAIN_PRIVATE_KEY_ARC is empty; set it or flip EXECUTION_MOCK=true"
+                );
+            }
+            if self.chain_private_key_base.trim().is_empty() {
+                anyhow::bail!(
+                    "EXECUTION_MOCK=false but CHAIN_PRIVATE_KEY_BASE is empty; set it or flip EXECUTION_MOCK=true"
+                );
+            }
+        }
+        if !self.circle_mock && self.circle_api_key.trim().is_empty() {
+            anyhow::bail!(
+                "MOCK_CIRCLE=false but CIRCLE_API_KEY is empty; set it or flip MOCK_CIRCLE=true"
+            );
+        }
+        // If we will actually send mail, the unsubscribe-token secret must not
+        // be the publicly-checked-in default.
+        if !self.resend_api_key.trim().is_empty()
+            && self.digest_secret == "dev-digest-secret-change-me"
+        {
+            anyhow::bail!(
+                "RESEND_API_KEY is set but DIGEST_SECRET is still the dev default; rotate DIGEST_SECRET before sending real mail"
+            );
+        }
+        // Production deploy hygiene: secure-cookie deploys need a real CORS
+        // origin (not the localhost dev fallback).
+        if self.session_cookie_secure
+            && self
+                .cors_allow_origin
+                .split(',')
+                .all(|o| o.trim().starts_with("http://localhost"))
+        {
+            anyhow::bail!(
+                "SESSION_COOKIE_SECURE=true requires a non-localhost CORS_ALLOW_ORIGIN; set it to your public frontend URL"
+            );
+        }
+        Ok(())
     }
 
     /// Resolve a `ModelRoute` to its configured OpenRouter slug.
