@@ -1,8 +1,14 @@
 pub mod agent;
 pub mod ai;
-pub mod auth;
+pub mod analytics;
+pub mod faucet;
+pub mod fx;
+pub mod gateway;
 pub mod market_data;
+pub mod paymaster;
 pub mod portfolio;
 pub mod rebalance;
 pub mod risk_engine;
 pub mod sse;
+pub mod treasury;
+pub mod wallet;

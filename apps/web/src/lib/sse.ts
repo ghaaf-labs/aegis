@@ -58,7 +58,10 @@ export function useEventSource(
 
     const open = () => {
       if (cancelled) return;
-      source = new EventSource(url, { withCredentials: false });
+      // withCredentials forwards the httpOnly auth cookie set by the
+      // wallet endpoints. The middleware also accepts `?token=` so the
+      // current bridge keeps working when the cookie isn't yet present.
+      source = new EventSource(url, { withCredentials: true });
 
       source.onopen = () => {
         if (cancelled) return;

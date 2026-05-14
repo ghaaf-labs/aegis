@@ -2,11 +2,11 @@
 
 import { TrendingUp, TrendingDown, Wallet } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { usePortfolioStore } from "@/stores/portfolio";
+import { useActivePortfolio } from "@/stores/portfolio";
 import { formatCurrency, formatPercent, changeColor } from "@/lib/utils";
 
 export function PortfolioSummaryCard() {
-  const portfolio = usePortfolioStore((s) => s.portfolio);
+  const portfolio = useActivePortfolio();
 
   if (!portfolio) {
     return (

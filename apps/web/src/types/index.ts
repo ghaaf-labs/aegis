@@ -1,8 +1,10 @@
 export type {
   Asset,
   AssetPrice,
+  AssetSymbol,
   Allocation,
   Portfolio,
+  PortfolioId,
   UserProfile,
   AgentDecision,
   AgentTrigger,
@@ -23,4 +25,7 @@ export type {
   RegimeSignals,
   RebalanceStatus,
   GatewayBalance,
+  WalletInfo,
+  PortfolioGoal,
+  GoalHorizon,
 } from "@aegis/shared";
