@@ -173,7 +173,7 @@ function ShareBlock({ decisionId }: { decisionId: string }) {
     window.open(intentUrl, "_blank", "noopener,noreferrer");
   };
   return (
-    <div className="mt-4 border-2 border-emerald-500/30 bg-emerald-500/5 p-3 flex items-center justify-between">
+    <div className="mt-4 border-2 border-emerald-500/30 bg-emerald-500/5 p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
       <div>
         <p className="text-xs font-semibold text-emerald-200">
           Rebalance complete
@@ -186,7 +186,7 @@ function ShareBlock({ decisionId }: { decisionId: string }) {
       <button
         type="button"
         onClick={handle}
-        className="px-3 py-1.5 text-xs font-semibold border-2 border-emerald-300 bg-emerald-500 text-black hover:bg-emerald-400 transition-colors"
+        className="self-start sm:self-auto px-3 py-1.5 text-xs font-semibold border-2 border-emerald-300 bg-emerald-500 text-black hover:bg-emerald-400 transition-colors"
       >
         Share to X
       </button>
