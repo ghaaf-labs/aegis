@@ -12,7 +12,6 @@ path = "src/main.rs"
 [dependencies]
 # Web framework
 axum = { version = "0.7", features = ["macros", "multipart"] }
-tower = { version = "0.5", features = ["full"] }
 tower-http = { version = "0.6", features = ["cors", "trace", "compression-gzip"] }
 
 # Async runtime
@@ -24,9 +23,13 @@ futures-util = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# Database — `default-features = false` keeps `sqlx-mysql` + `sqlite` out of
-# the dep tree (closes RUSTSEC-2023-0071, the rsa Marvin Attack pulled in by
-# sqlx-mysql). We only target PostgreSQL.
+# Database — `default-features = false` drops `any`. The `macros` feature is
+# required for `#[derive(FromRow)]`. sqlx-macros-core 0.8.6 declares
+# sqlx-{postgres,mysql,sqlite} as non-optional deps so all three appear in
+# Cargo.lock — none are actually compiled into the binary, but they cause
+# cargo-audit to flag RUSTSEC-2023-0071 (rsa via sqlx-mysql). Suppressed in
+# deny.toml + audit.toml with the rationale that the affected code path
+# is not reachable from this binary.
 sqlx = { version = "0.8", default-features = false, features = [
   "postgres",
   "runtime-tokio-rustls",
