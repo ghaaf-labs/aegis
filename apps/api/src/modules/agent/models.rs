@@ -26,6 +26,12 @@ pub struct AgentDecision {
     pub latency_ms: Option<i32>,
     #[sqlx(default)]
     pub critic_verdict: Option<serde_json::Value>,
+
+    /// Sprint 4: prices + holdings captured at decision time. Powers the
+    /// outcome compressor's real-delta computation and the diary's
+    /// counterfactual replay. Empty `{}` for legacy rows.
+    #[sqlx(default)]
+    pub snapshot: serde_json::Value,
 }
 
 #[allow(dead_code)]

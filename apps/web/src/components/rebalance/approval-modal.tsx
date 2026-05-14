@@ -4,11 +4,26 @@ import { useState } from "react";
 
 import { rebalanceApi, type RebalancePlanResponse } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { BacktestPreview } from "@/components/rebalance/backtest-preview";
+
+function formatRelativeSeconds(at: Date): string {
+  const secs = Math.max(0, Math.round((Date.now() - at.getTime()) / 1000));
+  if (secs < 60) return `${secs}s ago`;
+  if (secs < 3600) return `${Math.round(secs / 60)}m ago`;
+  return `${Math.round(secs / 3600)}h ago`;
+}
 
 export interface ApprovalModalProps {
   open: boolean;
   plan: RebalancePlanResponse | null;
+  /** Drives the inline backtest preview. Defaults to no preview when null. */
+  portfolioId?: string | null;
   estimatedFeeUsdc: number;
+  /** When the fee number was fetched. Drives the provenance line. */
+  feeFetchedAt?: Date | null;
+  /** Where the fee came from — `plan` is the planner-time stored value;
+   *  `paymaster` is a live quote from `GET /paymaster/estimate`. */
+  feeSource?: "plan" | "paymaster";
   /** Optional per-user / per-portfolio context surfaced in the header. */
   portfolioName?: string;
   onApproved: (rebalanceId: string) => void;
@@ -27,7 +42,10 @@ const KIND_LABEL: Record<string, string> = {
 export function ApprovalModal({
   open,
   plan,
+  portfolioId,
   estimatedFeeUsdc,
+  feeFetchedAt,
+  feeSource = "plan",
   portfolioName,
   onApproved,
   onClose,
@@ -106,6 +124,8 @@ export function ApprovalModal({
             ))}
           </ol>
 
+          <BacktestPreview portfolioId={portfolioId ?? null} />
+
           <div className="bg-black/40 border border-white/5 p-3 text-xs font-mono mb-4">
             <div className="flex justify-between text-gray-400">
               <span>Paymaster (USDC gas)</span>
@@ -119,6 +139,16 @@ export function ApprovalModal({
                 $
                 {plan.legs.reduce((acc, l) => acc + l.amountUsdc, 0).toFixed(2)}
               </span>
+            </div>
+            <div className="text-[10px] text-gray-500 mt-2">
+              via{" "}
+              {feeSource === "paymaster" ? "Circle Paymaster" : "plan estimate"}
+              {feeFetchedAt && (
+                <>
+                  {" · "}
+                  {formatRelativeSeconds(feeFetchedAt)}
+                </>
+              )}
             </div>
           </div>
 

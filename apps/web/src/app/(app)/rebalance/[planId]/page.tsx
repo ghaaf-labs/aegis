@@ -3,7 +3,7 @@
 import { useEffect, useState, use } from "react";
 import { useRouter } from "next/navigation";
 
-import { rebalanceApi } from "@/lib/api";
+import { rebalanceApi, ratesApi } from "@/lib/api";
 import { ApprovalModal } from "@/components/rebalance/approval-modal";
 import { ExecutionTrace } from "@/components/rebalance/execution-trace";
 
@@ -25,6 +25,9 @@ export default function RebalancePage({ params }: PageProps) {
 
   const [showApproval, setShowApproval] = useState(true);
   const [estimatedFee, setEstimatedFee] = useState(0);
+  const [feeFetchedAt, setFeeFetchedAt] = useState<Date | null>(null);
+  const [feeSource, setFeeSource] = useState<"plan" | "paymaster">("plan");
+  const [portfolioId, setPortfolioId] = useState<string | null>(null);
   const [plan, setPlan] = useState<{
     rebalanceId: string;
     decisionId: string;
@@ -48,6 +51,7 @@ export default function RebalancePage({ params }: PageProps) {
       .get(planId)
       .then((detail) => {
         if (cancelled) return;
+        setPortfolioId(detail.portfolioId);
         // Pre-approval: render the approval modal.
         setPlan({
           rebalanceId: detail.id,
@@ -64,11 +68,32 @@ export default function RebalancePage({ params }: PageProps) {
           })),
         });
         setEstimatedFee(detail.totalGasUsdc ?? 0);
+        setFeeFetchedAt(new Date());
+        setFeeSource("plan");
         // If the plan is already past 'planned' state, skip approval modal.
         if (detail.status !== "planned") {
           setShowApproval(false);
           setApproved(true);
         }
+        // Refresh from Paymaster live so the user sees the current quote, not
+        // the stale planner-time estimate. The destination chain of the first
+        // cross-chain leg drives the lookup; default to arc.
+        const firstCrossChain = detail.legs.find(
+          (l) => l.kind === "cross_chain_burn" || l.kind === "cross_chain_mint",
+        );
+        const chain: "arc" | "base" =
+          (firstCrossChain?.destChain as "arc" | "base" | undefined) ?? "arc";
+        ratesApi
+          .paymasterEstimate(chain, "rebalance")
+          .then((quote) => {
+            if (cancelled) return;
+            setEstimatedFee(quote.feeUsdc);
+            setFeeFetchedAt(new Date());
+            setFeeSource("paymaster");
+          })
+          .catch(() => {
+            // Plan-time estimate is still shown; the provenance line says so.
+          });
       })
       .catch((e) =>
         setLoadError(e instanceof Error ? e.message : "load failed"),
@@ -110,7 +135,10 @@ export default function RebalancePage({ params }: PageProps) {
         <ApprovalModal
           open={showApproval && plan !== null}
           plan={plan}
+          portfolioId={portfolioId}
           estimatedFeeUsdc={estimatedFee}
+          feeFetchedAt={feeFetchedAt}
+          feeSource={feeSource}
           onApproved={() => {
             setShowApproval(false);
             setApproved(true);

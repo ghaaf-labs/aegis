@@ -68,10 +68,14 @@ export interface WalletAuthResponse {
 }
 
 export const walletApi = {
-  createPasskey: (email: string, passkeyAttestation: unknown) =>
+  createPasskey: (
+    email: string,
+    passkeyAttestation: unknown,
+    referrerHandle?: string,
+  ) =>
     request<WalletAuthResponse>("/auth/wallet/create", {
       method: "POST",
-      body: { email, passkeyAttestation },
+      body: { email, passkeyAttestation, referrerHandle },
     }),
   loginPasskey: (email: string, passkeyAssertion: unknown) =>
     request<WalletAuthResponse>("/auth/wallet/login", {
@@ -83,10 +87,10 @@ export const walletApi = {
       "/auth/wallet/otp/start",
       { method: "POST", body: { email } },
     ),
-  verifyOtp: (email: string, code: string) =>
+  verifyOtp: (email: string, code: string, referrerHandle?: string) =>
     request<WalletAuthResponse>("/auth/wallet/otp/verify", {
       method: "POST",
-      body: { email, code },
+      body: { email, code, referrerHandle },
     }),
   me: () =>
     request<{ id: string; email: string; riskTolerance: string }>("/auth/me", {
@@ -157,6 +161,16 @@ export const portfolioApi = {
       method: "POST",
       authed: true,
     }),
+  getDiaryPublic: (id: string) =>
+    request<{ id: string; diaryPublic: boolean }>(
+      `/portfolios/${id}/diary-public`,
+      { authed: true },
+    ),
+  setDiaryPublic: (id: string, diaryPublic: boolean) =>
+    request<{ id: string; diaryPublic: boolean }>(
+      `/portfolios/${id}/diary-public`,
+      { method: "PATCH", body: { diaryPublic }, authed: true },
+    ),
 };
 
 // ── Market ─────────────────────────────────────────────────────────────────
@@ -316,6 +330,65 @@ export const ratesApi = {
     }>(
       `/paymaster/estimate?chain=${chain}&action=${encodeURIComponent(action)}`,
     ),
+};
+
+// ── Backtest preview ──────────────────────────────────────────────────────
+
+export interface BacktestLegMetrics {
+  totalReturnPct: number;
+  sharpe: number;
+  maxDrawdownPct: number;
+  observations: number;
+}
+
+export interface BacktestResponse {
+  current: BacktestLegMetrics;
+  proposed: BacktestLegMetrics;
+  deltaTotalReturnPct: number;
+  windowDays: number;
+  reliable: boolean;
+}
+
+export const backtestApi = {
+  preview: (
+    portfolioId: string,
+    proposed?: Array<{ symbol: string; targetWeight: number }>,
+  ) =>
+    request<BacktestResponse>("/backtest/preview", {
+      method: "POST",
+      body: proposed ? { portfolioId, proposed } : { portfolioId },
+      authed: true,
+    }),
+};
+
+// ── Trustability + leaderboard ────────────────────────────────────────────
+
+export interface TrustabilityRow {
+  userId: string;
+  handle: string;
+  decisionsExecuted: number;
+  distinctModels: number;
+  avg7dReturn: number;
+  trustabilityDelta: number;
+  lastDecisionAt: string | null;
+}
+
+export interface TrustabilityResponse {
+  row: TrustabilityRow | null;
+  label: "excellent" | "strong" | "stable" | "shaky" | "underperforming" | null;
+}
+
+export const trustabilityApi = {
+  me: () => request<TrustabilityResponse>("/trustability/me", { authed: true }),
+};
+
+export interface LeaderboardEntry extends TrustabilityRow {
+  label: "excellent" | "strong" | "stable" | "shaky" | "underperforming";
+}
+
+export const leaderboardApi = {
+  top: (limit = 50) =>
+    request<LeaderboardEntry[]>(`/leaderboard?limit=${limit}`),
 };
 
 // ── Analytics (best-effort) ───────────────────────────────────────────────

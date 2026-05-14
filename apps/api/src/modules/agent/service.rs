@@ -21,14 +21,16 @@ use uuid::Uuid;
 
 use super::memory;
 use super::models::{AgentDecision, AnalyzeRequest};
+use super::tools;
 use crate::config::ModelRoute;
-use crate::modules::ai::{Message, OpenRouterClient, PromptKey};
+use crate::modules::ai::{ChatToolResult, Message, OpenRouterClient, PromptKey};
 use crate::modules::fx;
 use crate::modules::market_data::MarketSnapshot;
 use crate::modules::portfolio::models::{Allocation, Portfolio};
 use crate::modules::risk_engine::{self, RegimeClassification};
 use crate::modules::sse::{
-    AgentDecisionPayload, RegimeFlip, RegimeSignals as SseRegimeSignals, SseEvent,
+    AgentAbstainedPayload, AgentDecisionPayload, AgentToolInvokedPayload, RegimeFlip,
+    RegimeSignals as SseRegimeSignals, SseEvent,
 };
 use crate::modules::treasury;
 use crate::router::AppState;
@@ -145,15 +147,17 @@ pub async fn analyze_portfolio(
         }
     }
     let strategist_prompt = state.prompts.render(PromptKey::Strategist, &strategist_ctx);
-    let strategist = ai
-        .chat(
-            ModelRoute::RebalanceReason,
-            vec![
-                Message::system(strategist_prompt),
-                Message::user("Propose a rebalance, or recommend hold."),
-            ],
-        )
-        .await?;
+    // Tool-aware strategist loop. The model can call `fetch_news`,
+    // `fetch_onchain_metric`, `fetch_correlation` up to MAX_TOOL_ITERATIONS-1
+    // times; the final iteration forces a JSON proposal output.
+    let strategist = run_strategist_with_tools(
+        state,
+        &ai,
+        portfolio.user_id,
+        req.portfolio_id,
+        &strategist_prompt,
+    )
+    .await?;
     if strategist.was_slow(STRATEGIST_SLOW_MS) {
         warn!(
             "strategist call slow: {}ms (budget {STRATEGIST_SLOW_MS}ms) model={}",
@@ -210,6 +214,19 @@ pub async fn analyze_portfolio(
 
     // 7. Decide on triggered_by — abstain if the strategist isn't confident.
     let final_triggered_by = if proposal.confidence < ABSTAIN_CONFIDENCE_THRESHOLD {
+        let _ = state
+            .sse
+            .send(SseEvent::AgentAbstained(AgentAbstainedPayload {
+                user_id: portfolio.user_id,
+                portfolio_id: req.portfolio_id,
+                confidence: proposal.confidence,
+                reason: if proposal.reasoning.is_empty() {
+                    "confidence below threshold".to_string()
+                } else {
+                    proposal.reasoning.clone()
+                },
+                decided_at: chrono::Utc::now(),
+            }));
         "abstain".to_string()
     } else {
         triggered_by
@@ -219,13 +236,14 @@ pub async fn analyze_portfolio(
     let latency_ms = start.elapsed().as_millis() as i32;
     let recommendation_value = serde_json::to_value(&proposal.recommendation)?;
     let critic_value = serde_json::to_value(&verdict)?;
+    let snapshot_value = build_decision_snapshot(&portfolio, &allocations, &snapshot);
 
     let decision: AgentDecision = sqlx::query_as(
         r#"INSERT INTO agent_decisions
            (id, portfolio_id, reasoning, recommendation, confidence,
             triggered_by, model_slug, regime, prompt_tokens,
-            completion_tokens, latency_ms, critic_verdict)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            completion_tokens, latency_ms, critic_verdict, snapshot)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
            RETURNING *"#,
     )
     .bind(Uuid::new_v4())
@@ -240,6 +258,7 @@ pub async fn analyze_portfolio(
     .bind(completion_tokens as i32)
     .bind(latency_ms)
     .bind(&critic_value)
+    .bind(&snapshot_value)
     .fetch_one(&state.db)
     .await?;
 
@@ -417,6 +436,178 @@ fn format_goal_block(goal: &serde_json::Value) -> String {
     format!(
         "{name} · horizon {horizon} · risk {risk}{monthly} · USYC opt-in: {usyc} · EURC opt-in: {eurc} · targets: {allocations}"
     )
+}
+
+/// Tool-aware strategist call. Runs up to `MAX_TOOL_ITERATIONS - 1` rounds
+/// of tool use; the last iteration is `force_final=true` so the model has to
+/// emit a JSON proposal we can parse.
+///
+/// Aggregates token usage + latency across iterations and reports each tool
+/// invocation over SSE as `agent.tool.invoked`.
+async fn run_strategist_with_tools(
+    state: &AppState,
+    ai: &OpenRouterClient<'_>,
+    user_id: Uuid,
+    portfolio_id: Uuid,
+    system_prompt: &str,
+) -> crate::error::Result<crate::modules::ai::ChatResponse> {
+    use serde_json::json;
+
+    let tool_specs = tools::tool_specs();
+    let mut messages: Vec<serde_json::Value> = vec![
+        json!({ "role": "system", "content": system_prompt }),
+        json!({
+            "role": "user",
+            "content": "Propose a rebalance, or recommend hold. Use the tools when a signal would change the proposal; do not stack tool calls when you can already answer."
+        }),
+    ];
+
+    let mut total_prompt = 0u32;
+    let mut total_completion = 0u32;
+    let mut total_latency = 0u64;
+    let mut model_slug = state.config.model_strategist.clone();
+
+    for iter in 0..tools::MAX_TOOL_ITERATIONS {
+        let is_last = iter == tools::MAX_TOOL_ITERATIONS - 1;
+        let result = ai
+            .chat_with_tools(ModelRoute::RebalanceReason, &messages, &tool_specs, is_last)
+            .await
+            .map_err(|e| {
+                crate::error::AppError::Internal(anyhow::anyhow!("strategist tool-call: {e}"))
+            })?;
+
+        match result {
+            ChatToolResult::Final {
+                content,
+                model_slug: slug,
+                prompt_tokens,
+                completion_tokens,
+                latency_ms,
+            } => {
+                total_prompt = total_prompt.saturating_add(prompt_tokens);
+                total_completion = total_completion.saturating_add(completion_tokens);
+                total_latency = total_latency.saturating_add(latency_ms);
+                model_slug = slug;
+                return Ok(crate::modules::ai::ChatResponse {
+                    content,
+                    model_slug,
+                    prompt_tokens: total_prompt,
+                    completion_tokens: total_completion,
+                    latency_ms: total_latency,
+                });
+            }
+            ChatToolResult::Calls {
+                calls,
+                assistant_message,
+                model_slug: slug,
+                prompt_tokens,
+                completion_tokens,
+                latency_ms,
+            } => {
+                total_prompt = total_prompt.saturating_add(prompt_tokens);
+                total_completion = total_completion.saturating_add(completion_tokens);
+                total_latency = total_latency.saturating_add(latency_ms);
+                model_slug = slug;
+
+                // Append the assistant's tool-call message verbatim so the
+                // next request has the full call trail.
+                messages.push(assistant_message);
+
+                for call in calls.iter() {
+                    let call_start = std::time::Instant::now();
+                    let payload = tools::dispatch(state, call).await;
+                    let call_latency = call_start.elapsed().as_millis() as i32;
+                    debug!(
+                        tool=%call.name, latency_ms=%call_latency,
+                        "agent tool invoked"
+                    );
+                    let _ = state
+                        .sse
+                        .send(SseEvent::AgentToolInvoked(AgentToolInvokedPayload {
+                            user_id,
+                            portfolio_id,
+                            tool_name: call.name.clone(),
+                            result_preview: truncate_preview(&payload, 200),
+                            latency_ms: call_latency,
+                            invoked_at: chrono::Utc::now(),
+                        }));
+                    messages.push(tools::tool_message(&call.id, payload));
+                }
+            }
+        }
+    }
+
+    // Shouldn't be reachable — `is_last=true` forces a Final on the last
+    // iteration. Belt-and-braces: return a placeholder so the persisted
+    // decision still records the work done.
+    Ok(crate::modules::ai::ChatResponse {
+        content: serde_json::json!({
+            "reasoning": "Tool loop exhausted without final proposal.",
+            "confidence": 0.0,
+            "recommendation": { "summary": "Hold", "trades": [], "expectedImpact": {} }
+        })
+        .to_string(),
+        model_slug,
+        prompt_tokens: total_prompt,
+        completion_tokens: total_completion,
+        latency_ms: total_latency,
+    })
+}
+
+fn truncate_preview(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(max - 1).collect();
+        out.push('…');
+        out
+    }
+}
+
+/// Snapshot the portfolio's holdings + per-asset prices at the moment of the
+/// decision. Persisted on `agent_decisions.snapshot` so the outcome compressor
+/// can compute *real* 24h deltas (vs. cumulative PnL) and the diary can render
+/// a counterfactual ("what if we'd done what we proposed?") instead of the
+/// Sprint 3 `realized + 0.5` placeholder.
+fn build_decision_snapshot(
+    portfolio: &Portfolio,
+    allocations: &[Allocation],
+    market: &MarketSnapshot,
+) -> serde_json::Value {
+    let mut price_by_symbol: HashMap<String, f64> = HashMap::with_capacity(market.assets.len());
+    for a in &market.assets {
+        price_by_symbol.insert(a.symbol.clone(), a.price_usd);
+    }
+
+    let holdings: Vec<serde_json::Value> = allocations
+        .iter()
+        .map(|a| {
+            // Prefer the market snapshot price; fall back to value/qty for
+            // assets the market data feed doesn't cover (e.g., USDC, USYC).
+            let price = price_by_symbol
+                .get(&a.asset_symbol)
+                .copied()
+                .unwrap_or_else(|| {
+                    if a.quantity.abs() > f64::EPSILON {
+                        a.value_usd / a.quantity
+                    } else {
+                        0.0
+                    }
+                });
+            json!({
+                "symbol": a.asset_symbol,
+                "quantity": a.quantity,
+                "priceUsd": price,
+                "valueUsd": a.value_usd,
+            })
+        })
+        .collect();
+
+    json!({
+        "capturedAt": market.captured_at,
+        "totalValueUsd": portfolio.total_value_usd,
+        "holdings": holdings,
+    })
 }
 
 fn format_allocations(allocations: &[Allocation]) -> String {

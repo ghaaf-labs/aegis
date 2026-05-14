@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { Shield } from "lucide-react";
 import Link from "next/link";
 import { CreateWalletCard } from "@/components/wallet/create-wallet-card";
@@ -7,6 +8,12 @@ export const metadata = {
   description:
     "Create your Circle Wallet — passkey or email code, no seed phrase.",
 };
+
+function WalletCardSkeleton() {
+  return (
+    <div className="max-w-md mx-auto h-64 border-2 border-white/10 bg-[#141414] animate-pulse" />
+  );
+}
 
 export default function SignupPage() {
   return (
@@ -23,7 +30,12 @@ export default function SignupPage() {
             Aegis
           </span>
         </Link>
-        <CreateWalletCard />
+        {/* CreateWalletCard reads `?ref=` via useSearchParams (referral
+            attribution, Sprint 4). Next.js 15 requires a Suspense boundary
+            around any child that calls useSearchParams during SSG. */}
+        <Suspense fallback={<WalletCardSkeleton />}>
+          <CreateWalletCard />
+        </Suspense>
         <p className="mt-6 text-center text-xs font-mono text-text-mut">
           Just looking?{" "}
           <Link href="/explore" className="text-accent-agent hover:underline">

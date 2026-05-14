@@ -1,0 +1,110 @@
+# Aegis API on k3s. Pair with infra/k3s/{postgres,caddy,aegis-web}.yaml.
+#
+# Secrets expected (create with `kubectl create secret generic aegis-api ...`):
+#   - jwt-secret
+#   - digest-secret
+#   - openrouter-api-key
+#   - circle-api-key            (when MOCK_CIRCLE=false)
+#   - chain-private-key-arc     (when EXECUTION_MOCK=false)
+#   - chain-private-key-base    (when EXECUTION_MOCK=false)
+#   - resend-api-key            (when sending real digest mail)
+#   - database-url              (postgres://aegis:.../aegis)
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aegis-api
+  labels: { app: aegis-api }
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  selector:
+    matchLabels: { app: aegis-api }
+  template:
+    metadata:
+      labels: { app: aegis-api }
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/mohijalili/aegis-api:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - { name: API_HOST, value: "0.0.0.0" }
+            - { name: API_PORT, value: "8080" }
+            - {
+                name: OPENROUTER_BASE_URL,
+                value: "https://openrouter.ai/api/v1",
+              }
+            - { name: MODEL_REGIME, value: "anthropic/claude-haiku-4-5" }
+            - { name: MODEL_STRATEGIST, value: "anthropic/claude-opus-4-7" }
+            - { name: MODEL_CRITIC, value: "openai/gpt-5" }
+            - { name: MODEL_TAX, value: "anthropic/claude-sonnet-4-6" }
+            - { name: MODEL_COMMENTARY, value: "google/gemini-2.5-flash" }
+            - { name: MOCK_CIRCLE, value: "false" }
+            - { name: EXECUTION_MOCK, value: "false" }
+            - { name: SCHEDULER_TICK_SECS, value: "300" }
+            - { name: SCHEDULER_COOLDOWN_SECS, value: "1800" }
+            - { name: DIGEST_HOUR_UTC, value: "13" }
+            - { name: SESSION_COOKIE_SECURE, value: "true" }
+            - name: DATABASE_URL
+              valueFrom:
+                { secretKeyRef: { name: aegis-api, key: database-url } }
+            - name: JWT_SECRET
+              valueFrom: { secretKeyRef: { name: aegis-api, key: jwt-secret } }
+            - name: DIGEST_SECRET
+              valueFrom:
+                { secretKeyRef: { name: aegis-api, key: digest-secret } }
+            - name: OPENROUTER_API_KEY
+              valueFrom:
+                { secretKeyRef: { name: aegis-api, key: openrouter-api-key } }
+            - name: CIRCLE_API_KEY
+              valueFrom:
+                { secretKeyRef: { name: aegis-api, key: circle-api-key } }
+            - name: CHAIN_PRIVATE_KEY_ARC
+              valueFrom:
+                {
+                  secretKeyRef: { name: aegis-api, key: chain-private-key-arc },
+                }
+            - name: CHAIN_PRIVATE_KEY_BASE
+              valueFrom:
+                {
+                  secretKeyRef:
+                    { name: aegis-api, key: chain-private-key-base },
+                }
+            - name: RESEND_API_KEY
+              valueFrom:
+                { secretKeyRef: { name: aegis-api, key: resend-api-key } }
+            - name: AEGIS_DOMAIN
+              valueFrom:
+                { configMapKeyRef: { name: aegis-config, key: domain } }
+            - { name: PUBLIC_BASE_URL, value: "https://$(AEGIS_DOMAIN)" }
+            - { name: API_BASE_URL, value: "https://$(AEGIS_DOMAIN)/api" }
+            - { name: CORS_ALLOW_ORIGIN, value: "https://$(AEGIS_DOMAIN)" }
+          readinessProbe:
+            httpGet: { path: /health, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 8080 }
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 200m, memory: 256Mi }
+            limits: { cpu: 1000m, memory: 1Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aegis-api
+  labels: { app: aegis-api }
+spec:
+  selector: { app: aegis-api }
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http

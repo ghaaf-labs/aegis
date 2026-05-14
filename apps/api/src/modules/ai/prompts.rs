@@ -15,6 +15,8 @@ pub enum PromptKey {
     Critic,
     Regime,
     Revision,
+    Tax,
+    Commentary,
 }
 
 impl PromptKey {
@@ -25,6 +27,8 @@ impl PromptKey {
             Self::Critic => "critic.md",
             Self::Regime => "regime.md",
             Self::Revision => "revision.md",
+            Self::Tax => "tax.md",
+            Self::Commentary => "commentary.md",
         }
     }
 
@@ -36,11 +40,20 @@ impl PromptKey {
             Self::Critic => include_str!("../../../prompts/critic.md"),
             Self::Regime => include_str!("../../../prompts/regime.md"),
             Self::Revision => include_str!("../../../prompts/revision.md"),
+            Self::Tax => include_str!("../../../prompts/tax.md"),
+            Self::Commentary => include_str!("../../../prompts/commentary.md"),
         }
     }
 
     pub fn all() -> &'static [Self] {
-        &[Self::Strategist, Self::Critic, Self::Regime, Self::Revision]
+        &[
+            Self::Strategist,
+            Self::Critic,
+            Self::Regime,
+            Self::Revision,
+            Self::Tax,
+            Self::Commentary,
+        ]
     }
 }
 
