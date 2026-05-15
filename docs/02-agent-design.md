@@ -8,11 +8,13 @@ We use **OpenRouter** as the single AI gateway. Each named task resolves to a mo
 
 | `ModelRoute`       | Env var            | Default slug                  | Why this model                                                   |
 | ------------------ | ------------------ | ----------------------------- | ---------------------------------------------------------------- |
-| `RegimeClassify`   | `MODEL_REGIME`     | `anthropic/claude-haiku-4-5`  | Cheap, fast, reliable JSON output for a 1-of-3 label             |
-| `RebalanceReason`  | `MODEL_STRATEGIST` | `anthropic/claude-opus-4-7`   | Highest reasoning quality on the user-facing decision            |
-| `TaxExplain`       | `MODEL_TAX`        | `anthropic/claude-sonnet-4-6` | Good prose, lower cost than Opus, plenty for explanations        |
-| `MarketCommentary` | `MODEL_COMMENTARY` | `google/gemini-2.5-flash`     | Cheap daily-digest writer, long context for many assets          |
-| `CritiqueAgent`    | `MODEL_CRITIC`     | `openai/gpt-5`                | Different family from strategist → genuine adversarial diversity |
+| `RegimeClassify`   | `MODEL_REGIME`     | `qwen/qwen3.5-flash-02-23`    | Sub-cent JSON output for the 1-of-3 regime label                 |
+| `RebalanceReason`  | `MODEL_STRATEGIST` | `deepseek/deepseek-v4-pro`    | Strong reasoning at ~10× cheaper than Claude Opus                |
+| `TaxExplain`       | `MODEL_TAX`        | `qwen/qwen3.6-flash`          | Cheap, good prose for the tax sleeve                             |
+| `MarketCommentary` | `MODEL_COMMENTARY` | `~google/gemini-flash-latest` | Long context for the daily-digest writer                         |
+| `CritiqueAgent`    | `MODEL_CRITIC`     | `~openai/gpt-mini-latest`     | Different family from strategist → genuine adversarial diversity |
+
+> OpenRouter slug conventions: version numbers are **dotted**; the `~` prefix is OpenRouter's "latest-pointer" alias. Claude (`anthropic/claude-opus-4.7`, `~anthropic/claude-sonnet-latest`) is a valid override for any route — about 10–50× more expensive per token but with the strongest reasoning on the headline path; flip via env var when budget allows. Strategist and critic are deliberately different families so the critic pass is genuinely adversarial, not just a self-edit.
 
 Switching providers requires zero code changes — change the env var, restart the server. Every persisted decision records `model_slug` (the resolved slug, not the route name), `prompt_tokens`, `completion_tokens`, and `latency_ms`. The slug is rendered next to the decision in the UI.
 

@@ -142,13 +142,20 @@ impl Config {
             openrouter_base_url: std::env::var("OPENROUTER_BASE_URL")
                 .unwrap_or_else(|_| "https://openrouter.ai/api/v1".into()),
 
+            // OpenRouter slugs use dotted version numbers and the `~` prefix
+            // is the "latest-pointer" alias. Verified 2026-05-15 against
+            // openrouter.ai/api/v1/models. Defaults pick cost-conscious
+            // models that keep adversarial diversity between strategist
+            // (DeepSeek) and critic (OpenAI family) — Claude slugs are
+            // valid overrides but priced ~10–50× higher per call.
             model_regime: std::env::var("MODEL_REGIME")
-                .unwrap_or_else(|_| "anthropic/claude-haiku-4-5".into()),
+                .unwrap_or_else(|_| "qwen/qwen3.5-flash-02-23".into()),
             model_strategist: std::env::var("MODEL_STRATEGIST")
-                .unwrap_or_else(|_| "anthropic/claude-opus-4-7".into()),
-            model_critic: std::env::var("MODEL_CRITIC").unwrap_or_else(|_| "openai/gpt-5".into()),
+                .unwrap_or_else(|_| "deepseek/deepseek-v4-pro".into()),
+            model_critic: std::env::var("MODEL_CRITIC")
+                .unwrap_or_else(|_| "~openai/gpt-mini-latest".into()),
             model_tax: std::env::var("MODEL_TAX")
-                .unwrap_or_else(|_| "anthropic/claude-sonnet-4-6".into()),
+                .unwrap_or_else(|_| "qwen/qwen3.6-flash".into()),
             model_commentary: std::env::var("MODEL_COMMENTARY")
                 .unwrap_or_else(|_| "google/gemini-2.5-flash".into()),
 
