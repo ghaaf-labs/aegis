@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentDecision {
     pub id: Uuid,
     pub portfolio_id: Uuid,
@@ -36,6 +37,7 @@ pub struct AgentDecision {
 
 #[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Recommendation {
     pub summary: String,
     pub trades: Vec<ProposedTrade>,
@@ -44,6 +46,7 @@ pub struct Recommendation {
 
 #[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProposedTrade {
     pub symbol: String,
     pub action: String,
@@ -54,12 +57,14 @@ pub struct ProposedTrade {
 
 #[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ExpectedImpact {
     pub risk_delta: f64,
     pub diversification_score: f64,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AnalyzeRequest {
     pub portfolio_id: Uuid,
     #[serde(default)]

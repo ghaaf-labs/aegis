@@ -46,6 +46,7 @@ pub struct WalletUserPublic {
 // ── Request shapes ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RegisterPasskeyRequest {
     pub email: String,
     /// Opaque payload from `navigator.credentials.create()` — passed through
@@ -55,11 +56,12 @@ pub struct RegisterPasskeyRequest {
     /// Optional 8-char user handle of the referrer (matches the `handle`
     /// column on `v_trustability_per_user`). Drives the referral payout
     /// loop in `billing::record_referral`.
-    #[serde(default, rename = "referrerHandle")]
+    #[serde(default)]
     pub referrer_handle: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LoginPasskeyRequest {
     pub email: String,
     /// Opaque payload from `navigator.credentials.get()`.
@@ -68,16 +70,18 @@ pub struct LoginPasskeyRequest {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OtpStartRequest {
     pub email: String,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OtpVerifyRequest {
     pub email: String,
     pub code: String,
     /// Referrer handle — same semantics as `RegisterPasskeyRequest`.
-    #[serde(default, rename = "referrerHandle")]
+    #[serde(default)]
     pub referrer_handle: Option<String>,
 }
 
