@@ -131,9 +131,28 @@ impl<'a> OpenRouterClient<'a> {
             builder = builder.header("HTTP-Referer", referer);
         }
 
-        let resp = builder.send().await?.error_for_status()?;
-        let raw: RawChatResponse = resp.json().await?;
+        let resp = builder.send().await?;
+        let status = resp.status();
+        let body = resp.text().await?;
         let latency_ms = start.elapsed().as_millis() as u64;
+
+        if !status.is_success() {
+            anyhow::bail!(
+                "OpenRouter {} for {}: {}",
+                status.as_u16(),
+                requested_slug,
+                openrouter_error_message(&body).unwrap_or(body)
+            );
+        }
+
+        let raw: RawChatResponse = serde_json::from_str(&body).map_err(|e| {
+            anyhow::anyhow!(
+                "OpenRouter 200 for {} returned non-chat body ({}): {}",
+                requested_slug,
+                openrouter_error_message(&body).unwrap_or_else(|| e.to_string()),
+                body.chars().take(500).collect::<String>()
+            )
+        })?;
 
         let choice = raw
             .choices
@@ -197,9 +216,28 @@ impl<'a> OpenRouterClient<'a> {
             builder = builder.header("HTTP-Referer", referer);
         }
 
-        let resp = builder.send().await?.error_for_status()?;
-        let raw: Value = resp.json().await?;
+        let resp = builder.send().await?;
+        let status = resp.status();
+        let body = resp.text().await?;
         let latency_ms = start.elapsed().as_millis() as u64;
+
+        if !status.is_success() {
+            anyhow::bail!(
+                "OpenRouter {} for {}: {}",
+                status.as_u16(),
+                requested_slug,
+                openrouter_error_message(&body).unwrap_or(body)
+            );
+        }
+
+        let raw: Value = serde_json::from_str(&body).map_err(|e| {
+            anyhow::anyhow!(
+                "OpenRouter 200 for {} returned non-json body ({}): {}",
+                requested_slug,
+                e,
+                body.chars().take(500).collect::<String>()
+            )
+        })?;
 
         let model_slug = raw
             .get("model")
@@ -299,6 +337,20 @@ pub enum ChatToolResult {
     },
 }
 
+/// Best-effort extractor for OpenRouter's `{"error":{"message":"..."}}` envelope.
+/// Returns `None` if the body isn't JSON or doesn't carry a string message.
+fn openrouter_error_message(body: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    let err = v.get("error")?;
+    if let Some(msg) = err.get("message").and_then(|m| m.as_str()) {
+        if let Some(code) = err.get("code").and_then(|c| c.as_str()) {
+            return Some(format!("{code}: {msg}"));
+        }
+        return Some(msg.to_string());
+    }
+    err.as_str().map(str::to_string)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,5 +372,29 @@ mod tests {
         };
         let _ = r.clone();
         assert!(format!("{r:?}").contains("model_slug"));
+    }
+
+    #[test]
+    fn openrouter_error_message_extracts_envelope() {
+        let body = r#"{"error":{"message":"No endpoints found","code":"model_not_found"}}"#;
+        assert_eq!(
+            openrouter_error_message(body).as_deref(),
+            Some("model_not_found: No endpoints found")
+        );
+    }
+
+    #[test]
+    fn openrouter_error_message_handles_message_only() {
+        let body = r#"{"error":{"message":"rate limited"}}"#;
+        assert_eq!(
+            openrouter_error_message(body).as_deref(),
+            Some("rate limited")
+        );
+    }
+
+    #[test]
+    fn openrouter_error_message_returns_none_for_non_error_body() {
+        let body = r#"{"choices":[{"message":{"role":"assistant","content":"hi"}}]}"#;
+        assert!(openrouter_error_message(body).is_none());
     }
 }
