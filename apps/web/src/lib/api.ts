@@ -190,6 +190,10 @@ export const agentApi = {
     request<AgentDecision[]>(`/agent/decisions/${portfolioId}`, {
       authed: true,
     }),
+  decisionById: (decisionId: string) =>
+    request<AgentDecision>(`/agent/decision/${decisionId}`, {
+      authed: true,
+    }),
   analyze: (portfolioId: string) =>
     request<AgentDecision>("/agent/analyze", {
       method: "POST",
