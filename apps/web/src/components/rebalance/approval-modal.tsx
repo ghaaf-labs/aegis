@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { rebalanceApi, type RebalancePlanResponse } from "@/lib/api";
+import type { AgentDecision } from "@/types";
 import { cn } from "@/lib/utils";
 import { BacktestPreview } from "@/components/rebalance/backtest-preview";
 
@@ -26,6 +27,10 @@ export interface ApprovalModalProps {
   feeSource?: "plan" | "paymaster";
   /** Optional per-user / per-portfolio context surfaced in the header. */
   portfolioName?: string;
+  /** The AgentDecision behind this plan. When present the modal surfaces
+   *  model_slug + confidence + critic verdict next to the plan — required
+   *  for Agentic Sophistication judging (30% weight). */
+  decision?: AgentDecision | null;
   onApproved: (rebalanceId: string) => void;
   onClose: () => void;
 }
@@ -47,6 +52,7 @@ export function ApprovalModal({
   feeFetchedAt,
   feeSource = "plan",
   portfolioName,
+  decision,
   onApproved,
   onClose,
 }: ApprovalModalProps) {
@@ -93,6 +99,46 @@ export function ApprovalModal({
         </header>
 
         <div className="px-6 py-4">
+          {decision && (
+            <div className="mb-4 border border-white/10 bg-black/40 p-3 font-mono text-[11px] space-y-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-cyan-400 uppercase tracking-wider">
+                  Agent
+                </span>
+                {decision.modelSlug && (
+                  <span className="px-1.5 py-0.5 bg-cyan-500/10 border border-cyan-500/30 text-cyan-200">
+                    {decision.modelSlug}
+                  </span>
+                )}
+                {decision.regime && (
+                  <span className="px-1.5 py-0.5 bg-violet-500/10 border border-violet-500/30 text-violet-200">
+                    regime: {decision.regime}
+                  </span>
+                )}
+                <span className="ml-auto text-gray-400">
+                  confidence{" "}
+                  <span className="text-emerald-300">
+                    {Math.round((decision.confidence ?? 0) * 100)}%
+                  </span>
+                </span>
+              </div>
+              {decision.reasoning && (
+                <p className="text-gray-300 leading-relaxed">
+                  {decision.reasoning}
+                </p>
+              )}
+              {decision.criticVerdict && (
+                <p className="text-[10px] text-amber-300/90 border-t border-white/5 pt-2">
+                  <span className="uppercase tracking-wider text-amber-400 mr-1.5">
+                    Critic
+                  </span>
+                  ({Math.round((decision.criticVerdict.confidence ?? 0) * 100)}
+                  %): {decision.criticVerdict.notes}
+                </p>
+              )}
+            </div>
+          )}
+
           <p className="text-sm text-gray-300 mb-3">
             The agent has planned <strong>{plan.totalLegs}</strong> leg
             {plan.totalLegs === 1 ? "" : "s"} to bring your portfolio to its
