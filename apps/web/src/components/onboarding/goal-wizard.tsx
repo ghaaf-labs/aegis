@@ -368,6 +368,8 @@ function AllocationStep({
         <input
           type="number"
           min={0}
+          max={1_000_000}
+          step={50}
           value={state.monthlyContribution}
           onChange={(e) =>
             setState((s) => ({ ...s, monthlyContribution: e.target.value }))
