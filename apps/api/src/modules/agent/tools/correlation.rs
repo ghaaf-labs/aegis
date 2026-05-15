@@ -59,16 +59,25 @@ async fn try_db_correlation(state: &AppState, a: &str, b: &str, window_days: i64
 
     let mut series_a: Vec<f64> = Vec::with_capacity(rows.len());
     let mut series_b: Vec<f64> = Vec::with_capacity(rows.len());
+    // market_snapshots.assets is JSONB serialized from AssetPrice (camelCase
+    // since the F-API-3 contract fix). Pre-fix rows used snake_case keys —
+    // read both so the correlation tool still works on historical snapshots.
+    let price_of = |asset: &serde_json::Value| {
+        asset
+            .get("priceUsd")
+            .or_else(|| asset.get("price_usd"))
+            .and_then(|v| v.as_f64())
+    };
     for (assets, _at) in &rows {
         let arr = assets.as_array()?;
         let pa = arr
             .iter()
             .find(|x| x.get("symbol").and_then(|v| v.as_str()) == Some(a))
-            .and_then(|x| x.get("price_usd").and_then(|v| v.as_f64()));
+            .and_then(price_of);
         let pb = arr
             .iter()
             .find(|x| x.get("symbol").and_then(|v| v.as_str()) == Some(b))
-            .and_then(|x| x.get("price_usd").and_then(|v| v.as_f64()));
+            .and_then(price_of);
         if let (Some(a), Some(b)) = (pa, pb) {
             series_a.push(a);
             series_b.push(b);
