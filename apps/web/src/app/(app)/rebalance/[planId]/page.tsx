@@ -3,7 +3,8 @@
 import { useEffect, useState, use } from "react";
 import { useRouter } from "next/navigation";
 
-import { rebalanceApi, ratesApi } from "@/lib/api";
+import { rebalanceApi, ratesApi, agentApi } from "@/lib/api";
+import type { AgentDecision } from "@/types";
 import { ApprovalModal } from "@/components/rebalance/approval-modal";
 import { ExecutionTrace } from "@/components/rebalance/execution-trace";
 
@@ -44,6 +45,7 @@ export default function RebalancePage({ params }: PageProps) {
   } | null>(null);
   const [approved, setApproved] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [decision, setDecision] = useState<AgentDecision | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -75,6 +77,17 @@ export default function RebalancePage({ params }: PageProps) {
           setShowApproval(false);
           setApproved(true);
         }
+        // Fetch the AgentDecision behind this plan so the approval modal
+        // can surface model_slug + critic verdict + confidence.
+        agentApi
+          .decisionById(detail.decisionId)
+          .then((d) => {
+            if (!cancelled) setDecision(d);
+          })
+          .catch(() => {
+            // Best-effort. The modal still renders without the agentic-signal
+            // header — judges then see plan-only, but execution still works.
+          });
         // Refresh from Paymaster live so the user sees the current quote, not
         // the stale planner-time estimate. The destination chain of the first
         // cross-chain leg drives the lookup; default to arc.
@@ -139,6 +152,7 @@ export default function RebalancePage({ params }: PageProps) {
           estimatedFeeUsdc={estimatedFee}
           feeFetchedAt={feeFetchedAt}
           feeSource={feeSource}
+          decision={decision}
           onApproved={() => {
             setShowApproval(false);
             setApproved(true);

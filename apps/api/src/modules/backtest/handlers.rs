@@ -142,7 +142,13 @@ async fn load_daily_prices(state: &AppState, window_days: i32) -> Result<Vec<Day
                 let Some(symbol) = a.get("symbol").and_then(|v| v.as_str()) else {
                     continue;
                 };
-                let Some(price) = a.get("price_usd").and_then(|v| v.as_f64()) else {
+                // AssetPrice serializes as `priceUsd` since the F-API-3
+                // contract fix; older rows used `price_usd`. Accept both.
+                let Some(price) = a
+                    .get("priceUsd")
+                    .or_else(|| a.get("price_usd"))
+                    .and_then(|v| v.as_f64())
+                else {
                     continue;
                 };
                 day.insert(symbol.to_string(), price);

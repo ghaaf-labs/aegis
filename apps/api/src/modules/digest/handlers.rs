@@ -17,6 +17,7 @@ pub struct SubscribeBody {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SubscribeResponse {
     pub unsubscribe_token: String,
 }
