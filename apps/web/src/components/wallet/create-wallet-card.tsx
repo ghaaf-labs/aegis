@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Mail, Fingerprint } from "lucide-react";
 import {
@@ -31,12 +31,19 @@ export function CreateWalletCard() {
 
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
-  const [mode, setMode] = useState<Mode>(() =>
-    typeof window !== "undefined" &&
-    typeof window.PublicKeyCredential === "function"
-      ? "passkey"
-      : "otp-start",
-  );
+  // Server can't feature-detect WebAuthn — render the OTP fallback on first
+  // paint and only swap to passkey post-mount. Avoids a hydration mismatch
+  // (server: Mail / client: Fingerprint) that React logs as a recoverable
+  // error on every signup load. `webauthnAvailable` also gates the
+  // "Use passkey instead" button in the otp-start mode.
+  const [mode, setMode] = useState<Mode>("otp-start");
+  const [webauthnAvailable, setWebauthnAvailable] = useState(false);
+  useEffect(() => {
+    if (typeof window.PublicKeyCredential === "function") {
+      setWebauthnAvailable(true);
+      setMode("passkey");
+    }
+  }, []);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -196,15 +203,14 @@ export function CreateWalletCard() {
               >
                 {submitting ? "Sending…" : "Send me a code"}
               </BrutalButton>
-              {typeof window !== "undefined" &&
-                typeof window.PublicKeyCredential === "function" && (
-                  <BrutalButton
-                    variant="ghost"
-                    onClick={() => setMode("passkey")}
-                  >
-                    Use passkey instead
-                  </BrutalButton>
-                )}
+              {webauthnAvailable && (
+                <BrutalButton
+                  variant="ghost"
+                  onClick={() => setMode("passkey")}
+                >
+                  Use passkey instead
+                </BrutalButton>
+              )}
             </>
           )}
           {mode === "otp-verify" && (
