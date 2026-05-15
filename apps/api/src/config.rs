@@ -142,21 +142,20 @@ impl Config {
             openrouter_base_url: std::env::var("OPENROUTER_BASE_URL")
                 .unwrap_or_else(|_| "https://openrouter.ai/api/v1".into()),
 
-            // OpenRouter slugs use dotted version numbers (`claude-opus-4.7`,
-            // not `claude-opus-4-7`) and there is no plain `openai/gpt-5` —
-            // the current GPT-5 family is `gpt-5.5` / `gpt-5.4`. Verified
-            // 2026-05-15 against openrouter.ai/api/v1/models. The `~` prefix
-            // is OpenRouter's "latest-pointer" alias — Haiku/Sonnet/Critic/
-            // Commentary track upstream releases automatically; Opus is
-            // pinned explicitly because it's the headline strategist model.
+            // OpenRouter slugs use dotted version numbers and the `~` prefix
+            // is the "latest-pointer" alias. Defaults pick cost-conscious
+            // models — strategist (DeepSeek) and critic (OpenAI) stay in
+            // different families so the critic pass is genuinely adversarial,
+            // not a self-edit. Claude slugs (`anthropic/claude-opus-4.7`,
+            // `~anthropic/claude-sonnet-latest`) remain valid env overrides
+            // for any route at ~10–50× the per-token cost.
             model_regime: std::env::var("MODEL_REGIME")
-                .unwrap_or_else(|_| "~anthropic/claude-haiku-latest".into()),
+                .unwrap_or_else(|_| "qwen/qwen3.5-flash-02-23".into()),
             model_strategist: std::env::var("MODEL_STRATEGIST")
-                .unwrap_or_else(|_| "anthropic/claude-opus-4.7".into()),
+                .unwrap_or_else(|_| "deepseek/deepseek-v4-pro".into()),
             model_critic: std::env::var("MODEL_CRITIC")
-                .unwrap_or_else(|_| "~openai/gpt-latest".into()),
-            model_tax: std::env::var("MODEL_TAX")
-                .unwrap_or_else(|_| "~anthropic/claude-sonnet-latest".into()),
+                .unwrap_or_else(|_| "~openai/gpt-mini-latest".into()),
+            model_tax: std::env::var("MODEL_TAX").unwrap_or_else(|_| "qwen/qwen3.6-flash".into()),
             model_commentary: std::env::var("MODEL_COMMENTARY")
                 .unwrap_or_else(|_| "~google/gemini-flash-latest".into()),
 

@@ -6,15 +6,15 @@
 
 We use **OpenRouter** as the single AI gateway. Each named task resolves to a model — and **every slug is env-driven, never hardcoded in Rust**. The `ModelRoute` enum is _intent_; `Config::model_for(route)` resolves intent → slug:
 
-| `ModelRoute`       | Env var            | Default slug                      | Why this model                                                   |
-| ------------------ | ------------------ | --------------------------------- | ---------------------------------------------------------------- |
-| `RegimeClassify`   | `MODEL_REGIME`     | `~anthropic/claude-haiku-latest`  | Cheap, fast, reliable JSON output for a 1-of-3 label             |
-| `RebalanceReason`  | `MODEL_STRATEGIST` | `anthropic/claude-opus-4.7`       | Highest reasoning quality on the user-facing decision            |
-| `TaxExplain`       | `MODEL_TAX`        | `~anthropic/claude-sonnet-latest` | Good prose, lower cost than Opus, plenty for explanations        |
-| `MarketCommentary` | `MODEL_COMMENTARY` | `~google/gemini-flash-latest`     | Cheap daily-digest writer, long context for many assets          |
-| `CritiqueAgent`    | `MODEL_CRITIC`     | `~openai/gpt-latest`              | Different family from strategist → genuine adversarial diversity |
+| `ModelRoute`       | Env var            | Default slug                  | Why this model                                                   |
+| ------------------ | ------------------ | ----------------------------- | ---------------------------------------------------------------- |
+| `RegimeClassify`   | `MODEL_REGIME`     | `qwen/qwen3.5-flash-02-23`    | Sub-cent JSON output for the 1-of-3 regime label                 |
+| `RebalanceReason`  | `MODEL_STRATEGIST` | `deepseek/deepseek-v4-pro`    | Strong reasoning at ~10× cheaper than Claude Opus                |
+| `TaxExplain`       | `MODEL_TAX`        | `qwen/qwen3.6-flash`          | Cheap, good prose for the tax sleeve                             |
+| `MarketCommentary` | `MODEL_COMMENTARY` | `~google/gemini-flash-latest` | Long context for the daily-digest writer                         |
+| `CritiqueAgent`    | `MODEL_CRITIC`     | `~openai/gpt-mini-latest`     | Different family from strategist → genuine adversarial diversity |
 
-> OpenRouter slug conventions: version numbers are **dotted** (`claude-opus-4.7`, not `claude-opus-4-7`) and a plain `openai/gpt-5` does not exist — the current GPT-5 family is `gpt-5.5` / `gpt-5.4`. The `~` prefix is OpenRouter's "latest-pointer" alias; pinning latest for the auxiliary roles keeps the strategist demo headline (Opus 4.7) stable while the others track upstream releases.
+> OpenRouter slug conventions: version numbers are **dotted**; the `~` prefix is OpenRouter's "latest-pointer" alias. Claude (`anthropic/claude-opus-4.7`, `~anthropic/claude-sonnet-latest`) is a valid override for any route — about 10–50× more expensive per token but with the strongest reasoning on the headline path; flip via env var when budget allows. Strategist and critic are deliberately different families so the critic pass is genuinely adversarial, not just a self-edit.
 
 Switching providers requires zero code changes — change the env var, restart the server. Every persisted decision records `model_slug` (the resolved slug, not the route name), `prompt_tokens`, `completion_tokens`, and `latency_ms`. The slug is rendered next to the decision in the UI.
 
@@ -68,7 +68,7 @@ The strategist has a small toolbox it can invoke during reasoning:
 | `fetch_correlation(symbols)`        | When proposing diversification moves                           |
 | `simulate_trade(from, to, amount)`  | Returns slippage and Hook fees before committing to a proposal |
 
-Tool results are appended to the conversation. Latency budget per decision: **8 seconds p95**, **20 seconds p99** (Opus + 1 critic pass + up to 2 tool calls).
+Tool results are appended to the conversation. Latency budget per decision under the cheap-model defaults (DeepSeek-v4-pro strategist, OpenAI mini critic): **30 seconds p95**, **120 seconds p99** for the full strategist → critic → optional revision pipeline. DeepSeek-v4-pro emits ~200–400 hidden CoT tokens per call, so a single strategist call typically lands around 15–25 s. Switch `MODEL_STRATEGIST` to `anthropic/claude-opus-4.7` to get the prior **8 s p95 / 20 s p99** profile at ~10× the cost.
 
 ## The critic
 
