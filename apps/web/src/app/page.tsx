@@ -26,39 +26,39 @@ const fadeUp = {
 const FEATURES = [
   {
     icon: Brain,
-    title: "AI-Driven Decisions",
+    title: "Multi-model agent loop",
     description:
-      "GPT-4o analyzes market conditions, your risk profile, and portfolio drift to generate intelligent rebalancing recommendations.",
+      "Claude Opus 4.7 proposes, GPT-5 critiques, Haiku classifies regime — each routed via OpenRouter. Every decision surfaces the model slug it used.",
   },
   {
     icon: Shield,
-    title: "Risk-Aware Rebalancing",
+    title: "USDC-native on Arc + Base",
     description:
-      "Continuous risk scoring keeps your exposure aligned with your goals — automatically, without emotional bias.",
+      "Cross-chain rebalancing via CCTP V2 + Hooks. Gas paid in USDC by Circle Paymaster — never bridge ETH again. EURC sleeve via Arc StableFX.",
   },
   {
     icon: TrendingUp,
-    title: "Real-Time Signals",
+    title: "Realtime via SSE",
     description:
-      "WebSocket-powered live market data feeds directly into the reasoning engine for sub-second decision intelligence.",
+      "Server-sent events stream price ticks, regime flips, agent decisions, and rebalance legs to your browser the moment they happen.",
   },
   {
     icon: Zap,
-    title: "Transparent Reasoning",
+    title: "Transparent reasoning",
     description:
-      "Every decision comes with a plain-English explanation. Know exactly why your portfolio moved.",
+      "Every decision ships with the strategist's prose, the critic's verdict, and a public diary — judge the agent on the receipts, not the demo.",
   },
   {
     icon: BarChart3,
-    title: "Portfolio Analytics",
+    title: "Yield on idle USDC",
     description:
-      "Deep performance metrics, allocation drift visualization, and historical P&L — all in one place.",
+      "Park cash in USYC for the Hashnote treasury rate. The strategist factors current yield into every rebalance proposal.",
   },
   {
     icon: Bot,
-    title: "Autonomous Agent",
+    title: "You approve every move",
     description:
-      "Set your risk tolerance once. The agent monitors 24/7 and acts when it matters.",
+      "Set your goal once. The agent monitors 24/7 and proposes — you click Approve. Single modal, USDC fee preview, no surprises.",
   },
 ];
 
@@ -133,11 +133,11 @@ export default function LandingPage() {
           animate="visible"
           variants={fadeUp}
           custom={2}
-          className="text-xl text-gray-400 max-w-2xl mx-auto mb-10 leading-relaxed"
+          className="text-xl text-gray-400 max-w-2xl mx-auto mb-6 leading-relaxed"
         >
-          Aegis autonomously monitors market conditions, evaluates your risk
-          exposure, and rebalances your portfolio — then explains every decision
-          in plain English.
+          Stablecoin-native portfolio agent. Set a goal, approve the moves — a
+          multi-model AI executes on Arc + Base via Circle&apos;s stack, with
+          USDC fees and a public reasoning diary.
         </motion.p>
 
         <motion.div
@@ -145,6 +145,30 @@ export default function LandingPage() {
           animate="visible"
           variants={fadeUp}
           custom={3}
+          className="flex flex-wrap items-center justify-center gap-2 mb-10 text-[11px] font-mono tracking-wide text-gray-500"
+        >
+          {[
+            "Circle Wallets",
+            "CCTP V2",
+            "USYC",
+            "Paymaster",
+            "StableFX",
+            "OpenRouter",
+          ].map((label) => (
+            <span
+              key={label}
+              className="px-2.5 py-1 rounded-full bg-white/[0.03] border border-white/10"
+            >
+              {label}
+            </span>
+          ))}
+        </motion.div>
+
+        <motion.div
+          initial="hidden"
+          animate="visible"
+          variants={fadeUp}
+          custom={4}
           className="flex items-center justify-center gap-4"
         >
           <Link href="/signup">

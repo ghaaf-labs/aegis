@@ -108,6 +108,10 @@ pub async fn build(db: Db, config: Config) -> Router {
             "/agent/decisions/:portfolio_id",
             get(agent::handlers::decisions),
         )
+        .route(
+            "/agent/decision/:decision_id",
+            get(agent::handlers::decision_by_id),
+        )
         .route("/agent/analyze", post(agent::handlers::analyze))
         .route("/backtest/preview", post(backtest::handlers::preview))
         .route("/trustability/me", get(trustability::handlers::me))

@@ -22,6 +22,7 @@ pub async fn emit(db: &Db, user_id: Option<Uuid>, event_name: &str, properties: 
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ClientEventBody {
     pub event_name: String,
     #[serde(default)]
@@ -32,4 +33,17 @@ pub struct ClientEventBody {
 #[serde(rename_all = "camelCase")]
 pub struct EventAccepted {
     pub accepted: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn client_event_body_deserializes_camel_case() {
+        let json = r#"{"eventName":"wallet.created","properties":{"source":"otp"}}"#;
+        let body: ClientEventBody = serde_json::from_str(json).unwrap();
+        assert_eq!(body.event_name, "wallet.created");
+        assert_eq!(body.properties["source"], "otp");
+    }
 }

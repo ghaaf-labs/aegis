@@ -3,14 +3,20 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import { usePortfolioStore } from "@/stores/portfolio";
 import { RealtimeBridge } from "@/components/realtime-bridge";
 
+// Only seed Zustand with mock data on the public /explore demo path. Authed
+// routes must hydrate from real server data so brand-new users see their own
+// (empty) portfolio, not the demo's $48k seed.
 function MockDataInitializer() {
+  const pathname = usePathname();
   const initMockData = usePortfolioStore((s) => s.initMockData);
+  const isExplore = pathname?.startsWith("/explore") ?? false;
   useEffect(() => {
-    initMockData();
-  }, [initMockData]);
+    if (isExplore) initMockData();
+  }, [isExplore, initMockData]);
   return null;
 }
 

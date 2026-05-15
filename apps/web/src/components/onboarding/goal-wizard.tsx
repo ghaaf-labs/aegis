@@ -122,7 +122,21 @@ export function GoalWizard() {
         allocations,
         goal,
       });
-      addPortfolio(portfolio);
+      // POST /portfolios returns the Portfolio row only; allocations live in
+      // a separate table. The dashboard reads `.allocations.length`, so the
+      // wizard merges the just-submitted weights into the store entry to
+      // avoid an empty-state crash before the next GET hydrates real data.
+      addPortfolio({
+        ...portfolio,
+        allocations: allocations.map((a) => ({
+          assetId: a.symbol,
+          symbol: a.symbol,
+          quantity: a.quantity,
+          targetWeight: a.targetWeight,
+          currentWeight: 0,
+          valueUsd: 0,
+        })),
+      });
       await analyticsApi.track("goal.completed", {
         portfolioId: portfolio.id,
         horizon: state.horizon,
@@ -354,6 +368,8 @@ function AllocationStep({
         <input
           type="number"
           min={0}
+          max={1_000_000}
+          step={50}
           value={state.monthlyContribution}
           onChange={(e) =>
             setState((s) => ({ ...s, monthlyContribution: e.target.value }))
