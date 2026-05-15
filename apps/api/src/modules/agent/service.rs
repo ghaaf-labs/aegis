@@ -642,7 +642,7 @@ fn default_recommendation() -> serde_json::Value {
 }
 
 fn parse_proposal(raw: &str) -> crate::error::Result<StrategistProposal> {
-    let stripped = strip_fences(raw);
+    let stripped = crate::modules::ai::strip_json_fences(raw);
     serde_json::from_str(stripped).map_err(|e| {
         crate::error::AppError::Internal(anyhow::anyhow!(
             "failed to parse strategist proposal: {e}\nraw: {raw}"
@@ -661,29 +661,9 @@ struct CriticOutput {
 }
 
 fn parse_critic(raw: &str) -> anyhow::Result<CriticOutput> {
-    let stripped = strip_fences(raw);
+    let stripped = crate::modules::ai::strip_json_fences(raw);
     serde_json::from_str(stripped)
         .map_err(|e| anyhow::anyhow!("invalid critic JSON: {e}; raw: {raw}"))
-}
-
-fn strip_fences(raw: &str) -> &str {
-    let t = raw.trim();
-    if let Some(rest) = t.strip_prefix("```json").or_else(|| t.strip_prefix("```")) {
-        return rest.trim_end_matches("```").trim();
-    }
-    // DeepSeek often emits prose before the JSON fence ("Here is my proposal:
-    // ```json {...} ```"). Pull the body out of the first fenced block.
-    if let Some(open) = t.find("```json").or_else(|| t.find("```")) {
-        let after_open = &t[open..];
-        let inner = after_open
-            .strip_prefix("```json")
-            .or_else(|| after_open.strip_prefix("```"))
-            .unwrap_or(after_open);
-        if let Some(close) = inner.find("```") {
-            return inner[..close].trim();
-        }
-    }
-    t
 }
 
 fn json_string<T: serde::Serialize>(value: &T) -> crate::error::Result<String> {
@@ -715,25 +695,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn strip_fences_handles_json_fence() {
-        assert_eq!(strip_fences("```json\n{\"a\":1}\n```"), "{\"a\":1}");
-    }
-
-    #[test]
-    fn strip_fences_handles_bare_fence() {
-        assert_eq!(strip_fences("```\n{\"a\":1}\n```"), "{\"a\":1}");
-    }
-
-    #[test]
-    fn strip_fences_passes_plain_json() {
-        assert_eq!(strip_fences("{\"a\":1}"), "{\"a\":1}");
-    }
-
-    #[test]
-    fn strip_fences_extracts_fence_after_preamble() {
-        // DeepSeek-style: prose preamble, fenced JSON, possible suffix.
-        let raw = "Reasoning blah blah.\n\n```json\n{\"a\":1}\n```\n\nThat's my proposal.";
-        assert_eq!(strip_fences(raw), "{\"a\":1}");
+    fn parse_proposal_strips_deepseek_preamble_fence() {
+        // DeepSeek-style: prose preamble, fenced JSON, suffix prose.
+        let raw = "Here is my proposal:\n\n```json\n{\"reasoning\":\"r\",\"confidence\":0.8}\n```\n\nThanks.";
+        let p = parse_proposal(raw).unwrap();
+        assert_eq!(p.reasoning, "r");
+        assert!((p.confidence - 0.8).abs() < 1e-6);
     }
 
     #[test]

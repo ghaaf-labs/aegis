@@ -68,7 +68,7 @@ The strategist has a small toolbox it can invoke during reasoning:
 | `fetch_correlation(symbols)`        | When proposing diversification moves                           |
 | `simulate_trade(from, to, amount)`  | Returns slippage and Hook fees before committing to a proposal |
 
-Tool results are appended to the conversation. Latency budget per decision: **8 seconds p95**, **20 seconds p99** (Opus + 1 critic pass + up to 2 tool calls).
+Tool results are appended to the conversation. Latency budget per decision under the cheap-model defaults (DeepSeek-v4-pro strategist, OpenAI mini critic): **30 seconds p95**, **120 seconds p99** for the full strategist → critic → optional revision pipeline. DeepSeek-v4-pro emits ~200–400 hidden CoT tokens per call, so a single strategist call typically lands around 15–25 s. Switch `MODEL_STRATEGIST` to `anthropic/claude-opus-4.7` to get the prior **8 s p95 / 20 s p99** profile at ~10× the cost.
 
 ## The critic
 

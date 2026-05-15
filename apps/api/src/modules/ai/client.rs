@@ -113,7 +113,12 @@ impl<'a> OpenRouterClient<'a> {
             model: requested_slug,
             messages: &messages,
             temperature: 0.3,
-            max_tokens: 1500,
+            // 4000 covers DeepSeek-v4-pro's reasoning mode — it emits 200-1500
+            // hidden CoT tokens before the visible answer, both of which count
+            // toward this budget. At ~$0.87/M output tokens, 4000 caps a single
+            // call at < $0.004. Claude/OpenAI don't reason out loud so they
+            // typically use < 1000 of the budget.
+            max_tokens: 4000,
             response_format: Some(ResponseFormat {
                 fmt_type: "json_object",
             }),
@@ -141,7 +146,8 @@ impl<'a> OpenRouterClient<'a> {
                 "OpenRouter {} for {}: {}",
                 status.as_u16(),
                 requested_slug,
-                openrouter_error_message(&body).unwrap_or(body)
+                openrouter_error_message(&body)
+                    .unwrap_or_else(|| body.chars().take(500).collect::<String>())
             );
         }
 
@@ -194,7 +200,8 @@ impl<'a> OpenRouterClient<'a> {
             "model": requested_slug,
             "messages": messages,
             "temperature": 0.3,
-            "max_tokens": 1500,
+            // See note on `chat()` — reasoning models eat budget for CoT.
+            "max_tokens": 4000,
         });
         if !force_final && !tools.is_empty() {
             body["tools"] = Value::Array(tools.to_vec());
@@ -226,7 +233,8 @@ impl<'a> OpenRouterClient<'a> {
                 "OpenRouter {} for {}: {}",
                 status.as_u16(),
                 requested_slug,
-                openrouter_error_message(&body).unwrap_or(body)
+                openrouter_error_message(&body)
+                    .unwrap_or_else(|| body.chars().take(500).collect::<String>())
             );
         }
 

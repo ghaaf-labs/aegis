@@ -28,6 +28,11 @@ pub struct AppStateInner {
 
 pub async fn build(db: Db, config: Config) -> Router {
     let http = reqwest::Client::builder()
+        // CoinGecko's free tier 403s anonymous / generic User-Agent strings
+        // with the message "please add a descriptive User-Agent". Identify
+        // ourselves explicitly — both for CoinGecko's heuristic and for
+        // OpenRouter analytics.
+        .user_agent(concat!("Aegis/", env!("CARGO_PKG_VERSION")))
         // 240s budget covers the full agent pipeline tail. DeepSeek-v4-pro
         // (strategist + revision) is a reasoning model that emits ~200-400
         // hidden CoT tokens per call, so a single completion can take 30-60s;
