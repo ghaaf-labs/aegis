@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct AssetPrice {
     pub symbol: String,
     pub price_usd: f64,
@@ -16,6 +17,7 @@ pub struct AssetPrice {
 }
 
 #[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct MarketSnapshot {
     pub assets: Vec<AssetPrice>,
     pub fear_greed_index: u8,
