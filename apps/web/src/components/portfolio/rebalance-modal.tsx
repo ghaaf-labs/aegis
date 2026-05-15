@@ -19,7 +19,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
-import { agentApi, rebalanceApi, type RebalancePlanResponse } from "@/lib/api";
+import { agentApi, rebalanceApi } from "@/lib/api";
 import type { AgentDecision } from "@/types";
 import { formatCurrency } from "@/lib/utils";
 
@@ -35,7 +35,6 @@ export function RebalanceModal({ open, onClose }: Props) {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isPlanning, setIsPlanning] = useState(false);
   const [decision, setDecision] = useState<AgentDecision | null>(null);
-  const [plan, setPlan] = useState<RebalancePlanResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const analyzed = decision !== null;
   const recommendation = decision?.recommendation;
@@ -65,7 +64,6 @@ export function RebalanceModal({ open, onClose }: Props) {
     setError(null);
     try {
       const planned = await rebalanceApi.plan(active.id);
-      setPlan(planned);
       onClose();
       router.push(`/rebalance/${planned.rebalanceId}`);
     } catch (e) {

@@ -136,8 +136,8 @@ export default function LandingPage() {
           className="text-xl text-gray-400 max-w-2xl mx-auto mb-6 leading-relaxed"
         >
           Stablecoin-native portfolio agent. Set a goal, approve the moves — a
-          multi-model AI executes on Arc + Base via Circle's stack, with USDC
-          fees and a public reasoning diary.
+          multi-model AI executes on Arc + Base via Circle&apos;s stack, with
+          USDC fees and a public reasoning diary.
         </motion.p>
 
         <motion.div
