@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Loader2,
   RefreshCw,
@@ -17,8 +18,9 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { usePortfolioStore } from "@/stores/portfolio";
-import { MOCK_AGENT_DECISIONS } from "@/lib/mock-data";
+import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
+import { agentApi, rebalanceApi, type RebalancePlanResponse } from "@/lib/api";
+import type { AgentDecision } from "@/types";
 import { formatCurrency } from "@/lib/utils";
 
 interface Props {
@@ -27,32 +29,51 @@ interface Props {
 }
 
 export function RebalanceModal({ open, onClose }: Props) {
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analyzed, setAnalyzed] = useState(false);
+  const router = useRouter();
+  const active = useActivePortfolio();
   const { addDecision, setIsRebalancing } = usePortfolioStore();
-
-  const recommendation = MOCK_AGENT_DECISIONS[0]?.recommendation;
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isPlanning, setIsPlanning] = useState(false);
+  const [decision, setDecision] = useState<AgentDecision | null>(null);
+  const [plan, setPlan] = useState<RebalancePlanResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const analyzed = decision !== null;
+  const recommendation = decision?.recommendation;
 
   const handleAnalyze = async () => {
+    if (!active) {
+      setError("Select a portfolio first.");
+      return;
+    }
     setIsAnalyzing(true);
-    await new Promise((r) => setTimeout(r, 2000));
-    setIsAnalyzing(false);
-    setAnalyzed(true);
+    setError(null);
+    try {
+      const result = await agentApi.analyze(active.id);
+      setDecision(result);
+      addDecision(result);
+    } catch (e) {
+      setError((e as Error).message || "Analysis failed");
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   const handleExecute = async () => {
+    if (!active) return;
+    setIsPlanning(true);
     setIsRebalancing(true);
-    await new Promise((r) => setTimeout(r, 1500));
-    if (MOCK_AGENT_DECISIONS[0]) {
-      addDecision({
-        ...MOCK_AGENT_DECISIONS[0],
-        id: `dec_${Date.now()}`,
-        triggeredBy: "user_request",
-        createdAt: new Date().toISOString(),
-      });
+    setError(null);
+    try {
+      const planned = await rebalanceApi.plan(active.id);
+      setPlan(planned);
+      onClose();
+      router.push(`/rebalance/${planned.rebalanceId}`);
+    } catch (e) {
+      setError((e as Error).message || "Plan creation failed");
+      setIsRebalancing(false);
+    } finally {
+      setIsPlanning(false);
     }
-    setIsRebalancing(false);
-    onClose();
   };
 
   return (
@@ -79,16 +100,24 @@ export function RebalanceModal({ open, onClose }: Props) {
                     Significant drift detected
                   </p>
                   <p className="text-xs text-gray-400">
-                    BTC is 18.7% above target weight. AI analysis recommended.
+                    {active?.name
+                      ? `Analyze "${active.name}" — the strategist + critic loop will propose a rebalance against your target allocation, market regime, and recent decisions.`
+                      : "Select a portfolio to analyze."}
                   </p>
                 </div>
               </div>
             </div>
 
+            {error && (
+              <div className="p-3 rounded-lg bg-red-500/5 border border-red-500/15 text-xs text-red-300">
+                {error}
+              </div>
+            )}
+
             <Button
               className="w-full bg-blue-600 hover:bg-blue-500"
               onClick={handleAnalyze}
-              disabled={isAnalyzing}
+              disabled={isAnalyzing || !active}
             >
               {isAnalyzing ? (
                 <>
@@ -107,17 +136,20 @@ export function RebalanceModal({ open, onClose }: Props) {
           <div className="space-y-4">
             <div className="p-4 rounded-xl bg-blue-500/5 border border-blue-500/15">
               <p className="text-xs text-gray-400 mb-3 leading-relaxed">
-                {MOCK_AGENT_DECISIONS[0]?.reasoning}
+                {decision?.reasoning}
               </p>
-              <div className="flex items-center gap-3 text-xs">
-                <Badge variant="success">
-                  Risk delta: {recommendation?.expectedImpact.riskDelta}
-                </Badge>
+              <div className="flex items-center gap-3 text-xs flex-wrap">
+                {recommendation?.expectedImpact && (
+                  <Badge variant="success">
+                    Risk delta: {recommendation.expectedImpact.riskDelta}
+                  </Badge>
+                )}
                 <Badge variant="default">
-                  Confidence:{" "}
-                  {Math.round((MOCK_AGENT_DECISIONS[0]?.confidence ?? 0) * 100)}
-                  %
+                  Confidence: {Math.round((decision?.confidence ?? 0) * 100)}%
                 </Badge>
+                {decision?.modelSlug && (
+                  <Badge variant="default">{decision.modelSlug}</Badge>
+                )}
               </div>
             </div>
 
@@ -127,7 +159,7 @@ export function RebalanceModal({ open, onClose }: Props) {
               </p>
               {recommendation?.trades.map((trade) => (
                 <div
-                  key={trade.assetId}
+                  key={`${trade.symbol}-${trade.action}`}
                   className="flex items-center justify-between p-3 rounded-lg bg-white/3 border border-white/5"
                 >
                   <div className="flex items-center gap-3">
@@ -161,19 +193,34 @@ export function RebalanceModal({ open, onClose }: Props) {
               ))}
             </div>
 
+            {error && (
+              <div className="p-3 rounded-lg bg-red-500/5 border border-red-500/15 text-xs text-red-300">
+                {error}
+              </div>
+            )}
+
             <div className="flex gap-3">
               <Button
                 variant="outline"
                 className="flex-1 border-white/10 text-gray-300"
                 onClick={onClose}
+                disabled={isPlanning}
               >
                 Cancel
               </Button>
               <Button
                 className="flex-1 bg-blue-600 hover:bg-blue-500"
                 onClick={handleExecute}
+                disabled={isPlanning || !active}
               >
-                Execute Rebalance
+                {isPlanning ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Building plan…
+                  </>
+                ) : (
+                  <>Review &amp; execute</>
+                )}
               </Button>
             </div>
           </div>
