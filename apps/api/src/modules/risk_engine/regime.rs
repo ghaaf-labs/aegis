@@ -111,15 +111,9 @@ struct ModelLabel {
 }
 
 fn parse_label(raw: &str) -> anyhow::Result<ModelLabel> {
-    // Models occasionally wrap JSON in markdown fences despite asks.
-    let trimmed = raw.trim();
-    let stripped = trimmed
-        .strip_prefix("```json")
-        .or_else(|| trimmed.strip_prefix("```"))
-        .unwrap_or(trimmed)
-        .trim_end_matches("```")
-        .trim();
-
+    // Reasoning models (Qwen, DeepSeek) often emit prose preamble then a
+    // fenced JSON block. The shared helper handles all three shapes.
+    let stripped = crate::modules::ai::strip_json_fences(raw);
     serde_json::from_str(stripped)
         .map_err(|e| anyhow::anyhow!("regime classifier: invalid JSON ({e}): {raw}"))
 }
