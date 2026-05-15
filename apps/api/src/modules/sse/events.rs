@@ -300,7 +300,7 @@ mod contract_tests {
             confidence: 0.7,
             triggered_by: "user_request".into(),
             created_at: ts(),
-            model_slug: Some("anthropic/claude-opus-4-7".into()),
+            model_slug: Some("anthropic/claude-opus-4.7".into()),
             regime: Some("neutral".into()),
             prompt_tokens: Some(123),
             completion_tokens: Some(456),
