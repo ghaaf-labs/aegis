@@ -17,9 +17,10 @@ const COINGECKO_IDS: &[(&str, &str)] = &[
     ("MATIC", "matic-network"),
 ];
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
+#[serde(default)]
 struct CoinGeckoPrice {
-    usd: f64,
+    usd: Option<f64>,
     usd_24h_change: Option<f64>,
     usd_7d_change: Option<f64>,
     usd_market_cap: Option<f64>,
@@ -40,14 +41,34 @@ pub async fn fetch_prices(client: &Client, cfg: &Config) -> anyhow::Result<Vec<A
         req = req.header("x-cg-demo-api-key", key);
     }
 
-    let raw: HashMap<String, CoinGeckoPrice> = req.send().await?.json().await?;
+    let resp = req.send().await?;
+    let status = resp.status();
+    let body = resp.text().await?;
+    if !status.is_success() {
+        anyhow::bail!(
+            "coingecko {}: {}",
+            status,
+            body.chars().take(300).collect::<String>()
+        );
+    }
+    let raw: HashMap<String, CoinGeckoPrice> = serde_json::from_str(&body).map_err(|e| {
+        anyhow::anyhow!(
+            "coingecko {status} body parse failed: {e}; body: {}",
+            body.chars().take(300).collect::<String>()
+        )
+    })?;
 
     let prices = COINGECKO_IDS
         .iter()
         .filter_map(|(symbol, id)| {
-            raw.get(*id).map(|p| AssetPrice {
+            let p = raw.get(*id)?;
+            // CoinGecko returns `{}` for retired IDs (e.g. matic-network after
+            // the Polygon→POL migration). Skip those instead of failing the
+            // whole snapshot — every other asset still has prices.
+            let usd = p.usd?;
+            Some(AssetPrice {
                 symbol: symbol.to_string(),
-                price_usd: p.usd,
+                price_usd: usd,
                 change_24h: p.usd_24h_change.unwrap_or(0.0),
                 change_7d: p.usd_7d_change.unwrap_or(0.0),
                 market_cap: p.usd_market_cap.unwrap_or(0.0),

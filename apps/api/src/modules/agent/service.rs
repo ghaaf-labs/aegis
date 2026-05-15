@@ -642,7 +642,7 @@ fn default_recommendation() -> serde_json::Value {
 }
 
 fn parse_proposal(raw: &str) -> crate::error::Result<StrategistProposal> {
-    let stripped = strip_fences(raw);
+    let stripped = crate::modules::ai::strip_json_fences(raw);
     serde_json::from_str(stripped).map_err(|e| {
         crate::error::AppError::Internal(anyhow::anyhow!(
             "failed to parse strategist proposal: {e}\nraw: {raw}"
@@ -661,18 +661,9 @@ struct CriticOutput {
 }
 
 fn parse_critic(raw: &str) -> anyhow::Result<CriticOutput> {
-    let stripped = strip_fences(raw);
+    let stripped = crate::modules::ai::strip_json_fences(raw);
     serde_json::from_str(stripped)
         .map_err(|e| anyhow::anyhow!("invalid critic JSON: {e}; raw: {raw}"))
-}
-
-fn strip_fences(raw: &str) -> &str {
-    let t = raw.trim();
-    t.strip_prefix("```json")
-        .or_else(|| t.strip_prefix("```"))
-        .unwrap_or(t)
-        .trim_end_matches("```")
-        .trim()
 }
 
 fn json_string<T: serde::Serialize>(value: &T) -> crate::error::Result<String> {
@@ -704,18 +695,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn strip_fences_handles_json_fence() {
-        assert_eq!(strip_fences("```json\n{\"a\":1}\n```"), "{\"a\":1}");
-    }
-
-    #[test]
-    fn strip_fences_handles_bare_fence() {
-        assert_eq!(strip_fences("```\n{\"a\":1}\n```"), "{\"a\":1}");
-    }
-
-    #[test]
-    fn strip_fences_passes_plain_json() {
-        assert_eq!(strip_fences("{\"a\":1}"), "{\"a\":1}");
+    fn parse_proposal_strips_deepseek_preamble_fence() {
+        // DeepSeek-style: prose preamble, fenced JSON, suffix prose.
+        let raw = "Here is my proposal:\n\n```json\n{\"reasoning\":\"r\",\"confidence\":0.8}\n```\n\nThanks.";
+        let p = parse_proposal(raw).unwrap();
+        assert_eq!(p.reasoning, "r");
+        assert!((p.confidence - 0.8).abs() < 1e-6);
     }
 
     #[test]
