@@ -28,7 +28,15 @@ pub struct AppStateInner {
 
 pub async fn build(db: Db, config: Config) -> Router {
     let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+        // 240s budget covers the full agent pipeline tail. DeepSeek-v4-pro
+        // (strategist + revision) is a reasoning model that emits ~200-400
+        // hidden CoT tokens per call, so a single completion can take 30-60s;
+        // a strategist-tools-critic-revision pass can run 90-150s total.
+        // Faster endpoints (CoinGecko, Circle, Iris) return in < 2s so the
+        // extra ceiling is harmless. Reqwest reports streaming timeouts as
+        // "error decoding response body", not "timeout" — bake an explicit
+        // ceiling so the cause surfaces in the logs.
+        .timeout(std::time::Duration::from_secs(240))
         .build()
         .expect("failed to build HTTP client");
 
