@@ -152,6 +152,14 @@ pub struct Config {
     /// Base URL of this API service — used in emails so unsubscribe links
     /// resolve to the backend route, not the frontend.
     pub api_base_url: String,
+
+    /// Billing v2 feature flag. When OFF, all `/billing/subscription*`,
+    /// `/billing/subscriptions*`, `/billing/invoices`, and `/billing/tiers`
+    /// endpoints return 404, and the tier-gate middleware short-circuits to
+    /// the original golden-path behavior. Default `false` so `main` stays
+    /// shippable while the runtime is partially landed across agents.
+    #[allow(dead_code)]
+    pub billing_v2_enabled: bool,
 }
 
 impl Config {
@@ -255,6 +263,8 @@ impl Config {
                 .unwrap_or_else(|_| "http://localhost:3000".into()),
             api_base_url: std::env::var("API_BASE_URL")
                 .unwrap_or_else(|_| "http://localhost:8080".into()),
+
+            billing_v2_enabled: parse_or("BILLING_V2_ENABLED", false)?,
         };
 
         cfg.validate()
@@ -392,6 +402,7 @@ mod tests {
             digest_secret: "test-secret".into(),
             public_base_url: "http://localhost:3000".into(),
             api_base_url: "http://localhost:8080".into(),
+            billing_v2_enabled: false,
         }
     }
 
