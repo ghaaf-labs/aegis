@@ -1,3 +1,4 @@
+pub mod handlers;
 pub mod peg_monitor;
 pub mod regime;
 

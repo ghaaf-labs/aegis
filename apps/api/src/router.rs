@@ -1,7 +1,7 @@
 use axum::{
     http::{HeaderValue, Method},
     middleware::from_fn_with_state,
-    routing::{get, post},
+    routing::{get, patch, post},
     Router,
 };
 use std::sync::Arc;
@@ -135,6 +135,19 @@ pub async fn build(db: Db, config: Config) -> Router {
         .route("/backtest/preview", post(backtest::handlers::preview))
         .route("/trustability/me", get(trustability::handlers::me))
         .route("/billing/referrals", get(billing::handlers::list_referrals))
+        .route(
+            "/peg/rules",
+            get(risk_engine::handlers::list).post(risk_engine::handlers::create),
+        )
+        .route(
+            "/peg/rules/:id",
+            patch(risk_engine::handlers::patch).delete(risk_engine::handlers::delete),
+        )
+        .route("/peg/rules/:id/pause", post(risk_engine::handlers::pause))
+        .route(
+            "/peg/rules/:id/unpause",
+            post(risk_engine::handlers::unpause),
+        )
         .route_layer(from_fn_with_state(state.clone(), require_auth));
 
     Router::new()
