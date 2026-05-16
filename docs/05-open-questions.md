@@ -21,6 +21,20 @@ The matching `JWT_SECRET` (which was also leaked in the same commit) has already
 
 Note: scrubbing history via filter-repo cleaned `origin/main`, but the historical `feat/sprint-*` branches and `fix/post-submission-audit` on origin still contain `2d768d7` in their git ancestry. If those branches are not needed, delete them on origin to fully purge. They're stale/merged already.
 
+## Circle Wallets API path staleness
+
+**Tag:** `F-WALLET-1` · **Status:** open · **Surfaced:** 2026-05-16 (N0.9 smoke)
+
+Smoke against the real Circle API on 2026-05-16 with `CIRCLE_API_KEY=TEST_API_KEY:…` showed:
+
+- TLS + DNS to `https://api-sandbox.circle.com` works.
+- `Bearer {api_key}` auth header format is correct (no 401/403 returned).
+- The specific paths `apps/api/src/modules/wallet/provider.rs` builds — `/v1/wallets/otp/start`, `/v1/health`, `/v1/ping` — all return Circle's structured 404 `{code:-1, message:"Resource not found"}`.
+
+**Likely cause**: Circle has reorganized Wallets-API endpoints between the v1 Programmable Wallets surface (which the codebase references) and the current Developer-Controlled-Wallets v1/w3s surface. The CircleProvider needs a path audit against the live Circle docs before the next signup flow ships.
+
+**Action** (do during N15 browser smoke, OR earlier if first signup attempt 404s): cross-reference each call site in `apps/api/src/modules/wallet/provider.rs` against `developers.circle.com/w3s` and update path strings. Tests will still pass under `MOCK_CIRCLE=true` so no regression risk locally.
+
 ## Budget guard enforcement (call-time downshift)
 
 **Tag:** `F-COST-2` · **Status:** open · **Surfaced:** 2026-05-16 by F-COST-1
