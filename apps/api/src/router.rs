@@ -57,7 +57,12 @@ pub async fn build(db: Db, config: Config) -> Router {
     });
 
     // Realtime background tasks
-    sse::spawn_price_ticker(http.clone(), Arc::new(config.clone()), sse_tx.clone(), db.clone());
+    sse::spawn_price_ticker(
+        http.clone(),
+        Arc::new(config.clone()),
+        sse_tx.clone(),
+        db.clone(),
+    );
     gateway::spawn_balance_ticker(db, http, Arc::new(config.clone()), sse_tx);
 
     // Long-running schedulers (cancelled when the process shuts down).

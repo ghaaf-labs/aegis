@@ -59,7 +59,7 @@ pub fn plan_legs(input: &PlanInput) -> Vec<PlannedLeg> {
     }
 
     for d in deltas.iter().filter(|d| d.value_delta_usd > 0.0) {
-        append_buy_legs(&mut legs, &mut next_idx, d, &mut usdc_pool);
+        append_buy_legs(&mut legs, &mut next_idx, d, &mut usdc_pool, &input.prices);
     }
 
     legs
@@ -140,6 +140,7 @@ fn append_buy_legs(
     next_idx: &mut i32,
     d: &SymbolDelta,
     usdc_pool: &mut HashMap<ChainKey, f64>,
+    prices: &HashMap<String, f64>,
 ) {
     let amount = d.value_delta_usd;
     let target_chain = native_chain(&d.symbol);
@@ -162,17 +163,36 @@ fn append_buy_legs(
         let available_other = usdc_pool.get(&other_chain).copied().unwrap_or(0.0);
         let to_bridge = available_other.min(to_acquire);
         if to_bridge > 0.0 {
+            // For volatile assets, attach the hook parameters to the burn leg so the
+            // RebalanceExecutor on the destination performs the atomic USDC → asset swap.
+            // For special stables (USYC, EURC) we keep the old bridge-then-special-leg pattern.
+            let is_volatile = !matches!(d.symbol.as_str(), "USYC" | "EURC" | "USDC");
+
+            let (burn_dest_symbol, burn_min_out) = if is_volatile {
+                let min_out = prices.get(&d.symbol).map(|&price| {
+                    if price > 0.0 {
+                        (to_bridge / price) * 0.95
+                    } else {
+                        0.0
+                    }
+                });
+                (Some(d.symbol.clone()), min_out)
+            } else {
+                (Some("USDC".into()), None)
+            };
+
             legs.push(PlannedLeg {
                 leg_index: *next_idx,
                 kind: LegKind::CrossChainBurn,
                 src_chain: Some(other_chain),
                 dest_chain: Some(target_chain),
                 src_symbol: Some("USDC".into()),
-                dest_symbol: Some("USDC".into()),
+                dest_symbol: burn_dest_symbol,
                 amount_usdc: to_bridge,
-                min_out: None,
+                min_out: burn_min_out,
             });
             *next_idx += 1;
+
             legs.push(PlannedLeg {
                 leg_index: *next_idx,
                 kind: LegKind::CrossChainMint,
@@ -184,16 +204,33 @@ fn append_buy_legs(
                 min_out: None,
             });
             *next_idx += 1;
+
             *usdc_pool.entry(other_chain).or_insert(0.0) -= to_bridge;
+
+            // If we attached the hook to the burn for a volatile asset, skip the separate
+            // local swap — the hook will perform it atomically on the destination.
+            if is_volatile {
+                return; // we already consumed the full amount for this delta
+            }
         }
     }
 
-    // Finally, the swap on the destination chain.
+    // Finally, the swap on the destination chain (only for local USDC or special stables
+    // when we didn't use the hook for the final leg).
     let kind = match d.symbol.as_str() {
         "USYC" => LegKind::ParkUsyc,
         "EURC" => LegKind::FxStablefx,
         _ => LegKind::LocalSwap,
     };
+
+    let min_out = prices.get(&d.symbol).map(|&price| {
+        if price > 0.0 {
+            (amount / price) * 0.95
+        } else {
+            0.0
+        }
+    });
+
     legs.push(PlannedLeg {
         leg_index: *next_idx,
         kind,
@@ -202,9 +239,7 @@ fn append_buy_legs(
         src_symbol: Some("USDC".into()),
         dest_symbol: Some(d.symbol.clone()),
         amount_usdc: amount,
-        // Planner does not have Uniswap quoter access — executor fills minOut
-        // before submitting the transaction.
-        min_out: None,
+        min_out,
     });
     *next_idx += 1;
 }
@@ -234,6 +269,7 @@ mod tests {
             usdc_per_chain,
             drift_threshold: 0.05,
             dust_threshold_usd: 5.0,
+            prices: HashMap::new(),
         }
     }
 
@@ -258,6 +294,7 @@ mod tests {
             usdc_per_chain: HashMap::new(),
             drift_threshold: 0.01,
             dust_threshold_usd: 50.0,
+            prices: HashMap::new(),
         };
         // Both deltas are $10 — below the $50 dust floor.
         assert!(plan_legs(&i).is_empty());
@@ -385,8 +422,21 @@ mod tests {
             LegKind::LocalSwap | LegKind::FxStablefx | LegKind::RedeemUsyc
         ));
         assert_eq!(first.dest_symbol.as_deref(), Some("USDC"));
-        // The final leg must be the ETH buy (positive delta -> acquisition).
-        let last = legs.last().unwrap();
-        assert_eq!(last.dest_symbol.as_deref(), Some("ETH"));
+        // With the CCTP + Hook design, the final acquisition of a volatile asset
+        // on another chain is expressed via the CrossChainBurn leg (which carries
+        // the hook parameters: dest_symbol = "ETH", min_out for ETH).
+        // The last leg in the plan for this ETH buy is the CrossChainMint (USDC arrival).
+        let eth_legs: Vec<_> = legs
+            .iter()
+            .filter(|l| {
+                l.dest_symbol.as_deref() == Some("ETH") || l.kind == LegKind::CrossChainMint
+            })
+            .collect();
+        assert!(
+            eth_legs
+                .iter()
+                .any(|l| l.dest_symbol.as_deref() == Some("ETH")),
+            "expected a CrossChainBurn with dest_symbol=ETH for the hook swap"
+        );
     }
 }

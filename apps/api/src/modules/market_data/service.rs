@@ -132,3 +132,31 @@ pub async fn persist_price_history(db: &Db, assets: &[AssetPrice]) -> anyhow::Re
 
     Ok(())
 }
+
+/// Returns the most recent price for each symbol as of a specific point in time
+/// (used by outcome compressor for true 24h "what would hold be worth" using price_history).
+pub async fn get_historical_prices(
+    db: &Db,
+    symbols: &[String],
+    as_of: chrono::DateTime<chrono::Utc>,
+) -> anyhow::Result<HashMap<String, f64>> {
+    if symbols.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let rows: Vec<(String, f64)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT ON (symbol) symbol, price_usd
+        FROM price_history
+        WHERE symbol = ANY($1)
+          AND fetched_at <= $2
+        ORDER BY symbol, fetched_at DESC
+        "#,
+    )
+    .bind(symbols)
+    .bind(as_of)
+    .fetch_all(db)
+    .await?;
+
+    Ok(rows.into_iter().collect())
+}

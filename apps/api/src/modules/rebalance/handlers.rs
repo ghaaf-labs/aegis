@@ -130,6 +130,10 @@ pub struct RebalanceView {
     pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// Nanopayments 25bps protocol fee settlement tx (if recorded).
+    /// Enables showing the real x402 tx in the execution trace UI.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protocol_fee_settlement_tx: Option<String>,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -166,15 +170,28 @@ pub async fn get(
 ) -> Result<Json<RebalanceDetail>> {
     own_rebalance_or_404(&state, claims.sub, rebalance_id).await?;
 
-    let plan: RebalanceView = sqlx::query_as(
+    let mut plan: RebalanceView = sqlx::query_as(
         "SELECT id, portfolio_id, decision_id, status, total_legs, completed_legs,
                 total_gas_usdc, failure_reason, approved_at, completed_at,
-                created_at, updated_at
+                created_at, updated_at, NULL::text as protocol_fee_settlement_tx
          FROM rebalances WHERE id = $1",
     )
     .bind(rebalance_id)
     .fetch_one(&state.db)
     .await?;
+
+    // Load the first protocol fee settlement tx (Nanopayments x402) if present.
+    if let Some(tx) = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT settlement_tx_hash FROM rebalance_fees
+         WHERE rebalance_id = $1 AND fee_type = 'protocol' AND settlement_tx_hash IS NOT NULL
+         ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(rebalance_id)
+    .fetch_optional(&state.db)
+    .await?
+    {
+        plan.protocol_fee_settlement_tx = tx;
+    }
 
     let legs: Vec<LegView> = sqlx::query_as(
         "SELECT id, rebalance_id, leg_index, kind, src_chain, dest_chain,
@@ -199,7 +216,7 @@ pub async fn history(
     let rows: Vec<RebalanceView> = sqlx::query_as(
         "SELECT id, portfolio_id, decision_id, status, total_legs, completed_legs,
                 total_gas_usdc, failure_reason, approved_at, completed_at,
-                created_at, updated_at
+                created_at, updated_at, NULL::text as protocol_fee_settlement_tx
          FROM rebalances WHERE portfolio_id = $1
          ORDER BY created_at DESC LIMIT 50",
     )
@@ -283,6 +300,29 @@ async fn build_plan_input(state: &AppState, portfolio_id: Uuid) -> Result<PlanIn
 
     let usdc_per_chain = load_gateway_pool(state, user_id).await;
 
+    // Populate recent prices from price_history (dense table from Phase 1).
+    // This lets the planner compute sensible min_out values for cross-chain
+    // hook legs and local swaps when EXECUTION_MOCK=false.
+    let relevant_symbols: Vec<String> = current_weights
+        .keys()
+        .chain(target_weights.keys())
+        .cloned()
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    let prices = if relevant_symbols.is_empty() {
+        HashMap::new()
+    } else {
+        crate::modules::market_data::service::get_historical_prices(
+            &state.db,
+            &relevant_symbols,
+            chrono::Utc::now(),
+        )
+        .await
+        .unwrap_or_default()
+    };
+
     Ok(PlanInput {
         portfolio_value_usd,
         current_weights,
@@ -290,6 +330,7 @@ async fn build_plan_input(state: &AppState, portfolio_id: Uuid) -> Result<PlanIn
         usdc_per_chain,
         drift_threshold: 0.05,
         dust_threshold_usd: 5.0,
+        prices,
     })
 }
 

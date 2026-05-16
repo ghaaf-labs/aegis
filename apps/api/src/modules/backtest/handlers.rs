@@ -121,8 +121,59 @@ async fn load_weights(
 }
 
 async fn load_daily_prices(state: &AppState, window_days: i32) -> Result<Vec<DayPrices>> {
-    // One row per snapshot; we de-dupe to the latest snapshot per UTC date
-    // so a noisy ticker doesn't oversample any single day.
+    // Phase 1: Prefer the new dense price_history table (much higher quality
+    // and normalized). Fall back to legacy market_snapshots only if needed.
+    let rows: Vec<(String, f64, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        r#"
+        SELECT DISTINCT ON (DATE(fetched_at), symbol)
+               symbol, price_usd, fetched_at
+        FROM price_history
+        WHERE fetched_at > NOW() - ($1::int || ' days')::interval
+        ORDER BY DATE(fetched_at), symbol, fetched_at DESC
+        "#,
+    )
+    .bind(window_days)
+    .fetch_all(&state.db)
+    .await?;
+
+    // Only switch to price_history if we have a meaningful amount of data.
+    // This prevents thin/sparse backtests while history is still building.
+    let unique_days: std::collections::HashSet<_> =
+        rows.iter().map(|(_, _, at)| at.date_naive()).collect();
+    if unique_days.len() >= 5 {
+        return build_day_prices_from_history_rows(rows);
+    }
+
+    // Fallback to old table (will be removed once price_history has enough history)
+    load_daily_prices_from_snapshots(state, window_days).await
+}
+
+fn build_day_prices_from_history_rows(
+    rows: Vec<(String, f64, chrono::DateTime<chrono::Utc>)>,
+) -> Result<Vec<DayPrices>> {
+    use std::collections::BTreeMap;
+
+    let mut by_date: BTreeMap<chrono::NaiveDate, HashMap<String, f64>> = BTreeMap::new();
+
+    for (symbol, price, at) in rows {
+        let date = at.date_naive();
+        by_date.entry(date).or_default().insert(symbol, price);
+    }
+
+    let mut series: Vec<DayPrices> = Vec::new();
+    for (_date, mut day) in by_date {
+        for stable in ["USDC", "EURC", "USYC"] {
+            day.entry(stable.to_string()).or_insert(1.0);
+        }
+        series.push(day);
+    }
+    Ok(series)
+}
+
+async fn load_daily_prices_from_snapshots(
+    state: &AppState,
+    window_days: i32,
+) -> Result<Vec<DayPrices>> {
     let rows: Vec<(serde_json::Value, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
         "SELECT DISTINCT ON (DATE(captured_at))
                 assets, captured_at
@@ -142,8 +193,6 @@ async fn load_daily_prices(state: &AppState, window_days: i32) -> Result<Vec<Day
                 let Some(symbol) = a.get("symbol").and_then(|v| v.as_str()) else {
                     continue;
                 };
-                // AssetPrice serializes as `priceUsd` since the F-API-3
-                // contract fix; older rows used `price_usd`. Accept both.
                 let Some(price) = a
                     .get("priceUsd")
                     .or_else(|| a.get("price_usd"))
@@ -154,12 +203,32 @@ async fn load_daily_prices(state: &AppState, window_days: i32) -> Result<Vec<Day
                 day.insert(symbol.to_string(), price);
             }
         }
-        // Stablecoins aren't in market_snapshots; pin them to $1 so the
-        // backtest treats USDC/EURC/USYC weight as cash-flat.
         for stable in ["USDC", "EURC", "USYC"] {
             day.entry(stable.to_string()).or_insert(1.0);
         }
         series.push(day);
     }
     Ok(series)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    #[test]
+    fn build_day_prices_from_history_rows_basic() {
+        let now = Utc::now();
+        let rows = vec![
+            ("BTC".to_string(), 62000.0, now),
+            ("ETH".to_string(), 2400.0, now),
+        ];
+
+        let series = build_day_prices_from_history_rows(rows).unwrap();
+        assert_eq!(series.len(), 1);
+        let day = &series[0];
+        assert_eq!(day.get("BTC"), Some(&62000.0));
+        assert_eq!(day.get("ETH"), Some(&2400.0));
+        assert_eq!(day.get("USDC"), Some(&1.0));
+    }
 }

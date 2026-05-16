@@ -95,6 +95,31 @@ pub struct Config {
     /// EOA private key for Base Sepolia transactions.
     #[allow(dead_code)]
     pub chain_private_key_base: String,
+
+    // Real CCTP + Hook execution addresses (loaded only when real-cctp feature + !mock)
+    #[allow(dead_code)]
+    pub cctp_token_messenger_arc: String,
+    #[allow(dead_code)]
+    pub cctp_token_messenger_base: String,
+    #[allow(dead_code)]
+    pub cctp_message_transmitter_arc: String,
+    #[allow(dead_code)]
+    pub cctp_message_transmitter_base: String,
+    #[allow(dead_code)]
+    pub rebalance_executor_arc: String,
+    #[allow(dead_code)]
+    pub rebalance_executor_base: String,
+    #[allow(dead_code)]
+    pub usdc_arc: String,
+    #[allow(dead_code)]
+    pub usdc_base: String,
+
+    // ── Nanopayments (x402) for 25bps protocol fee + referrals ────────────
+    #[allow(dead_code)]
+    pub nanopayments_facilitator_url: String,
+    #[allow(dead_code)]
+    pub nanopayments_seller_address: String,
+
     /// When true, the executor / cross-chain client skip real RPC calls and
     /// return deterministic mock receipts. Defaults to true so CI is hermetic.
     pub execution_mock: bool,
@@ -194,6 +219,26 @@ impl Config {
             cctp_attestation_timeout_secs: parse_or("CCTP_ATTESTATION_TIMEOUT_SECS", 180)?,
             chain_private_key_arc: std::env::var("CHAIN_PRIVATE_KEY_ARC").unwrap_or_default(),
             chain_private_key_base: std::env::var("CHAIN_PRIVATE_KEY_BASE").unwrap_or_default(),
+
+            // Real execution addresses (only used when EXECUTION_MOCK=false and real-cctp feature)
+            cctp_token_messenger_arc: std::env::var("CCTP_TOKEN_MESSENGER_ARC").unwrap_or_default(),
+            cctp_token_messenger_base: std::env::var("CCTP_TOKEN_MESSENGER_BASE")
+                .unwrap_or_default(),
+            cctp_message_transmitter_arc: std::env::var("CCTP_MESSAGE_TRANSMITTER_ARC")
+                .unwrap_or_default(),
+            cctp_message_transmitter_base: std::env::var("CCTP_MESSAGE_TRANSMITTER_BASE")
+                .unwrap_or_default(),
+            rebalance_executor_arc: std::env::var("REBALANCE_EXECUTOR_ARC").unwrap_or_default(),
+            rebalance_executor_base: std::env::var("REBALANCE_EXECUTOR_BASE").unwrap_or_default(),
+            usdc_arc: std::env::var("USDC_ARC").unwrap_or_default(),
+            usdc_base: std::env::var("USDC_BASE").unwrap_or_default(),
+
+            // Nanopayments (x402) for protocol fee (25bps) and referral payouts.
+            nanopayments_facilitator_url: std::env::var("NANOPAYMENTS_FACILITATOR_URL")
+                .unwrap_or_else(|_| "https://gateway-api-testnet.circle.com".into()),
+            nanopayments_seller_address: std::env::var("NANOPAYMENTS_SELLER_ADDRESS")
+                .unwrap_or_default(),
+
             execution_mock: parse_or("EXECUTION_MOCK", true)?,
 
             scheduler_tick_secs: parse_or("SCHEDULER_TICK_SECS", 300)?,
@@ -327,6 +372,16 @@ mod tests {
             cctp_attestation_timeout_secs: 180,
             chain_private_key_arc: String::new(),
             chain_private_key_base: String::new(),
+            cctp_token_messenger_arc: String::new(),
+            cctp_token_messenger_base: String::new(),
+            cctp_message_transmitter_arc: String::new(),
+            cctp_message_transmitter_base: String::new(),
+            rebalance_executor_arc: String::new(),
+            rebalance_executor_base: String::new(),
+            usdc_arc: String::new(),
+            usdc_base: String::new(),
+            nanopayments_facilitator_url: "https://gateway-api-testnet.circle.com".into(),
+            nanopayments_seller_address: String::new(),
             execution_mock: true,
             scheduler_tick_secs: 300,
             scheduler_cooldown_secs: 1800,

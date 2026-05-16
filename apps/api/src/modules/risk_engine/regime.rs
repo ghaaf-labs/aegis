@@ -66,7 +66,7 @@ pub async fn classify(
     ai: &OpenRouterClient<'_>,
     snapshot: &MarketSnapshot,
     prompts: &crate::modules::ai::PromptRegistry,
-    db: Option<&crate::db::Db>,   // Phase 1: pass Some(&db) to get real vol/corr
+    db: Option<&crate::db::Db>, // Phase 1: pass Some(&db) to get real vol/corr
 ) -> anyhow::Result<RegimeClassification> {
     let signals = if let Some(db) = db {
         compute_real_signals_from_history(db, snapshot).await
@@ -168,21 +168,23 @@ pub async fn compute_real_signals_from_history(
     snapshot: &MarketSnapshot,
 ) -> RegimeSignals {
     // Try to get real 30d BTC realized vol
-    let btc_vol_30d = compute_realized_vol(db, "BTC", 30).await.unwrap_or_else(|| {
-        // Fallback to snapshot proxy
-        let btc_change = snapshot
-            .assets
-            .iter()
-            .find(|a| a.symbol == "BTC")
-            .map(|a| a.change_24h.abs())
-            .unwrap_or(0.0);
-        (btc_change.abs() / 100.0) * (365f64.sqrt())
-    });
+    let btc_vol_30d = compute_realized_vol(db, "BTC", 30)
+        .await
+        .unwrap_or_else(|| {
+            // Fallback to snapshot proxy
+            let btc_change = snapshot
+                .assets
+                .iter()
+                .find(|a| a.symbol == "BTC")
+                .map(|a| a.change_24h.abs())
+                .unwrap_or(0.0);
+            (btc_change.abs() / 100.0) * (365f64.sqrt())
+        });
 
     // Try to get real 90d average correlation (BTC-ETH, BTC-SOL, ETH-SOL, etc.)
-    let corr_90d = compute_average_correlation(db, 90).await.unwrap_or_else(|| {
-        directional_agreement(snapshot)
-    });
+    let corr_90d = compute_average_correlation(db, 90)
+        .await
+        .unwrap_or_else(|| directional_agreement(snapshot));
 
     let max_drawdown = snapshot
         .assets
@@ -199,7 +201,7 @@ pub async fn compute_real_signals_from_history(
     }
 }
 
-/// Annualized 30-day realized volatility from log returns in price_history.
+/// Annualized 30-day realized volatility using log returns (standard in finance).
 async fn compute_realized_vol(db: &crate::db::Db, symbol: &str, days: i32) -> Option<f64> {
     let prices: Vec<f64> = sqlx::query_scalar(
         r#"
@@ -220,24 +222,26 @@ async fn compute_realized_vol(db: &crate::db::Db, symbol: &str, days: i32) -> Op
         return None;
     }
 
-    // Compute log returns
-    let returns: Vec<f64> = prices
-        .windows(2)
-        .map(|w| (w[1] / w[0]).ln())
-        .collect();
+    // Log returns (correct for volatility)
+    let log_returns: Vec<f64> = prices.windows(2).map(|w| (w[1] / w[0]).ln()).collect();
 
-    let n = returns.len() as f64;
-    let mean = returns.iter().sum::<f64>() / n;
-    let variance = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / (n - 1.0);
+    let n = log_returns.len() as f64;
+    let mean = log_returns.iter().sum::<f64>() / n;
+    let variance = log_returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / (n - 1.0);
     let daily_std = variance.sqrt();
 
-    // Annualize (assuming ~365 trading days for crypto)
+    // Annualize
     Some(daily_std * (365.0_f64).sqrt())
 }
 
 /// Average Pearson correlation across major pairs over the window.
 async fn compute_average_correlation(db: &crate::db::Db, days: i32) -> Option<f64> {
-    let pairs = [("BTC", "ETH"), ("BTC", "SOL"), ("ETH", "SOL"), ("BTC", "AVAX")];
+    let pairs = [
+        ("BTC", "ETH"),
+        ("BTC", "SOL"),
+        ("ETH", "SOL"),
+        ("BTC", "AVAX"),
+    ];
     let mut corrs = Vec::new();
 
     for (a, b) in pairs {
@@ -254,8 +258,31 @@ async fn compute_average_correlation(db: &crate::db::Db, days: i32) -> Option<f6
 }
 
 async fn fetch_pair_correlation(db: &crate::db::Db, a: &str, b: &str, days: i32) -> Option<f64> {
-    let prices_a: Vec<f64> = sqlx::query_scalar(
-        "SELECT price_usd FROM price_history WHERE symbol = $1 AND fetched_at > NOW() - ($3::int || ' days')::interval ORDER BY fetched_at",
+    // Use the same time-tolerant aligned join pattern as the correlation tool
+    // for correctness (prices must be close in time).
+    let rows: Vec<(f64, f64)> = sqlx::query_as(
+        r#"
+        WITH a_prices AS (
+            SELECT price_usd, fetched_at
+            FROM price_history
+            WHERE symbol = $1
+              AND fetched_at > NOW() - ($3::int || ' days')::interval
+            ORDER BY fetched_at ASC
+        ),
+        b_prices AS (
+            SELECT price_usd, fetched_at
+            FROM price_history
+            WHERE symbol = $2
+              AND fetched_at > NOW() - ($3::int || ' days')::interval
+            ORDER BY fetched_at ASC
+        )
+        SELECT a.price_usd, b.price_usd
+        FROM a_prices a
+        JOIN b_prices b
+          ON ABS(EXTRACT(EPOCH FROM (a.fetched_at - b.fetched_at))) < 180
+        ORDER BY a.fetched_at
+        LIMIT 3000
+        "#,
     )
     .bind(a)
     .bind(b)
@@ -264,22 +291,15 @@ async fn fetch_pair_correlation(db: &crate::db::Db, a: &str, b: &str, days: i32)
     .await
     .ok()?;
 
-    let prices_b: Vec<f64> = sqlx::query_scalar(
-        "SELECT price_usd FROM price_history WHERE symbol = $2 AND fetched_at > NOW() - ($3::int || ' days')::interval ORDER BY fetched_at",
-    )
-    .bind(a)
-    .bind(b)
-    .bind(days)
-    .fetch_all(db)
-    .await
-    .ok()?;
-
-    if prices_a.len() < 10 || prices_b.len() < 10 {
+    if rows.len() < 10 {
         return None;
     }
 
-    let rets_a: Vec<f64> = prices_a.windows(2).map(|w| (w[1]/w[0]).ln()).collect();
-    let rets_b: Vec<f64> = prices_b.windows(2).map(|w| (w[1]/w[0]).ln()).collect();
+    let series_a: Vec<f64> = rows.iter().map(|(p, _)| *p).collect();
+    let series_b: Vec<f64> = rows.iter().map(|(_, p)| *p).collect();
+
+    let rets_a = crate::modules::agent::tools::correlation::returns(&series_a);
+    let rets_b = crate::modules::agent::tools::correlation::returns(&series_b);
 
     crate::modules::agent::tools::correlation::pearson(&rets_a, &rets_b)
 }

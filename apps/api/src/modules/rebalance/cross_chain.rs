@@ -18,6 +18,73 @@ use crate::config::Config;
 use crate::error::{AppError, Result};
 use crate::modules::rebalance::models::ChainKey;
 
+#[cfg(feature = "real-cctp")]
+use alloy::{
+    primitives::{Address, Bytes, U256},
+    providers::ProviderBuilder,
+    signers::local::PrivateKeySigner,
+    sol,
+    sol_types::SolValue,
+};
+
+#[cfg(feature = "real-cctp")]
+sol! {
+    #[sol(rpc)]
+    interface ICCTPV2TokenMessenger {
+        // Standard 5-param version (no hook)
+        function depositForBurnWithCaller(
+            uint256 amount,
+            uint32 destinationDomain,
+            bytes32 mintRecipient,
+            address burnToken,
+            bytes32 destinationCaller
+        ) external returns (uint64 nonce);
+
+        // CCTP V2 hook-enabled variant: messageBody is delivered to
+        // RebalanceExecutor.handleReceiveMessage as the 160-byte HookExecutionPayload.
+        function depositForBurnWithCaller(
+            uint256 amount,
+            uint32 destinationDomain,
+            bytes32 mintRecipient,
+            address burnToken,
+            bytes32 destinationCaller,
+            bytes calldata messageBody
+        ) external returns (uint64 nonce);
+
+        event MessageSent(bytes message);
+    }
+
+    #[sol(rpc)]
+    interface IMessageTransmitter {
+        function receiveMessage(
+            bytes calldata message,
+            bytes calldata attestation
+        ) external returns (bool success);
+    }
+
+    // Hook payload exactly as the RebalanceExecutor expects in handleReceiveMessage
+    struct HookExecutionPayload {
+        address recipient;
+        address tokenOut;
+        uint24 poolFee;
+        uint256 minOut;
+        uint256 deadline;
+    }
+}
+
+/// Encodes a Rust HookPayload into the exact 160-byte ABI encoding expected by RebalanceExecutor.handleReceiveMessage
+#[cfg(feature = "real-cctp")]
+pub fn encode_hook_payload(hook: &HookPayload) -> Bytes {
+    let payload = HookExecutionPayload {
+        recipient: hook.recipient.parse().expect("valid recipient address"),
+        tokenOut: hook.token_out.parse().expect("valid tokenOut address"),
+        poolFee: hook.pool_fee.try_into().expect("poolFee fits in uint24"),
+        minOut: U256::from(hook.min_out),
+        deadline: U256::from(hook.deadline),
+    };
+    payload.abi_encode().into()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct HookPayload {
@@ -74,14 +141,19 @@ impl<'a> CctpClient<'a> {
             return Ok(mock_burn_receipt(src, dest, amount_usdc, hook));
         }
 
-        // Production path: build a signed transaction calling
-        // `ICCTPV2TokenMessenger.depositForBurnWithCaller(...)` on `src`'s
-        // TokenMessenger. Left as a TODO because the testnet sandbox doesn't
-        // hand out the real ABI on hackathon day; the executor falls back to
-        // mock receipts unless the operator explicitly opts in via env.
-        Err(AppError::Internal(anyhow::anyhow!(
-            "real CCTP burn submission not implemented — set EXECUTION_MOCK=true"
-        )))
+        #[cfg(not(feature = "real-cctp"))]
+        {
+            let _ = (src, dest, amount_usdc, hook);
+            Err(AppError::Internal(anyhow::anyhow!(
+                "real-cctp feature not enabled. Build with --features real-cctp and set EXECUTION_MOCK=false"
+            )))
+        }
+
+        #[cfg(feature = "real-cctp")]
+        {
+            self.real_deposit_for_burn(src, dest, amount_usdc, hook)
+                .await
+        }
     }
 
     /// Poll Circle's attestation API until the message is attested or the
@@ -90,6 +162,219 @@ impl<'a> CctpClient<'a> {
     /// `src_domain` is the CCTP V2 domain id of the chain that produced the
     /// burn. Circle's V2 endpoint is `/v2/messages/{srcDomain}/{messageHash}`
     /// — without the domain segment the API returns 404.
+    #[cfg(feature = "real-cctp")]
+    async fn real_deposit_for_burn(
+        &self,
+        src: ChainKey,
+        dest: ChainKey,
+        amount_usdc: f64,
+        hook: &HookPayload,
+    ) -> Result<BurnReceipt> {
+        use alloy::network::EthereumWallet;
+
+        let amount = (amount_usdc * 1_000_000.0) as u128;
+
+        let private_key = match src {
+            ChainKey::Arc => &self.config.chain_private_key_arc,
+            ChainKey::Base => &self.config.chain_private_key_base,
+        };
+
+        let key_bytes = hex::decode(private_key.trim_start_matches("0x")).map_err(|_| {
+            AppError::Internal(anyhow::anyhow!("invalid hex private key for {:?}", src))
+        })?;
+        let signer = PrivateKeySigner::from_slice(&key_bytes).map_err(|_| {
+            AppError::Internal(anyhow::anyhow!("invalid private key for {:?}", src))
+        })?;
+
+        let wallet = EthereumWallet::from(signer);
+
+        let rpc_url = match src {
+            ChainKey::Arc => &self.config.arc_rpc_url,
+            ChainKey::Base => &self.config.base_rpc_url,
+        };
+
+        let provider = ProviderBuilder::new()
+            .with_recommended_fillers()
+            .wallet(wallet)
+            .on_http(
+                rpc_url
+                    .parse()
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
+            );
+
+        // Choose addresses based on source chain
+        let (token_messenger, usdc, executor_on_dest) = match src {
+            ChainKey::Arc => (
+                self.config
+                    .cctp_token_messenger_arc
+                    .parse::<Address>()
+                    .map_err(|_| {
+                        AppError::Internal(anyhow::anyhow!("bad CCTP TokenMessenger on Arc"))
+                    })?,
+                self.config
+                    .usdc_arc
+                    .parse::<Address>()
+                    .map_err(|_| AppError::Internal(anyhow::anyhow!("bad USDC on Arc")))?,
+                self.config
+                    .rebalance_executor_base
+                    .parse::<Address>()
+                    .map_err(|_| {
+                        AppError::Internal(anyhow::anyhow!("bad RebalanceExecutor on Base"))
+                    })?,
+            ),
+            ChainKey::Base => (
+                self.config
+                    .cctp_token_messenger_base
+                    .parse::<Address>()
+                    .map_err(|_| {
+                        AppError::Internal(anyhow::anyhow!("bad CCTP TokenMessenger on Base"))
+                    })?,
+                self.config
+                    .usdc_base
+                    .parse::<Address>()
+                    .map_err(|_| AppError::Internal(anyhow::anyhow!("bad USDC on Base")))?,
+                self.config
+                    .rebalance_executor_arc
+                    .parse::<Address>()
+                    .map_err(|_| {
+                        AppError::Internal(anyhow::anyhow!("bad RebalanceExecutor on Arc"))
+                    })?,
+            ),
+        };
+
+        let contract = ICCTPV2TokenMessenger::new(token_messenger, &provider);
+
+        // Encode the hook payload - this becomes the messageBody delivered verbatim
+        // to RebalanceExecutor.handleReceiveMessage on the destination after attestation.
+        let hook_data = encode_hook_payload(hook);
+
+        // Use the CCTP V2 hook-enabled overload. The 160-byte messageBody is
+        // forwarded by the MessageTransmitter to our RebalanceExecutor, which
+        // decodes it and performs the atomic USDC -> tokenOut Uniswap V3 swap.
+        // Call the 6-argument overload generated by Alloy for the hook-enabled variant
+        // (the one that accepts the final messageBody bytes).
+        let receipt = contract
+            .depositForBurnWithCaller_1(
+                U256::from(amount),
+                dest.domain_id(),
+                executor_on_dest.into_word(), // mintRecipient
+                usdc,
+                executor_on_dest.into_word(), // destinationCaller (RebalanceExecutor)
+                hook_data,                    // <-- the actual HookExecutionPayload (160 bytes)
+            )
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("alloy send error: {e}"))?
+            .get_receipt()
+            .await
+            .map_err(|e| anyhow::anyhow!("get_receipt error: {e}"))?;
+
+        // Robust MessageSent extraction (works across Alloy Log type differences)
+        let message_sent_topic: alloy::primitives::B256 =
+            alloy::primitives::keccak256("MessageSent(bytes)");
+
+        let message_hash = receipt
+            .inner
+            .logs()
+            .iter()
+            .find_map(|log| {
+                if log.topics().first() == Some(&message_sent_topic) {
+                    // The message is in the first (and only) topic or data depending on indexing.
+                    // For CCTP MessageSent, the message is usually in the data.
+                    let data = &log.data().data;
+                    if !data.is_empty() {
+                        Some(hex::encode(Sha256::digest(data)))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| {
+                AppError::Internal(anyhow::anyhow!("MessageSent event not found in receipt"))
+            })?;
+
+        Ok(BurnReceipt {
+            tx_hash: receipt.transaction_hash.to_string(),
+            message_hash,
+        })
+    }
+
+    #[cfg(feature = "real-cctp")]
+    pub async fn real_receive_message(
+        &self,
+        dest: ChainKey,
+        message: &str,
+        attestation: &str,
+    ) -> Result<String> {
+        use alloy::network::EthereumWallet;
+
+        let private_key = match dest {
+            ChainKey::Arc => &self.config.chain_private_key_arc,
+            ChainKey::Base => &self.config.chain_private_key_base,
+        };
+
+        let signer = PrivateKeySigner::from_slice(
+            &hex::decode(private_key.trim_start_matches("0x"))
+                .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid hex key")))?,
+        )
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid private key")))?;
+
+        let wallet = EthereumWallet::from(signer);
+
+        let rpc_url = match dest {
+            ChainKey::Arc => &self.config.arc_rpc_url,
+            ChainKey::Base => &self.config.base_rpc_url,
+        };
+
+        let provider = ProviderBuilder::new()
+            .with_recommended_fillers()
+            .wallet(wallet)
+            .on_http(
+                rpc_url
+                    .parse()
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
+            );
+
+        let transmitter: Address = match dest {
+            ChainKey::Arc => self
+                .config
+                .cctp_message_transmitter_arc
+                .parse()
+                .map_err(|_| {
+                    AppError::Internal(anyhow::anyhow!("bad MessageTransmitter on Arc"))
+                })?,
+            ChainKey::Base => self
+                .config
+                .cctp_message_transmitter_base
+                .parse()
+                .map_err(|_| {
+                    AppError::Internal(anyhow::anyhow!("bad MessageTransmitter on Base"))
+                })?,
+        };
+
+        let contract = IMessageTransmitter::new(transmitter, &provider);
+
+        let message_bytes: alloy::primitives::Bytes = message
+            .parse()
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid message hex")))?;
+        let attestation_bytes: alloy::primitives::Bytes = attestation
+            .parse()
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid attestation hex")))?;
+
+        let receipt = contract
+            .receiveMessage(message_bytes, attestation_bytes)
+            .send()
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("receiveMessage send error: {e}")))?
+            .get_receipt()
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("get_receipt error: {e}")))?;
+
+        Ok(receipt.transaction_hash.to_string())
+    }
+
     pub async fn wait_for_attestation(
         &self,
         src_domain: u32,
@@ -145,9 +430,22 @@ impl<'a> CctpClient<'a> {
                 tx_hash: mock_tx_hash("mint", dest.as_str(), &attestation.message),
             });
         }
-        Err(AppError::Internal(anyhow::anyhow!(
-            "real CCTP receiveMessage not implemented — set EXECUTION_MOCK=true"
-        )))
+
+        #[cfg(not(feature = "real-cctp"))]
+        {
+            let _ = (dest, attestation);
+            Err(AppError::Internal(anyhow::anyhow!(
+                "real-cctp feature not enabled. Build with --features real-cctp and set EXECUTION_MOCK=false"
+            )))
+        }
+
+        #[cfg(feature = "real-cctp")]
+        {
+            let tx_hash = self
+                .real_receive_message(dest, &attestation.message, &attestation.attestation)
+                .await?;
+            Ok(MintReceipt { tx_hash })
+        }
     }
 }
 
@@ -261,6 +559,17 @@ mod tests {
             digest_secret: "s".into(),
             public_base_url: "http://localhost:3000".into(),
             api_base_url: "http://localhost:8080".into(),
+            // New real-execution + Nanopayments fields (defaults for tests)
+            cctp_token_messenger_arc: String::new(),
+            cctp_token_messenger_base: String::new(),
+            cctp_message_transmitter_arc: String::new(),
+            cctp_message_transmitter_base: String::new(),
+            rebalance_executor_arc: String::new(),
+            rebalance_executor_base: String::new(),
+            usdc_arc: String::new(),
+            usdc_base: String::new(),
+            nanopayments_facilitator_url: "https://gateway-api-testnet.circle.com".into(),
+            nanopayments_seller_address: String::new(),
         };
         c.execution_mock = true;
         c
@@ -314,5 +623,29 @@ mod tests {
         assert_eq!(h.pool_fee, 3000);
         assert_eq!(h.min_out, 999);
         assert_eq!(h.deadline, 1_700_000_600);
+    }
+
+    #[cfg(feature = "real-cctp")]
+    #[test]
+    fn encode_hook_payload_produces_160_byte_abi() {
+        let hook = build_hook_payload(
+            "0x1234567890123456789012345678901234567890",
+            "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", // USDC
+            3000,
+            1_000_000_000_000_000_000u128,
+            1_700_000_000,
+        );
+        let encoded = encode_hook_payload(&hook);
+        // HookExecutionPayload is 5 words (160 bytes) exactly.
+        assert_eq!(
+            encoded.len(),
+            160,
+            "HookExecutionPayload must be exactly 160 bytes for RebalanceExecutor"
+        );
+        // First 32 bytes should be the recipient address left-padded.
+        assert_eq!(
+            &encoded[12..32],
+            &hex::decode("1234567890123456789012345678901234567890").unwrap()[..]
+        );
     }
 }

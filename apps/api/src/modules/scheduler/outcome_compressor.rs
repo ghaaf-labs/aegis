@@ -5,11 +5,11 @@
 //! compressed to an 80-char memory row. The strategist's next prompt reads
 //! these rows via `agent::memory`.
 //!
-//! Sprint 4 promoted the realized-delta computation from "cumulative PnL"
-//! (which was wrong: it conflated old performance with the decision) to a
-//! true 24h delta against `agent_decisions.snapshot.totalValueUsd`. The
-//! counterfactual is computed by replaying the recommendation's trades on
-//! the snapshot holdings and revaluing at current prices.
+//! Phase 1: The counterfactual "what would hold be worth 24h later" now uses
+//! real prices from `price_history` at exactly decision_time + 24h (via
+//! get_historical_prices) instead of whatever the live price is when the
+//! compressor happens to run. This gives accurate "edge vs hold" for memory
+//! and calibration.
 //!
 //! Failure mode: if any step fails (no snapshot, no current prices, malformed
 //! recommendation) we fall back to the Sprint 3 heuristic so a single bad row
@@ -46,11 +46,12 @@ struct DecisionRow {
     triggered_by: String,
     snapshot: serde_json::Value,
     recommendation: serde_json::Value,
+    created_at: chrono::DateTime<chrono::Utc>,
 }
 
 async fn compress_pending(state: &AppState) -> crate::error::Result<()> {
     let rows: Vec<DecisionRow> = sqlx::query_as(
-        "SELECT d.id, d.portfolio_id, d.triggered_by, d.snapshot, d.recommendation
+        "SELECT d.id, d.portfolio_id, d.triggered_by, d.snapshot, d.recommendation, d.created_at
          FROM agent_decisions d
          LEFT JOIN agent_memory m ON m.decision_id = d.id
          WHERE m.id IS NULL
@@ -94,9 +95,10 @@ async fn compress_one(state: &AppState, row: &DecisionRow) -> crate::error::Resu
         legacy.unwrap_or(0.0)
     };
 
-    let counterfactual = compute_counterfactual(state, &row.snapshot, &row.recommendation)
-        .await
-        .unwrap_or(realized + 0.5);
+    let counterfactual =
+        compute_counterfactual(state, &row.snapshot, &row.recommendation, row.created_at)
+            .await
+            .unwrap_or(realized + 0.5);
 
     let summary = format!(
         "{}: realized {realized:+.2}%, would-have-been {counterfactual:+.2}%",
@@ -129,6 +131,7 @@ async fn compute_counterfactual(
     state: &AppState,
     snapshot: &serde_json::Value,
     recommendation: &serde_json::Value,
+    decision_created_at: chrono::DateTime<chrono::Utc>,
 ) -> Option<f64> {
     let snap_total = snapshot_total(snapshot);
     if snap_total <= 0.0 {
@@ -167,19 +170,32 @@ async fn compute_counterfactual(
         }
     }
 
-    // Current prices.
-    let market = crate::modules::market_data::service::fetch_snapshot(&state.http, &state.config)
-        .await
-        .ok()?;
-    let mut current_price: HashMap<String, f64> = HashMap::with_capacity(market.assets.len());
-    for a in &market.assets {
-        current_price.insert(a.symbol.clone(), a.price_usd);
+    // Phase 1: Use real historical prices from price_history at exactly T+24h
+    // instead of whatever the "current" price happens to be when the compressor runs.
+    // This gives a true apples-to-apples 24h outcome.
+    let target_time = decision_created_at + chrono::Duration::hours(24);
+    let symbols: Vec<String> = snap_price.keys().cloned().collect();
+    let historical_prices = crate::modules::market_data::service::get_historical_prices(
+        &state.db,
+        &symbols,
+        target_time,
+    )
+    .await
+    .unwrap_or_default();
+
+    let mut price_at_24h: HashMap<String, f64> = HashMap::new();
+    for sym in &symbols {
+        if let Some(p) = historical_prices.get(sym) {
+            price_at_24h.insert(sym.clone(), *p);
+        } else if let Some(p) = snap_price.get(sym) {
+            price_at_24h.insert(sym.clone(), *p); // fallback to decision-time price
+        }
     }
 
     let counterfactual_value: f64 = qty
         .iter()
         .map(|(sym, q)| {
-            let p = current_price
+            let p = price_at_24h
                 .get(sym)
                 .copied()
                 .or_else(|| snap_price.get(sym).copied())
