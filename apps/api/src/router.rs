@@ -257,6 +257,10 @@ pub async fn build(db: Db, config: Config) -> Router {
             get(diary::handlers::by_decision),
         )
         .route(
+            "/diary/decision/:decision_id/full",
+            get(diary::handlers::full_by_decision),
+        )
+        .route(
             "/digest/unsubscribe",
             get(digest::handlers::unsubscribe_public),
         )
