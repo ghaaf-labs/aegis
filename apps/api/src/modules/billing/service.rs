@@ -1,8 +1,17 @@
 //! Referral attribution + Nanopayment payout.
+//!
+//! F-AUM-3 also adds the invoice lifecycle helpers used by the AUM-fee
+//! streamer (`open_or_create_invoice`, `append_invoice_line_item`,
+//! `settle_invoice`, `mark_invoice_past_due`). Settlement reuses
+//! `settle_protocol_fee_via_nanopayments` so the AUM rail and the
+//! per-rebalance rail post against the same facilitator endpoint.
 
+use chrono::{DateTime, Utc};
+use rust_decimal::Decimal;
 use serde::Serialize;
 use uuid::Uuid;
 
+use super::types::{Invoice, LineItem};
 use crate::config::Config;
 use crate::db::Db;
 use crate::error::AppError;
@@ -199,6 +208,129 @@ pub async fn settle_protocol_fee_via_nanopayments(
     } else {
         Ok(None)
     }
+}
+
+// ── F-AUM-3 — Invoice lifecycle helpers ───────────────────────────────────
+//
+// These exist as free functions (not a struct) so the AUM ticker, the tier
+// upgrade handler (A3), and the per-rebalance fee path can all call into
+// the same code without owning a service handle.
+
+/// Find the open invoice for (subscription, period) or create one. The
+/// (subscription_id, period_start, period_end) unique index makes the
+/// INSERT idempotent under concurrent ticks.
+pub async fn open_or_create_invoice(
+    db: &Db,
+    user_id: Uuid,
+    subscription_id: Uuid,
+    period_start: DateTime<Utc>,
+    period_end: DateTime<Utc>,
+) -> anyhow::Result<Invoice> {
+    let inv: Invoice = sqlx::query_as(
+        r#"
+        INSERT INTO invoices
+            (user_id, subscription_id, period_start, period_end, status, line_items, subtotal_usdc, total_usdc)
+        VALUES ($1, $2, $3, $4, 'open', '[]'::jsonb, 0, 0)
+        ON CONFLICT (subscription_id, period_start, period_end) DO UPDATE
+          SET updated_at = NOW()
+        RETURNING id, user_id, subscription_id, period_start, period_end,
+                  status, line_items, subtotal_usdc, total_usdc, paid_at, paid_tx_hash
+        "#,
+    )
+    .bind(user_id)
+    .bind(subscription_id)
+    .bind(period_start)
+    .bind(period_end)
+    .fetch_one(db)
+    .await?;
+    Ok(inv)
+}
+
+/// Append a line item to an invoice's JSONB array and bump
+/// subtotal/total atomically.
+pub async fn append_invoice_line_item(
+    db: &Db,
+    invoice_id: Uuid,
+    line_item: &LineItem,
+) -> anyhow::Result<()> {
+    let item_json = serde_json::to_value(line_item)?;
+    sqlx::query(
+        r#"
+        UPDATE invoices
+           SET line_items    = line_items || $2::jsonb,
+               subtotal_usdc = subtotal_usdc + $3,
+               total_usdc    = total_usdc + $3,
+               updated_at    = NOW()
+         WHERE id = $1
+        "#,
+    )
+    .bind(invoice_id)
+    .bind(item_json)
+    .bind(line_item.amount_usdc)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+pub async fn mark_invoice_past_due(db: &Db, invoice_id: Uuid) -> anyhow::Result<()> {
+    sqlx::query("UPDATE invoices SET status='past_due', updated_at=NOW() WHERE id=$1 AND status IN ('open','past_due')")
+        .bind(invoice_id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// Settle an invoice by posting its total via Nanopayments. Marks the row
+/// paid on success. Returns the tx hash, or None when the facilitator is
+/// in mock/empty-seller mode (handled by `settle_protocol_fee_via_nanopayments`).
+pub async fn settle_invoice(
+    db: &Db,
+    config: &Config,
+    invoice_id: Uuid,
+) -> anyhow::Result<Option<String>> {
+    let row: Option<(Uuid, Decimal, Option<String>)> = sqlx::query_as(
+        r#"
+        SELECT i.user_id, i.total_usdc, u.arc_address
+        FROM invoices i
+        JOIN users u ON u.id = i.user_id
+        WHERE i.id = $1 AND i.status IN ('open','past_due')
+        "#,
+    )
+    .bind(invoice_id)
+    .fetch_optional(db)
+    .await?;
+
+    let Some((_user_id, total, payer)) = row else {
+        return Ok(None);
+    };
+
+    let payer = payer.unwrap_or_default();
+    if payer.is_empty() {
+        anyhow::bail!("invoice {invoice_id}: user has no arc_address; cannot settle");
+    }
+
+    let total_f64: f64 = total.try_into().unwrap_or(0.0);
+    if total_f64 <= 0.0 {
+        sqlx::query(
+            "UPDATE invoices SET status='paid', paid_at=NOW(), updated_at=NOW() WHERE id=$1",
+        )
+        .bind(invoice_id)
+        .execute(db)
+        .await?;
+        return Ok(None);
+    }
+
+    let tx = settle_protocol_fee_via_nanopayments(config, &payer, total_f64).await?;
+    if let Some(tx_hash) = tx.as_deref() {
+        sqlx::query(
+            "UPDATE invoices SET status='paid', paid_at=NOW(), paid_tx_hash=$2, updated_at=NOW() WHERE id=$1",
+        )
+        .bind(invoice_id)
+        .bind(tx_hash)
+        .execute(db)
+        .await?;
+    }
+    Ok(tx)
 }
 
 #[cfg(test)]
