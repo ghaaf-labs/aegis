@@ -27,7 +27,11 @@ export function Header() {
     void gatewayApi
       .balance()
       .then((b) => alive && setUnifiedUsdc(b.unifiedUsdc))
-      .catch(() => {});
+      .catch((err) => {
+        // Best-effort hydration; SSE will overwrite this once the channel
+        // opens. Surface in dev so we can spot persistent gateway outages.
+        if (alive) console.warn("gateway balance hydrate failed", err);
+      });
     return () => {
       alive = false;
     };

@@ -45,9 +45,11 @@ export default function PortfolioDashboardPage() {
       .then((r) => {
         if (!cancelled) setDiaryPublic(r.diaryPublic);
       })
-      .catch(() => {
+      .catch((err) => {
         // Best-effort hydration; the toggle still works against the PATCH route
-        // and we don't want a stale token to crash the dashboard.
+        // and we don't want a stale token to crash the dashboard. Log in dev
+        // so a real auth regression is visible.
+        if (!cancelled) console.warn("diary visibility hydrate failed", err);
       });
     return () => {
       cancelled = true;
