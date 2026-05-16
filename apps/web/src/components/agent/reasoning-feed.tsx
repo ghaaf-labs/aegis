@@ -59,7 +59,7 @@ const REGIME_LABEL: Record<MarketRegime, string> = {
 };
 
 const REGIME_CLASS: Record<MarketRegime, string> = {
-  risk_on: "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30",
+  risk_on: "bg-cyan-500/15 text-cyan-300 border border-cyan-500/30",
   neutral: "bg-white/8 text-white border border-white/15",
   risk_off: "bg-rose-500/15 text-rose-300 border border-rose-500/30",
 };
@@ -83,7 +83,7 @@ export function AgentReasoningFeed() {
             title={sseConnected ? "Live feed connected" : "Reconnecting…"}
           >
             {sseConnected ? (
-              <Wifi className="w-3 h-3 text-emerald-400/80" />
+              <Wifi className="w-3 h-3 text-cyan-400/80" />
             ) : (
               <WifiOff className="w-3 h-3 text-gray-500" />
             )}
@@ -247,7 +247,7 @@ function DecisionRow({
               <span
                 className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
                   trade.action === "buy"
-                    ? "bg-emerald-500/15 text-emerald-400"
+                    ? "bg-cyan-500/15 text-cyan-400"
                     : "bg-red-500/15 text-red-400"
                 }`}
               >
@@ -278,7 +278,7 @@ function ConfidencePill({ confidence }: { confidence: number }) {
   const pct = Math.round(confidence * 100);
   const tone =
     pct >= 75
-      ? "text-emerald-300"
+      ? "text-cyan-300"
       : pct >= 50
         ? "text-yellow-400"
         : "text-gray-400";

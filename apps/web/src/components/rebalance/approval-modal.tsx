@@ -152,7 +152,7 @@ export function ApprovalModal({
                       }
                     >
                       {isCalibrated ? "calibrated " : "confidence "}
-                      <span className="text-emerald-300">{headlinePct}%</span>
+                      <span className="text-cyan-300">{headlinePct}%</span>
                       {isCalibrated && (
                         <span className="text-gray-500"> (raw {rawPct}%)</span>
                       )}
@@ -164,7 +164,7 @@ export function ApprovalModal({
                     aria-label={`Calibrated confidence ${headlinePct}%`}
                   >
                     <div
-                      className="h-full bg-emerald-400"
+                      className="h-full bg-cyan-400"
                       style={{
                         width: `${Math.min(100, Math.max(0, headlinePct))}%`,
                       }}

@@ -69,11 +69,7 @@ export function BacktestPreview({ portfolioId, proposed }: Props) {
 
   const delta = data.deltaTotalReturnPct;
   const deltaTone =
-    delta > 0
-      ? "text-emerald-300"
-      : delta < 0
-        ? "text-rose-300"
-        : "text-gray-300";
+    delta > 0 ? "text-cyan-300" : delta < 0 ? "text-rose-300" : "text-gray-300";
   const deltaSign = delta > 0 ? "+" : "";
 
   return (
