@@ -116,12 +116,33 @@ export type ModelRoute =
 
 export interface CriticVerdict {
   model?: string;
-  /** Modern verdict field (preferred). */
-  verdict?: "approved" | "revised" | "abstained";
+  /** Modern verdict field (preferred). Adds "veto" for constitution-driven
+   * short-circuit decisions surfaced by the F-CON-3 flow. */
+  verdict?: "approved" | "revised" | "abstained" | "veto";
   /** Legacy boolean field for older decisions. */
   demandsRevision?: boolean;
   notes: string;
   confidence?: number;
+  /** Constitution clause IDs cited by this verdict. Present (non-empty) only
+   * on veto verdicts; absent or empty for ordinary critic output. */
+  clauseIds?: string[];
+}
+
+/** One clause from the Aegis Constitution YAML, surfaced on the public
+ * /about/constitution model card and (by id) in the approval modal. */
+export interface ConstitutionClause {
+  id: string;
+  summary: string;
+  description: string;
+  field: string;
+  kind: "hard_limit" | "band" | "floor" | "ceiling";
+  tierMin?: "free" | "pro" | "business";
+}
+
+export interface ConstitutionDocument {
+  version: number;
+  effectiveAt: string;
+  clauses: ConstitutionClause[];
 }
 
 export interface AgentDecision {

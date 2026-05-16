@@ -41,4 +41,6 @@ export type {
   CounterfactualReplay,
   AgentToolInvoked,
   AgentAbstained,
+  ConstitutionClause,
+  ConstitutionDocument,
 } from "@aegis/shared";

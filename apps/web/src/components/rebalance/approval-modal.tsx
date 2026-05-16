@@ -6,6 +6,7 @@ import { rebalanceApi, type RebalancePlanResponse } from "@/lib/api";
 import type { AgentDecision } from "@/types";
 import { cn } from "@/lib/utils";
 import { BacktestPreview } from "@/components/rebalance/backtest-preview";
+import { ConstitutionClauseBadge } from "@/components/agent/ConstitutionClauseBadge";
 import { ModelBadge, ChainBadge } from "@aegis/ui";
 
 function formatRelativeSeconds(at: Date): string {
@@ -126,6 +127,34 @@ export function ApprovalModal({
                   {decision.reasoning}
                 </p>
               )}
+              {decision.criticVerdict &&
+                (decision.criticVerdict.clauseIds?.length ?? 0) > 0 && (
+                  <div className="border-t border-white/5 pt-2 space-y-1">
+                    <p className="text-[10px] uppercase tracking-wider text-rose-400">
+                      Critic veto reasons (constitution)
+                    </p>
+                    <div className="flex flex-wrap gap-1">
+                      {decision.criticVerdict.clauseIds!.map((id) => (
+                        <ConstitutionClauseBadge
+                          key={id}
+                          clauseId={id}
+                          violated
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              {decision.criticVerdict &&
+                (decision.criticVerdict.clauseIds?.length ?? 0) === 0 &&
+                decision.criticVerdict.verdict !== "veto" && (
+                  <div className="border-t border-white/5 pt-2">
+                    <ConstitutionClauseBadge
+                      clauseId="Constitution clean"
+                      violated={false}
+                      summary="No hard constraints violated. Critic ran free-form review only."
+                    />
+                  </div>
+                )}
               {decision.criticVerdict && (
                 <p className="text-[10px] text-amber-300/90 border-t border-white/5 pt-2">
                   <span className="uppercase tracking-wider text-amber-400 mr-1.5">
