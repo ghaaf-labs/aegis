@@ -41,21 +41,26 @@ export function AssetTable({ showActions = false }: Props) {
       <CardHeader>
         <CardTitle>Holdings</CardTitle>
       </CardHeader>
-      <CardContent className="p-0">
-        <table className="w-full">
+      <CardContent className="p-0 overflow-x-auto">
+        <table className="w-full min-w-[640px]">
           <thead>
             <tr className="border-b border-white/5">
-              {[
-                "Asset",
-                "Price",
-                "24h",
-                "Holdings",
-                "Value",
-                "Weight vs Target",
-              ].map((h) => (
+              {(
+                [
+                  ["Asset", ""],
+                  ["Price", ""],
+                  ["24h", "hidden sm:table-cell"],
+                  ["Holdings", "hidden md:table-cell"],
+                  ["Value", ""],
+                  ["Weight vs Target", "hidden lg:table-cell"],
+                ] as const
+              ).map(([h, cls]) => (
                 <th
                   key={h}
-                  className="px-5 py-3 text-left text-[11px] font-medium text-gray-500 uppercase tracking-wider"
+                  className={
+                    "px-5 py-3 text-left text-[11px] font-medium text-gray-500 uppercase tracking-wider " +
+                    cls
+                  }
                 >
                   {h}
                 </th>
@@ -92,7 +97,7 @@ export function AssetTable({ showActions = false }: Props) {
                   >
                     {price ? formatCurrency(price.priceUsd) : "—"}
                   </td>
-                  <td className="px-5 py-3.5">
+                  <td className="px-5 py-3.5 hidden sm:table-cell">
                     {price && (
                       <span
                         className={`text-xs flex items-center gap-1 ${changeColor(price.change24h)}`}
@@ -106,13 +111,13 @@ export function AssetTable({ showActions = false }: Props) {
                       </span>
                     )}
                   </td>
-                  <td className="px-5 py-3.5 text-xs text-gray-400 font-mono">
+                  <td className="px-5 py-3.5 text-xs text-gray-400 font-mono hidden md:table-cell">
                     {formatNumber(alloc.quantity)}
                   </td>
                   <td className="px-5 py-3.5 text-sm text-white font-medium">
                     {formatCurrency(alloc.valueUsd)}
                   </td>
-                  <td className="px-5 py-3.5">
+                  <td className="px-5 py-3.5 hidden lg:table-cell">
                     <div className="flex items-center gap-2">
                       <div className="flex items-center gap-1">
                         <span className="text-xs text-gray-400 font-mono w-8">
