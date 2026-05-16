@@ -131,6 +131,15 @@ pub struct AgentDecisionPayload {
     pub completion_tokens: Option<i32>,
     pub latency_ms: Option<i32>,
     pub critic_verdict: Option<serde_json::Value>,
+    // F-CONF-4 / F-CONF-5: surfaced to the approval modal. Omitted from
+    // serialization when None so the wire stays lean for callers that
+    // don't run with CALIBRATED_CONF_ENABLED.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_confidence: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub calibrated_confidence: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub counterfactual: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -310,6 +319,9 @@ mod contract_tests {
                 "notes": "OK",
                 "confidence": 0.9
             })),
+            raw_confidence: None,
+            calibrated_confidence: None,
+            counterfactual: None,
         };
         let v = json(&payload);
         for key in [
@@ -371,6 +383,9 @@ mod contract_tests {
             completion_tokens: None,
             latency_ms: None,
             critic_verdict: None,
+            raw_confidence: None,
+            calibrated_confidence: None,
+            counterfactual: None,
         });
         let agent_for_other = SseEvent::AgentDecision(AgentDecisionPayload {
             id: uuid::Uuid::nil(),
@@ -387,6 +402,9 @@ mod contract_tests {
             completion_tokens: None,
             latency_ms: None,
             critic_verdict: None,
+            raw_confidence: None,
+            calibrated_confidence: None,
+            counterfactual: None,
         });
         let public_event = SseEvent::PriceTick(PriceTick {
             symbol: "BTC".into(),

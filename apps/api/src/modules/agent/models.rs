@@ -33,6 +33,15 @@ pub struct AgentDecision {
     /// counterfactual replay. Empty `{}` for legacy rows.
     #[sqlx(default)]
     pub snapshot: serde_json::Value,
+
+    // F-CONF-4: calibrated confidence + critic counterfactual. All Optional
+    // for back-compat with rows persisted before migration 0013.
+    #[sqlx(default)]
+    pub raw_confidence: Option<f64>,
+    #[sqlx(default)]
+    pub calibrated_confidence: Option<f64>,
+    #[sqlx(default)]
+    pub counterfactual: Option<String>,
 }
 
 #[allow(dead_code)]

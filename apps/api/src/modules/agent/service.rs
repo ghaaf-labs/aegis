@@ -19,6 +19,8 @@ use serde_json::json;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
+use super::critic as critic_mod;
+use super::calibration_train;
 use super::memory;
 use super::models::{AgentDecision, AnalyzeRequest};
 use super::tools;
@@ -234,6 +236,74 @@ pub async fn analyze_portfolio(
         triggered_by
     };
 
+    // 7b. F-CONF-4: apply the strategist calibrator, if one has been fit.
+    // Cold start (no calibrations row) ⇒ calibrated == raw; the headline UI
+    // number falls back to the raw confidence so behavior is unchanged with
+    // the feature flag off.
+    let raw_confidence = proposal.confidence;
+    let (calibrated_confidence, calibration_id_opt) = if state.config.calibrated_conf_enabled {
+        match calibration_train::latest_for(&state.db, calibration_train::TASK_STRATEGIST).await {
+            Ok(Some(latest)) => {
+                let cal_conf = crate::modules::agent::calibration::apply_scalar(
+                    &latest.calibration,
+                    "right",
+                    raw_confidence,
+                );
+                (cal_conf, Some(latest.id))
+            }
+            Ok(None) => {
+                tracing::info!(
+                    "calibration: no strategist calibration row yet; falling back to raw confidence"
+                );
+                (raw_confidence, None)
+            }
+            Err(e) => {
+                warn!("calibration lookup failed, using raw confidence: {e:#}");
+                (raw_confidence, None)
+            }
+        }
+    } else {
+        (raw_confidence, None)
+    };
+
+    // 7c. F-CONF-5: optional counterfactual second-pass on the critic.
+    let counterfactual_opt = if state.config.calibrated_conf_enabled {
+        let cf_prompt = critic_mod::build_prompt(
+            &json_string(&proposal).unwrap_or_default(),
+            regime.regime.as_str(),
+            &verdict.notes,
+        );
+        match ai
+            .chat(
+                ModelRoute::CritiqueAgent,
+                vec![
+                    Message::system(cf_prompt),
+                    Message::user("Emit the counterfactual JSON.".to_string()),
+                ],
+            )
+            .await
+        {
+            Ok(resp) => {
+                prompt_tokens = prompt_tokens.saturating_add(resp.prompt_tokens);
+                completion_tokens = completion_tokens.saturating_add(resp.completion_tokens);
+                match critic_mod::parse(&resp.content) {
+                    Ok(out) if !out.is_empty() => Some(out.counterfactual),
+                    Ok(_) => None,
+                    Err(e) => {
+                        warn!("counterfactual parse failed: {e:#}");
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("counterfactual call failed: {e:#}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // 8. Persist with full telemetry.
     let latency_ms = start.elapsed().as_millis() as i32;
     let recommendation_value = serde_json::to_value(&proposal.recommendation)?;
@@ -244,8 +314,9 @@ pub async fn analyze_portfolio(
         r#"INSERT INTO agent_decisions
            (id, portfolio_id, reasoning, recommendation, confidence,
             triggered_by, model_slug, regime, prompt_tokens,
-            completion_tokens, latency_ms, critic_verdict, snapshot)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            completion_tokens, latency_ms, critic_verdict, snapshot,
+            raw_confidence, calibrated_confidence, counterfactual)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
            RETURNING *"#,
     )
     .bind(Uuid::new_v4())
@@ -261,8 +332,32 @@ pub async fn analyze_portfolio(
     .bind(latency_ms)
     .bind(&critic_value)
     .bind(&snapshot_value)
+    .bind(raw_confidence)
+    .bind(calibrated_confidence)
+    .bind(counterfactual_opt.as_deref())
     .fetch_one(&state.db)
     .await?;
+
+    // 8b. F-CONF-4: insert the audit-trail row when calibration ran. Best-effort —
+    // if this insert fails we still surface the decision (the columns on
+    // agent_decisions are the source of truth for the UI).
+    if state.config.calibrated_conf_enabled {
+        if let Err(e) = sqlx::query(
+            r#"INSERT INTO calibrated_predictions
+               (decision_id, raw_confidence, calibrated_confidence, calibration_id, counterfactual)
+               VALUES ($1, $2, $3, $4, $5)"#,
+        )
+        .bind(decision.id)
+        .bind(raw_confidence)
+        .bind(calibrated_confidence)
+        .bind(calibration_id_opt)
+        .bind(counterfactual_opt.as_deref())
+        .execute(&state.db)
+        .await
+        {
+            warn!("calibrated_predictions insert failed: {e:#}");
+        }
+    }
 
     // 9. Broadcast the final decision over SSE.
     let _ = state
@@ -282,6 +377,9 @@ pub async fn analyze_portfolio(
             completion_tokens: decision.completion_tokens,
             latency_ms: decision.latency_ms,
             critic_verdict: decision.critic_verdict.clone(),
+            raw_confidence: decision.raw_confidence,
+            calibrated_confidence: decision.calibrated_confidence,
+            counterfactual: decision.counterfactual.clone(),
         }));
 
     Ok(decision)
