@@ -10,7 +10,7 @@ use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLay
 use crate::middleware::auth::require_auth;
 use crate::modules::{
     agent, ai, analytics, backtest, billing, diary, digest, faucet, fx, gateway, market_data,
-    paymaster, portfolio, rebalance, scheduler,
+    paymaster, portfolio, rebalance, risk_engine, scheduler,
     sse::{self, SseSender},
     tax, treasury, trustability, wallet,
 };
@@ -69,7 +69,8 @@ pub async fn build(db: Db, config: Config) -> Router {
     let cancel = tokio_util::sync::CancellationToken::new();
     scheduler::spawn_portfolio_scheduler(state.clone(), cancel.clone());
     scheduler::spawn_outcome_compressor(state.clone(), cancel.clone());
-    digest::spawn_digest_worker(state.clone(), cancel);
+    digest::spawn_digest_worker(state.clone(), cancel.clone());
+    let _peg_monitor = risk_engine::spawn_peg_monitor(state.clone(), cancel);
 
     // CORS — must list specific origin(s) when sending credentials. The
     // wildcard isn't legal alongside `Access-Control-Allow-Credentials: true`.

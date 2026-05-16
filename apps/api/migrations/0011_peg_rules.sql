@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS peg_rules (
     -- NULL portfolio_id == apply to every portfolio the user owns.
     portfolio_id    UUID REFERENCES portfolios(id) ON DELETE CASCADE,
     asset           TEXT NOT NULL,
-    threshold_price NUMERIC NOT NULL CHECK (threshold_price > 0),
+    threshold_price DOUBLE PRECISION NOT NULL CHECK (threshold_price > 0),
     window_seconds  INTEGER NOT NULL DEFAULT 300 CHECK (window_seconds >= 0),
     action_kind     TEXT NOT NULL CHECK (action_kind IN ('alert','propose_rebalance','auto_execute')),
     target_asset    TEXT,
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS peg_events (
     id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     rule_id        UUID NOT NULL REFERENCES peg_rules(id) ON DELETE CASCADE,
     asset          TEXT NOT NULL,
-    observed_price NUMERIC NOT NULL,
+    observed_price DOUBLE PRECISION NOT NULL,
     observed_at    TIMESTAMPTZ NOT NULL,
     action_taken   TEXT NOT NULL,
     rebalance_id   UUID REFERENCES rebalances(id) ON DELETE SET NULL,
