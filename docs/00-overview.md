@@ -23,6 +23,18 @@ Humans steer. Agents execute. The agent never moves money on its own — every r
 | AI          | **OpenRouter** with per-task model routing | Right brain for each job; not locked to one provider                          |
 | Realtime    | **SSE** (`/sse`)                           | Server→client only; native `EventSource`; trivial proxying                    |
 
+### Default models + cost guard (F-COST-1, 2026-05-16)
+
+| Route             | Default slug                  | Reason                                                                                                     |
+| ----------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Regime classifier | `qwen/qwen3.5-flash-02-23`    | Cheapest viable 3-class output                                                                             |
+| Strategist        | `deepseek/deepseek-v4-flash`  | $0.112/$0.224 per Mtok, 1M context. Swapped 2026-05-16 from `v4-pro` whose promo cliffed 4× on 2026-05-31. |
+| Critic            | `~openai/gpt-mini-latest`     | Different family from strategist so the adversarial pass isn't a self-edit                                 |
+| Tax explainer     | `qwen/qwen3.6-flash`          | Lowest-cost narrative model                                                                                |
+| Daily commentary  | `~google/gemini-flash-latest` | Different family again                                                                                     |
+
+A soft per-decision budget guard `OPENROUTER_BUDGET_GUARD_USD` (default `$0.05`) logs a `warn!` when a single call exceeds the ceiling; enforcement-at-call-time (auto-downshift to Haiku) is tracked as F-COST-2 in [`docs/05-open-questions.md`](./05-open-questions.md).
+
 ## What we are _not_ building
 
 - A custodian. Circle Wallets hold keys; we hold preferences.

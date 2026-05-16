@@ -580,6 +580,7 @@ mod tests {
             aum_stream_enabled: false,
             calibrated_conf_enabled: false,
             constitution_enabled: false,
+            openrouter_budget_guard_usd: 0.05,
         };
         c.execution_mock = true;
         c

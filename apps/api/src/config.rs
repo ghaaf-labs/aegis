@@ -145,6 +145,16 @@ pub struct Config {
     /// Harvestable-losses threshold (USD). Below this, no harvest signal.
     pub harvest_threshold_usd: f64,
 
+    /// F-COST-1: soft budget guard. When an OpenRouter call's reported
+    /// cost exceeds this number of USD per decision, the agent service
+    /// logs a `warn!` and (once the enforcement path lands) routes the
+    /// next call to the cheaper Haiku tier. Default $0.05/decision —
+    /// roughly the cost ceiling of a typical strategist + critic pass
+    /// at v4-flash + Haiku 4.5 mid-2026 pricing.
+    /// TODO(F-COST-2): enforce at call time in agent/service.rs.
+    #[allow(dead_code)]
+    pub openrouter_budget_guard_usd: f64,
+
     // ── Sprint 3: digest ──────────────────────────────────────────────────
     /// Hour of day (UTC) when the digest worker fires. 0–23.
     #[allow(dead_code)]
@@ -221,8 +231,13 @@ impl Config {
             // for any route at ~10–50× the per-token cost.
             model_regime: std::env::var("MODEL_REGIME")
                 .unwrap_or_else(|_| "qwen/qwen3.5-flash-02-23".into()),
+            // F-COST-1: default to deepseek-v4-flash. The previous default
+            // `deepseek/deepseek-v4-pro` had a promo price ($0.435/$0.87 per
+            // Mtok) that expired 2026-05-31 → 4× cliff to $1.74/$3.48.
+            // v4-flash is permanently $0.112/$0.224 per Mtok with the same
+            // 1M context and strong-enough reasoning for this use case.
             model_strategist: std::env::var("MODEL_STRATEGIST")
-                .unwrap_or_else(|_| "deepseek/deepseek-v4-pro".into()),
+                .unwrap_or_else(|_| "deepseek/deepseek-v4-flash".into()),
             model_critic: std::env::var("MODEL_CRITIC")
                 .unwrap_or_else(|_| "~openai/gpt-mini-latest".into()),
             model_tax: std::env::var("MODEL_TAX").unwrap_or_else(|_| "qwen/qwen3.6-flash".into()),
@@ -293,6 +308,7 @@ impl Config {
             scheduler_tick_secs: parse_or("SCHEDULER_TICK_SECS", 300)?,
             scheduler_cooldown_secs: parse_or("SCHEDULER_COOLDOWN_SECS", 1800)?,
             harvest_threshold_usd: parse_or("HARVEST_THRESHOLD_USD", 50.0)?,
+            openrouter_budget_guard_usd: parse_or("OPENROUTER_BUDGET_GUARD_USD", 0.05)?,
 
             digest_hour_utc: parse_or("DIGEST_HOUR_UTC", 8)?,
             resend_api_key: std::env::var("RESEND_API_KEY").unwrap_or_default(),
@@ -463,6 +479,7 @@ mod tests {
             scheduler_tick_secs: 300,
             scheduler_cooldown_secs: 1800,
             harvest_threshold_usd: 50.0,
+            openrouter_budget_guard_usd: 0.05,
             digest_hour_utc: 8,
             resend_api_key: String::new(),
             digest_from: "Aegis <noreply@aegis.local>".into(),

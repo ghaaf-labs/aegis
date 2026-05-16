@@ -21,6 +21,16 @@ The matching `JWT_SECRET` (which was also leaked in the same commit) has already
 
 Note: scrubbing history via filter-repo cleaned `origin/main`, but the historical `feat/sprint-*` branches and `fix/post-submission-audit` on origin still contain `2d768d7` in their git ancestry. If those branches are not needed, delete them on origin to fully purge. They're stale/merged already.
 
+## Budget guard enforcement (call-time downshift)
+
+**Tag:** `F-COST-2` · **Status:** open · **Surfaced:** 2026-05-16 by F-COST-1
+
+F-COST-1 (the DeepSeek price-cliff defuse) added `OPENROUTER_BUDGET_GUARD_USD` (default `$0.05`) to `Config` but did NOT enforce it at call time — the value is read at boot and the field is plumbed through, but no code consults it yet. The TODO is marked at `apps/api/src/config.rs::openrouter_budget_guard_usd` in the doc comment.
+
+**What's missing**: in `apps/api/src/modules/agent/service.rs`, after each `OpenRouterClient::chat` returns, compute the call's cost-USD (OpenRouter returns `usage.cost` in the response — needs plumbing through `ChatToolResult`) and compare to the guard. When exceeded, route the next call in the same decision to a cheaper Haiku tier and persist a `tier_features.downshifted: true` marker in the decision metadata so the UI can surface it.
+
+Cheap escape valve: if enforcement is too risky, just log a `warn!` for now and ticket a dashboard alert. The guard config itself is already valuable as an operator signal.
+
 ## Regime classifier accuracy
 
 The classifier turns three statistical inputs (BTC 30d realized vol, 90d cross-asset correlation, max drawdown) into a 1-of-3 label via a small Haiku call. We have no out-of-sample validation. In a longer build we'd:
