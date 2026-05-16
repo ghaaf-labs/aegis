@@ -40,6 +40,7 @@ export function ExecutionTrace({ rebalanceId, sseUrl }: ExecutionTraceProps) {
   const [completed, setCompleted] = useState<number>(0);
   const [total, setTotal] = useState<number>(0);
   const [decisionId, setDecisionId] = useState<string | null>(null);
+  const [settlementTx, setSettlementTx] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -49,6 +50,7 @@ export function ExecutionTrace({ rebalanceId, sseUrl }: ExecutionTraceProps) {
       setTotal(plan.totalLegs);
       setCompleted(plan.completedLegs);
       setDecisionId(plan.decisionId);
+      setSettlementTx(plan.protocolFeeSettlementTx ?? null);
       setLegs(
         plan.legs.map((l) => ({
           id: l.id,
@@ -107,7 +109,17 @@ export function ExecutionTrace({ rebalanceId, sseUrl }: ExecutionTraceProps) {
   return (
     <section className="space-y-3">
       <header className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-white">Execution trace</h2>
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-semibold text-white">Execution trace</h2>
+          {legs.some(
+            (l) =>
+              l.kind === "cross_chain_burn" || l.kind === "cross_chain_mint",
+          ) && (
+            <span className="inline-flex items-center gap-1 rounded border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-mono text-cyan-300">
+              Real on-chain • CCTP V2 + Hooks
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-3 font-mono text-xs">
           <span className="text-gray-400">
             {completed} / {total} legs
@@ -156,10 +168,66 @@ export function ExecutionTrace({ rebalanceId, sseUrl }: ExecutionTraceProps) {
         )}
       </div>
       {status === "completed" && decisionId && (
-        <ShareBlock decisionId={decisionId} />
+        <>
+          <div className="mt-3 border border-amber-500/30 bg-amber-500/5 p-3 text-[11px] font-mono text-amber-300 flex items-center gap-2 flex-wrap">
+            <span>
+              Protocol fee (25 bps) settled via Circle Nanopayments (x402)
+            </span>
+            {settlementTx ? (
+              <>
+                <a
+                  href={
+                    settlementTx.startsWith("0x")
+                      ? getExplorerUrlForTx(settlementTx, legs)
+                      : undefined
+                  }
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline text-amber-400 hover:text-amber-200"
+                >
+                  {settlementTx.slice(0, 10)}… ↗
+                </a>
+                <span className="text-amber-400/60 text-[10px]">
+                  on{" "}
+                  {legs.some(
+                    (l) => l.destChain === "base" || l.srcChain === "base",
+                  )
+                    ? "Base"
+                    : "Arc"}
+                </span>
+                {settlementTx.startsWith("0x") && (
+                  <span className="text-emerald-400 text-[10px] border border-emerald-500/30 px-1 rounded">
+                    on-chain
+                  </span>
+                )}
+                <button
+                  onClick={() => {
+                    void navigator.clipboard.writeText(settlementTx);
+                  }}
+                  className="ml-1 px-1.5 py-0.5 text-[10px] border border-amber-500/40 hover:bg-amber-500/10 rounded"
+                >
+                  copy
+                </button>
+              </>
+            ) : (
+              <span className="text-amber-400/70">· tx recorded</span>
+            )}
+          </div>
+          <ShareBlock decisionId={decisionId} />
+        </>
       )}
     </section>
   );
+}
+
+function getExplorerUrlForTx(tx: string, legs: InternalLeg[]): string {
+  const hasBase = legs.some(
+    (l) => l.destChain === "base" || l.srcChain === "base",
+  );
+  const base = hasBase
+    ? "https://sepolia.basescan.org/tx/"
+    : "https://explorer.testnet.arc.network/tx/";
+  return `${base}${tx}`;
 }
 
 function ShareBlock({ decisionId }: { decisionId: string }) {

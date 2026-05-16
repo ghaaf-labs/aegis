@@ -294,9 +294,12 @@ function ConfidencePill({ confidence }: { confidence: number }) {
 }
 
 function CriticLine({ verdict }: { verdict: CriticVerdict }) {
+  // Use cyan (agent accent) for approved, rose for revision requested.
+  // This follows the strict design-system rule: green = money/PnL only,
+  // cyan = agent surfaces.
   const tone = verdict.demandsRevision
     ? "text-rose-300 border-rose-500/30 bg-rose-500/5"
-    : "text-emerald-300/80 border-emerald-500/30 bg-emerald-500/5";
+    : "text-cyan-300 border-cyan-500/30 bg-cyan-500/5";
   return (
     <div
       className={`mt-3 flex items-start gap-2 px-2 py-1.5 rounded border ${tone} text-[10px] leading-relaxed`}
@@ -304,7 +307,7 @@ function CriticLine({ verdict }: { verdict: CriticVerdict }) {
       <ShieldAlert className="w-3 h-3 mt-0.5 shrink-0" />
       <span className="font-mono">
         <span className="opacity-70">
-          Critic ({Math.round(verdict.confidence * 100)}%):
+          Critic ({Math.round((verdict.confidence ?? 0) * 100)}%):
         </span>{" "}
         {verdict.demandsRevision ? "Revision requested — " : "Approved — "}
         <span className="opacity-90">{verdict.notes || "(no notes)"}</span>

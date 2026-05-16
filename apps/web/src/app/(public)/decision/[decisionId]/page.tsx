@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { ModelBadge } from "@aegis/ui";
 import type { DiaryEntry } from "@/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
@@ -89,14 +90,41 @@ export default async function DecisionPage({ params }: RouteParams) {
           <h1 className="text-3xl font-semibold text-text-hi font-mono tracking-tight">
             {decision.recommendationSummary}
           </h1>
-          <p className="text-sm text-text-lo">
-            {decision.regime?.toUpperCase()} regime · model{" "}
-            <span className="text-accent-agent font-mono">
-              {decision.modelSlug ?? "(unknown)"}
-            </span>{" "}
-            · confidence {Math.round(decision.confidence * 100)}%
-          </p>
+          <div className="flex flex-wrap items-center gap-2 text-sm text-text-lo">
+            {decision.regime && (
+              <span className="uppercase tracking-wider">
+                {decision.regime.replace("_", " ")} regime
+              </span>
+            )}
+            {decision.modelSlug && <ModelBadge model={decision.modelSlug} />}
+            <span>confidence {Math.round(decision.confidence * 100)}%</span>
+          </div>
+
+          {decision.criticVerdict && (
+            <div className="mt-1 inline-flex items-center gap-2 text-xs">
+              <span className="uppercase tracking-[1px] text-text-lo">
+                Critic
+              </span>
+              <span
+                className={`px-2 py-0.5 font-mono border ${
+                  decision.criticVerdict.verdict === "revised"
+                    ? "border-rose-500/40 text-rose-300 bg-rose-500/10"
+                    : "border-cyan-500/40 text-cyan-300 bg-cyan-500/10"
+                }`}
+              >
+                {decision.criticVerdict.verdict.toUpperCase()}
+              </span>
+              <span className="text-text-mut max-w-[420px] truncate">
+                {decision.criticVerdict.notes}
+              </span>
+            </div>
+          )}
         </header>
+
+        <p className="text-[10px] text-text-mut font-mono">
+          Decision recorded {new Date(decision.createdAt).toLocaleString()} ·
+          via agent pipeline
+        </p>
 
         {realized != null && counterfactual != null && (
           <section className="grid grid-cols-2 gap-3">

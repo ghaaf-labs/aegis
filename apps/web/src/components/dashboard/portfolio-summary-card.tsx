@@ -2,11 +2,13 @@
 
 import { TrendingUp, TrendingDown, Wallet } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { useActivePortfolio } from "@/stores/portfolio";
+import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
 import { formatCurrency, formatPercent, changeColor } from "@/lib/utils";
+import { ProvenanceLine } from "@aegis/ui";
 
 export function PortfolioSummaryCard() {
   const portfolio = useActivePortfolio();
+  const snapshot = usePortfolioStore((s) => s.marketSnapshot);
 
   if (!portfolio) {
     return (
@@ -17,6 +19,17 @@ export function PortfolioSummaryCard() {
       </Card>
     );
   }
+
+  const ageMs = snapshot
+    ? Date.now() - new Date(snapshot.capturedAt).getTime()
+    : 0;
+  const isStale = ageMs > 60_000;
+  const isVeryStale = ageMs > 300_000;
+  const priceColor = isVeryStale
+    ? "text-red-400"
+    : isStale
+      ? "text-yellow-400"
+      : "text-white";
 
   const isPositive = portfolio.totalPnlUsd >= 0;
   const TrendIcon = isPositive ? TrendingUp : TrendingDown;
@@ -30,7 +43,7 @@ export function PortfolioSummaryCard() {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <p className="text-3xl font-bold text-white mb-1">
+        <p className={`text-3xl font-bold mb-1 ${priceColor}`}>
           {formatCurrency(portfolio.totalValueUsd)}
         </p>
         <div
@@ -54,11 +67,35 @@ export function PortfolioSummaryCard() {
           </div>
           <div className="p-3 rounded-lg bg-white/3 border border-white/5">
             <p className="text-xs text-gray-500 mb-1">Risk Score</p>
-            <p
-              className={`text-sm font-semibold ${portfolio.riskScore < 40 ? "text-emerald-400" : portfolio.riskScore < 65 ? "text-yellow-400" : "text-red-400"}`}
-            >
-              {portfolio.riskScore}/100
-            </p>
+            <div className="flex items-center gap-2">
+              <p
+                className={`text-sm font-semibold ${portfolio.riskScore < 40 ? "text-emerald-400" : portfolio.riskScore < 65 ? "text-yellow-400" : "text-red-400"}`}
+              >
+                {portfolio.riskScore}/100
+              </p>
+              {isVeryStale && (
+                <span className="text-red-400 text-[10px]">stale</span>
+              )}
+              {isStale && !isVeryStale && (
+                <span className="text-yellow-400 text-[10px]">stale</span>
+              )}
+            </div>
+            {snapshot && (
+              <p className="text-[10px] text-gray-500 mt-0.5">
+                as of{" "}
+                {new Date(snapshot.capturedAt).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </p>
+            )}
+          </div>
+
+          <div className="pt-2 border-t border-white/10">
+            <ProvenanceLine
+              source="Gateway unified balance + on-chain positions"
+              freshness="live"
+            />
           </div>
         </div>
       </CardContent>

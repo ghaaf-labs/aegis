@@ -109,6 +109,14 @@ function DiaryCard({ entry }: { entry: DiaryEntry }) {
                 </BrutalPill>
               )}
               {entry.modelSlug && <ModelBadge model={entry.modelSlug} />}
+              {entry.criticVerdict && (
+                <span className="text-xs px-2 py-0.5 rounded bg-white/10 text-white/80 border border-white/20">
+                  Critic:{" "}
+                  {entry.criticVerdict.verdict === "revised"
+                    ? "revised"
+                    : "approved"}
+                </span>
+              )}
             </div>
             <time
               className="font-mono text-[11px] text-gray-500"
