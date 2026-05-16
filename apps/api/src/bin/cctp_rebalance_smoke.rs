@@ -1,25 +1,18 @@
-//! N6 smoke — fire the first real CCTP V2 rebalance end-to-end without the
-//! HTTP layer or Circle Wallets API.
+//! Smoke harness for a real CCTP V2 rebalance, end-to-end, without the HTTP
+//! layer or the Circle Wallets API.
 //!
-//! Bypasses two things that are broken for our purposes:
+//! Loads a pre-seeded user + portfolio from the database (see
+//! `scripts/seed-rebalance-smoke.sh`), injects a synthetic Gateway pool
+//! `{Base: portfolio_value, Arc: 0}` to force a cross-chain burn-mint pair,
+//! drives `executor::approve_and_execute`, then polls until the rebalance
+//! reaches a terminal state and prints the leg-level result.
 //!
-//! 1. **Circle Wallets signup** (`F-WALLET-1` — paths 404 on api-sandbox).
-//!    `scripts/seed-n6-smoke.sh` writes the user + portfolio + allocations
-//!    directly via psql. This binary reads them back.
-//! 2. **Gateway balance fetch** (depends on a real Circle wallet_id which we
-//!    don't have). This binary injects a synthetic `usdc_per_chain` pool of
-//!    `{Base: 20.0, Arc: 0.0}` so the planner emits a CCTP burn-mint pair.
-//!
-//! Run with:
+//! Run:
 //!
 //! ```bash
 //! EXECUTION_MOCK=false MOCK_CIRCLE=false BILLING_V2_ENABLED=false \
-//!     cargo run --features real-cctp --bin n6_smoke
+//!     cargo run --features real-cctp --bin cctp_rebalance_smoke
 //! ```
-//!
-//! On success, prints both tx hashes (Base burn + Arc mint) plus the
-//! rebalance UUID. Verify on basescan-sepolia + testnet.arcscan and add to
-//! `docs/06-traction.md` "Live testnet evidence".
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -51,10 +44,8 @@ const PORTFOLIO_ID: &str = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Load order: .env.local (gitignored personal overrides) wins, .env
-    // (committed defaults) fills remaining. Both .ok() — silent if absent.
-    // Surfaces parse errors at startup; debugging F-EXEC-1's DIGEST_FROM
-    // quoting bug showed that silent `.ok()` had been hiding a broken .env.
+    // .env.local wins; .env fills remaining. Surface parse errors at startup
+    // — a malformed value silently zeroes every downstream CCTP/USDC address.
     if let Err(e) = dotenvy::from_filename(".env.local") {
         if !matches!(&e, dotenvy::Error::Io(io) if io.kind() == std::io::ErrorKind::NotFound) {
             eprintln!("[dotenv] .env.local: {e}");
@@ -67,26 +58,21 @@ async fn main() -> anyhow::Result<()> {
     }
 
     tracing_subscriber::registry()
-        .with(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "aegis_api=info,n6_smoke=info".into()),
-        )
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            "aegis_api=info,cctp_rebalance_smoke=info".into()
+        }))
         .with(tracing_subscriber::fmt::layer().compact())
         .init();
 
     let cfg = Config::from_env().context("Config::from_env")?;
     anyhow::ensure!(
         !cfg.execution_mock,
-        "N6 smoke must run with EXECUTION_MOCK=false; got true"
+        "smoke must run with EXECUTION_MOCK=false; got true"
     );
     anyhow::ensure!(
         !cfg.circle_mock,
-        "N6 smoke must run with MOCK_CIRCLE=false; got true"
+        "smoke must run with MOCK_CIRCLE=false; got true"
     );
-    // Quick "are CCTP addresses + private keys actually loaded" sanity print.
-    // If any of these are empty after the dotenvy calls above, .env failed
-    // to parse (commonest cause: an unquoted value with spaces or `<` —
-    // see docs/09-env-hygiene.md).
     let public_vars = [
         ("CCTP_TOKEN_MESSENGER_BASE", &cfg.cctp_token_messenger_base),
         ("CCTP_TOKEN_MESSENGER_ARC", &cfg.cctp_token_messenger_arc),
@@ -95,10 +81,10 @@ async fn main() -> anyhow::Result<()> {
         ("REBALANCE_EXECUTOR_BASE", &cfg.rebalance_executor_base),
         ("REBALANCE_EXECUTOR_ARC", &cfg.rebalance_executor_arc),
     ];
-    println!("--- runtime config (public CCTP/USDC + secret key lengths) ---");
+    println!("--- runtime config ---");
     for (name, val) in public_vars {
         let v = if val.is_empty() {
-            "<EMPTY — .env didn't parse?>".to_string()
+            "<EMPTY — .env failed to parse?>".to_string()
         } else {
             val.clone()
         };
@@ -116,7 +102,7 @@ async fn main() -> anyhow::Result<()> {
 
     let pool = db::connect(&cfg.database_url).await?;
     let http = reqwest::Client::builder()
-        .user_agent(concat!("Aegis-N6Smoke/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("Aegis-RebalanceSmoke/", env!("CARGO_PKG_VERSION")))
         .timeout(Duration::from_secs(240))
         .build()?;
     let sse_tx = sse::new_channel();
@@ -132,19 +118,17 @@ async fn main() -> anyhow::Result<()> {
     let portfolio_id: Uuid = PORTFOLIO_ID.parse()?;
     let user_id: Uuid = USER_ID.parse()?;
 
-    // 1. Sanity: confirm the seed exists.
     let portfolio_row =
         sqlx::query("SELECT total_value_usd, goal FROM portfolios WHERE id = $1 AND user_id = $2")
             .bind(portfolio_id)
             .bind(user_id)
             .fetch_optional(&pool)
             .await?
-            .ok_or_else(|| anyhow!("seed missing — run scripts/seed-n6-smoke.sh first"))?;
+            .ok_or_else(|| anyhow!("seed missing — run scripts/seed-rebalance-smoke.sh first"))?;
     let total_value_usd: f64 = portfolio_row.try_get("total_value_usd")?;
     let goal: serde_json::Value = portfolio_row.try_get("goal")?;
     info!(%portfolio_id, total_value_usd, "loaded portfolio");
 
-    // 2. Read current allocations.
     let alloc_rows: Vec<(String, f64)> = sqlx::query_as(
         "SELECT asset_symbol, current_weight FROM allocations WHERE portfolio_id = $1",
     )
@@ -156,8 +140,6 @@ async fn main() -> anyhow::Result<()> {
         current_weights.insert(sym.clone(), w / 100.0);
     }
 
-    // 3. Pull target weights from goal.targetAllocation (0–100 percentages
-    //    → 0–1 fractions).
     let mut target_weights: HashMap<String, f64> = HashMap::new();
     if let Some(obj) = goal.get("targetAllocation").and_then(|v| v.as_object()) {
         for (k, v) in obj {
@@ -170,9 +152,6 @@ async fn main() -> anyhow::Result<()> {
         anyhow::bail!("goal.targetAllocation empty; seed shape wrong");
     }
 
-    // 4. SYNTHETIC Gateway pool — bypasses F-WALLET-1.
-    //    User holds 20 USDC, all on Base. This pushes the planner to bridge
-    //    half (10 USDC) to Arc to fund the USYC park.
     let mut usdc_per_chain: HashMap<ChainKey, f64> = HashMap::new();
     usdc_per_chain.insert(ChainKey::Arc, 0.0);
     usdc_per_chain.insert(ChainKey::Base, total_value_usd);
@@ -198,29 +177,24 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    // 5. Synthesize an agent_decisions row to anchor the rebalance.
     let decision_id: Uuid = sqlx::query_scalar(
         "INSERT INTO agent_decisions (portfolio_id, reasoning, confidence, triggered_by)
          VALUES ($1, $2, 0.95, 'user_request')
          RETURNING id",
     )
     .bind(portfolio_id)
-    .bind("N6 smoke: first real CCTP V2 rebalance, Base→Arc, 10 USDC")
+    .bind("rebalance smoke: cross-chain USDC via CCTP V2")
     .fetch_one(&pool)
     .await?;
     info!(%decision_id, "anchored agent decision");
 
-    // 6. Persist the plan.
     let rebalance_id = create_plan(&state, portfolio_id, decision_id, &legs).await?;
     println!();
     println!("rebalance_id = {rebalance_id}");
 
-    // 7. Approve + execute (spawns walk_legs in background).
     approve_and_execute(state.clone(), rebalance_id).await?;
     info!(%rebalance_id, "executor started; polling status until terminal");
 
-    // 8. Poll status until terminal. Timeout after 4 minutes (CCTP V2 ceiling
-    //    + buffer).
     let started = std::time::Instant::now();
     let timeout = Duration::from_secs(240);
     loop {
@@ -245,7 +219,6 @@ async fn main() -> anyhow::Result<()> {
         tokio::time::sleep(Duration::from_secs(3)).await;
     }
 
-    // 9. Dump leg-level state for the verification log.
     println!();
     println!("=== rebalance_legs ===");
     let leg_rows = sqlx::query(

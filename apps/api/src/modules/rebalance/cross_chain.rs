@@ -62,9 +62,8 @@ sol! {
         ) external returns (bool success);
     }
 
-    // F-EXEC-1c (2026-05-16): USDC must be approve()'d to the TokenMessenger
-    // before depositForBurn or the contract reverts on internal
-    // `transferFrom(sender, …)`. Minimal ERC-20 surface for the approve call.
+    // USDC must be approve()'d to the TokenMessenger before depositForBurn,
+    // or the contract reverts on its internal `transferFrom(sender, …)`.
     #[sol(rpc)]
     interface IERC20 {
         function approve(address spender, uint256 amount) external returns (bool);
@@ -251,13 +250,9 @@ impl<'a> CctpClient<'a> {
             ),
         };
 
-        // F-EXEC-1c — approve USDC for the TokenMessenger. CCTP V2's
-        // depositForBurn internally calls
-        // `USDC.transferFrom(msg.sender, tokenMessenger, amount)` which
-        // requires a non-zero allowance first. Without this approve, the
-        // burn reverts with "execution reverted" (error code 3) on the
-        // RPC layer. We approve exactly `amount` so the allowance is
-        // consumed and the user's wallet doesn't carry residual approval.
+        // depositForBurn calls `USDC.transferFrom(msg.sender, tokenMessenger,
+        // amount)` internally; approve exactly `amount` so no residual
+        // allowance is left behind.
         let usdc_token = IERC20::new(usdc, &provider);
         let _approve_receipt = usdc_token
             .approve(token_messenger, U256::from(amount))
@@ -410,13 +405,9 @@ impl<'a> CctpClient<'a> {
             return Ok(mock_attestation(message_hash));
         }
 
-        // F-EXEC-1a (2026-05-16): the prior `/v2/messages/{srcDomain}/{hash}`
-        // path was aspirational — Circle's testnet iris (and the documented
-        // CCTP V1 surface) actually serves `/v1/attestations/{messageHash}`.
-        // Verified live: `curl https://iris-api-sandbox.circle.com/v1/attestations/0x0…01`
-        // returns Circle-shape `{"error":"Message hash not found"}` (404).
-        // The `src_domain` parameter is kept in the signature so callers don't
-        // change but is unused here; `F-IRIS-1` tracks the mainnet V2 swap.
+        // Circle's testnet iris serves `/v1/attestations/{messageHash}` —
+        // the V2 `/v2/messages/{srcDomain}/{hash}` path is mainnet-only.
+        // `src_domain` is kept in the signature for the eventual V2 swap.
         let _ = src_domain;
 
         let start = std::time::Instant::now();

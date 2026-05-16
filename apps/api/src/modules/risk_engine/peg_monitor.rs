@@ -301,11 +301,11 @@ async fn user_tier(db: &Db, user_id: Uuid) -> anyhow::Result<String> {
     Ok(tier.unwrap_or_else(|| "free".into()))
 }
 
-/// F-PEG-7: Build a defensive rebalance plan that shifts the depegged
-/// asset's full weight into the rule's `target_asset`. Reuses the existing
-/// pure-function `rebalance::planner::plan_legs` so the same routing logic
-/// applies as for user-triggered rebalances (cross-chain burn/mint when
-/// USDC liquidity sits on the other chain, local swaps otherwise).
+/// Build a defensive rebalance plan that shifts the depegged asset's full
+/// weight into the rule's `target_asset`. Reuses the existing pure-function
+/// `rebalance::planner::plan_legs` so the same routing logic applies as for
+/// user-triggered rebalances (cross-chain burn/mint when USDC liquidity sits
+/// on the other chain, local swaps otherwise).
 ///
 /// Returns the rebalance plan id when legs were produced; `Ok(None)` when
 /// the rule has no resolvable portfolio, the depegged asset's weight is

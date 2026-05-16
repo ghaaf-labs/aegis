@@ -317,16 +317,10 @@ async fn dispatch(
                 .ok_or_else(|| AppError::BadRequest("missing src_chain".into()))?;
             let dest = ChainKey::parse(leg.dest_chain.as_deref().unwrap_or(""))
                 .ok_or_else(|| AppError::BadRequest("missing dest_chain".into()))?;
-            // F-EXEC-1b (2026-05-16): the prior code took a 32-hex-char UUID
-            // and sliced `[..40]` which panicked (UUID hex is 32 chars, not
-            // 40). Worse, the value was used as the *recipient* in the hook
-            // payload — meaningless data, USDC would mint to a dead address.
-            //
-            // Real fix: look up the user's destination-chain EOA address
-            // (users.arc_address when dest=Arc, users.base_address when
-            // dest=Base) and use it as the hook recipient. The minted USDC
+            // Look up the user's destination-chain EOA — this is the
+            // recipient embedded in the hook payload. The minted USDC
             // arrives at the destination-chain RebalanceExecutor, which
-            // then transfers to this recipient.
+            // then forwards it here.
             let recipient_col = match dest {
                 ChainKey::Arc => "arc_address",
                 ChainKey::Base => "base_address",
