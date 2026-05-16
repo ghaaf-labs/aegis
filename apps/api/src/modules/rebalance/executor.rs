@@ -137,15 +137,34 @@ pub async fn approve_and_execute(state: AppState, rebalance_id: Uuid) -> Result<
     tokio::spawn(async move {
         if let Err(e) = walk_legs(&st, rebalance_id, user_id).await {
             tracing::error!(?rebalance_id, error=%e, "rebalance walk failed");
+            let reason = format!("{e}");
             let _ = sqlx::query(
                 "UPDATE rebalances SET status = 'failed', failure_reason = $2,
                                        completed_at = NOW()
                  WHERE id = $1 AND status = 'executing'",
             )
             .bind(rebalance_id)
-            .bind(format!("{e}"))
+            .bind(&reason)
             .execute(&st.db)
             .await;
+
+            // If a protocol fee was recorded before the failure (e.g. partial
+            // success, or a future per-leg billing path), reverse it. No-op
+            // when the rebalance failed before fee recording.
+            if let Err(refund_err) = crate::modules::billing::service::refund_protocol_fee(
+                &st.db,
+                &st.config,
+                rebalance_id,
+                &reason,
+            )
+            .await
+            {
+                tracing::warn!(
+                    ?rebalance_id,
+                    error = %refund_err,
+                    "billing: refund_protocol_fee failed after rebalance failure"
+                );
+            }
         }
     });
     Ok(())
@@ -242,9 +261,29 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
     .unwrap_or(0.0);
 
     if plan_total > 0.0 {
+        // Resolve the real payer: portfolio → user → users.arc_address.
+        // Falling back to the zero address (the pre-audit behaviour) would let
+        // the facilitator silently accept invalid payments — fail loudly here
+        // instead so the operator notices a misprovisioned wallet.
+        let payer_address: String = sqlx::query_scalar(
+            "SELECT u.arc_address
+               FROM portfolios p
+               JOIN users u ON u.id = p.user_id
+              WHERE p.id = $1",
+        )
+        .bind(portfolio_id)
+        .fetch_optional(&state.db)
+        .await?
+        .flatten()
+        .ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "cannot settle protocol fee: users.arc_address missing for portfolio {portfolio_id}"
+            ))
+        })?;
+
         let settlement_tx = crate::modules::billing::service::settle_protocol_fee_via_nanopayments(
             &state.config,
-            "0x0000000000000000000000000000000000000001",
+            &payer_address,
             plan_total,
         )
         .await

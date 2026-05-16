@@ -119,6 +119,18 @@ pub struct Config {
     pub nanopayments_facilitator_url: String,
     #[allow(dead_code)]
     pub nanopayments_seller_address: String,
+    /// Treasury wallet address that pays out referral rewards via
+    /// Nanopayments. Required when `BILLING_V2_ENABLED=true`; validated at
+    /// startup so the API never boots with this flag on but the wallet
+    /// unset. Empty when the flag is off.
+    #[allow(dead_code)]
+    pub nanopayments_treasury_address: String,
+    /// Master feature flag for the post-hackathon real-revenue path:
+    /// real Nanopayments settlement, refunds, real referral payouts, AUM
+    /// streaming, subscriptions, tier gating. Defaults `false` so `main`
+    /// stays trunk-shippable.
+    #[allow(dead_code)]
+    pub billing_v2_enabled: bool,
 
     /// When true, the executor / cross-chain client skip real RPC calls and
     /// return deterministic mock receipts. Defaults to true so CI is hermetic.
@@ -238,6 +250,10 @@ impl Config {
                 .unwrap_or_else(|_| "https://gateway-api-testnet.circle.com".into()),
             nanopayments_seller_address: std::env::var("NANOPAYMENTS_SELLER_ADDRESS")
                 .unwrap_or_default(),
+            nanopayments_treasury_address: std::env::var("NANOPAYMENTS_TREASURY_ADDRESS")
+                .unwrap_or_default(),
+
+            billing_v2_enabled: parse_or("BILLING_V2_ENABLED", false)?,
 
             execution_mock: parse_or("EXECUTION_MOCK", true)?,
 
@@ -282,6 +298,14 @@ impl Config {
             anyhow::bail!(
                 "MOCK_CIRCLE=false but CIRCLE_API_KEY is empty; set it or flip MOCK_CIRCLE=true"
             );
+        }
+        if self.billing_v2_enabled {
+            if self.nanopayments_seller_address.trim().is_empty() {
+                anyhow::bail!("BILLING_V2_ENABLED=true but NANOPAYMENTS_SELLER_ADDRESS is empty");
+            }
+            if self.nanopayments_treasury_address.trim().is_empty() {
+                anyhow::bail!("BILLING_V2_ENABLED=true but NANOPAYMENTS_TREASURY_ADDRESS is empty");
+            }
         }
         // If we will actually send mail, the unsubscribe-token secret must not
         // be the publicly-checked-in default.
@@ -382,6 +406,8 @@ mod tests {
             usdc_base: String::new(),
             nanopayments_facilitator_url: "https://gateway-api-testnet.circle.com".into(),
             nanopayments_seller_address: String::new(),
+            nanopayments_treasury_address: String::new(),
+            billing_v2_enabled: false,
             execution_mock: true,
             scheduler_tick_secs: 300,
             scheduler_cooldown_secs: 1800,

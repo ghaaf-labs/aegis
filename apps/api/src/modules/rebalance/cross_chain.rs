@@ -570,6 +570,8 @@ mod tests {
             usdc_base: String::new(),
             nanopayments_facilitator_url: "https://gateway-api-testnet.circle.com".into(),
             nanopayments_seller_address: String::new(),
+            nanopayments_treasury_address: String::new(),
+            billing_v2_enabled: false,
         };
         c.execution_mock = true;
         c

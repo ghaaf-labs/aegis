@@ -59,12 +59,29 @@ pub async fn record_referral(
     // Settle the payout.
     let tx_hash = if config.execution_mock {
         Some(mock_tx_hash(referrer_id, new_user_id))
+    } else if config.billing_v2_enabled {
+        // Real Nanopayments settlement path. We pay from the project
+        // treasury wallet to the referrer's Arc address. The /settle call
+        // is best-effort here — a network blip shouldn't break user signup,
+        // so we still log and continue; the row stays with paid_at NULL so
+        // the daily reconcile cron (A4) can retry.
+        match settle_referral_via_nanopayments(config, db, referrer_id, reward).await {
+            Ok(tx) => tx,
+            Err(e) => {
+                tracing::warn!(
+                    referrer = %referrer_id,
+                    new = %new_user_id,
+                    error = %e,
+                    "referral nanopayments /settle failed; row left unpaid for retry"
+                );
+                None
+            }
+        }
     } else {
-        // Real Nanopayment path — gated TODO. Don't fail the wallet-create
-        // call over a missing treasury wallet; instead leave paid_at NULL
-        // so an operator can reconcile from the pending-index.
+        // BILLING_V2_ENABLED=false: legacy behaviour. Leave paid_at NULL so
+        // an operator can reconcile from the pending-index.
         tracing::warn!(
-            "real Nanopayment not implemented; referral recorded but unpaid (referrer={referrer_id}, new={new_user_id})"
+            "real Nanopayment disabled (BILLING_V2_ENABLED=false); referral recorded but unpaid (referrer={referrer_id}, new={new_user_id})"
         );
         None
     };
@@ -112,6 +129,49 @@ pub async fn record_protocol_fee(
     Ok(())
 }
 
+async fn settle_referral_via_nanopayments(
+    config: &Config,
+    db: &Db,
+    referrer_id: Uuid,
+    reward_usdc: f64,
+) -> anyhow::Result<Option<String>> {
+    if config.nanopayments_treasury_address.trim().is_empty() {
+        anyhow::bail!("NANOPAYMENTS_TREASURY_ADDRESS is empty");
+    }
+    let referrer_address: Option<String> =
+        sqlx::query_scalar("SELECT arc_address FROM users WHERE id = $1")
+            .bind(referrer_id)
+            .fetch_optional(db)
+            .await?
+            .flatten();
+    let Some(pay_to) = referrer_address.filter(|s| !s.is_empty()) else {
+        anyhow::bail!("referrer {referrer_id} has no arc_address");
+    };
+
+    let client = reqwest::Client::new();
+    let payload = serde_json::json!({
+        "payment": {
+            "amount": (reward_usdc * 1_000_000.0) as u64,
+            "payer": config.nanopayments_treasury_address,
+            "payTo": pay_to,
+            "network": "arc-testnet",
+        }
+    });
+    let res = client
+        .post(format!("{}/settle", config.nanopayments_facilitator_url))
+        .json(&payload)
+        .send()
+        .await?;
+    if !res.status().is_success() {
+        anyhow::bail!("/settle returned HTTP {}", res.status());
+    }
+    let body: serde_json::Value = res.json().await?;
+    Ok(body
+        .get("transaction")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string()))
+}
+
 async fn resolve_handle(db: &Db, handle: &str) -> crate::error::Result<Option<Uuid>> {
     if handle.len() < 4 || handle.len() > 64 || !handle.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(AppError::BadRequest("invalid referrer handle".into()));
@@ -146,6 +206,112 @@ fn mock_tx_hash(referrer: Uuid, new_user: Uuid) -> String {
     format!("0xmock:{}", hex::encode(&h.finalize()[..8]))
 }
 
+/// Refund the protocol fee for a failed rebalance. Marks the fee row as
+/// `refunded` and (in real mode, when the original settlement produced a
+/// tx hash) POSTs to `NANOPAYMENTS_FACILITATOR_URL/reverse` so the user
+/// actually gets the USDC back. A 404 from the facilitator is tolerated
+/// with a `warn!` log because some facilitator builds don't support
+/// `/reverse`; in that case the row stays marked `refunded` for the
+/// operator to reconcile manually.
+///
+/// Returns the reverse-tx hash when one was produced, `None` otherwise.
+pub async fn refund_protocol_fee(
+    db: &Db,
+    config: &Config,
+    rebalance_id: Uuid,
+    reason: &str,
+) -> crate::error::Result<Option<String>> {
+    let row: Option<(Option<String>, String)> = sqlx::query_as(
+        "SELECT settlement_tx_hash, status
+           FROM rebalance_fees
+          WHERE rebalance_id = $1 AND fee_type = 'protocol'
+          LIMIT 1",
+    )
+    .bind(rebalance_id)
+    .fetch_optional(db)
+    .await?;
+    let Some((settlement_tx, current_status)) = row else {
+        return Ok(None);
+    };
+    if current_status == "refunded" {
+        return Ok(None);
+    }
+
+    let reverse_tx = if !config.execution_mock {
+        if let Some(original_tx) = settlement_tx.as_deref() {
+            match post_reverse(config, original_tx, rebalance_id, reason).await {
+                Ok(tx) => tx,
+                Err(e) => {
+                    tracing::warn!(
+                        rebalance_id = ?rebalance_id,
+                        error = %e,
+                        "nanopayments /reverse failed; marking refunded without on-chain reversal"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    sqlx::query(
+        "UPDATE rebalance_fees
+            SET status = 'refunded',
+                refunded_at = NOW(),
+                refund_tx_hash = COALESCE($2, refund_tx_hash)
+          WHERE rebalance_id = $1 AND fee_type = 'protocol'",
+    )
+    .bind(rebalance_id)
+    .bind(reverse_tx.as_deref())
+    .execute(db)
+    .await?;
+
+    Ok(reverse_tx)
+}
+
+async fn post_reverse(
+    config: &Config,
+    original_tx: &str,
+    rebalance_id: Uuid,
+    reason: &str,
+) -> anyhow::Result<Option<String>> {
+    let client = reqwest::Client::new();
+    let payload = serde_json::json!({
+        "transaction": original_tx,
+        "rebalanceId": rebalance_id,
+        "reason": reason,
+        "network": "arc-testnet",
+    });
+    let res = client
+        .post(format!("{}/reverse", config.nanopayments_facilitator_url))
+        .json(&payload)
+        .send()
+        .await?;
+
+    if res.status() == reqwest::StatusCode::NOT_FOUND {
+        // Older facilitator builds don't expose /reverse; that's fine — the
+        // row is still marked refunded so the user-facing balance stays
+        // consistent. Operator can reconcile manually.
+        tracing::warn!(
+            rebalance_id = ?rebalance_id,
+            "nanopayments facilitator returned 404 on /reverse; no on-chain reversal recorded"
+        );
+        return Ok(None);
+    }
+    if !res.status().is_success() {
+        anyhow::bail!("/reverse returned HTTP {}", res.status());
+    }
+
+    let body: serde_json::Value = res.json().await?;
+    Ok(body
+        .get("transaction")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string()))
+}
+
 /// Settle the protocol fee (25 bps) via Circle Nanopayments (x402).
 /// In real mode, this calls the facilitator to settle the signed authorization.
 /// For the hackathon, the user must have pre-authorized via the Gateway balance or signed the payment.
@@ -171,6 +337,13 @@ pub async fn settle_protocol_fee_via_nanopayments(
     let seller_address = &config.nanopayments_seller_address;
 
     if seller_address.is_empty() {
+        // When the new billing flag is on, an empty seller address means the
+        // operator forgot to provision the treasury wallet — silently
+        // returning Ok(None) (the old behaviour) would let every protocol
+        // fee disappear into the void. Surface the misconfig instead.
+        if config.billing_v2_enabled {
+            anyhow::bail!("BILLING_V2_ENABLED=true but NANOPAYMENTS_SELLER_ADDRESS is empty");
+        }
         return Ok(None);
     }
 
