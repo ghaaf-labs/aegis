@@ -10,10 +10,6 @@
 //! The constitution is pure data plus a pure function. No I/O, no DB; the
 //! only side effect is the OnceCell cache to avoid re-parsing per request.
 
-// F-CON-3 wires `load` + `evaluate` into the critic. Until then the module
-// is built and tested standalone; silence the in-between dead-code warnings.
-#![allow(dead_code)]
-
 use std::path::PathBuf;
 
 use once_cell::sync::OnceCell;
@@ -140,15 +136,9 @@ pub fn load() -> anyhow::Result<&'static Constitution> {
     Ok(CACHE.get().expect("just set"))
 }
 
-/// Reset the cache. Test-only — production code never re-reads.
-#[cfg(test)]
-pub fn reset_for_test() {
-    // OnceCell exposes no public reset; tests instead use `load_from_str`
-    // to avoid the global cache entirely.
-}
-
 /// Test/inspection-only entry point that parses YAML without populating the
 /// global cache.
+#[allow(dead_code)]
 pub fn load_from_str(yaml: &str) -> anyhow::Result<Constitution> {
     serde_yaml::from_str(yaml).map_err(|e| anyhow::anyhow!("parse constitution: {e}"))
 }
@@ -160,7 +150,9 @@ fn config_path() -> PathBuf {
     // CARGO_MANIFEST_DIR resolves to `apps/api/` at build time so the file
     // ships with the binary's source checkout without needing CWD munging.
     let manifest = env!("CARGO_MANIFEST_DIR");
-    PathBuf::from(manifest).join("config").join("constitution.yaml")
+    PathBuf::from(manifest)
+        .join("config")
+        .join("constitution.yaml")
 }
 
 /// Normalise a weight value: accept either `0..1` fractions or `0..100`
@@ -380,7 +372,9 @@ mod tests {
         p.allocations[1].target_weight_pct = 0.75;
         p.allocations[0].target_weight_pct = 0.10;
         // And blow past the slippage ceiling.
-        p.legs.push(ProposalLeg { slippage_bps: 200.0 });
+        p.legs.push(ProposalLeg {
+            slippage_bps: 200.0,
+        });
         let v = evaluate(&c, &p, Tier::Pro, 10_000.0);
         let ids: Vec<&str> = v.iter().map(|x| x.clause_id.as_str()).collect();
         assert!(ids.contains(&"RISK-2"));
