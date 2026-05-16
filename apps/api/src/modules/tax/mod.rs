@@ -9,6 +9,7 @@
 //! → `users`. Callers must pass `user_id` (extracted from JWT) — the module
 //! never trusts an unauthenticated portfolio_id.
 
+pub mod export;
 pub mod fifo;
 pub mod handlers;
 pub mod models;
