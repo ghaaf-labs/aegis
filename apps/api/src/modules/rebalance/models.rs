@@ -133,4 +133,8 @@ pub struct PlanInput {
     pub drift_threshold: f64,
     /// USD value below which we treat a delta as dust and skip.
     pub dust_threshold_usd: f64,
+    /// Recent prices (USD) for symbols that may be involved in swaps.
+    /// Used by the planner to compute realistic min_out for cross-chain hook legs
+    /// and local swaps in real execution mode.
+    pub prices: std::collections::HashMap<String, f64>,
 }

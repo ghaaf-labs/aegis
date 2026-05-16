@@ -2,7 +2,7 @@ use chrono::Utc;
 use reqwest::Client;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, warn};
+use tracing::warn;
 
 use super::events::{PriceTick, SseEvent};
 use super::SseSender;
@@ -27,22 +27,14 @@ pub fn spawn_price_ticker(http: Client, config: Arc<Config>, sse: SseSender, db:
         loop {
             interval.tick().await;
 
-            // Bail out cheaply if nobody is listening.
-            if sse.receiver_count() == 0 {
-                debug!("sse ticker: no subscribers, skipping fetch");
-                continue;
-            }
-
+            // Always fetch + persist for Phase 1 (price_history must be dense even with no UI open).
+            // Only the *broadcast* part is skipped when no one is listening.
             match crate::modules::market_data::service::fetch_snapshot(&http, &config).await {
                 Ok(snapshot) => {
-                    // Always persist (Phase 1 requirement). This must run even when no
-                    // UI clients are connected, otherwise backtests, outcome compressor,
-                    // scheduled regime flips, and calibration all get garbage/sparse data.
                     if let Err(e) = persist_price_history(&db, &snapshot.assets).await {
                         warn!("price_history persist failed (non-fatal): {e:#}");
                     }
 
-                    // Only broadcast SSE if someone is listening (cheap bail for the broadcast part)
                     if sse.receiver_count() > 0 {
                         let captured = snapshot.captured_at;
                         for asset in snapshot.assets {

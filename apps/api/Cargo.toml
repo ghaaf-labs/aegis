@@ -74,5 +74,14 @@ tokio-util = { version = "0.7", features = ["rt"] }
 # HTML rendering for the daily digest.
 handlebars = "6"
 
+# Alloy for real CCTP V2 + Hook execution (Phase 2).
+# Gated behind the "real-cctp" feature. Default build stays fast.
+# cargo build --features real-cctp
+alloy = { version = "0.5", features = ["contract", "json", "node-bindings", "signer-local", "sol-types"], optional = true }
+
+[features]
+default = []
+real-cctp = ["dep:alloy"]
+
 [dev-dependencies]
 tokio-test = "0.4"

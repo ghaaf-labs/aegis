@@ -32,7 +32,7 @@ pub async fn run(state: &AppState, args: &Value) -> Result<String, String> {
         "symbol_b": b,
         "window_days": window,
         "pearson_r": (correlation * 1000.0).round() / 1000.0,
-        "source": "market_snapshots+pearson",
+        "source": "price_history+pearson",
     })
     .to_string())
 }
@@ -66,7 +66,7 @@ async fn try_db_correlation(state: &AppState, a: &str, b: &str, window_days: i64
         SELECT a.price_usd, b.price_usd
         FROM a_prices a
         JOIN b_prices b ON ABS(EXTRACT(EPOCH FROM (a.fetched_at - b.fetched_at))) < 120
-        ORDER BY a.fetched_at
+        ORDER BY a.fetched_at DESC
         LIMIT 2000
         "#,
     )
@@ -81,15 +81,18 @@ async fn try_db_correlation(state: &AppState, a: &str, b: &str, window_days: i64
         return None;
     }
 
-    let series_a: Vec<f64> = rows.iter().map(|(p, _)| *p).collect();
-    let series_b: Vec<f64> = rows.iter().map(|(_, p)| *p).collect();
+    // We ordered DESC to get recent data - reverse so returns() sees chronological order
+    let mut series_a: Vec<f64> = rows.iter().map(|(p, _)| *p).collect();
+    let mut series_b: Vec<f64> = rows.iter().map(|(_, p)| *p).collect();
+    series_a.reverse();
+    series_b.reverse();
 
     let ret_a = returns(&series_a);
     let ret_b = returns(&series_b);
     pearson(&ret_a, &ret_b)
 }
 
-fn returns(prices: &[f64]) -> Vec<f64> {
+pub(crate) fn returns(prices: &[f64]) -> Vec<f64> {
     prices.windows(2).map(|w| (w[1] - w[0]) / w[0]).collect()
 }
 

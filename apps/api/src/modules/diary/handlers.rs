@@ -22,6 +22,7 @@ pub struct DiaryEntry {
     pub recommendation_summary: String,
     pub created_at: DateTime<Utc>,
     pub outcome: Option<DiaryOutcome>,
+    pub critic_verdict: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -45,6 +46,7 @@ struct Row {
     created_at: DateTime<Utc>,
     outcome_24h: Option<serde_json::Value>,
     memory_recorded_at: Option<DateTime<Utc>>,
+    critic_verdict: Option<serde_json::Value>,
 }
 
 const ROW_SELECT: &str = "SELECT d.id              AS decision_id,
@@ -56,7 +58,8 @@ const ROW_SELECT: &str = "SELECT d.id              AS decision_id,
                                 d.recommendation  AS recommendation,
                                 d.created_at      AS created_at,
                                 m.outcome_24h     AS outcome_24h,
-                                m.recorded_at     AS memory_recorded_at
+                                m.recorded_at     AS memory_recorded_at,
+                                d.critic_verdict  AS critic_verdict
                          FROM agent_decisions d
                          JOIN portfolios p ON p.id = d.portfolio_id AND p.diary_public = TRUE
                          JOIN users u      ON u.id = p.user_id
@@ -127,5 +130,6 @@ fn row_to_entry(row: Row) -> DiaryEntry {
         recommendation_summary: summary,
         created_at: row.created_at,
         outcome,
+        critic_verdict: row.critic_verdict,
     }
 }
