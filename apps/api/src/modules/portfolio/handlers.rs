@@ -52,6 +52,12 @@ pub async fn create(
     Extension(claims): Extension<Claims>,
     Json(body): Json<CreatePortfolioRequest>,
 ) -> crate::error::Result<(StatusCode, Json<Portfolio>)> {
+    // Tier gate: Free is capped at 1 portfolio. No-op when flag is OFF so the
+    // existing golden-path tests keep passing.
+    if state.config.billing_v2_enabled {
+        let tier = crate::middleware::tier::resolve_tier(&state.db, claims.sub).await?;
+        crate::middleware::tier::enforce_portfolios_cap(&state.db, claims.sub, tier).await?;
+    }
     let goal_value = body.goal.clone().unwrap_or(serde_json::json!({}));
     let portfolio = sqlx::query_as::<_, Portfolio>(
         "INSERT INTO portfolios (id, user_id, name, goal) VALUES ($1, $2, $3, $4) RETURNING *",

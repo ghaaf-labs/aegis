@@ -40,6 +40,51 @@ const ABSTAIN_CONFIDENCE_THRESHOLD: f64 = 0.5;
 /// keeps the agent honest during demo while we tune model selection.
 const STRATEGIST_SLOW_MS: u64 = 10_000;
 
+/// Per-tier model routing + feature toggles. Free runs on the cheap regime
+/// slug for the strategist and skips the critic entirely. Pro restores the
+/// full Opus + GPT-5 critic pipeline. Business is Pro plus the Constitution
+///   counterfactual hooks (A8/A9 read `tier_features` from the persisted
+///   decision metadata).
+#[derive(Debug, Clone, Copy)]
+struct TierModels {
+    strategist_route: crate::config::ModelRoute,
+    critic_route: crate::config::ModelRoute,
+    run_critic: bool,
+    constitution: bool,
+    counterfactual: bool,
+}
+
+fn pick_models(tier: crate::modules::billing::types::Tier) -> TierModels {
+    use crate::config::ModelRoute;
+    use crate::modules::billing::types::Tier;
+    match tier {
+        Tier::Free => TierModels {
+            // Free runs the cheap classifier slug for both regime + strategist.
+            // The slug falls back to its env default if MODEL_REGIME isn't set,
+            // so deploys that never configure Free-tier models still work.
+            strategist_route: ModelRoute::RegimeClassify,
+            critic_route: ModelRoute::CritiqueAgent,
+            run_critic: false,
+            constitution: false,
+            counterfactual: false,
+        },
+        Tier::Pro => TierModels {
+            strategist_route: ModelRoute::RebalanceReason,
+            critic_route: ModelRoute::CritiqueAgent,
+            run_critic: true,
+            constitution: false,
+            counterfactual: false,
+        },
+        Tier::Business => TierModels {
+            strategist_route: ModelRoute::RebalanceReason,
+            critic_route: ModelRoute::CritiqueAgent,
+            run_critic: true,
+            constitution: true,
+            counterfactual: true,
+        },
+    }
+}
+
 pub async fn analyze_portfolio(
     state: &AppState,
     req: AnalyzeRequest,
@@ -65,6 +110,19 @@ pub async fn analyze_portfolio(
     .bind(req.portfolio_id)
     .fetch_all(&state.db)
     .await?;
+
+    // Tier gate + model routing: resolve once, use for both the cap check
+    // and the strategist/critic model selection. When billing v2 is OFF we
+    // keep the original Pro-equivalent pipeline so the golden path is
+    // untouched.
+    let tier = if state.config.billing_v2_enabled {
+        let t = crate::middleware::tier::resolve_tier(&state.db, portfolio.user_id).await?;
+        crate::middleware::tier::enforce_decision_cap(&state.db, portfolio.user_id, t).await?;
+        t
+    } else {
+        crate::modules::billing::types::Tier::Pro
+    };
+    let tier_models = pick_models(tier);
 
     let user_profile = fetch_user_profile(state, portfolio.user_id).await?;
 
@@ -158,6 +216,7 @@ pub async fn analyze_portfolio(
         portfolio.user_id,
         req.portfolio_id,
         &strategist_prompt,
+        tier_models.strategist_route,
     )
     .await?;
     if strategist.was_slow(STRATEGIST_SLOW_MS) {
@@ -170,28 +229,39 @@ pub async fn analyze_portfolio(
     let mut prompt_tokens = strategist.prompt_tokens;
     let mut completion_tokens = strategist.completion_tokens;
 
-    // 5. Critic pass — adversarial review.
-    let critic_ctx = build_critic_context(&proposal, &allocations, &user_profile, &regime, &risk);
-    let critic_prompt = state.prompts.render(PromptKey::Critic, &critic_ctx);
-    let critic = ai
-        .chat(
-            ModelRoute::CritiqueAgent,
-            vec![
-                Message::system(critic_prompt),
-                Message::user("Render verdict.".to_string()),
-            ],
-        )
-        .await?;
-    let verdict = parse_critic(&critic.content).unwrap_or_else(|e| {
-        warn!("critic parse failed, treating as approved: {e}");
+    // 5. Critic pass — adversarial review. Skipped on Free tier so the cost
+    // of a no-revenue user is purely the Haiku strategist call.
+    let verdict = if tier_models.run_critic {
+        let critic_ctx =
+            build_critic_context(&proposal, &allocations, &user_profile, &regime, &risk);
+        let critic_prompt = state.prompts.render(PromptKey::Critic, &critic_ctx);
+        let critic = ai
+            .chat(
+                tier_models.critic_route,
+                vec![
+                    Message::system(critic_prompt),
+                    Message::user("Render verdict.".to_string()),
+                ],
+            )
+            .await?;
+        let v = parse_critic(&critic.content).unwrap_or_else(|e| {
+            warn!("critic parse failed, treating as approved: {e}");
+            CriticOutput {
+                demands_revision: false,
+                notes: "(critic output unparsable)".into(),
+                confidence: 0.0,
+            }
+        });
+        prompt_tokens = prompt_tokens.saturating_add(critic.prompt_tokens);
+        completion_tokens = completion_tokens.saturating_add(critic.completion_tokens);
+        v
+    } else {
         CriticOutput {
             demands_revision: false,
-            notes: "(critic output unparsable)".into(),
+            notes: "(critic skipped: Free tier)".into(),
             confidence: 0.0,
         }
-    });
-    prompt_tokens = prompt_tokens.saturating_add(critic.prompt_tokens);
-    completion_tokens = completion_tokens.saturating_add(critic.completion_tokens);
+    };
 
     // 6. Revision (optional).
     if verdict.demands_revision {
@@ -202,7 +272,7 @@ pub async fn analyze_portfolio(
         let revision_prompt = state.prompts.render(PromptKey::Revision, &revision_ctx);
         let revised = ai
             .chat(
-                ModelRoute::RebalanceReason,
+                tier_models.strategist_route,
                 vec![
                     Message::system(revision_prompt),
                     Message::user("Provide the revised proposal.".to_string()),
@@ -236,7 +306,22 @@ pub async fn analyze_portfolio(
 
     // 8. Persist with full telemetry.
     let latency_ms = start.elapsed().as_millis() as i32;
-    let recommendation_value = serde_json::to_value(&proposal.recommendation)?;
+    let mut recommendation_value = serde_json::to_value(&proposal.recommendation)?;
+    // Inject tier_features into the recommendation JSONB so downstream
+    // consumers (A8 calibration, A9 constitution-aware critic) can read what
+    // pipeline produced this decision. Camel-case key to match the wire
+    // convention; non-breaking add for existing readers.
+    if let Some(obj) = recommendation_value.as_object_mut() {
+        obj.insert(
+            "tierFeatures".to_string(),
+            json!({
+                "tier": tier.to_string(),
+                "constitution": tier_models.constitution,
+                "counterfactual": tier_models.counterfactual,
+                "criticRan": tier_models.run_critic,
+            }),
+        );
+    }
     let critic_value = serde_json::to_value(&verdict)?;
     let snapshot_value = build_decision_snapshot(&portfolio, &allocations, &snapshot);
 
@@ -263,6 +348,22 @@ pub async fn analyze_portfolio(
     .bind(&snapshot_value)
     .fetch_one(&state.db)
     .await?;
+
+    // 8b. Increment usage_meters.decisions_count for the current period.
+    // Only when billing v2 is on — otherwise the table may be untouched and
+    // the UPSERT would create spurious rows for users that won't ever pay.
+    if state.config.billing_v2_enabled {
+        if let Err(e) = crate::middleware::tier::record_decision(&state.db, portfolio.user_id).await
+        {
+            // Don't fail the whole decision on a meter bump — the strategist
+            // already ran, the user should see their answer. Log loudly so
+            // operators notice if this is ever non-transient.
+            warn!(
+                "usage_meters bump failed for user {}: {e}",
+                portfolio.user_id
+            );
+        }
+    }
 
     // 9. Broadcast the final decision over SSE.
     let _ = state
@@ -452,6 +553,7 @@ async fn run_strategist_with_tools(
     user_id: Uuid,
     portfolio_id: Uuid,
     system_prompt: &str,
+    strategist_route: ModelRoute,
 ) -> crate::error::Result<crate::modules::ai::ChatResponse> {
     use serde_json::json;
 
@@ -467,12 +569,12 @@ async fn run_strategist_with_tools(
     let mut total_prompt = 0u32;
     let mut total_completion = 0u32;
     let mut total_latency = 0u64;
-    let mut model_slug = state.config.model_strategist.clone();
+    let mut model_slug = state.config.model_for(strategist_route).to_string();
 
     for iter in 0..tools::MAX_TOOL_ITERATIONS {
         let is_last = iter == tools::MAX_TOOL_ITERATIONS - 1;
         let result = ai
-            .chat_with_tools(ModelRoute::RebalanceReason, &messages, &tool_specs, is_last)
+            .chat_with_tools(strategist_route, &messages, &tool_specs, is_last)
             .await
             .map_err(|e| {
                 crate::error::AppError::Internal(anyhow::anyhow!("strategist tool-call: {e}"))
@@ -695,6 +797,38 @@ fn format_harvestable_losses(losses: &[crate::modules::tax::HarvestableLoss]) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pick_models_free_skips_critic_and_uses_regime_slug() {
+        use crate::config::ModelRoute;
+        use crate::modules::billing::types::Tier;
+        let m = pick_models(Tier::Free);
+        assert_eq!(m.strategist_route, ModelRoute::RegimeClassify);
+        assert!(!m.run_critic);
+        assert!(!m.constitution);
+        assert!(!m.counterfactual);
+    }
+
+    #[test]
+    fn pick_models_pro_runs_full_pipeline_no_extras() {
+        use crate::config::ModelRoute;
+        use crate::modules::billing::types::Tier;
+        let m = pick_models(Tier::Pro);
+        assert_eq!(m.strategist_route, ModelRoute::RebalanceReason);
+        assert_eq!(m.critic_route, ModelRoute::CritiqueAgent);
+        assert!(m.run_critic);
+        assert!(!m.constitution);
+        assert!(!m.counterfactual);
+    }
+
+    #[test]
+    fn pick_models_business_enables_constitution_and_counterfactual() {
+        use crate::modules::billing::types::Tier;
+        let m = pick_models(Tier::Business);
+        assert!(m.run_critic);
+        assert!(m.constitution);
+        assert!(m.counterfactual);
+    }
 
     #[test]
     fn parse_proposal_strips_deepseek_preamble_fence() {

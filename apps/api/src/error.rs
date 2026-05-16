@@ -22,6 +22,12 @@ pub enum AppError {
     #[error("conflict: {0}")]
     Conflict(String),
 
+    /// HTTP 402 — emitted when a tier cap is hit (decisions/month, AUM,
+    /// portfolios). UI maps this to an "upgrade required" prompt.
+    #[allow(dead_code)]
+    #[error("payment required: {0}")]
+    PaymentRequired(String),
+
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
 
@@ -39,6 +45,7 @@ impl IntoResponse for AppError {
             AppError::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "UNAUTHORIZED"),
             AppError::BadRequest(_) => (StatusCode::BAD_REQUEST, "BAD_REQUEST"),
             AppError::Conflict(_) => (StatusCode::CONFLICT, "CONFLICT"),
+            AppError::PaymentRequired(_) => (StatusCode::PAYMENT_REQUIRED, "PAYMENT_REQUIRED"),
             AppError::Database(e) => {
                 tracing::error!("database error: {e}");
                 (StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR")
