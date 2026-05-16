@@ -166,11 +166,15 @@ pub fn spawn_peg_monitor(state: AppState, cancel: CancellationToken) -> Arc<PegM
 
 async fn tick_once(state: &AppState, monitor: &PegMonitor) -> anyhow::Result<()> {
     let prices = sample_stable_prices(state).await;
+    // Skip peg rules whose owning user has paused the agent globally
+    // (FE-PAUSE-1). Per-rule pause + global pause both gate; either one true
+    // means the rule sits dormant.
     let rules: Vec<PegRuleRow> = sqlx::query_as(
-        "SELECT id, user_id, portfolio_id, asset, threshold_price, window_seconds,
-                action_kind, target_asset, last_fired_at
-         FROM peg_rules
-         WHERE enabled = TRUE AND paused_at IS NULL",
+        "SELECT r.id, r.user_id, r.portfolio_id, r.asset, r.threshold_price,
+                r.window_seconds, r.action_kind, r.target_asset, r.last_fired_at
+         FROM peg_rules r
+         JOIN users u ON u.id = r.user_id
+         WHERE r.enabled = TRUE AND r.paused_at IS NULL AND u.agent_paused_at IS NULL",
     )
     .fetch_all(&state.db)
     .await?;

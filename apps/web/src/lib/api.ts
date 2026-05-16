@@ -209,6 +209,24 @@ export const agentApi = {
     }),
 };
 
+export interface AgentPauseStatus {
+  pausedAt: string | null;
+}
+
+export const userAgentApi = {
+  status: () => request<AgentPauseStatus>("/users/me/agent", { authed: true }),
+  pause: () =>
+    request<AgentPauseStatus>("/users/me/agent/pause", {
+      method: "POST",
+      authed: true,
+    }),
+  resume: () =>
+    request<AgentPauseStatus>("/users/me/agent/resume", {
+      method: "POST",
+      authed: true,
+    }),
+};
+
 // ── Rebalance ──────────────────────────────────────────────────────────────
 
 export interface RebalancePlanResponse {

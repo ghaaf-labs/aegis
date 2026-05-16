@@ -144,6 +144,18 @@ pub async fn build(db: Db, config: Config) -> Router {
             get(agent::handlers::decision_by_id),
         )
         .route("/agent/analyze", post(agent::handlers::analyze))
+        .route(
+            "/users/me/agent",
+            get(agent::pause_handlers::status),
+        )
+        .route(
+            "/users/me/agent/pause",
+            post(agent::pause_handlers::pause),
+        )
+        .route(
+            "/users/me/agent/resume",
+            post(agent::pause_handlers::resume),
+        )
         .route("/backtest/preview", post(backtest::handlers::preview))
         .route("/trustability/me", get(trustability::handlers::me))
         .route("/billing/referrals", get(billing::handlers::list_referrals))

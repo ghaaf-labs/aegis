@@ -6,5 +6,6 @@ pub mod critic;
 pub mod handlers;
 pub mod memory;
 pub mod models;
+pub mod pause_handlers;
 pub mod service;
 pub mod tools;

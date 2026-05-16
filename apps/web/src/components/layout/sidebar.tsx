@@ -20,6 +20,7 @@ const BASE_NAV_ITEMS = [
   { href: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
   { href: "/portfolio", icon: PieChart, label: "Portfolio" },
   { href: "/settings", icon: Settings, label: "Settings" },
+  { href: "/settings/agent", icon: Shield, label: "Agent" },
 ];
 
 const NAV_ITEMS = PRICING_UI_ENABLED

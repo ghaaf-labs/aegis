@@ -60,11 +60,17 @@ pub fn spawn_portfolio_scheduler(state: AppState, cancel: CancellationToken) -> 
                 _ = tokio::time::sleep(tick) => {}
             }
 
-            let active: Vec<Uuid> =
-                match sqlx::query_scalar("SELECT id FROM portfolios WHERE total_value_usd > 0")
-                    .fetch_all(&st.db)
-                    .await
-                {
+            // Skip portfolios whose owning user has paused the agent globally
+            // (FE-PAUSE-1). Manual /agent/analyze + /rebalance/:id/execute are
+            // unaffected — only the scheduled trigger is gated here.
+            let active: Vec<Uuid> = match sqlx::query_scalar(
+                "SELECT p.id FROM portfolios p \
+                 JOIN users u ON u.id = p.user_id \
+                 WHERE p.total_value_usd > 0 AND u.agent_paused_at IS NULL",
+            )
+            .fetch_all(&st.db)
+            .await
+            {
                     Ok(v) => v,
                     Err(e) => {
                         tracing::warn!(error=%e, "scheduler: portfolio fetch failed");
