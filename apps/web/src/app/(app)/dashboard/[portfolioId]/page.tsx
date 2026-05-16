@@ -14,6 +14,7 @@ import { DigestOptIn } from "@/components/settings/digest-opt-in";
 import { TrustabilityCard } from "@/components/dashboard/trustability-card";
 import { LivePill } from "@/components/realtime/live-pill";
 import { portfolioApi } from "@/lib/api";
+import { useApiQuery } from "@/lib/use-api-query";
 import { usePortfolioStore } from "@/stores/portfolio";
 
 const stagger = { visible: { transition: { staggerChildren: 0.08 } } };
@@ -31,30 +32,20 @@ const fadeUp = {
 export default function PortfolioDashboardPage() {
   const params = useParams<{ portfolioId: string }>();
   const setActive = usePortfolioStore((s) => s.setActivePortfolio);
-  const [diaryPublic, setDiaryPublic] = useState(false);
 
   useEffect(() => {
     if (params?.portfolioId) setActive(params.portfolioId);
   }, [params?.portfolioId, setActive]);
 
-  useEffect(() => {
-    if (!params?.portfolioId) return;
-    let cancelled = false;
-    portfolioApi
-      .getDiaryPublic(params.portfolioId)
-      .then((r) => {
-        if (!cancelled) setDiaryPublic(r.diaryPublic);
-      })
-      .catch((err) => {
-        // Best-effort hydration; the toggle still works against the PATCH route
-        // and we don't want a stale token to crash the dashboard. Log in dev
-        // so a real auth regression is visible.
-        if (!cancelled) console.warn("diary visibility hydrate failed", err);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [params?.portfolioId]);
+  const diaryQuery = useApiQuery(
+    `portfolio.diaryPublic.${params?.portfolioId ?? ""}`,
+    () => portfolioApi.getDiaryPublic(params!.portfolioId),
+    { enabled: !!params?.portfolioId },
+  );
+  const [localDiaryPublic, setLocalDiaryPublic] = useState<boolean | null>(
+    null,
+  );
+  const diaryPublic = localDiaryPublic ?? diaryQuery.data?.diaryPublic ?? false;
 
   return (
     <motion.div
@@ -116,7 +107,7 @@ export default function PortfolioDashboardPage() {
               params.portfolioId,
               next,
             );
-            setDiaryPublic(res.diaryPublic);
+            setLocalDiaryPublic(res.diaryPublic);
           }}
         />
       </motion.div>
