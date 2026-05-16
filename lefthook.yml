@@ -28,7 +28,10 @@ pre-commit:
       stage_fixed: true
 
 # Validate the branch name before push.
+# Also detect .env vs .env.example drift so .env.example never falls behind.
 pre-push:
   commands:
     branch-name:
       run: scripts/check-branch-name.sh
+    env-key-diff:
+      run: scripts/env-key-diff.sh
