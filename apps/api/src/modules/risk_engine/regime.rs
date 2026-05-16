@@ -118,11 +118,11 @@ fn parse_label(raw: &str) -> anyhow::Result<ModelLabel> {
         .map_err(|e| anyhow::anyhow!("regime classifier: invalid JSON ({e}): {raw}"))
 }
 
-/// Compute the statistical features the LLM labels.
+/// Compute statistical regime features from the latest snapshot (fast path).
 ///
-/// These are best-effort approximations for Sprint 1. With proper historical
-/// price storage we'd compute real 30d realized vol and 90d correlation
-/// matrices — see `docs/05-open-questions.md`.
+/// This is a lightweight approximation used when we don't have enough
+/// historical price data yet. Once `price_history` has sufficient ticks,
+/// callers should prefer `compute_real_signals_from_history`.
 pub fn compute_signals(snapshot: &MarketSnapshot) -> RegimeSignals {
     let btc_change = snapshot
         .assets
@@ -131,15 +131,11 @@ pub fn compute_signals(snapshot: &MarketSnapshot) -> RegimeSignals {
         .map(|a| a.change_24h.abs())
         .unwrap_or(0.0);
 
-    // Annualized vol proxy: |24h pct change| * sqrt(365). Crude but
-    // monotonic with realized vol over short windows.
+    // Annualized vol proxy using 24h change (still useful as fallback).
     let btc_vol_30d = (btc_change.abs() / 100.0) * (365f64.sqrt());
 
-    // Directional agreement across assets as a correlation proxy. When
-    // everything moves the same way, correlation is high.
     let corr_90d = directional_agreement(snapshot);
 
-    // Worst single-asset 24h drawdown as a max-drawdown proxy.
     let max_drawdown = snapshot
         .assets
         .iter()
@@ -153,6 +149,134 @@ pub fn compute_signals(snapshot: &MarketSnapshot) -> RegimeSignals {
         fear_greed: snapshot.fear_greed_index,
         btc_dominance: snapshot.btc_dominance,
     }
+}
+
+/// Computes higher-quality regime signals directly from `price_history`.
+///
+/// This is the real implementation for Phase 1+:
+/// - 30d realized volatility for BTC (annualized std dev of daily log returns)
+/// - 90d average pairwise correlation across major assets
+///
+/// Falls back to snapshot-based approximation if not enough history exists yet.
+pub async fn compute_real_signals_from_history(
+    db: &crate::db::Db,
+    snapshot: &MarketSnapshot,
+) -> RegimeSignals {
+    // Try to get real 30d BTC realized vol
+    let btc_vol_30d = compute_realized_vol(db, "BTC", 30).await.unwrap_or_else(|| {
+        // Fallback to snapshot proxy
+        let btc_change = snapshot
+            .assets
+            .iter()
+            .find(|a| a.symbol == "BTC")
+            .map(|a| a.change_24h.abs())
+            .unwrap_or(0.0);
+        (btc_change.abs() / 100.0) * (365f64.sqrt())
+    });
+
+    // Try to get real 90d average correlation (BTC-ETH, BTC-SOL, ETH-SOL, etc.)
+    let corr_90d = compute_average_correlation(db, 90).await.unwrap_or_else(|| {
+        directional_agreement(snapshot)
+    });
+
+    let max_drawdown = snapshot
+        .assets
+        .iter()
+        .map(|a| a.change_24h.min(0.0).abs() / 100.0)
+        .fold(0f64, f64::max);
+
+    RegimeSignals {
+        btc_vol_30d,
+        corr_90d,
+        max_drawdown,
+        fear_greed: snapshot.fear_greed_index,
+        btc_dominance: snapshot.btc_dominance,
+    }
+}
+
+/// Annualized 30-day realized volatility from log returns in price_history.
+async fn compute_realized_vol(db: &crate::db::Db, symbol: &str, days: i32) -> Option<f64> {
+    let prices: Vec<f64> = sqlx::query_scalar(
+        r#"
+        SELECT price_usd
+        FROM price_history
+        WHERE symbol = $1
+          AND fetched_at > NOW() - ($2::int || ' days')::interval
+        ORDER BY fetched_at ASC
+        "#,
+    )
+    .bind(symbol)
+    .bind(days)
+    .fetch_all(db)
+    .await
+    .ok()?;
+
+    if prices.len() < 10 {
+        return None;
+    }
+
+    // Compute log returns
+    let returns: Vec<f64> = prices
+        .windows(2)
+        .map(|w| (w[1] / w[0]).ln())
+        .collect();
+
+    let n = returns.len() as f64;
+    let mean = returns.iter().sum::<f64>() / n;
+    let variance = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / (n - 1.0);
+    let daily_std = variance.sqrt();
+
+    // Annualize (assuming ~365 trading days for crypto)
+    Some(daily_std * (365.0_f64).sqrt())
+}
+
+/// Average Pearson correlation across major pairs over the window.
+async fn compute_average_correlation(db: &crate::db::Db, days: i32) -> Option<f64> {
+    let pairs = [("BTC", "ETH"), ("BTC", "SOL"), ("ETH", "SOL"), ("BTC", "AVAX")];
+    let mut corrs = Vec::new();
+
+    for (a, b) in pairs {
+        if let Some(r) = fetch_pair_correlation(db, a, b, days).await {
+            corrs.push(r);
+        }
+    }
+
+    if corrs.is_empty() {
+        None
+    } else {
+        Some(corrs.iter().sum::<f64>() / corrs.len() as f64)
+    }
+}
+
+async fn fetch_pair_correlation(db: &crate::db::Db, a: &str, b: &str, days: i32) -> Option<f64> {
+    let prices_a: Vec<f64> = sqlx::query_scalar(
+        "SELECT price_usd FROM price_history WHERE symbol = $1 AND fetched_at > NOW() - ($3::int || ' days')::interval ORDER BY fetched_at",
+    )
+    .bind(a)
+    .bind(b)
+    .bind(days)
+    .fetch_all(db)
+    .await
+    .ok()?;
+
+    let prices_b: Vec<f64> = sqlx::query_scalar(
+        "SELECT price_usd FROM price_history WHERE symbol = $2 AND fetched_at > NOW() - ($3::int || ' days')::interval ORDER BY fetched_at",
+    )
+    .bind(a)
+    .bind(b)
+    .bind(days)
+    .fetch_all(db)
+    .await
+    .ok()?;
+
+    if prices_a.len() < 10 || prices_b.len() < 10 {
+        return None;
+    }
+
+    let rets_a: Vec<f64> = prices_a.windows(2).map(|w| (w[1]/w[0]).ln()).collect();
+    let rets_b: Vec<f64> = prices_b.windows(2).map(|w| (w[1]/w[0]).ln()).collect();
+
+    crate::modules::agent::tools::correlation::pearson(&rets_a, &rets_b)
 }
 
 fn directional_agreement(snapshot: &MarketSnapshot) -> f64 {

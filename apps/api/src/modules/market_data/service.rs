@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use super::{AssetPrice, MarketSnapshot};
 use crate::config::Config;
+use crate::db::Db;
 
 const COINGECKO_IDS: &[(&str, &str)] = &[
     ("BTC", "bitcoin"),
@@ -103,4 +104,31 @@ pub async fn fetch_snapshot(client: &Client, cfg: &Config) -> anyhow::Result<Mar
         btc_dominance,
         captured_at: Utc::now(),
     })
+}
+
+/// Persists the current price snapshot into `price_history`.
+/// Called on every successful ticker tick so we have dense data for
+/// correlation, realized vol, outcome analysis and backtests.
+pub async fn persist_price_history(db: &Db, assets: &[AssetPrice]) -> anyhow::Result<()> {
+    if assets.is_empty() {
+        return Ok(());
+    }
+
+    // Simple bulk insert. For very high frequency we could batch, but 5s cadence
+    // with 8 assets is completely fine for Postgres.
+    for asset in assets {
+        sqlx::query(
+            r#"
+            INSERT INTO price_history (symbol, price_usd, fetched_at, source)
+            VALUES ($1, $2, $3, 'coingecko')
+            "#,
+        )
+        .bind(&asset.symbol)
+        .bind(asset.price_usd)
+        .bind(asset.updated_at)
+        .execute(db)
+        .await?;
+    }
+
+    Ok(())
 }

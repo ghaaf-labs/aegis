@@ -7,13 +7,15 @@ use tracing::{debug, warn};
 use super::events::{PriceTick, SseEvent};
 use super::SseSender;
 use crate::config::Config;
+use crate::db::Db;
+use crate::modules::market_data::service::persist_price_history;
 
 /// Spawns a background task that polls market data on a configurable cadence
 /// and broadcasts a `price.tick` for every asset in the snapshot.
 ///
 /// The cadence is `Config::sse_price_tick_secs`. Failures are logged and the
 /// loop continues; a single upstream hiccup never crashes the broadcaster.
-pub fn spawn_price_ticker(http: Client, config: Arc<Config>, sse: SseSender) {
+pub fn spawn_price_ticker(http: Client, config: Arc<Config>, sse: SseSender, db: Db) {
     let cadence = Duration::from_secs(config.sse_price_tick_secs.max(1));
 
     tokio::spawn(async move {
@@ -33,6 +35,11 @@ pub fn spawn_price_ticker(http: Client, config: Arc<Config>, sse: SseSender) {
 
             match crate::modules::market_data::service::fetch_snapshot(&http, &config).await {
                 Ok(snapshot) => {
+                    // Persist to price_history for real correlation, vol, backtests, etc.
+                    if let Err(e) = persist_price_history(&db, &snapshot.assets).await {
+                        warn!("price_history persist failed (non-fatal): {e:#}");
+                    }
+
                     let captured = snapshot.captured_at;
                     for asset in snapshot.assets {
                         let tick = PriceTick {

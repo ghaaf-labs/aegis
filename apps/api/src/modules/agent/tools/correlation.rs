@@ -44,48 +44,46 @@ fn required_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
 }
 
 async fn try_db_correlation(state: &AppState, a: &str, b: &str, window_days: i64) -> Option<f64> {
-    // `market_snapshots` carries a JSONB `assets` array of `AssetPrice`-shaped
-    // rows. Pull both symbols across the requested window; if either has < 5
-    // ticks we bail and let the synthetic fallback answer.
-    let rows: Vec<(serde_json::Value, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-        "SELECT assets, captured_at FROM market_snapshots
-         WHERE captured_at > NOW() - ($1::int || ' days')::interval
-         ORDER BY captured_at ASC",
+    // Prefer the new dense price_history table (Phase 1). It is populated every
+    // 5s by the SSE ticker, giving us far better statistical quality than the
+    // sparser market_snapshots JSONB rows.
+    let rows: Vec<(f64, f64)> = sqlx::query_as(
+        r#"
+        WITH a_prices AS (
+            SELECT price_usd, fetched_at
+            FROM price_history
+            WHERE symbol = $1
+              AND fetched_at > NOW() - ($3::int || ' days')::interval
+            ORDER BY fetched_at ASC
+        ),
+        b_prices AS (
+            SELECT price_usd, fetched_at
+            FROM price_history
+            WHERE symbol = $2
+              AND fetched_at > NOW() - ($3::int || ' days')::interval
+            ORDER BY fetched_at ASC
+        )
+        SELECT a.price_usd, b.price_usd
+        FROM a_prices a
+        JOIN b_prices b ON ABS(EXTRACT(EPOCH FROM (a.fetched_at - b.fetched_at))) < 120
+        ORDER BY a.fetched_at
+        LIMIT 2000
+        "#,
     )
+    .bind(a)
+    .bind(b)
     .bind(window_days as i32)
     .fetch_all(&state.db)
     .await
     .ok()?;
 
-    let mut series_a: Vec<f64> = Vec::with_capacity(rows.len());
-    let mut series_b: Vec<f64> = Vec::with_capacity(rows.len());
-    // market_snapshots.assets is JSONB serialized from AssetPrice (camelCase
-    // since the F-API-3 contract fix). Pre-fix rows used snake_case keys —
-    // read both so the correlation tool still works on historical snapshots.
-    let price_of = |asset: &serde_json::Value| {
-        asset
-            .get("priceUsd")
-            .or_else(|| asset.get("price_usd"))
-            .and_then(|v| v.as_f64())
-    };
-    for (assets, _at) in &rows {
-        let arr = assets.as_array()?;
-        let pa = arr
-            .iter()
-            .find(|x| x.get("symbol").and_then(|v| v.as_str()) == Some(a))
-            .and_then(price_of);
-        let pb = arr
-            .iter()
-            .find(|x| x.get("symbol").and_then(|v| v.as_str()) == Some(b))
-            .and_then(price_of);
-        if let (Some(a), Some(b)) = (pa, pb) {
-            series_a.push(a);
-            series_b.push(b);
-        }
-    }
-    if series_a.len() < 5 {
+    if rows.len() < 5 {
         return None;
     }
+
+    let series_a: Vec<f64> = rows.iter().map(|(p, _)| *p).collect();
+    let series_b: Vec<f64> = rows.iter().map(|(_, p)| *p).collect();
+
     let ret_a = returns(&series_a);
     let ret_b = returns(&series_b);
     pearson(&ret_a, &ret_b)
