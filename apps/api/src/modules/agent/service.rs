@@ -19,8 +19,8 @@ use serde_json::json;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
-use super::critic as critic_mod;
 use super::calibration_train;
+use super::critic as critic_mod;
 use super::memory;
 use super::models::{AgentDecision, AnalyzeRequest};
 use super::tools;

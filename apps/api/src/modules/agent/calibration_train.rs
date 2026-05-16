@@ -22,7 +22,6 @@
 //! confidence into the same probability space.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
@@ -30,9 +29,7 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::db::Db;
-use crate::modules::agent::calibration::{
-    self, Calibration, CalibrationSample, REGIME_CLASSES,
-};
+use crate::modules::agent::calibration::{self, Calibration, CalibrationSample, REGIME_CLASSES};
 use crate::router::AppState;
 
 /// Minimum sample count before we'll fit the strategist calibrator.
@@ -155,11 +152,9 @@ pub async fn fit_regime(db: &Db) -> anyhow::Result<Option<Uuid>> {
 /// as a single-class problem with class label "right"; the calibrator's
 /// `apply_scalar` is used at inference time.
 pub async fn fit_strategist(db: &Db) -> anyhow::Result<Option<Uuid>> {
-    let rows: Vec<(f64, Option<serde_json::Value>, Option<String>)> = sqlx::query_as::<
-        _,
-        (f64, Option<serde_json::Value>, Option<String>),
-    >(
-        r#"
+    let rows: Vec<(f64, Option<serde_json::Value>, Option<String>)> =
+        sqlx::query_as::<_, (f64, Option<serde_json::Value>, Option<String>)>(
+            r#"
         SELECT d.confidence,
                m.outcome_24h,
                d.model_slug
@@ -169,9 +164,9 @@ pub async fn fit_strategist(db: &Db) -> anyhow::Result<Option<Uuid>> {
         ORDER BY m.recorded_at DESC
         LIMIT 5000
         "#,
-    )
-    .fetch_all(db)
-    .await?;
+        )
+        .fetch_all(db)
+        .await?;
 
     if rows.len() < STRATEGIST_MIN_SAMPLES {
         info!(
@@ -325,34 +320,46 @@ async fn persist(
     Ok(id)
 }
 
+/// Row shape from `calibrations` used by `latest_for`. Lifted out so we don't
+/// trip clippy::type_complexity on the tuple inference.
+#[derive(sqlx::FromRow)]
+struct LatestRow {
+    id: Uuid,
+    model_slug: String,
+    params_jsonb: serde_json::Value,
+    fit_samples_count: i32,
+    brier_before: f64,
+    brier_after: f64,
+    source_eval_run_id: Option<Uuid>,
+}
+
 /// Fetch the most recent calibration for a task, deserialized.
 pub async fn latest_for(db: &Db, task: &str) -> anyhow::Result<Option<LatestCalibration>> {
-    let row: Option<(Uuid, String, serde_json::Value, i32, f64, f64, Option<Uuid>)> =
-        sqlx::query_as(
-            r#"
-            SELECT id, model_slug, params_jsonb, fit_samples_count,
-                   brier_before, brier_after, source_eval_run_id
-            FROM calibrations
-            WHERE task = $1
-            ORDER BY created_at DESC
-            LIMIT 1
-            "#,
-        )
-        .bind(task)
-        .fetch_optional(db)
-        .await?;
-    let Some((id, model_slug, params, n, before, after, source)) = row else {
+    let row: Option<LatestRow> = sqlx::query_as::<_, LatestRow>(
+        r#"
+        SELECT id, model_slug, params_jsonb, fit_samples_count,
+               brier_before, brier_after, source_eval_run_id
+        FROM calibrations
+        WHERE task = $1
+        ORDER BY created_at DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(task)
+    .fetch_optional(db)
+    .await?;
+    let Some(row) = row else {
         return Ok(None);
     };
-    let cal: Calibration = serde_json::from_value(params)?;
+    let cal: Calibration = serde_json::from_value(row.params_jsonb)?;
     Ok(Some(LatestCalibration {
-        id,
-        model_slug,
+        id: row.id,
+        model_slug: row.model_slug,
         calibration: cal,
-        fit_samples_count: n,
-        brier_before: before,
-        brier_after: after,
-        source_eval_run_id: source,
+        fit_samples_count: row.fit_samples_count,
+        brier_before: row.brier_before,
+        brier_after: row.brier_after,
+        source_eval_run_id: row.source_eval_run_id,
     }))
 }
 
@@ -390,18 +397,7 @@ fn bin_index(p: f64, n_bins: usize) -> usize {
 
 fn clamp01(p: f64) -> f64 {
     if p.is_nan() {
-        0.0
-    } else if p < 0.0 {
-        0.0
-    } else if p > 1.0 {
-        1.0
-    } else {
-        p
+        return 0.0;
     }
-}
-
-/// Suppress dead_code on Arc-imported items used only by `spawn`.
-#[allow(dead_code)]
-fn _ensure_arc_used() -> Option<Arc<()>> {
-    None
+    p.clamp(0.0, 1.0)
 }

@@ -101,8 +101,7 @@ pub fn fit(samples: &[CalibrationSample]) -> Calibration {
         })
         .collect();
 
-    let mut per_bin_class_hits: Vec<HashMap<String, (usize, usize)>> =
-        vec![HashMap::new(); N_BINS];
+    let mut per_bin_class_hits: Vec<HashMap<String, (usize, usize)>> = vec![HashMap::new(); N_BINS];
 
     for sample in samples {
         for class in &classes {
@@ -122,9 +121,7 @@ pub fn fit(samples: &[CalibrationSample]) -> Calibration {
     for (i, class_counts) in per_bin_class_hits.into_iter().enumerate() {
         for (class, (hits, total)) in class_counts {
             if total > 0 {
-                bins[i]
-                    .empirical
-                    .insert(class, hits as f64 / total as f64);
+                bins[i].empirical.insert(class, hits as f64 / total as f64);
             }
         }
     }
@@ -202,14 +199,9 @@ fn bin_index(p: f64) -> usize {
 
 fn clamp01(p: f64) -> f64 {
     if p.is_nan() {
-        0.0
-    } else if p < 0.0 {
-        0.0
-    } else if p > 1.0 {
-        1.0
-    } else {
-        p
+        return 0.0;
     }
+    p.clamp(0.0, 1.0)
 }
 
 /// Convenience: scalar `apply` for the strategist's flat confidence number.
@@ -307,7 +299,10 @@ mod tests {
         let cal = fit(&samples);
         let out = apply(&cal, &proba(0.9, 0.05, 0.05));
         let sum: f64 = out.values().copied().sum();
-        assert!((sum - 1.0).abs() < 1e-9, "calibrated proba must sum to 1; got {sum}");
+        assert!(
+            (sum - 1.0).abs() < 1e-9,
+            "calibrated proba must sum to 1; got {sum}"
+        );
     }
 
     #[test]

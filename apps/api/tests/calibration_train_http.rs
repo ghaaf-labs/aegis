@@ -22,9 +22,7 @@ use uuid::Uuid;
 #[tokio::test]
 async fn trainer_persists_calibrations_row_for_regime() {
     let Ok(db_url) = std::env::var("TEST_DATABASE_URL") else {
-        eprintln!(
-            "TEST_DATABASE_URL not set; skipping calibration_train_http integration test"
-        );
+        eprintln!("TEST_DATABASE_URL not set; skipping calibration_train_http integration test");
         return;
     };
 
