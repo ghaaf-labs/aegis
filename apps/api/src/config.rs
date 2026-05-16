@@ -152,6 +152,13 @@ pub struct Config {
     /// Base URL of this API service — used in emails so unsubscribe links
     /// resolve to the backend route, not the frontend.
     pub api_base_url: String,
+
+    // ── Wave 2: differentiation flags ─────────────────────────────────────
+    /// When true, the critic runs the Aegis Constitution check first and
+    /// short-circuits to VETO on any clause violation (no LLM call). When
+    /// false, the constitution YAML is still loaded at startup but
+    /// `evaluate()` is bypassed — preserves the free-form critic flow.
+    pub constitution_enabled: bool,
 }
 
 impl Config {
@@ -255,6 +262,8 @@ impl Config {
                 .unwrap_or_else(|_| "http://localhost:3000".into()),
             api_base_url: std::env::var("API_BASE_URL")
                 .unwrap_or_else(|_| "http://localhost:8080".into()),
+
+            constitution_enabled: parse_or("CONSTITUTION_ENABLED", false)?,
         };
 
         cfg.validate()
@@ -392,6 +401,7 @@ mod tests {
             digest_secret: "test-secret".into(),
             public_base_url: "http://localhost:3000".into(),
             api_base_url: "http://localhost:8080".into(),
+            constitution_enabled: false,
         }
     }
 

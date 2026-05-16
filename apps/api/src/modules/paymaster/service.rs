@@ -124,6 +124,7 @@ mod tests {
             usdc_base: String::new(),
             nanopayments_facilitator_url: "https://gateway-api-testnet.circle.com".into(),
             nanopayments_seller_address: String::new(),
+            constitution_enabled: false,
         }
     }
 
