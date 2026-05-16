@@ -26,6 +26,11 @@ async fn main() -> anyhow::Result<()> {
 
     sqlx::migrate!("./migrations").run(&db).await?;
 
+    if cfg.aum_stream_enabled {
+        modules::billing::aum_stream::spawn(db.clone(), std::sync::Arc::new(cfg.clone()));
+        info!("aum_stream: 24h ticker spawned");
+    }
+
     let app = router::build(db, cfg.clone()).await;
 
     let addr: SocketAddr = format!("{}:{}", cfg.host, cfg.port).parse()?;

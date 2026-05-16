@@ -152,6 +152,19 @@ pub struct Config {
     /// Base URL of this API service — used in emails so unsubscribe links
     /// resolve to the backend route, not the frontend.
     pub api_base_url: String,
+
+    // ── Billing V2 + AUM stream ───────────────────────────────────────────
+    /// Master gate for the V2 billing path (real payer, refunds,
+    /// subscriptions, invoices). When false, the existing referral-only
+    /// billing path is unchanged.
+    pub billing_v2_enabled: bool,
+    /// When true, spawns the daily AUM-fee accrual ticker at startup.
+    /// Requires `billing_v2_enabled=true` (validated at boot).
+    pub aum_stream_enabled: bool,
+    /// Optional Nanopayments treasury address override used by AUM
+    /// settlement when distinct from the rebalance seller address.
+    #[allow(dead_code)]
+    pub nanopayments_treasury_address: String,
 }
 
 impl Config {
@@ -255,6 +268,11 @@ impl Config {
                 .unwrap_or_else(|_| "http://localhost:3000".into()),
             api_base_url: std::env::var("API_BASE_URL")
                 .unwrap_or_else(|_| "http://localhost:8080".into()),
+
+            billing_v2_enabled: parse_or("BILLING_V2_ENABLED", false)?,
+            aum_stream_enabled: parse_or("AUM_STREAM_ENABLED", false)?,
+            nanopayments_treasury_address: std::env::var("NANOPAYMENTS_TREASURY_ADDRESS")
+                .unwrap_or_default(),
         };
 
         cfg.validate()
@@ -292,6 +310,15 @@ impl Config {
                 "RESEND_API_KEY is set but DIGEST_SECRET is still the dev default; rotate DIGEST_SECRET before sending real mail"
             );
         }
+        // The AUM streamer reads `subscriptions` + `plan_tiers` rows that
+        // only exist behind the V2 billing schema. Fail fast at boot rather
+        // than silently NULL-rolling on every tick.
+        if self.aum_stream_enabled && !self.billing_v2_enabled {
+            anyhow::bail!(
+                "AUM_STREAM_ENABLED=true requires BILLING_V2_ENABLED=true (depends on subscription rows)"
+            );
+        }
+
         // Production deploy hygiene: secure-cookie deploys need a real CORS
         // origin (not the localhost dev fallback).
         if self.session_cookie_secure
@@ -392,7 +419,26 @@ mod tests {
             digest_secret: "test-secret".into(),
             public_base_url: "http://localhost:3000".into(),
             api_base_url: "http://localhost:8080".into(),
+            billing_v2_enabled: false,
+            aum_stream_enabled: false,
+            nanopayments_treasury_address: String::new(),
         }
+    }
+
+    #[test]
+    fn validate_rejects_aum_stream_without_billing_v2() {
+        let mut cfg = test_config();
+        cfg.aum_stream_enabled = true;
+        cfg.billing_v2_enabled = false;
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_accepts_aum_stream_with_billing_v2() {
+        let mut cfg = test_config();
+        cfg.aum_stream_enabled = true;
+        cfg.billing_v2_enabled = true;
+        assert!(cfg.validate().is_ok());
     }
 
     #[test]

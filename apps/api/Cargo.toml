@@ -38,6 +38,7 @@ sqlx = { version = "0.8", default-features = false, features = [
   "json",
   "macros",
   "migrate",
+  "rust_decimal",
 ] }
 
 # Auth
@@ -70,6 +71,10 @@ subtle = "2"
 # Concurrency primitives used by the proactive scheduler.
 dashmap = "6"
 tokio-util = { version = "0.7", features = ["rt"] }
+
+# Money math for the AUM-fee streamer (Decimal — no f64 rounding drift).
+rust_decimal = { version = "1", features = ["serde-with-str"] }
+rust_decimal_macros = "1"
 
 # HTML rendering for the daily digest.
 handlebars = "6"
