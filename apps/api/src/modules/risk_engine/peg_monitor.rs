@@ -114,8 +114,7 @@ impl PegMonitor {
         let mut buffers = self.buffers.lock().await;
         let buf = buffers.entry(rule_id).or_default();
         buf.push_back(sample);
-        let cutoff = sample.observed_at
-            - chrono::Duration::seconds(window_seconds as i64 + 60);
+        let cutoff = sample.observed_at - chrono::Duration::seconds(window_seconds as i64 + 60);
         while let Some(front) = buf.front() {
             if front.observed_at < cutoff {
                 buf.pop_front();
@@ -327,15 +326,14 @@ async fn propose_defensive_plan(
 /// Failures fall back to "1.00" for every symbol so a CoinGecko outage never
 /// triggers a false depeg.
 async fn sample_stable_prices(state: &AppState) -> HashMap<String, f64> {
-    let mut out: HashMap<String, f64> = PEG_ASSETS
-        .iter()
-        .map(|s| ((*s).to_string(), 1.0))
-        .collect();
+    let mut out: HashMap<String, f64> =
+        PEG_ASSETS.iter().map(|s| ((*s).to_string(), 1.0)).collect();
 
     // CoinGecko reports `usd-coin` + `euro-coin`; this is best-effort and
     // explicitly tolerant — the fallback above already gives every asset a
     // safe default if the request flakes.
-    let url = "https://api.coingecko.com/api/v3/simple/price?ids=usd-coin,euro-coin&vs_currencies=usd";
+    let url =
+        "https://api.coingecko.com/api/v3/simple/price?ids=usd-coin,euro-coin&vs_currencies=usd";
     let mut req = state.http.get(url);
     if let Some(key) = &state.config.coingecko_api_key {
         req = req.header("x-cg-demo-api-key", key);
@@ -343,10 +341,18 @@ async fn sample_stable_prices(state: &AppState) -> HashMap<String, f64> {
     match req.send().await {
         Ok(resp) if resp.status().is_success() => {
             if let Ok(json) = resp.json::<serde_json::Value>().await {
-                if let Some(p) = json.get("usd-coin").and_then(|v| v.get("usd")).and_then(|v| v.as_f64()) {
+                if let Some(p) = json
+                    .get("usd-coin")
+                    .and_then(|v| v.get("usd"))
+                    .and_then(|v| v.as_f64())
+                {
                     out.insert("USDC".into(), p);
                 }
-                if let Some(p) = json.get("euro-coin").and_then(|v| v.get("usd")).and_then(|v| v.as_f64()) {
+                if let Some(p) = json
+                    .get("euro-coin")
+                    .and_then(|v| v.get("usd"))
+                    .and_then(|v| v.as_f64())
+                {
                     // EURC's USD price isn't a depeg — convert via current
                     // EUR-USD basis so the threshold semantics stay "EURC vs
                     // 1 EURC". Approximate 1 EURC ≈ 1.085 USD as a stable

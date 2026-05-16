@@ -292,13 +292,12 @@ async fn own_portfolio_or_404(state: &AppState, user_id: Uuid, portfolio_id: Uui
 }
 
 async fn own_rule_or_404(state: &AppState, user_id: Uuid, rule_id: Uuid) -> Result<()> {
-    let exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM peg_rules WHERE id = $1 AND user_id = $2)",
-    )
-    .bind(rule_id)
-    .bind(user_id)
-    .fetch_one(&state.db)
-    .await?;
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM peg_rules WHERE id = $1 AND user_id = $2)")
+            .bind(rule_id)
+            .bind(user_id)
+            .fetch_one(&state.db)
+            .await?;
     if !exists {
         return Err(AppError::NotFound(format!("peg rule {rule_id}")));
     }
