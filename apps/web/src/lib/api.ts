@@ -280,9 +280,71 @@ export const rebalanceApi = {
 
 // ── Tax ────────────────────────────────────────────────────────────────────
 
+export interface TaxShareToken {
+  id: string;
+  portfolioId: string;
+  year: number;
+  token: string;
+  expiresAt: string;
+  revokedAt: string | null;
+  createdAt: string;
+}
+
+export interface TaxShareCreated {
+  tokenId: string;
+  token: string;
+  shareUrl: string;
+  expiresAt: string;
+}
+
 export const taxApi = {
   harvestable: (portfolioId: string) =>
     request<HarvestableLoss[]>(`/tax/harvestable/${portfolioId}`, {
+      authed: true,
+    }),
+  /**
+   * Trigger a CSV download via the browser. Bypasses the JSON `request`
+   * helper because the response is a file, not JSON. Returns the number
+   * of mock entries excluded (from X-Mock-Excluded) so the UI can render
+   * a provenance line.
+   */
+  downloadCsv: async (
+    portfolioId: string,
+    year: number,
+  ): Promise<{ mockExcluded: number }> => {
+    const params = new URLSearchParams({ portfolioId, year: String(year) });
+    const token = getToken();
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(`${BASE_URL}/tax/export.csv?${params}`, {
+      credentials: "include",
+      headers,
+    });
+    if (!res.ok) {
+      throw new Error(`${res.status}: ${res.statusText}`);
+    }
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `aegis_tax_${year}_${portfolioId}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+    const mockExcluded = Number(res.headers.get("X-Mock-Excluded") ?? "0");
+    return { mockExcluded: Number.isFinite(mockExcluded) ? mockExcluded : 0 };
+  },
+  listShares: () => request<TaxShareToken[]>("/tax/shares", { authed: true }),
+  createShare: (portfolioId: string, year: number, ttlDays: number) =>
+    request<TaxShareCreated>("/tax/share", {
+      method: "POST",
+      body: { portfolioId, year, ttlDays },
+      authed: true,
+    }),
+  revokeShare: (tokenId: string) =>
+    request<void>(`/tax/share/${tokenId}`, {
+      method: "DELETE",
       authed: true,
     }),
 };
