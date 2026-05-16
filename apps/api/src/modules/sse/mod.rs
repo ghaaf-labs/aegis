@@ -16,8 +16,8 @@ pub mod ticker;
 #[allow(unused_imports)]
 pub use events::{
     AgentAbstainedPayload, AgentDecisionPayload, AgentToolInvokedPayload, GatewayBalance,
-    PriceTick, RebalanceLegPayload, RebalancePlanPayload, RebalanceStatus, RegimeFlip,
-    RegimeSignals, SseEvent, TaxHarvestPayload,
+    PegAlertPayload, PriceTick, RebalanceLegPayload, RebalancePlanPayload, RebalanceStatus,
+    RegimeFlip, RegimeSignals, SseEvent, TaxHarvestPayload,
 };
 pub use handler::handler;
 pub use ticker::spawn_price_ticker;
