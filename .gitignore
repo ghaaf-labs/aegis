@@ -54,3 +54,4 @@ infra/contracts/cache/
 infra/contracts/out/
 infra/contracts/lib/
 infra/contracts/broadcast/
+.env.bak
