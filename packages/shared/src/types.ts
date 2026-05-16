@@ -187,7 +187,8 @@ export type AgentTrigger =
   | "scheduled"
   | "user_request"
   | "regime_flip"
-  | "abstain";
+  | "abstain"
+  | "peg_alert";
 
 export interface RebalanceRecommendation {
   summary: string;

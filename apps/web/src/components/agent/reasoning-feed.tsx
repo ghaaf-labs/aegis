@@ -35,6 +35,7 @@ const TRIGGER_LABELS: Record<AgentTrigger, string> = {
   user_request: "Manual",
   regime_flip: "Regime Flip",
   abstain: "Abstain",
+  peg_alert: "Peg Defense",
 };
 
 const TRIGGER_VARIANTS: Record<
@@ -48,6 +49,7 @@ const TRIGGER_VARIANTS: Record<
   user_request: "secondary",
   regime_flip: "warning",
   abstain: "secondary",
+  peg_alert: "danger",
 };
 
 const REGIME_LABEL: Record<MarketRegime, string> = {

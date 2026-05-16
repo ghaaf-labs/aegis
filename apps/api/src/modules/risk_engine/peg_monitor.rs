@@ -84,13 +84,11 @@ pub fn should_fire(buffer: &[PegSample], threshold_price: f64, window_seconds: i
 pub struct PegRuleRow {
     pub id: Uuid,
     pub user_id: Uuid,
-    #[allow(dead_code)]
     pub portfolio_id: Option<Uuid>,
     pub asset: String,
     pub threshold_price: f64,
     pub window_seconds: i32,
     pub action_kind: String,
-    #[allow(dead_code)]
     pub target_asset: Option<String>,
     pub last_fired_at: Option<DateTime<Utc>>,
 }
@@ -303,20 +301,159 @@ async fn user_tier(db: &Db, user_id: Uuid) -> anyhow::Result<String> {
     Ok(tier.unwrap_or_else(|| "free".into()))
 }
 
-/// Returns the rebalance plan id if a planner ran cleanly; `Ok(None)` if no
-/// portfolio could be resolved. Logs and returns `Err` only on hard DB failures.
+/// F-PEG-7: Build a defensive rebalance plan that shifts the depegged
+/// asset's full weight into the rule's `target_asset`. Reuses the existing
+/// pure-function `rebalance::planner::plan_legs` so the same routing logic
+/// applies as for user-triggered rebalances (cross-chain burn/mint when
+/// USDC liquidity sits on the other chain, local swaps otherwise).
+///
+/// Returns the rebalance plan id when legs were produced; `Ok(None)` when
+/// the rule has no resolvable portfolio, the depegged asset's weight is
+/// negligible, or the planner deemed the move dust.
+///
+/// Does NOT auto-execute. The caller fires `peg.alert` SSE; the user
+/// approves via the existing `POST /rebalance/:id/execute` endpoint.
+/// Auto-execute for Pro/Business tiers is deferred until tier-gate
+/// integration testing on real CCTP lands (see F-PEG-8 follow-up).
 async fn propose_defensive_plan(
-    _state: &AppState,
+    state: &AppState,
     rule: &PegRuleRow,
 ) -> anyhow::Result<Option<Uuid>> {
-    // TODO(A6 follow-up): wire a real defensive-plan generator via
-    // rebalance::planner. Today we stage the alert + event row only — the
-    // user-facing UI surfaces "open rebalance" buttons that hit the existing
-    // `POST /portfolios/:id/rebalance/plan` endpoint with the depegged asset
-    // pre-marked as the source. Auto-execute follows once A3 finalizes the
-    // tier gate so we can call the executor without re-prompting.
-    debug!(rule_id=%rule.id, "propose_defensive_plan: deferred until A6 follow-up");
-    Ok(None)
+    use crate::modules::rebalance::executor::create_plan;
+    use crate::modules::rebalance::models::{ChainKey, PlanInput};
+    use crate::modules::rebalance::planner::plan_legs;
+
+    // Resolve target portfolio: prefer the rule's pinned portfolio_id,
+    // fall back to the user's most-recently-updated portfolio. Multi-portfolio
+    // fan-out (one defensive plan per portfolio) is left as F-PEG-9.
+    let portfolio_id: Option<Uuid> = match rule.portfolio_id {
+        Some(pid) => Some(pid),
+        None => {
+            sqlx::query_scalar(
+                "SELECT id FROM portfolios WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 1",
+            )
+            .bind(rule.user_id)
+            .fetch_optional(&state.db)
+            .await?
+        }
+    };
+    let Some(portfolio_id) = portfolio_id else {
+        warn!(rule_id=%rule.id, user_id=%rule.user_id, "peg rule has no portfolio; skipping defensive plan");
+        return Ok(None);
+    };
+
+    // Portfolio value + current allocation (weights are 0–100 in DB; planner
+    // wants 0–1 fractions).
+    let total_value_usd: f64 =
+        sqlx::query_scalar("SELECT total_value_usd FROM portfolios WHERE id = $1")
+            .bind(portfolio_id)
+            .fetch_one(&state.db)
+            .await?;
+
+    let allocations: Vec<(String, f64)> = sqlx::query_as(
+        "SELECT asset_symbol, current_weight FROM allocations WHERE portfolio_id = $1",
+    )
+    .bind(portfolio_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let mut current_weights: HashMap<String, f64> = HashMap::new();
+    for (sym, w) in &allocations {
+        current_weights.insert(sym.clone(), w / 100.0);
+    }
+
+    let depegged_asset = rule.asset.to_uppercase();
+    let target_asset = rule
+        .target_asset
+        .clone()
+        .unwrap_or_else(|| "USYC".into())
+        .to_uppercase();
+
+    let Some((target_weights, depegged_weight)) =
+        build_defensive_target(&current_weights, &depegged_asset, &target_asset)
+    else {
+        debug!(rule_id=%rule.id, %depegged_asset,
+            "depegged asset weight < 1%; no defensive plan needed");
+        return Ok(None);
+    };
+
+    // Best-effort recent prices for min_out computation. Missing prices fall
+    // back to the planner's internal defaults.
+    let relevant_symbols: Vec<String> = current_weights
+        .keys()
+        .chain(target_weights.keys())
+        .cloned()
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let prices = if relevant_symbols.is_empty() {
+        HashMap::new()
+    } else {
+        crate::modules::market_data::service::get_historical_prices(
+            &state.db,
+            &relevant_symbols,
+            chrono::Utc::now(),
+        )
+        .await
+        .unwrap_or_default()
+    };
+
+    // Zero-pool gateway USDC: a peg-defense plan ignores idle USDC and just
+    // rebalances around the depegged asset. The planner falls back to
+    // single-chain legs in this configuration.
+    let mut usdc_per_chain: HashMap<ChainKey, f64> = HashMap::new();
+    usdc_per_chain.insert(ChainKey::Arc, 0.0);
+    usdc_per_chain.insert(ChainKey::Base, 0.0);
+
+    let input = PlanInput {
+        portfolio_value_usd: total_value_usd,
+        current_weights,
+        target_weights,
+        usdc_per_chain,
+        // Peg defense bypasses the usual drift threshold — a depeg is the
+        // signal, not a 5% drift.
+        drift_threshold: 0.0,
+        dust_threshold_usd: 5.0,
+        prices,
+    };
+
+    let legs = plan_legs(&input);
+    if legs.is_empty() {
+        debug!(rule_id=%rule.id, "planner produced no legs (dust or zero portfolio); no plan persisted");
+        return Ok(None);
+    }
+
+    // Synthetic agent_decisions row anchors the rebalance (rebalances.decision_id is NOT NULL).
+    // `triggered_by='peg_alert'` is a new variant; shared TS type already accepts
+    // unknown strings via the `(string & {})` union.
+    let reasoning = format!(
+        "Peg-defense: {asset} observed at or below {thr:.4} for the configured window; \
+         shifting {pct}% of portfolio from {asset} into {target}.",
+        asset = depegged_asset,
+        thr = rule.threshold_price,
+        pct = (depegged_weight * 100.0).round() as i64,
+        target = target_asset,
+    );
+    let decision_id: Uuid = sqlx::query_scalar(
+        "INSERT INTO agent_decisions (portfolio_id, reasoning, confidence, triggered_by)
+         VALUES ($1, $2, 0.9, 'peg_alert')
+         RETURNING id",
+    )
+    .bind(portfolio_id)
+    .bind(&reasoning)
+    .fetch_one(&state.db)
+    .await?;
+
+    let rebalance_id = create_plan(state, portfolio_id, decision_id, &legs).await?;
+    info!(
+        rule_id=%rule.id,
+        %rebalance_id,
+        legs_count = legs.len(),
+        action = %rule.action_kind,
+        "peg-defense plan persisted"
+    );
+
+    Ok(Some(rebalance_id))
 }
 
 /// Sample the current stablecoin prices. USDC/EURC come from CoinGecko via
@@ -384,10 +521,84 @@ pub async fn record_sample_for_test(
     monitor.push_sample(rule_id, window_seconds, sample).await;
 }
 
+/// Pure helper extracted for unit testability. Returns `Some((target_weights,
+/// depegged_weight))` when a defensive rebalance is warranted (depegged asset
+/// has ≥1% weight), `None` otherwise. The target map zeroes the depegged
+/// asset and piles its weight onto `target_asset`, creating the target_asset
+/// entry if it doesn't exist in the current allocation.
+fn build_defensive_target(
+    current_weights: &HashMap<String, f64>,
+    depegged_asset: &str,
+    target_asset: &str,
+) -> Option<(HashMap<String, f64>, f64)> {
+    let depegged_weight = *current_weights.get(depegged_asset).unwrap_or(&0.0);
+    if depegged_weight < 0.01 {
+        return None;
+    }
+    let mut target_weights = current_weights.clone();
+    target_weights.insert(depegged_asset.to_string(), 0.0);
+    *target_weights
+        .entry(target_asset.to_string())
+        .or_insert(0.0) += depegged_weight;
+    Some((target_weights, depegged_weight))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::TimeZone;
+
+    #[test]
+    fn peg_rule_proposes_usdc_to_usyc() {
+        // 80% USDC / 20% BTC. USDC depegs → defensive target should move
+        // 80% USDC into USYC (a brand-new entry), zero USDC, keep BTC at 20%.
+        let mut current = HashMap::new();
+        current.insert("USDC".to_string(), 0.80);
+        current.insert("BTC".to_string(), 0.20);
+
+        let (target, moved) =
+            build_defensive_target(&current, "USDC", "USYC").expect("80% > 1% → defensive plan");
+        assert!((moved - 0.80).abs() < 1e-9, "moved 80% of weight");
+        assert_eq!(target.get("USDC"), Some(&0.0));
+        assert_eq!(target.get("USYC"), Some(&0.80));
+        assert_eq!(target.get("BTC"), Some(&0.20));
+        let total: f64 = target.values().sum();
+        assert!((total - 1.0).abs() < 1e-9, "weights still sum to 1.0");
+    }
+
+    #[test]
+    fn peg_rule_no_op_when_depegged_asset_absent() {
+        // Portfolio holds only BTC. USDC depegs but the user isn't holding any
+        // USDC → no defensive plan needed.
+        let mut current = HashMap::new();
+        current.insert("BTC".to_string(), 1.00);
+        assert!(build_defensive_target(&current, "USDC", "USYC").is_none());
+    }
+
+    #[test]
+    fn peg_rule_no_op_when_depegged_weight_below_one_percent() {
+        // 0.5% USDC dust → not worth a defensive trade (planner's dust
+        // threshold would drop it anyway, but we short-circuit earlier).
+        let mut current = HashMap::new();
+        current.insert("USDC".to_string(), 0.005);
+        current.insert("BTC".to_string(), 0.995);
+        assert!(build_defensive_target(&current, "USDC", "USYC").is_none());
+    }
+
+    #[test]
+    fn peg_rule_appends_to_existing_target_asset_weight() {
+        // 50% USDC / 30% USYC / 20% BTC. USDC depegs → target_weights should
+        // be 0% USDC, 80% USYC (30% original + 50% moved), 20% BTC.
+        let mut current = HashMap::new();
+        current.insert("USDC".to_string(), 0.50);
+        current.insert("USYC".to_string(), 0.30);
+        current.insert("BTC".to_string(), 0.20);
+        let (target, moved) = build_defensive_target(&current, "USDC", "USYC").expect("50% > 1%");
+        assert!((moved - 0.50).abs() < 1e-9);
+        assert_eq!(target.get("USDC"), Some(&0.0));
+        assert_eq!(target.get("USYC"), Some(&0.80));
+        assert_eq!(target.get("BTC"), Some(&0.20));
+    }
 
     fn at(secs_after_epoch: i64) -> DateTime<Utc> {
         Utc.timestamp_opt(secs_after_epoch, 0).unwrap()
