@@ -134,6 +134,14 @@ pub async fn build(db: Db, config: Config) -> Router {
         .route("/backtest/preview", post(backtest::handlers::preview))
         .route("/trustability/me", get(trustability::handlers::me))
         .route("/billing/referrals", get(billing::handlers::list_referrals))
+        .route(
+            "/admin/billing/accruals",
+            get(billing::handlers::list_accruals),
+        )
+        .route(
+            "/admin/billing/accruals/run-once",
+            post(billing::handlers::run_accruals_once),
+        )
         .route_layer(from_fn_with_state(state.clone(), require_auth));
 
     Router::new()
