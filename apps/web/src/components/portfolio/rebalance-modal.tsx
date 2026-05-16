@@ -90,7 +90,7 @@ export function RebalanceModal({ open, onClose }: Props) {
 
         {!analyzed ? (
           <div className="space-y-4">
-            <div className="p-4 rounded-xl bg-yellow-500/5 border border-yellow-500/15">
+            <div className="p-4 rounded-card bg-warn/10 border-brutal border-warn/30">
               <div className="flex items-start gap-2.5">
                 <AlertTriangle className="w-4 h-4 text-yellow-400 shrink-0 mt-0.5" />
                 <div>
@@ -107,7 +107,7 @@ export function RebalanceModal({ open, onClose }: Props) {
             </div>
 
             {error && (
-              <div className="p-3 rounded-lg bg-red-500/5 border border-red-500/15 text-xs text-red-300">
+              <div className="p-3 rounded-sharp bg-risk/10 border border-risk/30 text-xs text-risk">
                 {error}
               </div>
             )}
@@ -132,7 +132,7 @@ export function RebalanceModal({ open, onClose }: Props) {
           </div>
         ) : (
           <div className="space-y-4">
-            <div className="p-4 rounded-xl bg-blue-500/5 border border-blue-500/15">
+            <div className="p-4 rounded-card bg-accent-agent/10 border-brutal border-accent-agent/30">
               <p className="text-xs text-gray-400 mb-3 leading-relaxed">
                 {decision?.reasoning}
               </p>
@@ -158,7 +158,7 @@ export function RebalanceModal({ open, onClose }: Props) {
               {recommendation?.trades.map((trade) => (
                 <div
                   key={`${trade.symbol}-${trade.action}`}
-                  className="flex items-center justify-between p-3 rounded-lg bg-white/3 border border-white/5"
+                  className="flex items-center justify-between p-3 rounded-sharp bg-raised border border-border-default"
                 >
                   <div className="flex items-center gap-3">
                     <span
@@ -192,7 +192,7 @@ export function RebalanceModal({ open, onClose }: Props) {
             </div>
 
             {error && (
-              <div className="p-3 rounded-lg bg-red-500/5 border border-red-500/15 text-xs text-red-300">
+              <div className="p-3 rounded-sharp bg-risk/10 border border-risk/30 text-xs text-risk">
                 {error}
               </div>
             )}

@@ -99,7 +99,7 @@ export function PerformanceChart() {
                 content={({ active, payload, label }) => {
                   if (!active || !payload?.length) return null;
                   return (
-                    <div className="bg-gray-900 border border-white/10 rounded-lg p-3 text-xs space-y-1">
+                    <div className="bg-surface border-brutal border-border-default rounded-sharp p-3 text-xs space-y-1">
                       <p className="text-gray-400 font-medium">{label}</p>
                       {payload.map((p) => (
                         <p key={p.name} style={{ color: p.color }}>
