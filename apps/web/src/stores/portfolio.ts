@@ -11,6 +11,8 @@ import type {
   RegimeSignals,
   PriceTick,
   WalletInfo,
+  RebalanceStatus,
+  PegAlert,
 } from "@/types";
 export interface RegimeState {
   current: MarketRegime;
@@ -39,6 +41,10 @@ interface PortfolioState {
   toolInvocations: AgentToolInvoked[];
   /** Most-recent abstain events (capped at 10). */
   abstains: AgentAbstained[];
+  /** Latest status update per rebalance id — kept fresh by SSE. */
+  rebalanceStatuses: Record<string, RebalanceStatus>;
+  /** Most-recent peg-alert events (capped at 20). */
+  pegAlerts: PegAlert[];
 
   setPortfolios: (p: Portfolio[]) => void;
   addPortfolio: (p: Portfolio) => void;
@@ -55,6 +61,8 @@ interface PortfolioState {
   setSseConnected: (v: boolean) => void;
   pushToolInvocation: (t: AgentToolInvoked) => void;
   pushAbstain: (a: AgentAbstained) => void;
+  applyRebalanceStatus: (s: RebalanceStatus) => void;
+  pushPegAlert: (a: PegAlert) => void;
 }
 
 const DEFAULT_REGIME: RegimeState = {
@@ -81,6 +89,8 @@ export const usePortfolioStore = create<PortfolioState>()(
       unifiedUsdc: 0,
       toolInvocations: [],
       abstains: [],
+      rebalanceStatuses: {},
+      pegAlerts: [],
 
       setPortfolios: (portfolios) =>
         set((state) => ({
@@ -124,6 +134,17 @@ export const usePortfolioStore = create<PortfolioState>()(
       pushAbstain: (abstain) =>
         set((state) => ({
           abstains: [abstain, ...state.abstains].slice(0, 10),
+        })),
+      applyRebalanceStatus: (status) =>
+        set((state) => ({
+          rebalanceStatuses: {
+            ...state.rebalanceStatuses,
+            [status.id]: status,
+          },
+        })),
+      pushPegAlert: (alert) =>
+        set((state) => ({
+          pegAlerts: [alert, ...state.pegAlerts].slice(0, 20),
         })),
     }),
     { name: "aegis-portfolio" },

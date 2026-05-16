@@ -88,8 +88,14 @@ export function useEventSource(
         "price.tick",
         "regime.flip",
         "agent.decision",
+        "agent.tool.invoked",
+        "agent.abstained",
         "rebalance.status",
+        "rebalance.plan.created",
+        "rebalance.leg.update",
+        "tax.harvest.proposed",
         "gateway.balance",
+        "wallet.created",
         "peg.alert",
       ];
       for (const type of eventTypes) {

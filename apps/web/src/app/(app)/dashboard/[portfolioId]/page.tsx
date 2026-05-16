@@ -12,6 +12,7 @@ import { MarketOverview } from "@/components/dashboard/market-overview";
 import { DiaryVisibilityToggle } from "@/components/settings/diary-visibility-toggle";
 import { DigestOptIn } from "@/components/settings/digest-opt-in";
 import { TrustabilityCard } from "@/components/dashboard/trustability-card";
+import { LivePill } from "@/components/realtime/live-pill";
 import { portfolioApi } from "@/lib/api";
 import { usePortfolioStore } from "@/stores/portfolio";
 
@@ -60,10 +61,14 @@ export default function PortfolioDashboardPage() {
       variants={stagger}
       className="max-w-[1400px] mx-auto space-y-6"
     >
-      <motion.div variants={fadeUp}>
+      <motion.div
+        variants={fadeUp}
+        className="flex items-center justify-between"
+      >
         <h1 className="text-2xl font-semibold text-text-hi font-mono tracking-tight">
           Portfolio Overview
         </h1>
+        <LivePill />
       </motion.div>
 
       <motion.div
