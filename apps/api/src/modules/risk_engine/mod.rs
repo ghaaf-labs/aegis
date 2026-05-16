@@ -1,4 +1,5 @@
 pub mod regime;
+pub mod regime_backtest;
 
 #[allow(unused_imports)]
 pub use regime::{classify, compute_signals, MarketRegime, RegimeClassification, RegimeSignals};
