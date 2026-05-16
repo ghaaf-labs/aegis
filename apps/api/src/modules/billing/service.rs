@@ -277,6 +277,15 @@ pub async fn settle_protocol_fee_via_nanopayments(
     let seller_address = &config.nanopayments_seller_address;
 
     if seller_address.is_empty() {
+        // When the new billing flag is on, an empty seller address means the
+        // operator forgot to provision the treasury wallet — silently
+        // returning Ok(None) (the old behaviour) would let every protocol
+        // fee disappear into the void. Surface the misconfig instead.
+        if config.billing_v2_enabled {
+            anyhow::bail!(
+                "BILLING_V2_ENABLED=true but NANOPAYMENTS_SELLER_ADDRESS is empty"
+            );
+        }
         return Ok(None);
     }
 
