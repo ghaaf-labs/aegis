@@ -22,6 +22,8 @@ futures-util = "0.3"
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9"
+once_cell = "1"
 
 # Database — `default-features = false` drops `any`. The `macros` feature is
 # required for `#[derive(FromRow)]`. sqlx-macros-core 0.8.6 declares
