@@ -113,6 +113,7 @@ mod tests {
             digest_secret: "x".into(),
             public_base_url: "http://localhost:3000".into(),
             api_base_url: "http://localhost:8080".into(),
+            regime_backtest_enabled: false,
             // New real-execution + Nanopayments fields (defaults for tests)
             cctp_token_messenger_arc: String::new(),
             cctp_token_messenger_base: String::new(),

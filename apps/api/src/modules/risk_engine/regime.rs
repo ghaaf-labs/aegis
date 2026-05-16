@@ -19,7 +19,7 @@ use crate::config::ModelRoute;
 use crate::modules::ai::{Message, OpenRouterClient, PromptKey};
 use crate::modules::market_data::MarketSnapshot;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MarketRegime {
     RiskOn,

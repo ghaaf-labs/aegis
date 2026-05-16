@@ -164,6 +164,12 @@ pub struct Config {
     /// Base URL of this API service — used in emails so unsubscribe links
     /// resolve to the backend route, not the frontend.
     pub api_base_url: String,
+
+    /// F-REG-6: gates the regime-backtest admin endpoints (kick off a run,
+    /// list latest evaluations). The public `/about/regime` model card reads
+    /// already-persisted rows directly from Postgres and is *not* gated, so
+    /// the model card keeps working even with the flag off.
+    pub regime_backtest_enabled: bool,
 }
 
 impl Config {
@@ -271,6 +277,8 @@ impl Config {
                 .unwrap_or_else(|_| "http://localhost:3000".into()),
             api_base_url: std::env::var("API_BASE_URL")
                 .unwrap_or_else(|_| "http://localhost:8080".into()),
+
+            regime_backtest_enabled: parse_or("REGIME_BACKTEST_ENABLED", false)?,
         };
 
         cfg.validate()
@@ -418,6 +426,7 @@ mod tests {
             digest_secret: "test-secret".into(),
             public_base_url: "http://localhost:3000".into(),
             api_base_url: "http://localhost:8080".into(),
+            regime_backtest_enabled: false,
         }
     }
 
