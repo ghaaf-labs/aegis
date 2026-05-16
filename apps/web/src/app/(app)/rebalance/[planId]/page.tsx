@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { rebalanceApi, ratesApi, agentApi } from "@/lib/api";
 import type { AgentDecision } from "@/types";
+import { ModelBadge } from "@aegis/ui";
 import { ApprovalModal } from "@/components/rebalance/approval-modal";
 import { ExecutionTrace } from "@/components/rebalance/execution-trace";
 
@@ -134,6 +135,46 @@ export default function RebalancePage({ params }: PageProps) {
           <h1 className="text-2xl font-bold mt-1">
             {approved ? "Execution in progress" : "Review the plan"}
           </h1>
+
+          {plan &&
+            plan.legs.some(
+              (l) =>
+                l.kind === "cross_chain_burn" || l.kind === "cross_chain_mint",
+            ) && (
+              <div className="mt-2 inline-flex items-center gap-2 rounded border border-cyan-500/40 bg-cyan-500/10 px-3 py-1 text-[11px] font-mono text-cyan-300">
+                Real on-chain execution • CCTP V2 Fast Transfer + Hooks
+              </div>
+            )}
+
+          {decision && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+              {decision.modelSlug && <ModelBadge model={decision.modelSlug} />}
+              {decision.regime && (
+                <span className="text-xs text-violet-300 font-mono">
+                  {decision.regime.replace("_", " ")}
+                </span>
+              )}
+              {decision.criticVerdict && (
+                <span
+                  className={`text-xs px-2 py-0.5 font-mono border ${
+                    decision.criticVerdict.verdict === "revised" ||
+                    decision.criticVerdict.demandsRevision
+                      ? "border-rose-500/40 text-rose-300 bg-rose-500/10"
+                      : "border-cyan-500/40 text-cyan-300 bg-cyan-500/10"
+                  }`}
+                >
+                  Critic:{" "}
+                  {decision.criticVerdict.verdict ??
+                    (decision.criticVerdict.demandsRevision
+                      ? "revised"
+                      : "approved")}
+                </span>
+              )}
+              <span className="text-xs text-gray-500">
+                confidence {(decision.confidence * 100).toFixed(0)}%
+              </span>
+            </div>
+          )}
         </header>
 
         {approved ? (

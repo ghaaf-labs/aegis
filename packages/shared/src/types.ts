@@ -115,10 +115,13 @@ export type ModelRoute =
   | "critique_agent";
 
 export interface CriticVerdict {
-  demandsRevision: boolean;
+  model?: string;
+  /** Modern verdict field (preferred). */
+  verdict?: "approved" | "revised" | "abstained";
+  /** Legacy boolean field for older decisions. */
+  demandsRevision?: boolean;
   notes: string;
-  /** Confidence the critic has that the strategist's proposal is sound (0..1). */
-  confidence: number;
+  confidence?: number;
 }
 
 export interface AgentDecision {
@@ -391,6 +394,13 @@ export interface DiaryEntry {
   recommendationSummary: string;
   createdAt: string;
   outcome?: DiaryOutcome;
+  /** Adversarial critic review of the strategist proposal (model, verdict, notes). */
+  criticVerdict?: {
+    model: string;
+    verdict: "approved" | "revised" | "abstained";
+    notes: string;
+    confidence?: number;
+  };
 }
 
 export interface DiaryOutcome {

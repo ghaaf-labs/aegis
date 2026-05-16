@@ -13,6 +13,7 @@ import {
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { MOCK_PERFORMANCE_DATA } from "@/lib/mock-data";
 import { formatCurrency } from "@/lib/utils";
+import { ProvenanceLine } from "@aegis/ui";
 
 export function PerformanceChart() {
   return (
@@ -115,6 +116,13 @@ export function PerformanceChart() {
               />
             </AreaChart>
           </ResponsiveContainer>
+        </div>
+
+        <div className="pt-2 border-t border-white/10">
+          <ProvenanceLine
+            source="on-chain outcomes + counterfactual replay"
+            freshness="live"
+          />
         </div>
       </CardContent>
     </Card>

@@ -248,6 +248,7 @@ export const rebalanceApi = {
       completedAt: string | null;
       createdAt: string;
       updatedAt: string;
+      protocolFeeSettlementTx?: string;
       legs: Array<{
         id: string;
         rebalanceId: string;

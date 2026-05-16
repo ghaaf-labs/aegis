@@ -3,7 +3,7 @@
 import { TrendingUp, TrendingDown, ArrowUpDown } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { useActivePortfolio } from "@/stores/portfolio";
+import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
 import {
   formatCurrency,
   formatPercent,
@@ -18,10 +18,29 @@ interface Props {
 
 export function AssetTable({ showActions = false }: Props) {
   const portfolio = useActivePortfolio();
+  const snapshot = usePortfolioStore((s) => s.marketSnapshot);
 
   if (!portfolio) return null;
 
-  const priceMap = Object.fromEntries(MOCK_PRICES.map((p) => [p.symbol, p]));
+  const ageMs = snapshot
+    ? Date.now() - new Date(snapshot.capturedAt).getTime()
+    : 0;
+  const isStale = ageMs > 60_000;
+  const isVeryStale = ageMs > 300_000;
+  const priceColor = isVeryStale
+    ? "text-red-400"
+    : isStale
+      ? "text-yellow-400"
+      : "text-white";
+
+  // Prefer live snapshot prices over mocks for freshness
+  const livePriceMap = snapshot
+    ? Object.fromEntries(snapshot.assets.map((a) => [a.symbol, a]))
+    : {};
+  const priceMap = {
+    ...Object.fromEntries(MOCK_PRICES.map((p) => [p.symbol, p])),
+    ...livePriceMap,
+  };
 
   return (
     <Card>
@@ -74,7 +93,9 @@ export function AssetTable({ showActions = false }: Props) {
                       </span>
                     </div>
                   </td>
-                  <td className="px-5 py-3.5 text-sm text-white font-medium">
+                  <td
+                    className={`px-5 py-3.5 text-sm font-medium ${priceColor}`}
+                  >
                     {price ? formatCurrency(price.priceUsd) : "—"}
                   </td>
                   <td className="px-5 py-3.5">
@@ -124,6 +145,9 @@ export function AssetTable({ showActions = false }: Props) {
             })}
           </tbody>
         </table>
+        <div className="px-5 py-2 text-[10px] text-text-mut font-mono border-t border-white/5">
+          Prices via CoinGecko · live snapshot
+        </div>
       </CardContent>
     </Card>
   );

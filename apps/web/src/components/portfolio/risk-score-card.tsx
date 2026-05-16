@@ -2,10 +2,13 @@
 
 import { Shield } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { useActivePortfolio } from "@/stores/portfolio";
+import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
+import { ProvenanceLine } from "@aegis/ui";
 
 export function RiskScoreCard() {
   const portfolio = useActivePortfolio();
+  const snapshot = usePortfolioStore((s) => s.marketSnapshot);
+
   if (!portfolio) return null;
 
   const score = portfolio.riskScore;
@@ -13,6 +16,12 @@ export function RiskScoreCard() {
 
   const label = score < 30 ? "Low Risk" : score < 60 ? "Moderate" : "High Risk";
   const color = score < 30 ? "#10b981" : score < 60 ? "#f59e0b" : "#ef4444";
+
+  const ageMs = snapshot
+    ? Date.now() - new Date(snapshot.capturedAt).getTime()
+    : 0;
+  const isStale = ageMs > 60_000;
+  const isVeryStale = ageMs > 300_000;
 
   return (
     <Card>
@@ -44,6 +53,27 @@ export function RiskScoreCard() {
           Your portfolio risk is within your target range. The AI agent will
           alert you if market conditions push this above 65.
         </p>
+
+        <div className="pt-3 border-t border-white/10">
+          <ProvenanceLine
+            source="current allocations + live prices"
+            freshness={
+              snapshot
+                ? new Date(snapshot.capturedAt).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })
+                : "live"
+            }
+          />
+          {(isVeryStale || isStale) && (
+            <span
+              className={`text-[10px] ml-2 ${isVeryStale ? "text-red-400" : "text-yellow-400"}`}
+            >
+              {isVeryStale ? "stale" : "stale"}
+            </span>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
