@@ -34,10 +34,16 @@ export function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="w-[220px] shrink-0 flex flex-col border-r border-white/5 bg-gray-950/50">
+    <aside
+      className="w-[220px] shrink-0 flex flex-col border-r border-white/5 bg-gray-950/50"
+      aria-label="Primary navigation"
+    >
       {/* Logo */}
       <div className="flex items-center gap-2.5 px-5 py-5 border-b border-white/5">
-        <div className="w-7 h-7 rounded-sharp bg-accent-agent flex items-center justify-center shrink-0">
+        <div
+          className="w-7 h-7 rounded-sharp bg-accent-agent flex items-center justify-center shrink-0"
+          aria-hidden="true"
+        >
           <Shield className="w-3.5 h-3.5 text-white" />
         </div>
         <span className="font-bold text-white text-sm tracking-tight">
@@ -56,6 +62,7 @@ export function Sidebar() {
             <Link
               key={href}
               href={href}
+              aria-current={active ? "page" : undefined}
               className={cn(
                 "flex items-center gap-3 px-3 py-2 rounded-sharp text-sm transition-all min-h-[44px]",
                 active
@@ -63,7 +70,7 @@ export function Sidebar() {
                   : "text-gray-500 hover:text-gray-300 hover:bg-white/5",
               )}
             >
-              <Icon className="w-4 h-4 shrink-0" />
+              <Icon className="w-4 h-4 shrink-0" aria-hidden="true" />
               {label}
             </Link>
           );
