@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guidance for Claude Code when working on Aegis. **Read [`docs/`](./docs/) first** — especially [`docs/06-harness.md`](./docs/06-harness.md) for how this repo uses Claude Code's skills, subagents, and hooks. For branch / commit / CI / coverage details, see [`CONTRIBUTING.md`](./CONTRIBUTING.md).
+Guidance for Claude Code when working on Aegis. **Read [`docs/`](./docs/) first** — especially [`docs/06-harness.md`](./docs/06-harness.md) for how this repo uses Claude Code's skills, subagents, and hooks. For branch / commit / CI / coverage details, see [`CONTRIBUTING.md`](./CONTRIBUTING.md). For environment-variable hygiene (load order, secrets-vs-public split, common pitfalls), read [`docs/09-env-hygiene.md`](./docs/09-env-hygiene.md) before editing `.env` or `.env.local`.
 
 ## What this is
 
