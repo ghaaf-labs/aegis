@@ -14,6 +14,7 @@ pub mod fifo;
 pub mod handlers;
 pub mod models;
 pub mod service;
+pub mod share;
 
 #[allow(unused_imports)]
 pub use models::{HarvestableLoss, HarvestableLot};
