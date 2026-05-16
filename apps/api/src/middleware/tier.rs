@@ -11,10 +11,9 @@
 //! unique index on `(user_id) WHERE status IN ('trialing','active','past_due')`
 //! guarantees at most one live row, so the lookup is point-query simple.
 //!
-//! Some helpers (portfolios cap, decision recorder, AUM cap) land here ahead
-//! of their first call sites in F-TIER-3 — `allow(dead_code)` is intentional
-//! within this single commit and removed as consumers wire up.
-#![allow(dead_code)]
+//! `enforce_aum_cap` lands ahead of its caller (A4 reads the live AUM from
+//! the Gateway poller before invoking it) — the per-fn `allow(dead_code)`
+//! below is the narrowest scope to suppress the unused-warn until then.
 
 use chrono::Datelike;
 use sqlx::PgPool;
@@ -85,6 +84,7 @@ pub async fn enforce_decision_cap(pool: &PgPool, user_id: Uuid, tier: Tier) -> R
 /// Reject when the user's effective AUM would exceed `tier.aum_cap_usd`.
 /// `None` cap = unlimited (Pro/Business). Caller passes the *current* AUM
 /// it already had to compute; we don't re-read it here to avoid double work.
+#[allow(dead_code)]
 pub async fn enforce_aum_cap(
     _pool: &PgPool,
     _user_id: Uuid,

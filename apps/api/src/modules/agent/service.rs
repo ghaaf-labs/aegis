@@ -66,6 +66,14 @@ pub async fn analyze_portfolio(
     .fetch_all(&state.db)
     .await?;
 
+    // Tier gate: count this strategist run against the user's monthly cap
+    // before we burn LLM tokens. No-op when BILLING_V2_ENABLED is false so the
+    // existing golden path keeps passing.
+    if state.config.billing_v2_enabled {
+        let tier = crate::middleware::tier::resolve_tier(&state.db, portfolio.user_id).await?;
+        crate::middleware::tier::enforce_decision_cap(&state.db, portfolio.user_id, tier).await?;
+    }
+
     let user_profile = fetch_user_profile(state, portfolio.user_id).await?;
 
     let snapshot =
@@ -263,6 +271,22 @@ pub async fn analyze_portfolio(
     .bind(&snapshot_value)
     .fetch_one(&state.db)
     .await?;
+
+    // 8b. Increment usage_meters.decisions_count for the current period.
+    // Only when billing v2 is on — otherwise the table may be untouched and
+    // the UPSERT would create spurious rows for users that won't ever pay.
+    if state.config.billing_v2_enabled {
+        if let Err(e) = crate::middleware::tier::record_decision(&state.db, portfolio.user_id).await
+        {
+            // Don't fail the whole decision on a meter bump — the strategist
+            // already ran, the user should see their answer. Log loudly so
+            // operators notice if this is ever non-transient.
+            warn!(
+                "usage_meters bump failed for user {}: {e}",
+                portfolio.user_id
+            );
+        }
+    }
 
     // 9. Broadcast the final decision over SSE.
     let _ = state
