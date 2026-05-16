@@ -469,6 +469,8 @@ pub async fn analyze_portfolio(
     .fetch_one(&state.db)
     .await?;
 
+    crate::modules::observability::counters::record_agent_decision();
+
     // 8b. Increment usage_meters.decisions_count for the current period (A3).
     // Only when billing v2 is on — otherwise the table may be untouched and
     // the UPSERT would create spurious rows for users that won't ever pay.

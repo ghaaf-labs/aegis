@@ -137,6 +137,7 @@ pub async fn approve_and_execute(state: AppState, rebalance_id: Uuid) -> Result<
     tokio::spawn(async move {
         if let Err(e) = walk_legs(&st, rebalance_id, user_id).await {
             tracing::error!(?rebalance_id, error=%e, "rebalance walk failed");
+            crate::modules::observability::counters::record_rebalance_failed();
             let reason = format!("{e}");
             let _ = sqlx::query(
                 "UPDATE rebalances SET status = 'failed', failure_reason = $2,
@@ -259,6 +260,8 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
     .fetch_one(&state.db)
     .await
     .unwrap_or(0.0);
+
+    crate::modules::observability::counters::record_rebalance_succeeded(plan_total);
 
     if plan_total > 0.0 {
         // Resolve the real payer: portfolio → user → users.arc_address.

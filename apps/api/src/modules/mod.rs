@@ -9,6 +9,7 @@ pub mod faucet;
 pub mod fx;
 pub mod gateway;
 pub mod market_data;
+pub mod observability;
 pub mod paymaster;
 pub mod portfolio;
 pub mod rebalance;

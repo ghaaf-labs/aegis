@@ -10,7 +10,7 @@ use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLay
 use crate::middleware::auth::require_auth;
 use crate::modules::{
     agent, ai, analytics, backtest, billing, diary, digest, faucet, fx, gateway, market_data,
-    paymaster, portfolio, rebalance, risk_engine, scheduler,
+    observability, paymaster, portfolio, rebalance, risk_engine, scheduler,
     sse::{self, SseSender},
     tax, treasury, trustability, wallet,
 };
@@ -201,6 +201,7 @@ pub async fn build(db: Db, config: Config) -> Router {
 
     Router::new()
         .route("/health", get(health))
+        .route("/metrics", get(observability::handlers::metrics))
         // Wallet auth — public (cookies + token set on success).
         .route(
             "/auth/wallet/create",
