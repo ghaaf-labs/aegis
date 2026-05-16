@@ -159,6 +159,11 @@ pub async fn build(db: Db, config: Config) -> Router {
         )
         .route("/treasury/usyc/rate", get(treasury::handlers::usyc_rate))
         .route("/fx/usdc-eurc", get(fx::handlers::basis))
+        // Public constitution model-card — version + clauses, read-only.
+        .route(
+            "/about/constitution",
+            get(agent::constitution_handlers::document),
+        )
         // Public leaderboard — anonymous handles, no auth required.
         .route("/leaderboard", get(trustability::handlers::leaderboard))
         // Public diary + share-card data + unsubscribe — no auth.
