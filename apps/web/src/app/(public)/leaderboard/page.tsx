@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Trophy } from "lucide-react";
+import { ModelBadge } from "@aegis/ui";
 
 export const metadata: Metadata = {
   title: "Aegis · Leaderboard",
@@ -22,6 +23,11 @@ interface LeaderboardEntry {
   trustabilityDelta: number;
   lastDecisionAt: string | null;
   label: "excellent" | "strong" | "stable" | "shaky" | "underperforming";
+  recentModelSlug?: string;
+  recentCriticVerdict?: {
+    verdict?: "approved" | "revised" | "abstained";
+    demandsRevision?: boolean;
+  };
 }
 
 const LABEL_TONE: Record<LeaderboardEntry["label"], string> = {
@@ -122,15 +128,36 @@ function Row({ entry, rank }: { entry: LeaderboardEntry; rank: number }) {
   return (
     <li className="grid grid-cols-[40px_1fr_80px_80px_80px_100px] gap-3 items-center px-4 py-3 border-b border-white/4 last:border-0 font-mono text-xs hover:bg-white/2 transition-colors">
       <span className="text-text-mut">{rank.toString().padStart(2, "0")}</span>
-      <span className="text-text-hi">
-        <span className="opacity-70">0x</span>
-        {entry.handle}
+      <Link
+        href={`/diary/${entry.handle}`}
+        className="text-text-hi hover:text-cyan-300 transition-colors inline-flex items-center gap-2"
+      >
+        <span>
+          <span className="opacity-70">0x</span>
+          {entry.handle}
+        </span>
+        {entry.recentModelSlug && <ModelBadge model={entry.recentModelSlug} />}
+        {entry.recentCriticVerdict && (
+          <span
+            className={`text-[9px] px-1 py-0.5 font-mono border ${
+              entry.recentCriticVerdict.verdict === "revised" ||
+              entry.recentCriticVerdict.demandsRevision
+                ? "border-rose-500/40 text-rose-300"
+                : "border-cyan-500/40 text-cyan-300"
+            }`}
+          >
+            {entry.recentCriticVerdict.verdict ??
+              (entry.recentCriticVerdict.demandsRevision
+                ? "revised"
+                : "approved")}
+          </span>
+        )}
         {entry.distinctModels > 1 && (
-          <span className="ml-2 text-[10px] text-cyan-300/70">
+          <span className="ml-1 text-[10px] text-cyan-300/70">
             {entry.distinctModels} models
           </span>
         )}
-      </span>
+      </Link>
       <span className={`text-right tabular-nums ${deltaTone}`}>
         {deltaSign}
         {entry.trustabilityDelta.toFixed(2)}%

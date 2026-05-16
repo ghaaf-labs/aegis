@@ -228,6 +228,41 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
     .bind(rebalance_id)
     .execute(&state.db)
     .await?;
+
+    // Record the 25 bps protocol fee once for the entire plan, against the
+    // sum of leg notionals. The leg loop above intentionally does not touch
+    // billing — fee-per-leg would multiply the fee by the leg count.
+    let plan_total: f64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(amount_usdc), 0)::DOUBLE PRECISION
+         FROM rebalance_legs WHERE rebalance_id = $1",
+    )
+    .bind(rebalance_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0.0);
+
+    if plan_total > 0.0 {
+        let settlement_tx = crate::modules::billing::service::settle_protocol_fee_via_nanopayments(
+            &state.config,
+            "0x0000000000000000000000000000000000000001",
+            plan_total,
+        )
+        .await
+        .ok()
+        .flatten();
+
+        if let Err(e) = crate::modules::billing::service::record_protocol_fee(
+            &state.db,
+            rebalance_id,
+            plan_total,
+            settlement_tx.as_deref(),
+        )
+        .await
+        {
+            tracing::warn!(rebalance_id=?rebalance_id, error=%e, "billing: protocol fee record failed");
+        }
+    }
+
     Ok(())
 }
 
@@ -247,10 +282,19 @@ async fn dispatch(
             // message_hash is unique per leg (avoids collisions when the
             // executor processes two identical-amount burns).
             let recipient = format!("0x{}", &hex::encode(leg.id.as_bytes())[..40].to_lowercase());
+            // The planner doesn't yet resolve dest_symbol (e.g. "BTC") to a
+            // concrete ERC-20 address on the destination chain, and the leg
+            // row doesn't carry the address either. Until the planner stores
+            // (chain, token) tuples, we route USDC-only burns: zero address
+            // tokenOut + minOut=0 tells the destination RebalanceExecutor to
+            // skip the Uniswap leg and just credit USDC. Real volatile-asset
+            // hooks land when the planner gains address lookup.
+            let pool_fee = 3000u32;
+            let token_out_zero = "0x0000000000000000000000000000000000000000";
             let hook = build_hook_payload(
                 &recipient,
-                "0x0000000000000000000000000000000000000000",
-                3000,
+                token_out_zero,
+                pool_fee,
                 0,
                 (chrono::Utc::now().timestamp() + 600) as u64,
             );
@@ -369,6 +413,7 @@ async fn mark_leg_confirmed(
     .bind(cctp_hash)
     .execute(&state.db)
     .await?;
+
     broadcast_leg(
         state,
         rebalance_id,

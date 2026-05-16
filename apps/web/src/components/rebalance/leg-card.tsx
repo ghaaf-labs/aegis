@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import { ChainBadge } from "@aegis/ui";
 import type { LegStatus } from "@/types";
 
 interface LegCardProps {
@@ -73,11 +74,31 @@ export function LegCard({
           >
             {status}
           </span>
+          {kind === "cross_chain_mint" && status === "confirmed" && (
+            <span className="text-[10px] px-1.5 py-0.5 bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 font-mono tracking-wider">
+              Hook executed
+            </span>
+          )}
+          {kind === "cross_chain_burn" && status === "confirmed" && (
+            <span className="text-[10px] px-1.5 py-0.5 bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 font-mono tracking-wider">
+              Hook payload sent
+            </span>
+          )}
         </div>
-        <div className="text-xs text-gray-400 font-mono">
+        <div className="text-xs text-gray-400 font-mono flex items-center gap-2 flex-wrap">
           {srcSymbol ?? "?"}
-          {srcChain ? ` (${srcChain})` : ""} → {destSymbol ?? "?"}
-          {destChain ? ` (${destChain})` : ""}
+          {srcChain && (
+            <ChainBadge
+              chain={srcChain.toUpperCase() as "ARC" | "BASE" | "AVAX"}
+            />
+          )}
+          <span className="text-gray-600">→</span>
+          {destSymbol ?? "?"}
+          {destChain && (
+            <ChainBadge
+              chain={destChain.toUpperCase() as "ARC" | "BASE" | "AVAX"}
+            />
+          )}
           <span className="ml-2 text-emerald-400">
             ${amountUsdc.toFixed(2)}
           </span>

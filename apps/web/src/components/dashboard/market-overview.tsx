@@ -4,11 +4,21 @@ import { TrendingUp, TrendingDown } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { usePortfolioStore } from "@/stores/portfolio";
 import { formatCurrency, formatPercent, changeColor } from "@/lib/utils";
+import { ProvenanceLine } from "@aegis/ui";
 
 export function MarketOverview() {
   const snapshot = usePortfolioStore((s) => s.marketSnapshot);
 
   if (!snapshot) return null;
+
+  const ageMs = Date.now() - new Date(snapshot.capturedAt).getTime();
+  const isStale = ageMs > 60_000; // > 1 minute
+  const isVeryStale = ageMs > 300_000; // > 5 minutes
+  const priceColor = isVeryStale
+    ? "text-red-400"
+    : isStale
+      ? "text-yellow-400"
+      : "text-white";
 
   const fearLabel =
     snapshot.fearGreedIndex < 25
@@ -65,7 +75,7 @@ export function MarketOverview() {
                   {asset.symbol}
                 </span>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-white font-medium">
+                  <span className={`text-xs font-medium ${priceColor}`}>
                     {formatCurrency(asset.priceUsd, { compact: true })}
                   </span>
                   <span
@@ -82,6 +92,17 @@ export function MarketOverview() {
               </div>
             );
           })}
+        </div>
+
+        {/* Provenance — trust surface (design system component) */}
+        <div className="pt-2 border-t border-white/10">
+          <ProvenanceLine
+            source="CoinGecko"
+            freshness={new Date(snapshot.capturedAt).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+          />
         </div>
       </CardContent>
     </Card>

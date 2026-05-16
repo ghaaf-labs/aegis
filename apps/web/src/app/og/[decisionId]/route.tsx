@@ -105,6 +105,38 @@ export async function GET(_req: Request, { params }: RouteParams) {
             {entry.regime.replace("_", "-")}
           </div>
         )}
+        {entry.modelSlug && (
+          <div
+            style={{
+              background: "#111",
+              color: "#00E0FF",
+              padding: "6px 12px",
+              fontSize: 14,
+              fontFamily: "monospace",
+              border: "1px solid #00E0FF",
+            }}
+          >
+            {entry.modelSlug}
+          </div>
+        )}
+        {entry.criticVerdict && (
+          <div
+            style={{
+              background:
+                entry.criticVerdict.verdict === "revised"
+                  ? "#FF2D7A"
+                  : "#00FF88",
+              color: "#000",
+              padding: "6px 12px",
+              fontSize: 14,
+              fontWeight: 700,
+              textTransform: "uppercase",
+            }}
+          >
+            CRITIC:{" "}
+            {entry.criticVerdict.verdict === "revised" ? "REVISED" : "APPROVED"}
+          </div>
+        )}
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>

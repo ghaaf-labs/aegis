@@ -74,7 +74,9 @@ pub async fn analyze_portfolio(
     let ai = OpenRouterClient::new(&state.http, &state.config);
 
     // 2. Regime classifier — cheap pass that conditions the strategist.
-    let regime = risk_engine::classify(&ai, &snapshot, state.prompts.as_ref()).await?;
+    // Phase 1: pass the DB so we get real 30d vol + 90d correlation from price_history
+    let regime =
+        risk_engine::classify(&ai, &snapshot, state.prompts.as_ref(), Some(&state.db)).await?;
 
     // Broadcast the regime read immediately so the UI can react before the
     // strategist call completes (sub-second feedback even when Opus is slow).

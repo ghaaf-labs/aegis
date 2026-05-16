@@ -4,6 +4,7 @@ import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { useActivePortfolio } from "@/stores/portfolio";
 import { formatPercent } from "@/lib/utils";
+import { ProvenanceLine } from "@aegis/ui";
 
 const COLORS = [
   "#3b82f6",
@@ -97,6 +98,13 @@ export function AllocationChart({ compact = false }: Props) {
                 </span>
               </div>
             ))}
+          </div>
+
+          <div className="pt-2 border-t border-white/10">
+            <ProvenanceLine
+              source="current portfolio allocations"
+              freshness="live"
+            />
           </div>
         </div>
       </CardContent>

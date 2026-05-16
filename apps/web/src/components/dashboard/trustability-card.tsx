@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { ShieldCheck } from "lucide-react";
 import { trustabilityApi, type TrustabilityResponse } from "@/lib/api";
+import { ProvenanceLine } from "@aegis/ui";
 
 const LABEL_TONE: Record<string, string> = {
   excellent: "text-emerald-300 border-emerald-500/30 bg-emerald-500/5",
@@ -99,6 +100,12 @@ function Shell({ children }: { children: React.ReactNode }) {
         <span className="text-xs font-semibold text-text-hi">Trustability</span>
       </div>
       {children}
+      <div className="pt-2 border-t border-white/10">
+        <ProvenanceLine
+          source="on-chain outcomes + counterfactuals"
+          freshness="7d window"
+        />
+      </div>
     </div>
   );
 }
