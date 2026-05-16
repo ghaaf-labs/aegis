@@ -71,12 +71,12 @@ pub fn spawn_portfolio_scheduler(state: AppState, cancel: CancellationToken) -> 
             .fetch_all(&st.db)
             .await
             {
-                    Ok(v) => v,
-                    Err(e) => {
-                        tracing::warn!(error=%e, "scheduler: portfolio fetch failed");
-                        continue;
-                    }
-                };
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(error=%e, "scheduler: portfolio fetch failed");
+                    continue;
+                }
+            };
 
             for portfolio_id in active {
                 if cd.within(portfolio_id, window) {

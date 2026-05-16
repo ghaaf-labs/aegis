@@ -187,12 +187,11 @@ pub async fn summary(
     require_ownership(&state, claims.sub, q.portfolio_id).await?;
     let year = q.year.unwrap_or_else(|| Utc::now().year());
 
-    let row: (Option<String>, Option<String>) = sqlx::query_as(
-        "SELECT arc_address, base_address FROM users WHERE id = $1",
-    )
-    .bind(claims.sub)
-    .fetch_one(&state.db)
-    .await?;
+    let row: (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT arc_address, base_address FROM users WHERE id = $1")
+            .bind(claims.sub)
+            .fetch_one(&state.db)
+            .await?;
     let (arc, base) = row;
 
     let counts: (i64, Option<DateTime<Utc>>) = sqlx::query_as(

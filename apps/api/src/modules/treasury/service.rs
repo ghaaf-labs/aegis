@@ -35,10 +35,7 @@ pub struct ParkResult {
 const HASHNOTE_PUBLISHED_YIELD: f64 = 0.0510;
 
 pub async fn rate(http: &reqwest::Client, config: &Config) -> Result<UsycRate> {
-    if config.execution_mock
-        || config.usyc_oracle_arc.is_empty()
-        || config.arc_rpc_url.is_empty()
-    {
+    if config.execution_mock || config.usyc_oracle_arc.is_empty() || config.arc_rpc_url.is_empty() {
         return Ok(UsycRate {
             annualized_yield: HASHNOTE_PUBLISHED_YIELD,
             price_usd: 1.00,
@@ -66,11 +63,7 @@ pub async fn rate(http: &reqwest::Client, config: &Config) -> Result<UsycRate> {
     }
 }
 
-async fn oracle_latest_price(
-    http: &reqwest::Client,
-    rpc_url: &str,
-    oracle: &str,
-) -> Result<f64> {
+async fn oracle_latest_price(http: &reqwest::Client, rpc_url: &str, oracle: &str) -> Result<f64> {
     let body = json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -127,10 +120,7 @@ pub async fn park_in_usyc(
     )
     .await;
 
-    if config.execution_mock
-        || config.usyc_teller_arc.is_empty()
-        || config.usdc_arc.is_empty()
-    {
+    if config.execution_mock || config.usyc_teller_arc.is_empty() || config.usdc_arc.is_empty() {
         return Ok(ParkResult {
             intent: "park_usyc",
             amount_usdc,

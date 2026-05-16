@@ -1,6 +1,6 @@
 "use client";
 
-import { TrendingUp, TrendingDown, ArrowUpDown } from "lucide-react";
+import { TrendingUp, TrendingDown } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
@@ -11,11 +11,7 @@ import {
   changeColor,
 } from "@/lib/utils";
 
-interface Props {
-  showActions?: boolean;
-}
-
-export function AssetTable({ showActions = false }: Props) {
+export function AssetTable() {
   const portfolio = useActivePortfolio();
   const snapshot = usePortfolioStore((s) => s.marketSnapshot);
 

@@ -32,7 +32,6 @@ export class ErrorBoundary extends Component<Props, State> {
 
   override componentDidCatch(error: Error, info: ErrorInfo) {
     if (typeof window !== "undefined") {
-      // eslint-disable-next-line no-console
       console.error("aegis error boundary caught", error, info.componentStack);
     }
   }
