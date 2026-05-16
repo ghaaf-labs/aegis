@@ -2,9 +2,13 @@ import type {
   AgentDecision,
   DiaryEntry,
   HarvestableLoss,
+  Invoice,
   MarketSnapshot,
   Portfolio,
   PortfolioGoal,
+  PricingTier,
+  Subscription,
+  Tier,
   WalletInfo,
 } from "@/types";
 
@@ -413,6 +417,53 @@ export const analyticsApi = {
       /* analytics failures must never break user flows */
     }
   },
+};
+
+// ── Billing v2 ────────────────────────────────────────────────────────────
+
+export interface PatchSubscriptionBody {
+  /** ISO timestamp; when set, schedules cancellation at period end. */
+  cancelAt?: string | null;
+  /** Switch tier mid-cycle (proration handled server-side). */
+  tier?: Tier;
+}
+
+export interface ListInvoicesParams {
+  limit?: number;
+  /** ISO timestamp cursor — return invoices created strictly before this. */
+  before?: string;
+}
+
+export const billingApi = {
+  /** Current user's active subscription. Returns `null` for Free users
+   * who have never upgraded (server returns 204 / explicit null). */
+  getSubscription: () =>
+    request<Subscription | null>("/billing/subscription", { authed: true }),
+
+  createSubscription: (payload: { tier: Tier }) =>
+    request<Subscription>("/billing/subscriptions", {
+      method: "POST",
+      body: payload,
+      authed: true,
+    }),
+
+  patchSubscription: (id: string, body: PatchSubscriptionBody) =>
+    request<Subscription>(`/billing/subscriptions/${id}`, {
+      method: "PATCH",
+      body,
+      authed: true,
+    }),
+
+  listInvoices: (params: ListInvoicesParams = {}) => {
+    const qs = new URLSearchParams();
+    if (params.limit !== undefined) qs.set("limit", String(params.limit));
+    if (params.before) qs.set("before", params.before);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return request<Invoice[]>(`/billing/invoices${suffix}`, { authed: true });
+  },
+
+  /** Public — pricing page renders this for anonymous visitors. */
+  listTiers: () => request<PricingTier[]>("/billing/tiers"),
 };
 
 // ── Health ─────────────────────────────────────────────────────────────────
