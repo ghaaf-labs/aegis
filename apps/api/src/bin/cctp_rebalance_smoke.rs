@@ -162,7 +162,7 @@ async fn main() -> anyhow::Result<()> {
         target_weights,
         usdc_per_chain,
         drift_threshold: 0.05,
-        dust_threshold_usd: 5.0,
+        dust_threshold_usd: 1.0,
         prices: HashMap::new(),
     };
     let legs = plan_legs(&input);
@@ -195,8 +195,10 @@ async fn main() -> anyhow::Result<()> {
     approve_and_execute(state.clone(), rebalance_id).await?;
     info!(%rebalance_id, "executor started; polling status until terminal");
 
+    // Outlast the executor's own attestation wait so the in-process tokio
+    // task that finishes the rebalance doesn't get dropped when main exits.
     let started = std::time::Instant::now();
-    let timeout = Duration::from_secs(240);
+    let timeout = Duration::from_secs(cfg.cctp_attestation_timeout_secs + 60);
     loop {
         if started.elapsed() >= timeout {
             warn!("polling timeout — inspect rebalance_legs manually");

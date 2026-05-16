@@ -39,7 +39,7 @@ VALUES (
   '${PORTFOLIO_ID}'::uuid,
   '${USER_ID}'::uuid,
   'rebalance-smoke',
-  10.00,
+  20.00,
   jsonb_build_object(
     'name', 'rebalance smoke goal',
     'horizon', '1y',
@@ -54,7 +54,7 @@ VALUES (
 
 INSERT INTO allocations (portfolio_id, asset_symbol, quantity, target_weight, current_weight)
 VALUES
-  ('${PORTFOLIO_ID}'::uuid, 'USDC', 10.0, 50.0, 100.0),
+  ('${PORTFOLIO_ID}'::uuid, 'USDC', 20.0, 50.0, 100.0),
   ('${PORTFOLIO_ID}'::uuid, 'USYC',  0.0, 50.0,   0.0);
 
 COMMIT;

@@ -369,10 +369,10 @@ async fn dispatch(
             let dest = ChainKey::parse(leg.dest_chain.as_deref().unwrap_or(""))
                 .ok_or_else(|| AppError::BadRequest("missing dest_chain".into()))?;
             let client = CctpClient::new(&state.http, &state.config);
-            // The companion burn leg already produced a message_hash; the
+            // The companion burn leg already produced a tx_hash; the
             // executor reads it back from rebalance_legs in production.
             let burn_hash = sqlx::query_scalar::<_, Option<String>>(
-                "SELECT cctp_message_hash FROM rebalance_legs
+                "SELECT tx_hash FROM rebalance_legs
                  WHERE rebalance_id = (SELECT rebalance_id FROM rebalance_legs WHERE id = $1)
                    AND kind = 'cross_chain_burn'
                    AND leg_index = $2 - 1",
