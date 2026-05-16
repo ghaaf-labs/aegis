@@ -418,3 +418,91 @@ export interface CounterfactualReplay {
   counterfactualPct: number;
   deltaPct: number;
 }
+
+// ── Billing v2 (subscriptions, invoices, usage, performance fees) ──────────
+//
+// Mirror of `apps/api/src/modules/billing/types.rs`. All fields are camelCase
+// to match the Rust `#[serde(rename_all = "camelCase")]` convention.
+
+export type Tier = "free" | "pro" | "business";
+
+export type SubscriptionStatus = "trialing" | "active" | "pastDue" | "canceled";
+
+export interface Subscription {
+  id: string;
+  userId: UserId;
+  tier: Tier;
+  status: SubscriptionStatus;
+  startedAt: string;
+  currentPeriodStart: string;
+  currentPeriodEnd: string;
+  cancelAt?: string;
+  /** Day of month (1-28) used as the monthly billing anchor. */
+  billingAnchorDay: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type InvoiceStatus = "open" | "paid" | "void" | "pastDue";
+
+export interface LineItem {
+  description: string;
+  quantity: number;
+  unitAmountUsdc: number;
+  amountUsdc: number;
+  /** Free-form tag, e.g. "subscription", "aum_stream", "rebalance_fee". */
+  kind?: string;
+}
+
+export interface Invoice {
+  id: string;
+  userId: UserId;
+  subscriptionId?: string;
+  periodStart: string;
+  periodEnd: string;
+  lineItems: LineItem[];
+  subtotalUsdc: number;
+  totalUsdc: number;
+  status: InvoiceStatus;
+  paidAt?: string;
+  paidTxHash?: string;
+  createdAt: string;
+}
+
+export interface PricingTier {
+  code: Tier;
+  monthlyUsd: number;
+  /** Null on Pro / Business — unlimited AUM. */
+  aumCapUsd: number | null;
+  /** Null on Business — unlimited portfolios. */
+  portfoliosCap: number | null;
+  /** Null on Business — unlimited decisions. */
+  decisionsCapMonthly: number | null;
+  perRebalanceBps: number;
+  aumAnnualBps: number;
+}
+
+export interface UsageMeter {
+  userId: UserId;
+  /** Billing-period anchor date (YYYY-MM-DD). */
+  periodStart: string;
+  decisionsCount: number;
+  aumUsdAvg: number;
+  updatedAt: string;
+}
+
+export type PerformanceBenchmark = "tbill3m" | "susds";
+
+export interface PerformanceFee {
+  id: string;
+  userId: UserId;
+  decisionId?: string;
+  period: "monthly";
+  benchmark: PerformanceBenchmark;
+  realizedGainUsd: number;
+  accruedBps: number;
+  accruedUsdc: number;
+  settledAt?: string;
+  settlementTxHash?: string;
+  createdAt: string;
+}
