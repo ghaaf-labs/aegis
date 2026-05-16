@@ -29,14 +29,10 @@ async fn main() -> anyhow::Result<()> {
     // so future refactors of `validate` can't silently weaken it.
     if cfg.billing_v2_enabled {
         if cfg.nanopayments_seller_address.trim().is_empty() {
-            anyhow::bail!(
-                "BILLING_V2_ENABLED=true but NANOPAYMENTS_SELLER_ADDRESS is empty"
-            );
+            anyhow::bail!("BILLING_V2_ENABLED=true but NANOPAYMENTS_SELLER_ADDRESS is empty");
         }
         if cfg.nanopayments_treasury_address.trim().is_empty() {
-            anyhow::bail!(
-                "BILLING_V2_ENABLED=true but NANOPAYMENTS_TREASURY_ADDRESS is empty"
-            );
+            anyhow::bail!("BILLING_V2_ENABLED=true but NANOPAYMENTS_TREASURY_ADDRESS is empty");
         }
     }
 

@@ -301,14 +301,10 @@ impl Config {
         }
         if self.billing_v2_enabled {
             if self.nanopayments_seller_address.trim().is_empty() {
-                anyhow::bail!(
-                    "BILLING_V2_ENABLED=true but NANOPAYMENTS_SELLER_ADDRESS is empty"
-                );
+                anyhow::bail!("BILLING_V2_ENABLED=true but NANOPAYMENTS_SELLER_ADDRESS is empty");
             }
             if self.nanopayments_treasury_address.trim().is_empty() {
-                anyhow::bail!(
-                    "BILLING_V2_ENABLED=true but NANOPAYMENTS_TREASURY_ADDRESS is empty"
-                );
+                anyhow::bail!("BILLING_V2_ENABLED=true but NANOPAYMENTS_TREASURY_ADDRESS is empty");
             }
         }
         // If we will actually send mail, the unsubscribe-token secret must not

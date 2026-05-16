@@ -342,9 +342,7 @@ pub async fn settle_protocol_fee_via_nanopayments(
         // returning Ok(None) (the old behaviour) would let every protocol
         // fee disappear into the void. Surface the misconfig instead.
         if config.billing_v2_enabled {
-            anyhow::bail!(
-                "BILLING_V2_ENABLED=true but NANOPAYMENTS_SELLER_ADDRESS is empty"
-            );
+            anyhow::bail!("BILLING_V2_ENABLED=true but NANOPAYMENTS_SELLER_ADDRESS is empty");
         }
         return Ok(None);
     }
