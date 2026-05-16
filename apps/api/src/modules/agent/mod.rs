@@ -1,3 +1,4 @@
+pub mod calibration;
 pub mod handlers;
 pub mod memory;
 pub mod models;
