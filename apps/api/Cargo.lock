@@ -28,6 +28,7 @@ dependencies = [
  "rand 0.8.6",
  "reqwest",
  "rust_decimal",
+ "rust_decimal_macros",
  "serde",
  "serde_json",
  "serde_urlencoded",
@@ -3499,6 +3500,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rust_decimal_macros"
+version = "1.40.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "74a5a6f027e892c7a035c6fddb50435a1fbf5a734ffc0c2a9fed4d0221440519"
+dependencies = [
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
 name = "rustc-hash"
 version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3941,6 +3952,7 @@ dependencies = [
  "memchr",
  "once_cell",
  "percent-encoding",
+ "rust_decimal",
  "rustls",
  "serde",
  "serde_json",
@@ -4025,6 +4037,7 @@ dependencies = [
  "percent-encoding",
  "rand 0.8.6",
  "rsa",
+ "rust_decimal",
  "serde",
  "sha1",
  "sha2",
@@ -4064,6 +4077,7 @@ dependencies = [
  "memchr",
  "once_cell",
  "rand 0.8.6",
+ "rust_decimal",
  "serde",
  "serde_json",
  "sha2",

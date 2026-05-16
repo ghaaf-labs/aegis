@@ -129,9 +129,18 @@ pub struct LineItem {
     pub amount_usdc: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
+    /// Optional period covered by this line item (used by AUM accrual rollups
+    /// that bill a sub-period inside the invoice's larger period).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub period_start: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub period_end: Option<DateTime<Utc>>,
+    /// Optional pointer to the source row (e.g. an `aum_accruals.id`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ref_id: Option<Uuid>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]
 pub struct Invoice {
     pub id: Uuid,
@@ -139,13 +148,29 @@ pub struct Invoice {
     pub subscription_id: Option<Uuid>,
     pub period_start: DateTime<Utc>,
     pub period_end: DateTime<Utc>,
+    #[sqlx(json)]
     pub line_items: Vec<LineItem>,
     pub subtotal_usdc: f64,
     pub total_usdc: f64,
+    #[sqlx(try_from = "String")]
     pub status: InvoiceStatus,
     pub paid_at: Option<DateTime<Utc>>,
     pub paid_tx_hash: Option<String>,
+    #[sqlx(default)]
     pub created_at: DateTime<Utc>,
+}
+
+impl TryFrom<String> for InvoiceStatus {
+    type Error = String;
+    fn try_from(s: String) -> std::result::Result<Self, String> {
+        match s.as_str() {
+            "open" => Ok(InvoiceStatus::Open),
+            "paid" => Ok(InvoiceStatus::Paid),
+            "void" => Ok(InvoiceStatus::Void),
+            "past_due" => Ok(InvoiceStatus::PastDue),
+            other => Err(format!("unknown invoice status: {other}")),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

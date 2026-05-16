@@ -38,6 +38,7 @@ sqlx = { version = "0.8", default-features = false, features = [
   "json",
   "macros",
   "migrate",
+  "rust_decimal",
 ] }
 
 # Auth
@@ -71,13 +72,12 @@ subtle = "2"
 dashmap = "6"
 tokio-util = { version = "0.7", features = ["rt"] }
 
+# Money math for the AUM-fee streamer (Decimal — no f64 rounding drift).
+rust_decimal = { version = "1", features = ["serde-with-str"] }
+rust_decimal_macros = "1"
+
 # HTML rendering for the daily digest.
 handlebars = "6"
-
-# Money math — tax export numbers must round-trip exactly to the
-# IRS 1099-DA CSV. f64 leaks ULP error at >$1M positions; rust_decimal
-# is 128-bit fixed-point and serializes deterministically.
-rust_decimal = { version = "1", features = ["serde-with-str"] }
 
 # Share-token generation: 32 random bytes → base64-url.
 rand = "0.8"

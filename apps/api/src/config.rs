@@ -189,6 +189,11 @@ pub struct Config {
     /// Gates both `/tax/export.csv` and `/tax/share*`. Default false.
     #[allow(dead_code)]
     pub tax_export_v1_enabled: bool,
+
+    /// A4 — when true, spawns the daily AUM-fee accrual ticker at startup.
+    /// Requires `billing_v2_enabled=true` (validated at boot).
+    #[allow(dead_code)]
+    pub aum_stream_enabled: bool,
 }
 
 impl Config {
@@ -302,6 +307,7 @@ impl Config {
             peg_monitor_tick_secs: parse_or("PEG_MONITOR_TICK_SECS", 10)?,
             peg_fire_cooldown_secs: parse_or("PEG_FIRE_COOLDOWN_SECS", 1800)?,
             tax_export_v1_enabled: parse_or("TAX_EXPORT_V1_ENABLED", false)?,
+            aum_stream_enabled: parse_or("AUM_STREAM_ENABLED", false)?,
         };
 
         cfg.validate()
@@ -347,6 +353,15 @@ impl Config {
                 "RESEND_API_KEY is set but DIGEST_SECRET is still the dev default; rotate DIGEST_SECRET before sending real mail"
             );
         }
+        // The AUM streamer reads `subscriptions` + `plan_tiers` rows that
+        // only exist behind the V2 billing schema. Fail fast at boot rather
+        // than silently NULL-rolling on every tick.
+        if self.aum_stream_enabled && !self.billing_v2_enabled {
+            anyhow::bail!(
+                "AUM_STREAM_ENABLED=true requires BILLING_V2_ENABLED=true (depends on subscription rows)"
+            );
+        }
+
         // Production deploy hygiene: secure-cookie deploys need a real CORS
         // origin (not the localhost dev fallback).
         if self.session_cookie_secure
@@ -454,7 +469,24 @@ mod tests {
             peg_monitor_tick_secs: 10,
             peg_fire_cooldown_secs: 1800,
             tax_export_v1_enabled: false,
+            aum_stream_enabled: false,
         }
+    }
+
+    #[test]
+    fn validate_rejects_aum_stream_without_billing_v2() {
+        let mut cfg = test_config();
+        cfg.aum_stream_enabled = true;
+        cfg.billing_v2_enabled = false;
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_accepts_aum_stream_with_billing_v2() {
+        let mut cfg = test_config();
+        cfg.aum_stream_enabled = true;
+        cfg.billing_v2_enabled = true;
+        assert!(cfg.validate().is_ok());
     }
 
     #[test]

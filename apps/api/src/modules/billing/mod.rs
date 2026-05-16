@@ -14,6 +14,7 @@
 //! The 50¢-per-referral default is intentionally tiny — it's a "thanks"
 //! signal, not an incentive that would attract sybils.
 
+pub mod aum_stream;
 pub mod handlers;
 pub mod service;
 pub mod types;

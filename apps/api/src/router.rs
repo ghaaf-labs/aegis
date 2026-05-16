@@ -186,6 +186,16 @@ pub async fn build(db: Db, config: Config) -> Router {
             patch(billing::handlers::patch_subscription),
         )
         .route("/billing/invoices", get(billing::handlers::list_invoices))
+        // F-AUM-5 — admin AUM accrual list + run-once. Gated by
+        // AUM_STREAM_ENABLED inside the handlers.
+        .route(
+            "/admin/billing/accruals",
+            get(billing::handlers::list_accruals),
+        )
+        .route(
+            "/admin/billing/accruals/run-once",
+            post(billing::handlers::run_accruals_once),
+        )
         .route_layer(from_fn_with_state(state.clone(), require_auth));
 
     Router::new()
