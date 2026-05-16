@@ -1,9 +1,13 @@
 pub mod handlers;
+pub mod peg_monitor;
 pub mod regime;
 pub mod regime_backtest;
 
 #[allow(unused_imports)]
 pub use regime::{classify, compute_signals, MarketRegime, RegimeClassification, RegimeSignals};
+
+#[allow(unused_imports)]
+pub use peg_monitor::{spawn_peg_monitor, PegMonitor};
 
 use crate::modules::market_data::AssetPrice;
 use crate::modules::portfolio::models::Allocation;

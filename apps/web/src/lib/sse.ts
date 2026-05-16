@@ -90,6 +90,7 @@ export function useEventSource(
         "agent.decision",
         "rebalance.status",
         "gateway.balance",
+        "peg.alert",
       ];
       for (const type of eventTypes) {
         source.addEventListener(type, (event) => {

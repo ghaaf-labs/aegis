@@ -42,6 +42,10 @@ pub enum SseEvent {
     /// Sprint 4+. Audience = the referrer.
     #[allow(dead_code)]
     ReferralCredited(crate::modules::billing::service::ReferralCreditedPayload),
+    /// Peg-defense rule fired — the observed price stayed below threshold
+    /// for the configured window. A6 + later.
+    #[allow(dead_code)]
+    PegAlert(PegAlertPayload),
 }
 
 impl SseEvent {
@@ -61,6 +65,7 @@ impl SseEvent {
             Self::AgentToolInvoked(_) => "agent.tool.invoked",
             Self::AgentAbstained(_) => "agent.abstained",
             Self::ReferralCredited(_) => "referral.credited",
+            Self::PegAlert(_) => "peg.alert",
         }
     }
 
@@ -81,6 +86,7 @@ impl SseEvent {
             Self::AgentToolInvoked(p) => Some(p.user_id),
             Self::AgentAbstained(p) => Some(p.user_id),
             Self::ReferralCredited(p) => Some(p.referrer_user_id),
+            Self::PegAlert(p) => Some(p.user_id),
         }
     }
 }
@@ -213,6 +219,24 @@ pub struct AgentToolInvokedPayload {
     pub result_preview: String,
     pub latency_ms: i32,
     pub invoked_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PegAlertPayload {
+    /// Audience filter — only the rule's owner receives this on `/sse`.
+    #[serde(skip)]
+    pub user_id: Uuid,
+    pub rule_id: Uuid,
+    pub asset: String,
+    pub observed_price: f64,
+    pub threshold_price: f64,
+    pub observed_at: DateTime<Utc>,
+    /// `alert` | `propose_rebalance` | `auto_execute` — what the monitor did.
+    pub action_taken: String,
+    /// Set when the action created a rebalance plan.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rebalance_id: Option<Uuid>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -399,6 +423,54 @@ mod contract_tests {
         assert_eq!(agent_for_me.audience_user_id(), Some(me));
         assert_eq!(agent_for_other.audience_user_id(), Some(other));
         assert_eq!(public_event.audience_user_id(), None);
+    }
+
+    #[test]
+    fn peg_alert_keys_are_camel_case() {
+        let v = json(&PegAlertPayload {
+            user_id: uuid::Uuid::new_v4(),
+            rule_id: uuid::Uuid::new_v4(),
+            asset: "USDC".into(),
+            observed_price: 0.994,
+            threshold_price: 0.995,
+            observed_at: ts(),
+            action_taken: "alert".into(),
+            rebalance_id: None,
+        });
+        for key in [
+            "ruleId",
+            "asset",
+            "observedPrice",
+            "thresholdPrice",
+            "observedAt",
+            "actionTaken",
+        ] {
+            assert!(v.get(key).is_some(), "peg.alert missing {key}");
+        }
+        // `user_id` is `#[serde(skip)]` — it's an audience filter only.
+        assert!(v.get("userId").is_none(), "peg.alert leaked userId");
+        assert!(v.get("user_id").is_none());
+        assert!(
+            v.get("rebalanceId").is_none(),
+            "rebalanceId should be omitted when None"
+        );
+    }
+
+    #[test]
+    fn peg_alert_audience_filter_resolves_owner() {
+        let me = uuid::Uuid::new_v4();
+        let ev = SseEvent::PegAlert(PegAlertPayload {
+            user_id: me,
+            rule_id: uuid::Uuid::nil(),
+            asset: "USDC".into(),
+            observed_price: 0.994,
+            threshold_price: 0.995,
+            observed_at: ts(),
+            action_taken: "alert".into(),
+            rebalance_id: None,
+        });
+        assert_eq!(ev.audience_user_id(), Some(me));
+        assert_eq!(ev.event_name(), "peg.alert");
     }
 
     #[test]

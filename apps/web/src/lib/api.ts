@@ -3,6 +3,9 @@ import type {
   DiaryEntry,
   HarvestableLoss,
   MarketSnapshot,
+  PegActionKind,
+  PegAssetSymbol,
+  PegRule,
   Portfolio,
   PortfolioGoal,
   WalletInfo,
@@ -276,6 +279,54 @@ export const rebalanceApi = {
         createdAt: string;
       }>
     >(`/portfolios/${portfolioId}/rebalance/history`, { authed: true }),
+};
+
+// ── Peg defense (A6) ───────────────────────────────────────────────────────
+
+export interface CreatePegRuleBody {
+  portfolioId?: string | null;
+  asset: PegAssetSymbol;
+  thresholdPrice: number;
+  windowSeconds?: number;
+  actionKind: PegActionKind;
+  targetAsset?: PegAssetSymbol | null;
+}
+
+export interface PatchPegRuleBody {
+  enabled?: boolean;
+  paused?: boolean;
+  thresholdPrice?: number;
+  windowSeconds?: number;
+  actionKind?: PegActionKind;
+  targetAsset?: PegAssetSymbol | null;
+}
+
+export const pegApi = {
+  list: () => request<PegRule[]>("/peg/rules", { authed: true }),
+  create: (body: CreatePegRuleBody) =>
+    request<PegRule>("/peg/rules", {
+      method: "POST",
+      body,
+      authed: true,
+    }),
+  patch: (id: string, body: PatchPegRuleBody) =>
+    request<PegRule>(`/peg/rules/${id}`, {
+      method: "PATCH",
+      body,
+      authed: true,
+    }),
+  remove: (id: string) =>
+    request<void>(`/peg/rules/${id}`, { method: "DELETE", authed: true }),
+  pause: (id: string) =>
+    request<PegRule>(`/peg/rules/${id}/pause`, {
+      method: "POST",
+      authed: true,
+    }),
+  unpause: (id: string) =>
+    request<PegRule>(`/peg/rules/${id}/unpause`, {
+      method: "POST",
+      authed: true,
+    }),
 };
 
 // ── Tax ────────────────────────────────────────────────────────────────────

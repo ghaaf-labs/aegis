@@ -218,7 +218,8 @@ export type SseEvent =
   | { type: "rebalance.leg.update"; data: RebalanceLeg }
   | { type: "tax.harvest.proposed"; data: HarvestableLoss }
   | { type: "gateway.balance"; data: GatewayBalance }
-  | { type: "wallet.created"; data: WalletInfo };
+  | { type: "wallet.created"; data: WalletInfo }
+  | { type: "peg.alert"; data: PegAlert };
 
 export type SseEventType = SseEvent["type"];
 
@@ -290,6 +291,42 @@ export interface GatewayBalance extends UserScopedSseEvent {
   unifiedUsdc: number;
   perChain: Record<string, number>;
   observedAt: string;
+}
+
+// ── Peg-defense (A6) ────────────────────────────────────────────────────────
+
+export type PegAssetSymbol = "USDC" | "EURC" | "USYC";
+
+export type PegActionKind = "alert" | "propose_rebalance" | "auto_execute";
+
+export interface PegRule {
+  id: string;
+  userId: UserId;
+  /** Null = apply across every portfolio the user owns. */
+  portfolioId?: PortfolioId | null;
+  asset: PegAssetSymbol;
+  /** Trigger when observed price drops below this value (e.g. 0.995). */
+  thresholdPrice: number;
+  /** Rolling window the depeg must persist over before firing. */
+  windowSeconds: number;
+  actionKind: PegActionKind;
+  /** Defensive asset to rotate into when `actionKind != 'alert'`. */
+  targetAsset?: PegAssetSymbol | null;
+  enabled: boolean;
+  pausedAt?: string | null;
+  lastFiredAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PegAlert {
+  ruleId: string;
+  asset: PegAssetSymbol;
+  observedPrice: number;
+  thresholdPrice: number;
+  observedAt: string;
+  actionTaken: PegActionKind;
+  rebalanceId?: string;
 }
 
 // ── Cross-chain rebalance execution (Sprint 3) ─────────────────────────────

@@ -41,4 +41,8 @@ export type {
   CounterfactualReplay,
   AgentToolInvoked,
   AgentAbstained,
+  PegRule,
+  PegAlert,
+  PegAssetSymbol,
+  PegActionKind,
 } from "@aegis/shared";

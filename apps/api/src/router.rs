@@ -1,7 +1,7 @@
 use axum::{
     http::{HeaderValue, Method},
     middleware::from_fn_with_state,
-    routing::{get, post},
+    routing::{get, patch, post},
     Router,
 };
 use std::sync::Arc;
@@ -69,7 +69,8 @@ pub async fn build(db: Db, config: Config) -> Router {
     let cancel = tokio_util::sync::CancellationToken::new();
     scheduler::spawn_portfolio_scheduler(state.clone(), cancel.clone());
     scheduler::spawn_outcome_compressor(state.clone(), cancel.clone());
-    digest::spawn_digest_worker(state.clone(), cancel);
+    digest::spawn_digest_worker(state.clone(), cancel.clone());
+    let _peg_monitor = risk_engine::spawn_peg_monitor(state.clone(), cancel);
 
     // CORS — must list specific origin(s) when sending credentials. The
     // wildcard isn't legal alongside `Access-Control-Allow-Credentials: true`.
@@ -143,6 +144,21 @@ pub async fn build(db: Db, config: Config) -> Router {
         .route(
             "/admin/regime/backtest",
             post(risk_engine::handlers::kick_off_backtest),
+        )
+        // F-PEG-4 — peg-defense rules CRUD. Auth-required; gated by
+        // PEG_DEFENSE_ENABLED inside the handlers.
+        .route(
+            "/peg/rules",
+            get(risk_engine::handlers::list).post(risk_engine::handlers::create),
+        )
+        .route(
+            "/peg/rules/:id",
+            patch(risk_engine::handlers::patch).delete(risk_engine::handlers::delete),
+        )
+        .route("/peg/rules/:id/pause", post(risk_engine::handlers::pause))
+        .route(
+            "/peg/rules/:id/unpause",
+            post(risk_engine::handlers::unpause),
         )
         .route_layer(from_fn_with_state(state.clone(), require_auth));
 

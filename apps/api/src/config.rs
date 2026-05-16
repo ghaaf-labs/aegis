@@ -170,6 +170,20 @@ pub struct Config {
     /// already-persisted rows directly from Postgres and is *not* gated, so
     /// the model card keeps working even with the flag off.
     pub regime_backtest_enabled: bool,
+
+    // ── Peg-defense (A6) ──────────────────────────────────────────────────
+    /// Master switch for the peg-defense feature: rules CRUD endpoints and
+    /// the background monitor task. Default `false` keeps trunk shippable.
+    #[allow(dead_code)]
+    pub peg_defense_enabled: bool,
+    /// Polling cadence (seconds) for the peg monitor. Lower = faster reaction
+    /// to a depeg event, higher = friendlier to upstream rate limits.
+    #[allow(dead_code)]
+    pub peg_monitor_tick_secs: u64,
+    /// Throttle window (seconds) between consecutive fires of the same rule.
+    /// Prevents an alert storm if a peg stays under threshold for hours.
+    #[allow(dead_code)]
+    pub peg_fire_cooldown_secs: i64,
 }
 
 impl Config {
@@ -279,6 +293,9 @@ impl Config {
                 .unwrap_or_else(|_| "http://localhost:8080".into()),
 
             regime_backtest_enabled: parse_or("REGIME_BACKTEST_ENABLED", false)?,
+            peg_defense_enabled: parse_or("PEG_DEFENSE_ENABLED", false)?,
+            peg_monitor_tick_secs: parse_or("PEG_MONITOR_TICK_SECS", 10)?,
+            peg_fire_cooldown_secs: parse_or("PEG_FIRE_COOLDOWN_SECS", 1800)?,
         };
 
         cfg.validate()
@@ -427,6 +444,9 @@ mod tests {
             public_base_url: "http://localhost:3000".into(),
             api_base_url: "http://localhost:8080".into(),
             regime_backtest_enabled: false,
+            peg_defense_enabled: false,
+            peg_monitor_tick_secs: 10,
+            peg_fire_cooldown_secs: 1800,
         }
     }
 
