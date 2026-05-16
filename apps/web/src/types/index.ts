@@ -41,4 +41,13 @@ export type {
   CounterfactualReplay,
   AgentToolInvoked,
   AgentAbstained,
+  Tier,
+  SubscriptionStatus,
+  InvoiceStatus,
+  Subscription,
+  Invoice,
+  InvoiceLineItem,
+  PricingTier,
+  UsageMeter,
+  PerformanceFee,
 } from "@aegis/shared";

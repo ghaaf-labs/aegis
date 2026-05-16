@@ -418,3 +418,109 @@ export interface CounterfactualReplay {
   counterfactualPct: number;
   deltaPct: number;
 }
+
+// ── Billing v2: subscriptions, invoices, tiers ─────────────────────────────
+
+export type Tier = "free" | "pro" | "business";
+
+export type SubscriptionStatus =
+  | "active"
+  | "trialing"
+  | "past_due"
+  | "canceled"
+  | "incomplete";
+
+export type InvoiceStatus = "open" | "paid" | "past_due" | "void";
+
+export interface Subscription {
+  id: string;
+  userId: UserId;
+  tier: Tier;
+  status: SubscriptionStatus;
+  /** Anchor day-of-month for monthly Nanopayments anniversary settlement. */
+  currentPeriodStart: string;
+  currentPeriodEnd: string;
+  /** Set when the user has scheduled a cancellation; UI renders re-enable toggle. */
+  cancelAt: string | null;
+  canceledAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InvoiceLineItem {
+  /** "subscription" | "aum_fee" | "rebalance_fee" | "referral_payout" */
+  kind: string;
+  description: string;
+  amountUsdc: number;
+  /** Optional metadata — e.g. AUM × bps × Δt breakdown. */
+  metadata?: Record<string, string | number>;
+}
+
+export interface Invoice {
+  id: string;
+  userId: UserId;
+  subscriptionId: string;
+  tier: Tier;
+  periodStart: string;
+  periodEnd: string;
+  subtotalUsdc: number;
+  totalUsdc: number;
+  status: InvoiceStatus;
+  lineItems: InvoiceLineItem[];
+  /** Arc tx hash for the Nanopayments settlement when paid. */
+  paidTxHash: string | null;
+  paidAt: string | null;
+  createdAt: string;
+}
+
+/** Public-facing pricing tier definition served from `GET /billing/tiers`.
+ * Mirrors §2.1 of the roadmap and is the single source of truth for the
+ * pricing table — the frontend renders whatever the API returns. */
+export interface PricingTier {
+  tier: Tier;
+  /** Display name e.g. "Free" / "Pro" / "Business". */
+  name: string;
+  monthlyUsd: number;
+  /** Null means unlimited. */
+  aumCapUsd: number | null;
+  /** Null means unlimited. */
+  portfolioCap: number | null;
+  /** Null means unlimited. */
+  decisionsPerMonth: number | null;
+  /** Free-form model menu description, e.g. "Haiku regime + Haiku strategist". */
+  models: string;
+  /** Per-rebalance protocol fee in basis points. */
+  perRebalanceBps: number;
+  /** Streamed annual AUM fee in basis points. */
+  aumAnnualBps: number;
+  /** Marketing bullet list rendered under the price. */
+  features: string[];
+  /** Hint to the UI that this tier is the recommended "Pro" middle column. */
+  recommended?: boolean;
+}
+
+export interface UsageMeter {
+  userId: UserId;
+  periodStart: string;
+  periodEnd: string;
+  decisionsUsed: number;
+  decisionsLimit: number | null;
+  aumUsd: number;
+  aumCapUsd: number | null;
+  portfoliosUsed: number;
+  portfolioCap: number | null;
+}
+
+export interface PerformanceFee {
+  id: string;
+  userId: UserId;
+  portfolioId: PortfolioId;
+  periodStart: string;
+  periodEnd: string;
+  highWaterMarkUsd: number;
+  realizedGainUsd: number;
+  feeBps: number;
+  feeUsdc: number;
+  settledTxHash: string | null;
+  createdAt: string;
+}
