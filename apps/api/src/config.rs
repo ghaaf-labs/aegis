@@ -113,6 +113,12 @@ pub struct Config {
     pub usdc_arc: String,
     #[allow(dead_code)]
     pub usdc_base: String,
+    #[allow(dead_code)]
+    pub usyc_token_arc: String,
+    #[allow(dead_code)]
+    pub usyc_teller_arc: String,
+    #[allow(dead_code)]
+    pub usyc_oracle_arc: String,
 
     // ── Nanopayments (x402) for 25bps protocol fee + referrals ────────────
     #[allow(dead_code)]
@@ -292,6 +298,9 @@ impl Config {
             rebalance_executor_base: std::env::var("REBALANCE_EXECUTOR_BASE").unwrap_or_default(),
             usdc_arc: std::env::var("USDC_ARC").unwrap_or_default(),
             usdc_base: std::env::var("USDC_BASE").unwrap_or_default(),
+            usyc_token_arc: std::env::var("USYC_TOKEN_ARC").unwrap_or_default(),
+            usyc_teller_arc: std::env::var("USYC_TELLER_ARC").unwrap_or_default(),
+            usyc_oracle_arc: std::env::var("USYC_ORACLE_ARC").unwrap_or_default(),
 
             // Nanopayments (x402) for protocol fee (25bps) and referral payouts.
             nanopayments_facilitator_url: std::env::var("NANOPAYMENTS_FACILITATOR_URL")
@@ -471,6 +480,9 @@ mod tests {
             rebalance_executor_base: String::new(),
             usdc_arc: String::new(),
             usdc_base: String::new(),
+            usyc_token_arc: String::new(),
+            usyc_teller_arc: String::new(),
+            usyc_oracle_arc: String::new(),
             nanopayments_facilitator_url: "https://gateway-api-testnet.circle.com".into(),
             nanopayments_seller_address: String::new(),
             nanopayments_treasury_address: String::new(),

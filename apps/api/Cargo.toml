@@ -93,6 +93,7 @@ alloy = { version = "0.5", features = ["contract", "json", "node-bindings", "sig
 [features]
 default = []
 real-cctp = ["dep:alloy"]
+real-usyc = ["dep:alloy"]
 
 [dev-dependencies]
 tokio-test = "0.4"

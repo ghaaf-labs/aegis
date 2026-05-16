@@ -201,7 +201,7 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
         let kind = parse_kind(&leg.kind)?;
         mark_leg_submitted(state, rebalance_id, leg.id, user_id, &leg).await?;
 
-        let (tx_hash, cctp_hash) = match dispatch(state, rebalance_id, kind, &leg).await {
+        let (tx_hash, cctp_hash) = match dispatch(state, rebalance_id, kind, &leg, user_id).await {
             Ok(v) => v,
             Err(e) => {
                 mark_leg_failed(state, rebalance_id, leg.id, user_id, &leg, &format!("{e}"))
@@ -313,7 +313,9 @@ async fn dispatch(
     rebalance_id: Uuid,
     kind: LegKind,
     leg: &LegRow,
+    user_id: Uuid,
 ) -> Result<(String, Option<String>)> {
+    let _ = rebalance_id;
     match kind {
         LegKind::CrossChainBurn => {
             let src = ChainKey::parse(leg.src_chain.as_deref().unwrap_or(""))
@@ -393,16 +395,43 @@ async fn dispatch(
             let r = client.receive_message(dest, &att).await?;
             Ok((r.tx_hash, None))
         }
-        LegKind::LocalSwap | LegKind::ParkUsyc | LegKind::RedeemUsyc | LegKind::FxStablefx => {
-            // Mock receipt — production swaps go through the destination-chain
-            // RebalanceExecutor or the relevant Circle module (treasury / fx).
-            let mut h = sha2::Sha256::new();
-            h.update(kind.as_str().as_bytes());
-            h.update(b":");
-            h.update(leg.id.as_bytes());
-            Ok((format!("0x{}", hex::encode(h.finalize())), None))
+        LegKind::ParkUsyc => {
+            let r = crate::modules::treasury::service::park_in_usyc(
+                &state.db,
+                &state.config,
+                user_id,
+                leg.amount_usdc,
+            )
+            .await?;
+            let tx = r.tx_hash.unwrap_or_else(|| mock_leg_hash(kind, leg));
+            Ok((tx, None))
+        }
+        LegKind::RedeemUsyc => {
+            let r = crate::modules::treasury::service::redeem_from_usyc(
+                &state.db,
+                &state.config,
+                user_id,
+                leg.amount_usdc,
+            )
+            .await?;
+            let tx = r.tx_hash.unwrap_or_else(|| mock_leg_hash(kind, leg));
+            Ok((tx, None))
+        }
+        LegKind::LocalSwap | LegKind::FxStablefx => {
+            // Mock receipt — local AMM swap + StableFX lands when the per-chain
+            // executor (Uniswap V3 on Base, Arc StableFX) and FX module mints
+            // real txs. Until then this hash anchors the row to a leg id.
+            Ok((mock_leg_hash(kind, leg), None))
         }
     }
+}
+
+fn mock_leg_hash(kind: LegKind, leg: &LegRow) -> String {
+    let mut h = sha2::Sha256::new();
+    h.update(kind.as_str().as_bytes());
+    h.update(b":");
+    h.update(leg.id.as_bytes());
+    format!("0x{}", hex::encode(h.finalize()))
 }
 
 fn parse_kind(s: &str) -> Result<LegKind> {
