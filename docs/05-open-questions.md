@@ -21,6 +21,53 @@ The matching `JWT_SECRET` (which was also leaked in the same commit) has already
 
 Note: scrubbing history via filter-repo cleaned `origin/main`, but the historical `feat/sprint-*` branches and `fix/post-submission-audit` on origin still contain `2d768d7` in their git ancestry. If those branches are not needed, delete them on origin to fully purge. They're stale/merged already.
 
+## CCTP V2 `depositForBurnWithCaller` reverts on Base Sepolia
+
+**Tag:** `F-CCTP-1` · **Status:** open · **Surfaced:** 2026-05-16 (N6.3 first real attempt)
+
+After F-EXEC-1's full pre-flight (real-cctp build, iris path fix, recipient lookup, USDC approve, env-parse fix), the first real CCTP V2 burn against `0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA` on Base Sepolia STILL reverts:
+
+```
+alloy send error: server returned an error response: error code 3: execution reverted
+```
+
+The local_swap leg (mocked) confirms cleanly with tx `0xda9a…295e`. The USDC `approve()` step appears to land (no approve-receipt error). Only the actual `depositForBurnWithCaller_1` reverts.
+
+**Candidate causes (in priority order):**
+
+1. **Wrong CCTP V2 contract address on Base Sepolia.** The address `0x8FE6B999…2DAA` came from `developers.circle.com/cctp/evm-smart-contracts` — verify against the LIVE contract at `https://sepolia.basescan.org/address/0x8FE6B999...` (does it have a `depositForBurnWithCaller` function with a 6-arg overload?). Possible that Circle has redeployed since the docs were last updated.
+
+2. **Contract signature mismatch.** Our sol! interface declares two `depositForBurnWithCaller` overloads (5-arg and 6-arg). The deployed contract may have a different function (e.g. `depositForBurn`, `depositForBurnWithHook`, or different argument order). `cast 4byte-decode 0x<calldata>` on a reverted tx would confirm.
+
+3. **Arc testnet not registered as a CCTP V2 domain.** We pass `destinationDomain=26` (per Circle's docs). If Arc's domain isn't activated in the deployed TokenMessenger's `localToken` / `allowedRemote` config, the burn reverts.
+
+4. **`destinationCaller` must be all-zeros (any caller)** vs our `executor_on_dest.into_word()` (RebalanceExecutor address). Per the CCTP V2 spec, a non-zero destinationCaller restricts which address can call receiveMessage — if our RebalanceExecutor isn't on the allowlist for that domain pair, the burn rejects.
+
+**Debug recipe**:
+
+```bash
+# Inspect Base Sepolia contract surface
+cast interface 0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA --rpc-url https://sepolia.base.org
+
+# Decode the reverted calldata
+cast tx <reverted_tx_hash> --rpc-url https://sepolia.base.org
+
+# Domain registry on the contract
+cast call 0x8FE6B999... "remoteTokenMessengers(uint32)(bytes32)" 26 --rpc-url https://sepolia.base.org
+```
+
+**Workaround for the demo path**: skip the hook'd burn entirely and use CCTP V1's simpler `depositForBurn(amount, destinationDomain, mintRecipient, burnToken)` 4-arg form — gets the cross-chain USDC delivered without the swap-on-arrival hook. Less impressive but verifies the rail works.
+
+**Net N6 progress so far** (this finding does NOT block all of F-EXEC-1 — six other audit-found bugs were fixed):
+
+- ✅ `--features real-cctp` build works.
+- ✅ Iris API path fixed (F-EXEC-1a).
+- ✅ Recipient lookup fixed (F-EXEC-1b).
+- ✅ USDC `approve()` added (F-EXEC-1c).
+- ✅ `.env` parse failure on `DIGEST_FROM` fixed (F-EXEC-1d) — was silently breaking dotenvy for every contributor.
+- ✅ Real local_swap tx on Base Sepolia: `0xda9a2ab4159ee1b579b8625f6695013f6d8f5a63d22adff7a010d663fe7f295e` (visible on sepolia.basescan.org).
+- ❌ Real cross_chain_burn: blocked on F-CCTP-1.
+
 ## CCTP V2 iris API path (mainnet swap)
 
 **Tag:** `F-IRIS-1` · **Status:** open · **Surfaced:** 2026-05-16 (N6.0 path audit)

@@ -62,6 +62,15 @@ sol! {
         ) external returns (bool success);
     }
 
+    // F-EXEC-1c (2026-05-16): USDC must be approve()'d to the TokenMessenger
+    // before depositForBurn or the contract reverts on internal
+    // `transferFrom(sender, …)`. Minimal ERC-20 surface for the approve call.
+    #[sol(rpc)]
+    interface IERC20 {
+        function approve(address spender, uint256 amount) external returns (bool);
+        function allowance(address owner, address spender) external view returns (uint256);
+    }
+
     // Hook payload exactly as the RebalanceExecutor expects in handleReceiveMessage
     struct HookExecutionPayload {
         address recipient;
@@ -241,6 +250,23 @@ impl<'a> CctpClient<'a> {
                     })?,
             ),
         };
+
+        // F-EXEC-1c — approve USDC for the TokenMessenger. CCTP V2's
+        // depositForBurn internally calls
+        // `USDC.transferFrom(msg.sender, tokenMessenger, amount)` which
+        // requires a non-zero allowance first. Without this approve, the
+        // burn reverts with "execution reverted" (error code 3) on the
+        // RPC layer. We approve exactly `amount` so the allowance is
+        // consumed and the user's wallet doesn't carry residual approval.
+        let usdc_token = IERC20::new(usdc, &provider);
+        let _approve_receipt = usdc_token
+            .approve(token_messenger, U256::from(amount))
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("USDC approve send error: {e}"))?
+            .get_receipt()
+            .await
+            .map_err(|e| anyhow::anyhow!("USDC approve receipt error: {e}"))?;
 
         let contract = ICCTPV2TokenMessenger::new(token_messenger, &provider);
 

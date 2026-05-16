@@ -317,10 +317,36 @@ async fn dispatch(
                 .ok_or_else(|| AppError::BadRequest("missing src_chain".into()))?;
             let dest = ChainKey::parse(leg.dest_chain.as_deref().unwrap_or(""))
                 .ok_or_else(|| AppError::BadRequest("missing dest_chain".into()))?;
-            // Salt the hook recipient/tokenOut with the leg id so the mock
-            // message_hash is unique per leg (avoids collisions when the
-            // executor processes two identical-amount burns).
-            let recipient = format!("0x{}", &hex::encode(leg.id.as_bytes())[..40].to_lowercase());
+            // F-EXEC-1b (2026-05-16): the prior code took a 32-hex-char UUID
+            // and sliced `[..40]` which panicked (UUID hex is 32 chars, not
+            // 40). Worse, the value was used as the *recipient* in the hook
+            // payload — meaningless data, USDC would mint to a dead address.
+            //
+            // Real fix: look up the user's destination-chain EOA address
+            // (users.arc_address when dest=Arc, users.base_address when
+            // dest=Base) and use it as the hook recipient. The minted USDC
+            // arrives at the destination-chain RebalanceExecutor, which
+            // then transfers to this recipient.
+            let recipient_col = match dest {
+                ChainKey::Arc => "arc_address",
+                ChainKey::Base => "base_address",
+            };
+            let recipient: String = sqlx::query_scalar(&format!(
+                "SELECT u.{recipient_col}
+                 FROM users u
+                 JOIN portfolios p ON p.user_id = u.id
+                 JOIN rebalances r ON r.portfolio_id = p.id
+                 WHERE r.id = $1"
+            ))
+            .bind(rebalance_id)
+            .fetch_one(&state.db)
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("recipient lookup: {e}")))?;
+            if recipient.is_empty() {
+                return Err(AppError::Internal(anyhow::anyhow!(
+                    "user.{recipient_col} is empty; cannot route mint without a destination address"
+                )));
+            }
             // The planner doesn't yet resolve dest_symbol (e.g. "BTC") to a
             // concrete ERC-20 address on the destination chain, and the leg
             // row doesn't carry the address either. Until the planner stores
@@ -337,7 +363,6 @@ async fn dispatch(
                 0,
                 (chrono::Utc::now().timestamp() + 600) as u64,
             );
-            let _ = rebalance_id; // used by record_disposal_for_leg path; reserved here for future production wiring
             let client = CctpClient::new(&state.http, &state.config);
             let r = client
                 .deposit_for_burn(src, dest, leg.amount_usdc, &hook)
