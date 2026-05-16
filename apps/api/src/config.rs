@@ -152,6 +152,11 @@ pub struct Config {
     /// Base URL of this API service — used in emails so unsubscribe links
     /// resolve to the backend route, not the frontend.
     pub api_base_url: String,
+
+    // ── Feature flags (plan-roadmap-2026-05-16 — all default false) ───────
+    /// A10 — 1099-DA tax export endpoints + accountant share tokens.
+    /// Gates both `/tax/export.csv` and `/tax/share*`.
+    pub tax_export_v1_enabled: bool,
 }
 
 impl Config {
@@ -255,6 +260,8 @@ impl Config {
                 .unwrap_or_else(|_| "http://localhost:3000".into()),
             api_base_url: std::env::var("API_BASE_URL")
                 .unwrap_or_else(|_| "http://localhost:8080".into()),
+
+            tax_export_v1_enabled: parse_or("TAX_EXPORT_V1_ENABLED", false)?,
         };
 
         cfg.validate()
@@ -392,6 +399,7 @@ mod tests {
             digest_secret: "test-secret".into(),
             public_base_url: "http://localhost:3000".into(),
             api_base_url: "http://localhost:8080".into(),
+            tax_export_v1_enabled: false,
         }
     }
 

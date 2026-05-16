@@ -74,6 +74,15 @@ tokio-util = { version = "0.7", features = ["rt"] }
 # HTML rendering for the daily digest.
 handlebars = "6"
 
+# Money math — tax export numbers must round-trip exactly to the
+# IRS 1099-DA CSV. f64 leaks ULP error at >$1M positions; rust_decimal
+# is 128-bit fixed-point and serializes deterministically.
+rust_decimal = { version = "1", features = ["serde-with-str"] }
+
+# Share-token generation: 32 random bytes → base64-url.
+rand = "0.8"
+base64 = "0.22"
+
 # Alloy for real CCTP V2 + Hook execution (Phase 2).
 # Gated behind the "real-cctp" feature. Default build stays fast.
 # cargo build --features real-cctp
