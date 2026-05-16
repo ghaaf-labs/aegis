@@ -368,27 +368,37 @@ export function ApprovalModal({
           )}
         </div>
 
-        <footer className="px-6 py-4 border-t border-white/10 flex justify-end gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 text-sm text-gray-300 hover:text-white border border-white/10"
+        <footer className="px-6 py-4 border-t border-white/10 flex items-center justify-between gap-2">
+          <a
+            href="/policy"
+            target="_blank"
+            rel="noopener"
+            className="text-xs text-gray-400 hover:text-white underline-offset-4 hover:underline"
           >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleApprove}
-            disabled={submitting}
-            className={cn(
-              "px-4 py-2 text-sm font-semibold border-2",
-              "bg-emerald-500 text-black border-emerald-300",
-              "hover:bg-emerald-400 transition-colors",
-              "disabled:opacity-50 disabled:cursor-not-allowed",
-            )}
-          >
-            {submitting ? "Submitting…" : "Approve & execute"}
-          </button>
+            Outcome &amp; refund policy
+          </a>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm text-gray-300 hover:text-white border border-white/10"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleApprove}
+              disabled={submitting}
+              className={cn(
+                "px-4 py-2 text-sm font-semibold border-2",
+                "bg-emerald-500 text-black border-emerald-300",
+                "hover:bg-emerald-400 transition-colors",
+                "disabled:opacity-50 disabled:cursor-not-allowed",
+              )}
+            >
+              {submitting ? "Submitting…" : "Approve & execute"}
+            </button>
+          </div>
         </footer>
       </div>
     </div>
