@@ -2,12 +2,7 @@ use std::net::SocketAddr;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-mod config;
-mod db;
-mod error;
-mod middleware;
-mod modules;
-mod router;
+use aegis_api::{config, db, router};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
