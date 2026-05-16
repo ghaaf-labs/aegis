@@ -172,35 +172,31 @@ pub struct Config {
     pub regime_backtest_enabled: bool,
 
     // ── Peg-defense (A6) ──────────────────────────────────────────────────
-    /// Master switch for the peg-defense feature: rules CRUD endpoints and
-    /// the background monitor task. Default `false` keeps trunk shippable.
     #[allow(dead_code)]
     pub peg_defense_enabled: bool,
-    /// Polling cadence (seconds) for the peg monitor. Lower = faster reaction
-    /// to a depeg event, higher = friendlier to upstream rate limits.
     #[allow(dead_code)]
     pub peg_monitor_tick_secs: u64,
-    /// Throttle window (seconds) between consecutive fires of the same rule.
-    /// Prevents an alert storm if a peg stays under threshold for hours.
     #[allow(dead_code)]
     pub peg_fire_cooldown_secs: i64,
 
-    /// A10 — 1099-DA tax export endpoints + accountant share tokens.
-    /// Gates both `/tax/export.csv` and `/tax/share*`. Default false.
+    /// A10 — 1099-DA tax export. Default false.
     #[allow(dead_code)]
     pub tax_export_v1_enabled: bool,
 
-    /// A4 — when true, spawns the daily AUM-fee accrual ticker at startup.
-    /// Requires `billing_v2_enabled=true` (validated at boot).
+    /// A4 — AUM-fee accrual ticker. Requires `billing_v2_enabled=true`.
     #[allow(dead_code)]
     pub aum_stream_enabled: bool,
 
-    /// F-CONF-7: gates the nightly calibration trainer, the per-decision
-    /// calibration apply step, and the critic's counterfactual second pass.
-    /// When off, the existing flat raw confidence is shown unchanged (no
-    /// new DB writes to `calibrations` or `calibrated_predictions`).
+    /// F-CONF-7: gates calibration trainer + per-decision calibration apply
+    /// + critic counterfactual. Default false.
     #[allow(dead_code)]
     pub calibrated_conf_enabled: bool,
+
+    /// F-CON-6 (A9): when true, the critic runs the Aegis Constitution check
+    /// first and short-circuits to VETO on any clause violation. When false,
+    /// the YAML still loads but `evaluate()` is bypassed.
+    #[allow(dead_code)]
+    pub constitution_enabled: bool,
 }
 
 impl Config {
@@ -316,6 +312,7 @@ impl Config {
             tax_export_v1_enabled: parse_or("TAX_EXPORT_V1_ENABLED", false)?,
             aum_stream_enabled: parse_or("AUM_STREAM_ENABLED", false)?,
             calibrated_conf_enabled: parse_or("CALIBRATED_CONF_ENABLED", false)?,
+            constitution_enabled: parse_or("CONSTITUTION_ENABLED", false)?,
         };
 
         cfg.validate()
@@ -479,6 +476,7 @@ mod tests {
             tax_export_v1_enabled: false,
             aum_stream_enabled: false,
             calibrated_conf_enabled: false,
+            constitution_enabled: false,
         }
     }
 

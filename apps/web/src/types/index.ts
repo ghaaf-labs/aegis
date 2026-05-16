@@ -54,4 +54,6 @@ export type {
   PricingTier,
   UsageMeter,
   PerformanceFee,
+  ConstitutionClause,
+  ConstitutionDocument,
 } from "@aegis/shared";

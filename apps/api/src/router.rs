@@ -224,6 +224,11 @@ pub async fn build(db: Db, config: Config) -> Router {
         .route("/fx/usdc-eurc", get(fx::handlers::basis))
         // Public pricing catalogue — gated by BILLING_V2_ENABLED inside the handler.
         .route("/billing/tiers", get(billing::handlers::list_tiers))
+        // Public constitution model-card — version + clauses, read-only.
+        .route(
+            "/about/constitution",
+            get(agent::constitution_handlers::document),
+        )
         // Public leaderboard — anonymous handles, no auth required.
         .route("/leaderboard", get(trustability::handlers::leaderboard))
         // F-REG-4 — public read-only alias for the /about/regime model card.

@@ -6,6 +6,7 @@ import { rebalanceApi, type RebalancePlanResponse } from "@/lib/api";
 import type { AgentDecision } from "@/types";
 import { cn } from "@/lib/utils";
 import { BacktestPreview } from "@/components/rebalance/backtest-preview";
+import { ConstitutionClauseBadge } from "@/components/agent/ConstitutionClauseBadge";
 import { ModelBadge, ChainBadge } from "@aegis/ui";
 
 /** Headline confidence the modal renders.
@@ -126,6 +127,7 @@ export function ApprovalModal({
                 typeof decision.calibratedConfidence === "number";
               const raw = decision.rawConfidence ?? decision.confidence ?? 0;
               const rawPct = Math.round(raw * 100);
+              const clauseIds = decision.criticVerdict?.clauseIds ?? [];
 
               return (
                 <div className="mb-4 border border-white/10 bg-black/40 p-3 font-mono text-[11px] space-y-2">
@@ -157,7 +159,6 @@ export function ApprovalModal({
                     </span>
                   </div>
 
-                  {/* Calibrated-confidence progress bar — headline trust signal. */}
                   <div
                     className="h-1.5 w-full bg-white/5 border border-white/10 overflow-hidden"
                     aria-label={`Calibrated confidence ${headlinePct}%`}
@@ -175,6 +176,36 @@ export function ApprovalModal({
                       {decision.reasoning}
                     </p>
                   )}
+
+                  {/* F-CON-4: constitution clause IDs (veto reasons). */}
+                  {clauseIds.length > 0 && (
+                    <div className="border-t border-white/5 pt-2 space-y-1">
+                      <p className="text-[10px] uppercase tracking-wider text-rose-400">
+                        Critic veto reasons (constitution)
+                      </p>
+                      <div className="flex flex-wrap gap-1">
+                        {clauseIds.map((id) => (
+                          <ConstitutionClauseBadge
+                            key={id}
+                            clauseId={id}
+                            violated
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {decision.criticVerdict &&
+                    clauseIds.length === 0 &&
+                    decision.criticVerdict.verdict !== "veto" && (
+                      <div className="border-t border-white/5 pt-2">
+                        <ConstitutionClauseBadge
+                          clauseId="Constitution clean"
+                          violated={false}
+                          summary="No hard constraints violated. Critic ran free-form review only."
+                        />
+                      </div>
+                    )}
+
                   {decision.criticVerdict && (
                     <p className="text-[10px] text-amber-300/90 border-t border-white/5 pt-2">
                       <span className="uppercase tracking-wider text-amber-400 mr-1.5">
@@ -188,7 +219,7 @@ export function ApprovalModal({
                     </p>
                   )}
 
-                  {/* F-CONF-6: counterfactual + provenance line. */}
+                  {/* F-CONF-6: counterfactual. */}
                   {decision.counterfactual && (
                     <div className="border-t border-white/5 pt-2">
                       <button

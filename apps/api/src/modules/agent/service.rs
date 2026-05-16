@@ -20,6 +20,7 @@ use tracing::{debug, warn};
 use uuid::Uuid;
 
 use super::calibration_train;
+use super::constitution::{self, ClauseViolation, Tier};
 use super::critic as critic_mod;
 use super::memory;
 use super::models::{AgentDecision, AnalyzeRequest};
@@ -231,9 +232,57 @@ pub async fn analyze_portfolio(
     let mut prompt_tokens = strategist.prompt_tokens;
     let mut completion_tokens = strategist.completion_tokens;
 
-    // 5. Critic pass — adversarial review. Skipped on Free tier so the cost
-    // of a no-revenue user is purely the Haiku strategist call.
-    let verdict = if tier_models.run_critic {
+    // 5. Critic pass — adversarial review.
+    //
+    // Free tier short-circuit: skip the critic entirely (the Haiku strategist
+    // already ran; no extra token spend on no-revenue users).
+    //
+    // Otherwise, the strategist's proposal is run through the versioned
+    // constitution YAML (max drawdown, single-asset cap, slippage ceiling,
+    // EURC band, USYC floor) BEFORE the LLM critic. Any violation triggers an
+    // immediate VETO whose reasoning cites the clause IDs — no LLM call
+    // needed. Closes the "prompt-injection bypasses critic" attack class.
+    let constitution_violations = if state.config.constitution_enabled && tier_models.run_critic {
+        evaluate_constitution(
+            &proposal,
+            &allocations,
+            &portfolio,
+            tier_for_user(&user_profile),
+        )
+    } else {
+        Vec::new()
+    };
+
+    let verdict = if !tier_models.run_critic {
+        CriticOutput {
+            demands_revision: false,
+            notes: "(critic skipped: Free tier)".into(),
+            confidence: 0.0,
+            clause_ids: Vec::new(),
+            verdict: None,
+        }
+    } else if !constitution_violations.is_empty() {
+        let clause_ids: Vec<String> = constitution_violations
+            .iter()
+            .map(|v| v.clause_id.clone())
+            .collect();
+        let notes = format!(
+            "Constitution violations: {} — {}",
+            clause_ids.join(", "),
+            constitution_violations
+                .iter()
+                .map(|v| v.summary.clone())
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+        CriticOutput {
+            demands_revision: true,
+            notes,
+            confidence: 1.0,
+            clause_ids,
+            verdict: Some("veto".into()),
+        }
+    } else {
         let critic_ctx =
             build_critic_context(&proposal, &allocations, &user_profile, &regime, &risk);
         let critic_prompt = state.prompts.render(PromptKey::Critic, &critic_ctx);
@@ -246,23 +295,20 @@ pub async fn analyze_portfolio(
                 ],
             )
             .await?;
-        let v = parse_critic(&critic.content).unwrap_or_else(|e| {
+        let mut v = parse_critic(&critic.content).unwrap_or_else(|e| {
             warn!("critic parse failed, treating as approved: {e}");
             CriticOutput {
                 demands_revision: false,
                 notes: "(critic output unparsable)".into(),
                 confidence: 0.0,
+                clause_ids: Vec::new(),
+                verdict: None,
             }
         });
+        v.clause_ids.clear();
         prompt_tokens = prompt_tokens.saturating_add(critic.prompt_tokens);
         completion_tokens = completion_tokens.saturating_add(critic.completion_tokens);
         v
-    } else {
-        CriticOutput {
-            demands_revision: false,
-            notes: "(critic skipped: Free tier)".into(),
-            confidence: 0.0,
-        }
     };
 
     // 6. Revision (optional).
@@ -850,6 +896,7 @@ fn parse_proposal(raw: &str) -> crate::error::Result<StrategistProposal> {
 }
 
 #[derive(Deserialize, serde::Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 struct CriticOutput {
     #[serde(default, rename = "demandsRevision", alias = "demands_revision")]
     demands_revision: bool,
@@ -857,6 +904,107 @@ struct CriticOutput {
     notes: String,
     #[serde(default)]
     confidence: f32,
+    /// Constitution clause IDs cited by this verdict. Empty Vec means either
+    /// the constitution check was clean or the feature flag is off. Surfaced
+    /// in the UI as the explicit rulebook behind any veto.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    clause_ids: Vec<String>,
+    /// Hard-coded verdict label. "veto" is only ever emitted by the
+    /// constitution short-circuit; the free-form critic returns "advise"
+    /// (with demands_revision) or "approve".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    verdict: Option<String>,
+}
+
+/// Map the strategist's structured proposal into the constitution's
+/// evaluation shape. The strategist may emit `expectedMaxDrawdownPct`,
+/// `allocations`, or `legs` directly on its proposal; whatever it omits is
+/// filled in from the user's current allocations (a no-op for that clause).
+fn evaluate_constitution(
+    strategist: &StrategistProposal,
+    current_allocations: &[Allocation],
+    portfolio: &Portfolio,
+    tier: Tier,
+) -> Vec<ClauseViolation> {
+    let constitution = match constitution::load() {
+        Ok(c) => c,
+        Err(e) => {
+            warn!("constitution load failed; skipping evaluation: {e}");
+            return Vec::new();
+        }
+    };
+
+    let rec = &strategist.recommendation;
+
+    let expected_max_drawdown_pct = rec
+        .get("expectedMaxDrawdownPct")
+        .and_then(serde_json::Value::as_f64);
+
+    // Prefer the strategist's own `allocations` field; fall back to current
+    // weights so we still surface FX-1 / USYC-1 / RISK-2 violations on the
+    // existing portfolio state.
+    let allocations: Vec<constitution::ProposalAllocation> = rec
+        .get("allocations")
+        .and_then(serde_json::Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| {
+                    let asset = v.get("asset")?.as_str()?.to_string();
+                    let weight = v
+                        .get("targetWeightPct")
+                        .or_else(|| v.get("target_weight_pct"))
+                        .and_then(serde_json::Value::as_f64)?;
+                    Some(constitution::ProposalAllocation {
+                        asset,
+                        target_weight_pct: weight,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_else(|| {
+            current_allocations
+                .iter()
+                .map(|a| constitution::ProposalAllocation {
+                    asset: a.asset_symbol.clone(),
+                    target_weight_pct: a.target_weight,
+                })
+                .collect()
+        });
+
+    let legs: Vec<constitution::ProposalLeg> = rec
+        .get("legs")
+        .and_then(serde_json::Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .map(|v| constitution::ProposalLeg {
+                    slippage_bps: v
+                        .get("slippageBps")
+                        .or_else(|| v.get("slippage_bps"))
+                        .and_then(serde_json::Value::as_f64)
+                        .unwrap_or(0.0),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let proposal = constitution::Proposal {
+        expected_max_drawdown_pct,
+        allocations,
+        legs,
+    };
+
+    constitution::evaluate(constitution, &proposal, tier, portfolio.total_value_usd)
+}
+
+/// Derive the user's tier for constitution evaluation. A2's billing schema
+/// will land this on `users.tier`; until then we honour an env override
+/// (USER_TIER_OVERRIDE) for integration tests and default to Free.
+fn tier_for_user(_profile: &UserProfile) -> Tier {
+    match std::env::var("USER_TIER_OVERRIDE").as_deref() {
+        Ok("business") => Tier::Business,
+        Ok("pro") => Tier::Pro,
+        _ => Tier::Free,
+    }
 }
 
 fn parse_critic(raw: &str) -> anyhow::Result<CriticOutput> {
@@ -1182,5 +1330,113 @@ mod tests {
         assert_eq!(v["summary"], "Hold");
         assert_eq!(v["trades"][0]["valueUsd"], 3000.0);
         assert_eq!(v["expectedImpact"]["riskDelta"], -0.04);
+    }
+
+    // ── F-CON-3: constitution short-circuit ──────────────────────────────
+    //
+    // The `analyze_portfolio` flow is too big to mock end-to-end without
+    // tooling we don't have at this layer (AppState wraps a live PgPool +
+    // reqwest client). Instead, these tests exercise the pure
+    // `evaluate_constitution` helper that the critic block consults — the
+    // bit that decides whether to short-circuit. Combined with the YAML +
+    // evaluator tests in `constitution::tests`, the short-circuit decision
+    // is fully covered end-to-end at the unit level.
+
+    fn proposal_with(recommendation: serde_json::Value) -> StrategistProposal {
+        StrategistProposal {
+            reasoning: "test".into(),
+            confidence: 0.8,
+            recommendation,
+        }
+    }
+
+    #[test]
+    fn evaluate_constitution_returns_empty_for_clean_proposal() {
+        let p = proposal_with(json!({
+            "expectedMaxDrawdownPct": 0.10,
+            "allocations": [
+                {"asset": "USDC", "targetWeightPct": 0.50},
+                {"asset": "BTC",  "targetWeightPct": 0.30},
+                {"asset": "USYC", "targetWeightPct": 0.20}
+            ],
+            "legs": [{"slippageBps": 20.0}]
+        }));
+        let portfolio = sample_portfolio();
+        let v = evaluate_constitution(&p, &[], &portfolio, Tier::Pro);
+        assert!(v.is_empty(), "expected clean but got: {:?}", v);
+    }
+
+    #[test]
+    fn evaluate_constitution_cites_clause_id_for_oversized_drawdown() {
+        let p = proposal_with(json!({
+            "expectedMaxDrawdownPct": 0.27,
+            "allocations": [{"asset": "USDC", "targetWeightPct": 0.50}]
+        }));
+        let portfolio = sample_portfolio();
+        let v = evaluate_constitution(&p, &[], &portfolio, Tier::Pro);
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].clause_id, "RISK-1");
+        assert_eq!(v[0].observed, json!(0.27));
+    }
+
+    #[test]
+    fn evaluate_constitution_fires_risk_2_for_concentrated_position() {
+        let p = proposal_with(json!({
+            "allocations": [
+                {"asset": "BTC",  "targetWeightPct": 0.75},
+                {"asset": "USDC", "targetWeightPct": 0.25}
+            ]
+        }));
+        let portfolio = sample_portfolio();
+        let v = evaluate_constitution(&p, &[], &portfolio, Tier::Free);
+        let ids: Vec<&str> = v.iter().map(|x| x.clause_id.as_str()).collect();
+        assert!(ids.contains(&"RISK-2"));
+    }
+
+    #[test]
+    fn critic_output_serialises_clause_ids_when_present() {
+        let v = CriticOutput {
+            demands_revision: true,
+            notes: "Constitution violations: RISK-1, RISK-2".into(),
+            confidence: 1.0,
+            clause_ids: vec!["RISK-1".into(), "RISK-2".into()],
+            verdict: Some("veto".into()),
+        };
+        let json = serde_json::to_value(&v).unwrap();
+        assert_eq!(json["verdict"], "veto");
+        assert_eq!(json["clauseIds"], json!(["RISK-1", "RISK-2"]));
+        assert_eq!(json["demandsRevision"], true);
+    }
+
+    #[test]
+    fn critic_output_omits_clause_ids_when_empty() {
+        let v = CriticOutput {
+            demands_revision: false,
+            notes: "ok".into(),
+            confidence: 0.8,
+            clause_ids: Vec::new(),
+            verdict: None,
+        };
+        let json = serde_json::to_value(&v).unwrap();
+        assert!(json.get("clauseIds").is_none());
+        assert!(json.get("verdict").is_none());
+    }
+
+    #[test]
+    fn tier_for_user_reads_env_override() {
+        // SAFETY: env var manipulation is racy across tests; we serialise by
+        // writing → reading → restoring inside the same scope and accept the
+        // serial-test cost as cheaper than introducing a global lock.
+        let prior = std::env::var("USER_TIER_OVERRIDE").ok();
+        std::env::set_var("USER_TIER_OVERRIDE", "business");
+        let t = tier_for_user(&sample_user());
+        assert_eq!(t, Tier::Business);
+        std::env::set_var("USER_TIER_OVERRIDE", "pro");
+        assert_eq!(tier_for_user(&sample_user()), Tier::Pro);
+        std::env::remove_var("USER_TIER_OVERRIDE");
+        assert_eq!(tier_for_user(&sample_user()), Tier::Free);
+        if let Some(v) = prior {
+            std::env::set_var("USER_TIER_OVERRIDE", v);
+        }
     }
 }

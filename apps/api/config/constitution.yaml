@@ -1,0 +1,63 @@
+# Aegis Constitution — versioned hard constraints the strategist must obey.
+#
+# This file is loaded once at startup and cached in-process. Every clause
+# below is enforced by `agent::constitution::evaluate` BEFORE the LLM critic
+# runs. If any clause fires, the critic short-circuits to VETO and cites the
+# clause IDs in its verdict — surfaced in the approval modal as the rulebook
+# behind the veto.
+#
+# Versioning rule: bump `version` and `effectiveAt` on any semantic change.
+# Removing or weakening a clause is a major version bump.
+version: 1
+effectiveAt: 2026-05-16T00:00:00Z
+clauses:
+  - id: RISK-1
+    summary: Max projected drawdown is 20%
+    description: |
+      Strategist must never propose an allocation whose modelled worst-case
+      drawdown exceeds 20%. Drawdown is reported on the proposal as
+      `expectedMaxDrawdownPct` (0..1). Hard limit.
+    kind: hard_limit
+    field: expected_max_drawdown_pct
+    param: 0.20
+
+  - id: RISK-2
+    summary: No single asset above 60% target weight
+    description: |
+      Diversification floor — no proposal may push any single asset target
+      weight above 60%. Applied to every entry of `proposal.allocations`.
+    kind: hard_limit
+    field: allocations[].target_weight_pct
+    param: 0.60
+
+  - id: RISK-3
+    summary: Per-leg slippage capped at 75bps
+    description: |
+      No execution leg may carry expected slippage above 75 basis points.
+      Applied to every entry of `proposal.legs[].slippage_bps`.
+    kind: ceiling
+    field: legs[].slippage_bps
+    param: 75
+
+  - id: FX-1
+    summary: EURC exposure band [0%, 40%] (Pro+)
+    description: |
+      For tier=Pro and above, EURC target weight must sit between 0% and 40%
+      of portfolio value. The lower bound protects users from being silently
+      moved entirely out of USDC; the upper bound caps FX-translation drift.
+    kind: band
+    field: allocations[asset='EURC'].target_weight_pct
+    param: [0.00, 0.40]
+    tierMin: pro
+
+  - id: USYC-1
+    summary: USYC liquidity floor 10% when AUM >= $50k (Business+)
+    description: |
+      For Business-tier users with AUM at or above $50,000, the proposal must
+      keep at least 10% of portfolio value in USYC so settlement liquidity is
+      not stripped to zero. Smaller AUM is exempt — the floor would dominate
+      a $5k portfolio.
+    kind: floor
+    field: allocations[asset='USYC'].target_weight_pct
+    param: 0.10
+    tierMin: business
