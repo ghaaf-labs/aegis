@@ -148,6 +148,96 @@ pub async fn list_shares(
     Ok(Json(rows))
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SummaryQuery {
+    pub portfolio_id: Uuid,
+    pub year: Option<i32>,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct WalletSummaryRow {
+    pub chain: String,
+    pub address: String,
+    pub lot_count: i64,
+    pub last_synced_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaxSummary {
+    pub year: i32,
+    pub wallets: Vec<WalletSummaryRow>,
+    pub total_lot_count: i64,
+    /// Caveat the UI surfaces verbatim — lot-level chain attribution lands
+    /// in a follow-up; for now the user sees both wallets + portfolio-level
+    /// totals.
+    pub caveat: String,
+}
+
+/// `GET /tax/summary?portfolioId=...&year=...` — authed; powers the
+/// pre-download wallet provenance card in /settings/tax.
+pub async fn summary(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Query(q): Query<SummaryQuery>,
+) -> Result<Json<TaxSummary>> {
+    require_flag(&state)?;
+    require_ownership(&state, claims.sub, q.portfolio_id).await?;
+    let year = q.year.unwrap_or_else(|| Utc::now().year());
+
+    let row: (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT arc_address, base_address FROM users WHERE id = $1",
+    )
+    .bind(claims.sub)
+    .fetch_one(&state.db)
+    .await?;
+    let (arc, base) = row;
+
+    let counts: (i64, Option<DateTime<Utc>>) = sqlx::query_as(
+        "SELECT COUNT(*)::BIGINT AS lots, MAX(l.acquired_at) AS last_synced
+         FROM cost_basis_lots l
+         JOIN allocations a ON a.id = l.allocation_id
+         WHERE a.portfolio_id = $1
+           AND DATE_PART('year', l.acquired_at) <= $2",
+    )
+    .bind(q.portfolio_id)
+    .bind(year as f64)
+    .fetch_one(&state.db)
+    .await?;
+    let (total, last_synced) = counts;
+
+    let mut wallets = Vec::new();
+    if let Some(addr) = arc {
+        wallets.push(WalletSummaryRow {
+            chain: "arc".into(),
+            address: addr,
+            lot_count: total,
+            last_synced_at: last_synced,
+        });
+    }
+    if let Some(addr) = base {
+        wallets.push(WalletSummaryRow {
+            chain: "base".into(),
+            address: addr,
+            lot_count: total,
+            last_synced_at: last_synced,
+        });
+    }
+
+    Ok(Json(TaxSummary {
+        year,
+        wallets,
+        total_lot_count: total,
+        caveat: "Lot counts are reported at portfolio level. Per-wallet chain \
+                 attribution lands in a future tax-export iteration; both wallet \
+                 addresses are listed here so an accountant can match the CSV \
+                 rows against on-chain records."
+            .into(),
+    }))
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────
 
 fn require_flag(state: &AppState) -> Result<()> {

@@ -125,6 +125,7 @@ pub async fn build(db: Db, config: Config) -> Router {
         // public CSV-by-token endpoint is wired outside this authed
         // sub-router below.
         .route("/tax/export.csv", get(tax::handlers::export_csv))
+        .route("/tax/summary", get(tax::handlers::summary))
         .route("/tax/shares", get(tax::handlers::list_shares))
         .route("/tax/share", post(tax::handlers::create_share))
         .route(
