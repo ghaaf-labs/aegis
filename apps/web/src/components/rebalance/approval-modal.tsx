@@ -8,6 +8,23 @@ import { cn } from "@/lib/utils";
 import { BacktestPreview } from "@/components/rebalance/backtest-preview";
 import { ModelBadge, ChainBadge } from "@aegis/ui";
 
+/** Headline confidence the modal renders.
+ *
+ * Prefers the histogram-bin calibrated confidence (F-CONF-4 → agent service
+ * with CALIBRATED_CONF_ENABLED=true). Falls back to the strategist's flat
+ * raw confidence when no calibration exists yet, then to the legacy
+ * `confidence` field for back-compat with decisions persisted before
+ * migration 0013. */
+function pickHeadlineConfidence(decision: AgentDecision): number {
+  if (typeof decision.calibratedConfidence === "number") {
+    return decision.calibratedConfidence;
+  }
+  if (typeof decision.rawConfidence === "number") {
+    return decision.rawConfidence;
+  }
+  return decision.confidence ?? 0;
+}
+
 function formatRelativeSeconds(at: Date): string {
   const secs = Math.max(0, Math.round((Date.now() - at.getTime()) / 1000));
   if (secs < 60) return `${secs}s ago`;
@@ -59,6 +76,7 @@ export function ApprovalModal({
 }: ApprovalModalProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [counterfactualOpen, setCounterfactualOpen] = useState(false);
 
   if (!open || !plan) return null;
 
@@ -100,43 +118,104 @@ export function ApprovalModal({
         </header>
 
         <div className="px-6 py-4">
-          {decision && (
-            <div className="mb-4 border border-white/10 bg-black/40 p-3 font-mono text-[11px] space-y-2">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-cyan-400 uppercase tracking-wider">
-                  Agent
-                </span>
-                {decision.modelSlug && (
-                  <ModelBadge model={decision.modelSlug} />
-                )}
-                {decision.regime && (
-                  <span className="px-1.5 py-0.5 bg-violet-500/10 border border-violet-500/30 text-violet-200">
-                    regime: {decision.regime}
-                  </span>
-                )}
-                <span className="ml-auto text-gray-400">
-                  confidence{" "}
-                  <span className="text-emerald-300">
-                    {Math.round((decision.confidence ?? 0) * 100)}%
-                  </span>
-                </span>
-              </div>
-              {decision.reasoning && (
-                <p className="text-gray-300 leading-relaxed">
-                  {decision.reasoning}
-                </p>
-              )}
-              {decision.criticVerdict && (
-                <p className="text-[10px] text-amber-300/90 border-t border-white/5 pt-2">
-                  <span className="uppercase tracking-wider text-amber-400 mr-1.5">
-                    Critic
-                  </span>
-                  ({Math.round((decision.criticVerdict.confidence ?? 0) * 100)}
-                  %): {decision.criticVerdict.notes}
-                </p>
-              )}
-            </div>
-          )}
+          {decision &&
+            (() => {
+              const headline = pickHeadlineConfidence(decision);
+              const headlinePct = Math.round(headline * 100);
+              const isCalibrated =
+                typeof decision.calibratedConfidence === "number";
+              const raw = decision.rawConfidence ?? decision.confidence ?? 0;
+              const rawPct = Math.round(raw * 100);
+
+              return (
+                <div className="mb-4 border border-white/10 bg-black/40 p-3 font-mono text-[11px] space-y-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-cyan-400 uppercase tracking-wider">
+                      Agent
+                    </span>
+                    {decision.modelSlug && (
+                      <ModelBadge model={decision.modelSlug} />
+                    )}
+                    {decision.regime && (
+                      <span className="px-1.5 py-0.5 bg-violet-500/10 border border-violet-500/30 text-violet-200">
+                        regime: {decision.regime}
+                      </span>
+                    )}
+                    <span
+                      className="ml-auto text-gray-400"
+                      title={
+                        isCalibrated
+                          ? `Histogram-bin calibrated · raw ${rawPct}%`
+                          : "Raw strategist confidence — no calibration available yet"
+                      }
+                    >
+                      {isCalibrated ? "calibrated " : "confidence "}
+                      <span className="text-emerald-300">{headlinePct}%</span>
+                      {isCalibrated && (
+                        <span className="text-gray-500"> (raw {rawPct}%)</span>
+                      )}
+                    </span>
+                  </div>
+
+                  {/* Calibrated-confidence progress bar — headline trust signal. */}
+                  <div
+                    className="h-1.5 w-full bg-white/5 border border-white/10 overflow-hidden"
+                    aria-label={`Calibrated confidence ${headlinePct}%`}
+                  >
+                    <div
+                      className="h-full bg-emerald-400"
+                      style={{
+                        width: `${Math.min(100, Math.max(0, headlinePct))}%`,
+                      }}
+                    />
+                  </div>
+
+                  {decision.reasoning && (
+                    <p className="text-gray-300 leading-relaxed">
+                      {decision.reasoning}
+                    </p>
+                  )}
+                  {decision.criticVerdict && (
+                    <p className="text-[10px] text-amber-300/90 border-t border-white/5 pt-2">
+                      <span className="uppercase tracking-wider text-amber-400 mr-1.5">
+                        Critic
+                      </span>
+                      (
+                      {Math.round(
+                        (decision.criticVerdict.confidence ?? 0) * 100,
+                      )}
+                      %): {decision.criticVerdict.notes}
+                    </p>
+                  )}
+
+                  {/* F-CONF-6: counterfactual + provenance line. */}
+                  {decision.counterfactual && (
+                    <div className="border-t border-white/5 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => setCounterfactualOpen((v) => !v)}
+                        className="text-[10px] uppercase tracking-wider text-cyan-300 hover:text-cyan-200"
+                      >
+                        {counterfactualOpen ? "▾" : "▸"} Why this might be wrong
+                      </button>
+                      {counterfactualOpen && (
+                        <p className="mt-1.5 text-[11px] text-cyan-100/90 bg-cyan-500/5 border border-cyan-500/20 px-2 py-1.5">
+                          {decision.counterfactual}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {isCalibrated && (
+                    <p
+                      className="text-[10px] text-gray-500"
+                      title="Calibration source persisted in `calibrations` table"
+                    >
+                      Calibration: histogram-bin · via model_evaluations
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
 
           {plan.legs.some(
             (l) =>

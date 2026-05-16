@@ -194,6 +194,13 @@ pub struct Config {
     /// Requires `billing_v2_enabled=true` (validated at boot).
     #[allow(dead_code)]
     pub aum_stream_enabled: bool,
+
+    /// F-CONF-7: gates the nightly calibration trainer, the per-decision
+    /// calibration apply step, and the critic's counterfactual second pass.
+    /// When off, the existing flat raw confidence is shown unchanged (no
+    /// new DB writes to `calibrations` or `calibrated_predictions`).
+    #[allow(dead_code)]
+    pub calibrated_conf_enabled: bool,
 }
 
 impl Config {
@@ -308,6 +315,7 @@ impl Config {
             peg_fire_cooldown_secs: parse_or("PEG_FIRE_COOLDOWN_SECS", 1800)?,
             tax_export_v1_enabled: parse_or("TAX_EXPORT_V1_ENABLED", false)?,
             aum_stream_enabled: parse_or("AUM_STREAM_ENABLED", false)?,
+            calibrated_conf_enabled: parse_or("CALIBRATED_CONF_ENABLED", false)?,
         };
 
         cfg.validate()
@@ -470,6 +478,7 @@ mod tests {
             peg_fire_cooldown_secs: 1800,
             tax_export_v1_enabled: false,
             aum_stream_enabled: false,
+            calibrated_conf_enabled: false,
         }
     }
 

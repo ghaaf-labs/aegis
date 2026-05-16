@@ -146,6 +146,17 @@ export interface AgentDecision {
   completionTokens?: number;
   latencyMs?: number;
   criticVerdict?: CriticVerdict;
+
+  // F-CONF-4 / F-CONF-5: calibrated confidence + critic counterfactual.
+  // Only populated when CALIBRATED_CONF_ENABLED=true on the API; the UI
+  // gracefully falls back to `confidence` when these are absent.
+  /** Strategist's raw self-reported confidence (0..1). */
+  rawConfidence?: number;
+  /** Confidence after the A8 histogram-bin calibrator is applied. */
+  calibratedConfidence?: number;
+  /** One-sentence critic counterfactual (e.g. "If regime had stayed RISK_ON,
+   *  this rebalance would not fire."). */
+  counterfactual?: string;
 }
 
 export type AgentTrigger =

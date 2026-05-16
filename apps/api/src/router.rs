@@ -70,7 +70,8 @@ pub async fn build(db: Db, config: Config) -> Router {
     scheduler::spawn_portfolio_scheduler(state.clone(), cancel.clone());
     scheduler::spawn_outcome_compressor(state.clone(), cancel.clone());
     digest::spawn_digest_worker(state.clone(), cancel.clone());
-    let _peg_monitor = risk_engine::spawn_peg_monitor(state.clone(), cancel);
+    let _peg_monitor = risk_engine::spawn_peg_monitor(state.clone(), cancel.clone());
+    agent::calibration_train::spawn(state.clone(), cancel);
 
     // CORS — must list specific origin(s) when sending credentials. The
     // wildcard isn't legal alongside `Access-Control-Allow-Credentials: true`.
