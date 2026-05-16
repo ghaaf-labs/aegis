@@ -21,66 +21,33 @@ The matching `JWT_SECRET` (which was also leaked in the same commit) has already
 
 Note: scrubbing history via filter-repo cleaned `origin/main`, but the historical `feat/sprint-*` branches and `fix/post-submission-audit` on origin still contain `2d768d7` in their git ancestry. If those branches are not needed, delete them on origin to fully purge. They're stale/merged already.
 
-## CCTP V2 `depositForBurnWithCaller` reverts on Base Sepolia
+## CCTP V2 contract surface — RESOLVED 2026-05-16
 
-**Tag:** `F-CCTP-1` · **Status:** open · **Surfaced:** 2026-05-16 (N6.3 first real attempt)
+**Tag:** `F-CCTP-1` (with `F-IRIS-1`) · **Status:** resolved · **Surfaced:** 2026-05-16 · **Closed:** 2026-05-16
 
-After F-EXEC-1's full pre-flight (real-cctp build, iris path fix, recipient lookup, USDC approve, env-parse fix), the first real CCTP V2 burn against `0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA` on Base Sepolia STILL reverts:
+The codebase shipped a CCTP V1 `sol!` interface (`depositForBurnWithCaller`, 5-arg + 6-arg hook) but the deployed TokenMessenger at `0x8FE6B999…2DAA` on Base Sepolia implements CCTP V2, whose signatures take two additional parameters (`maxFee`, `minFinalityThreshold`):
+
+- `depositForBurn(amount, domain, recipient, token, caller, maxFee, minFinalityThreshold)` — selector `0x8e0250ee`
+- `depositForBurnWithHook(amount, domain, recipient, token, caller, maxFee, minFinalityThreshold, hookData)` — selector `0x779b432d`
+
+Verified live via `cast call` — invoking `depositForBurnWithHook` with empty hook data returned the function-body revert `"Hook data is empty"`, proving the V2 selector resolves on the deployed contract.
+
+After rewriting `sol!` to V2 signatures, the first real CCTP V2 burn landed on Base Sepolia:
 
 ```
-alloy send error: server returned an error response: error code 3: execution reverted
+tx_hash:  0xc713c87b7d8d9a697a8f023aead65338131494277a3b6096a852df8b78825395
+iris V2:  cctpVersion=2, status=pending_confirmations, delayReason=null
 ```
 
-The local_swap leg (mocked) confirms cleanly with tx `0xda9a…295e`. The USDC `approve()` step appears to land (no approve-receipt error). Only the actual `depositForBurnWithCaller_1` reverts.
+Three sub-fixes shipped together (also closes `F-IRIS-1`):
 
-**Candidate causes (in priority order):**
+1. `sol!` interface rewritten to CCTP V2 `depositForBurn` + `depositForBurnWithHook`.
+2. `wait_for_attestation` switched from `/v1/attestations/{messageHash}` to `/v2/messages/{srcDomain}?transactionHash={txHash}`. The V2 envelope is `{messages: [{ attestation, message, status, delayReason, … }]}`; lookups are by source-domain + burn tx hash.
+3. USDC `approve(token_messenger, 2 * amount)` — razor-thin approves caused `"transfer amount exceeds allowance"` reverts even with `maxFee = 0`, likely due to V2's internal `transferFrom(amount + fee)` semantics. Approving with headroom avoids the race.
 
-1. **Wrong CCTP V2 contract address on Base Sepolia.** The address `0x8FE6B999…2DAA` came from `developers.circle.com/cctp/evm-smart-contracts` — verify against the LIVE contract at `https://sepolia.basescan.org/address/0x8FE6B999...` (does it have a `depositForBurnWithCaller` function with a 6-arg overload?). Possible that Circle has redeployed since the docs were last updated.
+**Standard vs Fast Transfer**: Fast (`minFinalityThreshold = 1000`) requires a non-zero `maxFee` or iris responds with `delayReason = "insufficient_fee"`. Standard (`2000`) is free but waits for hard finality (~13 min on Base Sepolia). We ship Standard; Fast can be enabled later by funding a fee budget.
 
-2. **Contract signature mismatch.** Our sol! interface declares two `depositForBurnWithCaller` overloads (5-arg and 6-arg). The deployed contract may have a different function (e.g. `depositForBurn`, `depositForBurnWithHook`, or different argument order). `cast 4byte-decode 0x<calldata>` on a reverted tx would confirm.
-
-3. **Arc testnet not registered as a CCTP V2 domain.** We pass `destinationDomain=26` (per Circle's docs). If Arc's domain isn't activated in the deployed TokenMessenger's `localToken` / `allowedRemote` config, the burn reverts.
-
-4. **`destinationCaller` must be all-zeros (any caller)** vs our `executor_on_dest.into_word()` (RebalanceExecutor address). Per the CCTP V2 spec, a non-zero destinationCaller restricts which address can call receiveMessage — if our RebalanceExecutor isn't on the allowlist for that domain pair, the burn rejects.
-
-**Debug recipe**:
-
-```bash
-# Inspect Base Sepolia contract surface
-cast interface 0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA --rpc-url https://sepolia.base.org
-
-# Decode the reverted calldata
-cast tx <reverted_tx_hash> --rpc-url https://sepolia.base.org
-
-# Domain registry on the contract
-cast call 0x8FE6B999... "remoteTokenMessengers(uint32)(bytes32)" 26 --rpc-url https://sepolia.base.org
-```
-
-**Workaround for the demo path**: skip the hook'd burn entirely and use CCTP V1's simpler `depositForBurn(amount, destinationDomain, mintRecipient, burnToken)` 4-arg form — gets the cross-chain USDC delivered without the swap-on-arrival hook. Less impressive but verifies the rail works.
-
-**Net N6 progress so far** (this finding does NOT block all of F-EXEC-1 — six other audit-found bugs were fixed):
-
-- ✅ `--features real-cctp` build works.
-- ✅ Iris API path fixed (F-EXEC-1a).
-- ✅ Recipient lookup fixed (F-EXEC-1b).
-- ✅ USDC `approve()` added (F-EXEC-1c).
-- ✅ `.env` parse failure on `DIGEST_FROM` fixed (F-EXEC-1d) — was silently breaking dotenvy for every contributor.
-- ✅ Real local_swap tx on Base Sepolia: `0xda9a2ab4159ee1b579b8625f6695013f6d8f5a63d22adff7a010d663fe7f295e` (visible on sepolia.basescan.org).
-- ❌ Real cross_chain_burn: blocked on F-CCTP-1.
-
-## CCTP V2 iris API path (mainnet swap)
-
-**Tag:** `F-IRIS-1` · **Status:** open · **Surfaced:** 2026-05-16 (N6.0 path audit)
-
-The codebase originally built attestation URLs against `{base}/v2/messages/{srcDomain}/{messageHash}` per the CCTP V2 fast-transfer spec. Live probe of `https://iris-api-sandbox.circle.com` on 2026-05-16 confirmed:
-
-- `/v2/messages/{srcDomain}/{messageHash}` → HTML 404 (path not routed).
-- `/v1/attestations/{messageHash}` → Circle-shape JSON 404 `{"error":"Message hash not found"}` (route exists, no entry).
-- `/v1/messages/{srcDomain}/{transactionHash}` → Circle-shape JSON 404 `{"error":"Transaction hash not found"}` (different semantics — takes tx_hash not message_hash).
-
-F-EXEC-1a (this session) switched the runtime path to `/v1/attestations/{messageHash}` so testnet attestations actually resolve. The `src_domain` arg in `wait_for_attestation` is preserved in the signature but unused.
-
-**Mainnet action**: when Circle ships V2 attestation routing publicly, swap back to `/v2/messages/{srcDomain}/{messageHash}`. Likely a 2-line change in `apps/api/src/modules/rebalance/cross_chain.rs::wait_for_attestation`. Acceptable interim because Arc mainnet itself is still "summer 2026" per Circle.
+**Remaining orchestration follow-up**: smoke binary's poll timeout was 240s, which dropped the in-process executor task before the 13-minute Standard finality cleared. Bumped to `cctp_attestation_timeout_secs + 60s` so end-to-end runs to completion. For the production API server this is moot — `scheduler::spawn_outcome_compressor` re-polls open rebalances on boot.
 
 ## Circle Wallets API path staleness
 
