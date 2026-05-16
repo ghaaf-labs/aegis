@@ -119,6 +119,17 @@ pub async fn build(db: Db, config: Config) -> Router {
             "/tax/harvestable/:portfolio_id",
             get(tax::handlers::harvestable),
         )
+        // A10: tax routes — 1099-DA export + accountant share tokens.
+        // Gated by config.tax_export_v1_enabled (default false). The
+        // public CSV-by-token endpoint is wired outside this authed
+        // sub-router below.
+        .route("/tax/export.csv", get(tax::handlers::export_csv))
+        .route("/tax/shares", get(tax::handlers::list_shares))
+        .route("/tax/share", post(tax::handlers::create_share))
+        .route(
+            "/tax/share/:token_id",
+            axum::routing::delete(tax::handlers::revoke_share),
+        )
         .route(
             "/digest/subscribe",
             post(digest::handlers::create).delete(digest::handlers::delete),
@@ -218,6 +229,11 @@ pub async fn build(db: Db, config: Config) -> Router {
         .route(
             "/digest/unsubscribe",
             get(digest::handlers::unsubscribe_public),
+        )
+        // A10: public tax share — token in path is the auth.
+        .route(
+            "/tax/share/:token/export.csv",
+            get(tax::handlers::export_via_share),
         )
         .merge(authed)
         .layer(cors)

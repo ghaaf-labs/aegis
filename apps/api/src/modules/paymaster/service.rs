@@ -130,6 +130,7 @@ mod tests {
             peg_defense_enabled: false,
             peg_monitor_tick_secs: 10,
             peg_fire_cooldown_secs: 1800,
+            tax_export_v1_enabled: false,
         }
     }
 

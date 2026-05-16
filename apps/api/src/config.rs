@@ -184,6 +184,11 @@ pub struct Config {
     /// Prevents an alert storm if a peg stays under threshold for hours.
     #[allow(dead_code)]
     pub peg_fire_cooldown_secs: i64,
+
+    /// A10 — 1099-DA tax export endpoints + accountant share tokens.
+    /// Gates both `/tax/export.csv` and `/tax/share*`. Default false.
+    #[allow(dead_code)]
+    pub tax_export_v1_enabled: bool,
 }
 
 impl Config {
@@ -296,6 +301,7 @@ impl Config {
             peg_defense_enabled: parse_or("PEG_DEFENSE_ENABLED", false)?,
             peg_monitor_tick_secs: parse_or("PEG_MONITOR_TICK_SECS", 10)?,
             peg_fire_cooldown_secs: parse_or("PEG_FIRE_COOLDOWN_SECS", 1800)?,
+            tax_export_v1_enabled: parse_or("TAX_EXPORT_V1_ENABLED", false)?,
         };
 
         cfg.validate()
@@ -447,6 +453,7 @@ mod tests {
             peg_defense_enabled: false,
             peg_monitor_tick_secs: 10,
             peg_fire_cooldown_secs: 1800,
+            tax_export_v1_enabled: false,
         }
     }
 
