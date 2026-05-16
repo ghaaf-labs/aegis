@@ -36,6 +36,10 @@
               └──────────────────────────────────────────────┘
 ```
 
+## How is this different from Anchorage agentic banking?
+
+[Anchorage Digital launched "agentic banking" at Consensus on 2026-05-07](https://www.anchorage.com/insights/anchorage-digital-launches-agentic-banking-and-partners-with-google-cloud-to-power-the-operating-layer-for-ai-and-capital) — a regulated, institutional trust-layer that gives autonomous agents identities and spending limits on fiat + crypto rails (partnered with Google Cloud, ~20-firm stablecoin-issuance pipeline). Aegis sits in a different lane: **retail and SMB, self-custodial, Circle-native**. Your USDC stays in your Circle Wallet (modular MSCA, no seed phrase); the agent is a multi-model strategist + critic loop that surfaces its model slug, regime, and constitution-clause verdict on every move — you approve every rebalance in a single modal that shows the USDC fee upfront. Anchorage is for enterprise treasury teams who want a chartered bank to run their agent stack; Aegis is for the prosumer / SMB treasurer who wants a transparent copilot with the Circle full-stack (USYC, StableFX, CCTP V2, Nanopayments) wired in.
+
 ## Stack
 
 | Layer       | Choice                                                                                          |
