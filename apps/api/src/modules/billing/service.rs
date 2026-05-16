@@ -146,6 +146,112 @@ fn mock_tx_hash(referrer: Uuid, new_user: Uuid) -> String {
     format!("0xmock:{}", hex::encode(&h.finalize()[..8]))
 }
 
+/// Refund the protocol fee for a failed rebalance. Marks the fee row as
+/// `refunded` and (in real mode, when the original settlement produced a
+/// tx hash) POSTs to `NANOPAYMENTS_FACILITATOR_URL/reverse` so the user
+/// actually gets the USDC back. A 404 from the facilitator is tolerated
+/// with a `warn!` log because some facilitator builds don't support
+/// `/reverse`; in that case the row stays marked `refunded` for the
+/// operator to reconcile manually.
+///
+/// Returns the reverse-tx hash when one was produced, `None` otherwise.
+pub async fn refund_protocol_fee(
+    db: &Db,
+    config: &Config,
+    rebalance_id: Uuid,
+    reason: &str,
+) -> crate::error::Result<Option<String>> {
+    let row: Option<(Option<String>, String)> = sqlx::query_as(
+        "SELECT settlement_tx_hash, status
+           FROM rebalance_fees
+          WHERE rebalance_id = $1 AND fee_type = 'protocol'
+          LIMIT 1",
+    )
+    .bind(rebalance_id)
+    .fetch_optional(db)
+    .await?;
+    let Some((settlement_tx, current_status)) = row else {
+        return Ok(None);
+    };
+    if current_status == "refunded" {
+        return Ok(None);
+    }
+
+    let reverse_tx = if !config.execution_mock {
+        if let Some(original_tx) = settlement_tx.as_deref() {
+            match post_reverse(config, original_tx, rebalance_id, reason).await {
+                Ok(tx) => tx,
+                Err(e) => {
+                    tracing::warn!(
+                        rebalance_id = ?rebalance_id,
+                        error = %e,
+                        "nanopayments /reverse failed; marking refunded without on-chain reversal"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    sqlx::query(
+        "UPDATE rebalance_fees
+            SET status = 'refunded',
+                refunded_at = NOW(),
+                refund_tx_hash = COALESCE($2, refund_tx_hash)
+          WHERE rebalance_id = $1 AND fee_type = 'protocol'",
+    )
+    .bind(rebalance_id)
+    .bind(reverse_tx.as_deref())
+    .execute(db)
+    .await?;
+
+    Ok(reverse_tx)
+}
+
+async fn post_reverse(
+    config: &Config,
+    original_tx: &str,
+    rebalance_id: Uuid,
+    reason: &str,
+) -> anyhow::Result<Option<String>> {
+    let client = reqwest::Client::new();
+    let payload = serde_json::json!({
+        "transaction": original_tx,
+        "rebalanceId": rebalance_id,
+        "reason": reason,
+        "network": "arc-testnet",
+    });
+    let res = client
+        .post(format!("{}/reverse", config.nanopayments_facilitator_url))
+        .json(&payload)
+        .send()
+        .await?;
+
+    if res.status() == reqwest::StatusCode::NOT_FOUND {
+        // Older facilitator builds don't expose /reverse; that's fine — the
+        // row is still marked refunded so the user-facing balance stays
+        // consistent. Operator can reconcile manually.
+        tracing::warn!(
+            rebalance_id = ?rebalance_id,
+            "nanopayments facilitator returned 404 on /reverse; no on-chain reversal recorded"
+        );
+        return Ok(None);
+    }
+    if !res.status().is_success() {
+        anyhow::bail!("/reverse returned HTTP {}", res.status());
+    }
+
+    let body: serde_json::Value = res.json().await?;
+    Ok(body
+        .get("transaction")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string()))
+}
+
 /// Settle the protocol fee (25 bps) via Circle Nanopayments (x402).
 /// In real mode, this calls the facilitator to settle the signed authorization.
 /// For the hackathon, the user must have pre-authorized via the Gateway balance or signed the payment.

@@ -137,15 +137,34 @@ pub async fn approve_and_execute(state: AppState, rebalance_id: Uuid) -> Result<
     tokio::spawn(async move {
         if let Err(e) = walk_legs(&st, rebalance_id, user_id).await {
             tracing::error!(?rebalance_id, error=%e, "rebalance walk failed");
+            let reason = format!("{e}");
             let _ = sqlx::query(
                 "UPDATE rebalances SET status = 'failed', failure_reason = $2,
                                        completed_at = NOW()
                  WHERE id = $1 AND status = 'executing'",
             )
             .bind(rebalance_id)
-            .bind(format!("{e}"))
+            .bind(&reason)
             .execute(&st.db)
             .await;
+
+            // If a protocol fee was recorded before the failure (e.g. partial
+            // success, or a future per-leg billing path), reverse it. No-op
+            // when the rebalance failed before fee recording.
+            if let Err(refund_err) = crate::modules::billing::service::refund_protocol_fee(
+                &st.db,
+                &st.config,
+                rebalance_id,
+                &reason,
+            )
+            .await
+            {
+                tracing::warn!(
+                    ?rebalance_id,
+                    error = %refund_err,
+                    "billing: refund_protocol_fee failed after rebalance failure"
+                );
+            }
         }
     });
     Ok(())
