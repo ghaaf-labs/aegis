@@ -59,12 +59,29 @@ pub async fn record_referral(
     // Settle the payout.
     let tx_hash = if config.execution_mock {
         Some(mock_tx_hash(referrer_id, new_user_id))
+    } else if config.billing_v2_enabled {
+        // Real Nanopayments settlement path. We pay from the project
+        // treasury wallet to the referrer's Arc address. The /settle call
+        // is best-effort here — a network blip shouldn't break user signup,
+        // so we still log and continue; the row stays with paid_at NULL so
+        // the daily reconcile cron (A4) can retry.
+        match settle_referral_via_nanopayments(config, db, referrer_id, reward).await {
+            Ok(tx) => tx,
+            Err(e) => {
+                tracing::warn!(
+                    referrer = %referrer_id,
+                    new = %new_user_id,
+                    error = %e,
+                    "referral nanopayments /settle failed; row left unpaid for retry"
+                );
+                None
+            }
+        }
     } else {
-        // Real Nanopayment path — gated TODO. Don't fail the wallet-create
-        // call over a missing treasury wallet; instead leave paid_at NULL
-        // so an operator can reconcile from the pending-index.
+        // BILLING_V2_ENABLED=false: legacy behaviour. Leave paid_at NULL so
+        // an operator can reconcile from the pending-index.
         tracing::warn!(
-            "real Nanopayment not implemented; referral recorded but unpaid (referrer={referrer_id}, new={new_user_id})"
+            "real Nanopayment disabled (BILLING_V2_ENABLED=false); referral recorded but unpaid (referrer={referrer_id}, new={new_user_id})"
         );
         None
     };
@@ -110,6 +127,49 @@ pub async fn record_protocol_fee(
     .await?;
 
     Ok(())
+}
+
+async fn settle_referral_via_nanopayments(
+    config: &Config,
+    db: &Db,
+    referrer_id: Uuid,
+    reward_usdc: f64,
+) -> anyhow::Result<Option<String>> {
+    if config.nanopayments_treasury_address.trim().is_empty() {
+        anyhow::bail!("NANOPAYMENTS_TREASURY_ADDRESS is empty");
+    }
+    let referrer_address: Option<String> =
+        sqlx::query_scalar("SELECT arc_address FROM users WHERE id = $1")
+            .bind(referrer_id)
+            .fetch_optional(db)
+            .await?
+            .flatten();
+    let Some(pay_to) = referrer_address.filter(|s| !s.is_empty()) else {
+        anyhow::bail!("referrer {referrer_id} has no arc_address");
+    };
+
+    let client = reqwest::Client::new();
+    let payload = serde_json::json!({
+        "payment": {
+            "amount": (reward_usdc * 1_000_000.0) as u64,
+            "payer": config.nanopayments_treasury_address,
+            "payTo": pay_to,
+            "network": "arc-testnet",
+        }
+    });
+    let res = client
+        .post(format!("{}/settle", config.nanopayments_facilitator_url))
+        .json(&payload)
+        .send()
+        .await?;
+    if !res.status().is_success() {
+        anyhow::bail!("/settle returned HTTP {}", res.status());
+    }
+    let body: serde_json::Value = res.json().await?;
+    Ok(body
+        .get("transaction")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string()))
 }
 
 async fn resolve_handle(db: &Db, handle: &str) -> crate::error::Result<Option<Uuid>> {
