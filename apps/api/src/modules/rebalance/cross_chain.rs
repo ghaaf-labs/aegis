@@ -384,6 +384,15 @@ impl<'a> CctpClient<'a> {
             return Ok(mock_attestation(message_hash));
         }
 
+        // F-EXEC-1a (2026-05-16): the prior `/v2/messages/{srcDomain}/{hash}`
+        // path was aspirational — Circle's testnet iris (and the documented
+        // CCTP V1 surface) actually serves `/v1/attestations/{messageHash}`.
+        // Verified live: `curl https://iris-api-sandbox.circle.com/v1/attestations/0x0…01`
+        // returns Circle-shape `{"error":"Message hash not found"}` (404).
+        // The `src_domain` parameter is kept in the signature so callers don't
+        // change but is unused here; `F-IRIS-1` tracks the mainnet V2 swap.
+        let _ = src_domain;
+
         let start = std::time::Instant::now();
         let timeout = Duration::from_secs(self.config.cctp_attestation_timeout_secs);
         let mut delay = Duration::from_secs(2);
@@ -398,8 +407,8 @@ impl<'a> CctpClient<'a> {
             }
 
             let url = format!(
-                "{}/v2/messages/{}/{}",
-                self.config.cctp_attestation_url, src_domain, message_hash
+                "{}/v1/attestations/{}",
+                self.config.cctp_attestation_url, message_hash
             );
             let resp = self.http.get(&url).send().await;
             match resp {

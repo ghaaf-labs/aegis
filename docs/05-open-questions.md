@@ -21,6 +21,20 @@ The matching `JWT_SECRET` (which was also leaked in the same commit) has already
 
 Note: scrubbing history via filter-repo cleaned `origin/main`, but the historical `feat/sprint-*` branches and `fix/post-submission-audit` on origin still contain `2d768d7` in their git ancestry. If those branches are not needed, delete them on origin to fully purge. They're stale/merged already.
 
+## CCTP V2 iris API path (mainnet swap)
+
+**Tag:** `F-IRIS-1` · **Status:** open · **Surfaced:** 2026-05-16 (N6.0 path audit)
+
+The codebase originally built attestation URLs against `{base}/v2/messages/{srcDomain}/{messageHash}` per the CCTP V2 fast-transfer spec. Live probe of `https://iris-api-sandbox.circle.com` on 2026-05-16 confirmed:
+
+- `/v2/messages/{srcDomain}/{messageHash}` → HTML 404 (path not routed).
+- `/v1/attestations/{messageHash}` → Circle-shape JSON 404 `{"error":"Message hash not found"}` (route exists, no entry).
+- `/v1/messages/{srcDomain}/{transactionHash}` → Circle-shape JSON 404 `{"error":"Transaction hash not found"}` (different semantics — takes tx_hash not message_hash).
+
+F-EXEC-1a (this session) switched the runtime path to `/v1/attestations/{messageHash}` so testnet attestations actually resolve. The `src_domain` arg in `wait_for_attestation` is preserved in the signature but unused.
+
+**Mainnet action**: when Circle ships V2 attestation routing publicly, swap back to `/v2/messages/{srcDomain}/{messageHash}`. Likely a 2-line change in `apps/api/src/modules/rebalance/cross_chain.rs::wait_for_attestation`. Acceptable interim because Arc mainnet itself is still "summer 2026" per Circle.
+
 ## Circle Wallets API path staleness
 
 **Tag:** `F-WALLET-1` · **Status:** open · **Surfaced:** 2026-05-16 (N0.9 smoke)
