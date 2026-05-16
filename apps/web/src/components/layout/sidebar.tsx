@@ -2,18 +2,32 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, PieChart, Settings, Shield } from "lucide-react";
+import {
+  CreditCard,
+  LayoutDashboard,
+  PieChart,
+  Settings,
+  Shield,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PRICING_UI_ENABLED } from "@/lib/flags";
 
 // /agent and /activity were placeholder Sprint 1 nav items whose routes
 // were never built — clicking them 404'd. The dashboard already shows the
 // agent's reasoning feed and decision history, so the dedicated routes
 // are unnecessary. Keep the surfaces that actually exist.
-const NAV_ITEMS = [
+const BASE_NAV_ITEMS = [
   { href: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
   { href: "/portfolio", icon: PieChart, label: "Portfolio" },
   { href: "/settings", icon: Settings, label: "Settings" },
 ];
+
+const NAV_ITEMS = PRICING_UI_ENABLED
+  ? [
+      ...BASE_NAV_ITEMS,
+      { href: "/settings/billing", icon: CreditCard, label: "Billing" },
+    ]
+  : BASE_NAV_ITEMS;
 
 export function Sidebar() {
   const pathname = usePathname();

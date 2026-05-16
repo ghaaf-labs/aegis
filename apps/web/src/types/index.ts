@@ -45,4 +45,13 @@ export type {
   PegAlert,
   PegAssetSymbol,
   PegActionKind,
+  Tier,
+  SubscriptionStatus,
+  InvoiceStatus,
+  Subscription,
+  Invoice,
+  LineItem,
+  PricingTier,
+  UsageMeter,
+  PerformanceFee,
 } from "@aegis/shared";

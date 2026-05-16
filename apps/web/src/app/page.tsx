@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { PRICING_UI_ENABLED } from "@/lib/flags";
 
 const fadeUp = {
   hidden: { opacity: 0, y: 24 },
@@ -81,6 +82,17 @@ export default function LandingPage() {
           <span className="font-bold text-lg tracking-tight">Aegis</span>
         </div>
         <div className="flex items-center gap-3">
+          {PRICING_UI_ENABLED && (
+            <Link href="/pricing">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-gray-400 hover:text-white"
+              >
+                Pricing
+              </Button>
+            </Link>
+          )}
           <Link href="/explore">
             <Button
               variant="ghost"

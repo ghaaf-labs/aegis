@@ -481,22 +481,24 @@ export interface Subscription {
   userId: UserId;
   tier: Tier;
   status: SubscriptionStatus;
-  startedAt: string;
+  startedAt?: string;
   currentPeriodStart: string;
   currentPeriodEnd: string;
-  cancelAt?: string;
+  cancelAt?: string | null;
+  /** Set when the cancellation has fully taken effect. */
+  canceledAt?: string | null;
   /** Day of month (1-28) used as the monthly billing anchor. */
-  billingAnchorDay: number;
+  billingAnchorDay?: number;
   createdAt: string;
   updatedAt: string;
 }
 
-export type InvoiceStatus = "open" | "paid" | "void" | "pastDue";
+export type InvoiceStatus = "open" | "paid" | "void" | "pastDue" | "past_due";
 
 export interface LineItem {
   description: string;
-  quantity: number;
-  unitAmountUsdc: number;
+  quantity?: number;
+  unitAmountUsdc?: number;
   amountUsdc: number;
   /** Free-form tag, e.g. "subscription", "aum_stream", "rebalance_fee". */
   kind?: string;
@@ -506,28 +508,44 @@ export interface Invoice {
   id: string;
   userId: UserId;
   subscriptionId?: string;
+  /** A5 — tier this invoice was billed at (display-only). */
+  tier?: Tier;
   periodStart: string;
   periodEnd: string;
   lineItems: LineItem[];
   subtotalUsdc: number;
   totalUsdc: number;
   status: InvoiceStatus;
-  paidAt?: string;
-  paidTxHash?: string;
+  paidAt?: string | null;
+  paidTxHash?: string | null;
   createdAt: string;
 }
 
 export interface PricingTier {
   code: Tier;
+  /** Alias for `code` used by the pricing-UI (A5). */
+  tier?: Tier;
+  /** Human-readable display name (e.g. "Free" / "Pro" / "Business"). */
+  name?: string;
   monthlyUsd: number;
   /** Null on Pro / Business — unlimited AUM. */
   aumCapUsd: number | null;
   /** Null on Business — unlimited portfolios. */
   portfoliosCap: number | null;
+  /** A5 alias for `portfoliosCap`. */
+  portfolioCap?: number | null;
   /** Null on Business — unlimited decisions. */
   decisionsCapMonthly: number | null;
+  /** A5 alias for `decisionsCapMonthly`. */
+  decisionsPerMonth?: number | null;
   perRebalanceBps: number;
   aumAnnualBps: number;
+  /** Display-only — free-form model menu, e.g. "Haiku regime + Haiku strategist". */
+  models?: string;
+  /** Display-only — marketing bullet list rendered under the price. */
+  features?: string[];
+  /** UI hint: render this tier as the recommended middle column. */
+  recommended?: boolean;
 }
 
 export interface UsageMeter {
