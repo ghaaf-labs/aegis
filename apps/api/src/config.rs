@@ -493,6 +493,10 @@ mod tests {
         let mut cfg = test_config();
         cfg.aum_stream_enabled = true;
         cfg.billing_v2_enabled = true;
+        // A1's stricter validation also requires the Nanopayments
+        // addresses to be set whenever BILLING_V2_ENABLED=true.
+        cfg.nanopayments_seller_address = "0xseller".into();
+        cfg.nanopayments_treasury_address = "0xtreasury".into();
         assert!(cfg.validate().is_ok());
     }
 
