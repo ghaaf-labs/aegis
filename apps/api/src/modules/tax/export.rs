@@ -8,7 +8,7 @@
 //! * `Disposition`  — closed cost-basis lots (with FIFO matching).
 //! * `Acquisition`  — opened cost-basis lots.
 //! * `FxGainLoss`   — USDC↔EURC realized gain/loss vs. the oracle price at
-//!                    the time the FX leg confirmed.
+//!   the time the FX leg confirmed.
 //! * `IncomeUsyc`   — USYC interest accrual treated as ordinary income.
 //!
 //! Mock-mode rows (where the executor never produced a `tx_hash`) are
@@ -351,10 +351,7 @@ pub fn lines_to_csv_1099da(lines: &[TaxLine]) -> String {
         let date = line.occurred_at.format("%Y-%m-%d").to_string();
         let short_long = if line.holding_days >= 365 { "long" } else { "short" };
         let asset_out = line.asset_out.clone().unwrap_or_default();
-        let qty_out = line
-            .qty_out
-            .map(|d| format_qty(d))
-            .unwrap_or_else(|| "".into());
+        let qty_out = line.qty_out.map(format_qty).unwrap_or_default();
         let tx_ref = line.leg_ref.clone().unwrap_or_default();
         out.push_str(&format!(
             "{year},{date},{kind},{asset_in},{qty_in},{basis},{asset_out},{qty_out},{proceeds},{gain},{days},{slt},{tx}\n",
@@ -404,6 +401,7 @@ mod tests {
         Decimal::from_str(s).unwrap()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn line(
         kind: TaxLineKind,
         asset_in: &str,
@@ -546,6 +544,144 @@ mod tests {
         let basis = attribute_fifo_basis(&lots, dec("200"));
         // Only 50 units of basis available — exporter falls back to amount.
         assert_eq!(basis, dec("50"));
+    }
+
+    // ── Integration test (F-TAX-7) ──────────────────────────────────────
+    // Seeded portfolio + 3 rebalances + 1 USDC→EURC swap; asserts CSV
+    // row count, FX gain/loss row, and the mock-exclusion count.
+    //
+    // Uses `sqlx::test`, which spins up a fresh per-test database off the
+    // `DATABASE_URL` set in CI (or your local docker-compose Postgres) and
+    // runs the migrations in `./migrations/` automatically. The test is
+    // skipped at compile time when sqlx-cli isn't on the path — Cargo
+    // doesn't gate the test, but the connection just fails fast.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn export_walks_legs_and_excludes_mocks(pool: sqlx::PgPool) -> sqlx::Result<()> {
+        let user_id = Uuid::new_v4();
+        let portfolio_id = Uuid::new_v4();
+        let alloc_id = Uuid::new_v4();
+
+        // Seed user (post-0003: no password_hash) + portfolio + allocation.
+        sqlx::query(
+            "INSERT INTO users (id, email, risk_tolerance, investment_horizon_months)
+             VALUES ($1, $2, 'moderate', 12)",
+        )
+        .bind(user_id)
+        .bind(format!("u-{}@test.aegis", user_id))
+        .execute(&pool)
+        .await?;
+        sqlx::query("INSERT INTO portfolios (id, user_id, name) VALUES ($1, $2, 'T')")
+            .bind(portfolio_id)
+            .bind(user_id)
+            .execute(&pool)
+            .await?;
+        sqlx::query(
+            "INSERT INTO allocations (id, portfolio_id, asset_symbol, quantity, target_weight)
+             VALUES ($1, $2, 'USDC', 10000, 100)",
+        )
+        .bind(alloc_id)
+        .bind(portfolio_id)
+        .execute(&pool)
+        .await?;
+
+        // Agent decision + rebalance.
+        let decision_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO agent_decisions (id, portfolio_id, reasoning, confidence)
+             VALUES ($1, $2, 'test', 0.9)",
+        )
+        .bind(decision_id)
+        .bind(portfolio_id)
+        .execute(&pool)
+        .await?;
+
+        let reb_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO rebalances
+                 (id, portfolio_id, decision_id, status, total_legs, completed_legs)
+             VALUES ($1, $2, $3, 'completed', 3, 3)",
+        )
+        .bind(reb_id)
+        .bind(portfolio_id)
+        .bind(decision_id)
+        .execute(&pool)
+        .await?;
+
+        // 3 confirmed legs, all in 2026:
+        //  - 1 local_swap with a real tx_hash (becomes a Disposition row)
+        //  - 1 fx_stablefx USDC→EURC (becomes the FxGainLoss row)
+        //  - 1 leg with NULL tx_hash (must be excluded, counted)
+        let when = chrono::Utc
+            .with_ymd_and_hms(2026, 3, 1, 12, 0, 0)
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO rebalance_legs
+                 (rebalance_id, leg_index, kind, src_symbol, dest_symbol,
+                  amount_usdc, min_out, status, tx_hash, confirmed_at)
+             VALUES ($1, 0, 'local_swap', 'USDC', 'USDT',
+                     1000, 999.5, 'confirmed', '0xreal1', $2)",
+        )
+        .bind(reb_id)
+        .bind(when)
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO rebalance_legs
+                 (rebalance_id, leg_index, kind, src_symbol, dest_symbol,
+                  amount_usdc, min_out, status, tx_hash, confirmed_at)
+             VALUES ($1, 1, 'fx_stablefx', 'USDC', 'EURC',
+                     1000, 921.7, 'confirmed', '0xfx', $2)",
+        )
+        .bind(reb_id)
+        .bind(when)
+        .execute(&pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO rebalance_legs
+                 (rebalance_id, leg_index, kind, src_symbol, dest_symbol,
+                  amount_usdc, min_out, status, tx_hash, confirmed_at)
+             VALUES ($1, 2, 'local_swap', 'USDC', 'USDT',
+                     500, 500, 'confirmed', NULL, $2)",
+        )
+        .bind(reb_id)
+        .bind(when)
+        .execute(&pool)
+        .await?;
+
+        let export = export_portfolio(&pool, portfolio_id, 2026)
+            .await
+            .map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
+
+        assert_eq!(
+            export.mock_lines_excluded_count, 1,
+            "the NULL-tx_hash leg must be excluded but counted"
+        );
+        assert_eq!(export.lines.len(), 2, "two real legs → two tax lines");
+
+        let fx = export
+            .lines
+            .iter()
+            .find(|l| l.kind == TaxLineKind::FxGainLoss)
+            .expect("fx_gain_loss row present");
+        assert_eq!(fx.asset_in, "USDC");
+        assert_eq!(fx.asset_out.as_deref(), Some("EURC"));
+        assert_eq!(fx.qty_in, dec("1000"));
+        assert_eq!(fx.proceeds_usd, dec("921.7"));
+        // Gain = proceeds − basis = 921.7 − 1000 = −78.3.
+        assert_eq!(fx.gain_usd, dec("-78.3"));
+
+        let disp = export
+            .lines
+            .iter()
+            .find(|l| l.kind == TaxLineKind::Disposition)
+            .expect("disposition row present");
+        assert_eq!(disp.leg_ref.as_deref(), Some("0xreal1"));
+
+        let csv = lines_to_csv_1099da(&export.lines);
+        // Header + 2 rows + trailing newline.
+        assert_eq!(csv.lines().count(), 3);
+        assert!(csv.contains(",fx_gain_loss,USDC,1000,1000.00,EURC,921.7"));
+        Ok(())
     }
 
     #[test]
