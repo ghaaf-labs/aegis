@@ -79,11 +79,7 @@ pub struct TaxExport {
 /// Walk every confirmed leg for `portfolio_id` in `year`, attribute FIFO
 /// cost basis from `cost_basis_lots`, and emit tax lines. Mock rows
 /// (`tx_hash IS NULL`) are *counted* but not emitted.
-pub async fn export_portfolio(
-    pool: &PgPool,
-    portfolio_id: Uuid,
-    year: i32,
-) -> Result<TaxExport> {
+pub async fn export_portfolio(pool: &PgPool, portfolio_id: Uuid, year: i32) -> Result<TaxExport> {
     let year_start = chrono::NaiveDate::from_ymd_opt(year, 1, 1)
         .unwrap()
         .and_hms_opt(0, 0, 0)
@@ -154,8 +150,8 @@ pub async fn export_portfolio(
             "fx_stablefx" => {
                 let src = leg.src_symbol.clone().unwrap_or_else(|| "USDC".into());
                 let dest = leg.dest_symbol.clone().unwrap_or_else(|| "EURC".into());
-                let proceeds = Decimal::from_f64(leg.min_out.unwrap_or(leg.amount_usdc))
-                    .unwrap_or_default();
+                let proceeds =
+                    Decimal::from_f64(leg.min_out.unwrap_or(leg.amount_usdc)).unwrap_or_default();
                 let gain = proceeds - amount;
                 lines.push(TaxLine {
                     occurred_at: confirmed_at,
@@ -190,8 +186,8 @@ pub async fn export_portfolio(
                 });
             }
             "redeem_usyc" => {
-                let proceeds = Decimal::from_f64(leg.min_out.unwrap_or(leg.amount_usdc))
-                    .unwrap_or_default();
+                let proceeds =
+                    Decimal::from_f64(leg.min_out.unwrap_or(leg.amount_usdc)).unwrap_or_default();
                 let gain = proceeds - amount;
                 lines.push(TaxLine {
                     occurred_at: confirmed_at,
@@ -214,8 +210,8 @@ pub async fn export_portfolio(
             "local_swap" | "cross_chain_mint" => {
                 let src = leg.src_symbol.clone().unwrap_or_else(|| "USDC".into());
                 let dest = leg.dest_symbol.clone().unwrap_or_else(|| "USDC".into());
-                let proceeds = Decimal::from_f64(leg.min_out.unwrap_or(leg.amount_usdc))
-                    .unwrap_or_default();
+                let proceeds =
+                    Decimal::from_f64(leg.min_out.unwrap_or(leg.amount_usdc)).unwrap_or_default();
                 let basis_match = match_fifo_basis(pool, portfolio_id, &src, amount).await?;
                 let basis_usd = basis_match.unwrap_or(amount);
                 let gain = proceeds - basis_usd;
@@ -349,7 +345,11 @@ pub fn lines_to_csv_1099da(lines: &[TaxLine]) -> String {
     for line in lines {
         let year = line.occurred_at.year();
         let date = line.occurred_at.format("%Y-%m-%d").to_string();
-        let short_long = if line.holding_days >= 365 { "long" } else { "short" };
+        let short_long = if line.holding_days >= 365 {
+            "long"
+        } else {
+            "short"
+        };
         let asset_out = line.asset_out.clone().unwrap_or_default();
         let qty_out = line.qty_out.map(format_qty).unwrap_or_default();
         let tx_ref = line.leg_ref.clone().unwrap_or_default();
@@ -495,17 +495,19 @@ mod tests {
         assert_eq!(csv.lines().count(), 5);
 
         // Disposition gain is negative; short-term (< 365 holding days).
-        assert!(csv.contains(",disposition,USDC,1000,1000.00,USDT,999.5,999.50,-0.50,30,short,0xdeadbeef"));
+        assert!(csv.contains(
+            ",disposition,USDC,1000,1000.00,USDT,999.5,999.50,-0.50,30,short,0xdeadbeef"
+        ));
         // Acquisition row carries no gain.
         assert!(csv.contains(",acquisition,USYC,500,500.00,USDC,500,0.00,0.00,0,short,0xabc"));
         // FX gain/loss against the StableFX mid (0.9217).
-        assert!(csv.contains(
-            ",fx_gain_loss,USDC,1000,1000.00,EURC,921.7,921.70,-78.30,14,short,0xfx1"
-        ));
+        assert!(
+            csv.contains(",fx_gain_loss,USDC,1000,1000.00,EURC,921.7,921.70,-78.30,14,short,0xfx1")
+        );
         // USYC interest realized as ordinary income; holding_days ≥ 365 → long.
-        assert!(csv.contains(
-            ",income_usyc,USDC,510,500.00,USYC,500,510.00,10.00,400,long,0xredeem"
-        ));
+        assert!(
+            csv.contains(",income_usyc,USDC,510,500.00,USYC,500,510.00,10.00,400,long,0xredeem")
+        );
         // Tax year column == event year.
         assert!(csv.contains("2026,2026-04-15,"));
     }
@@ -513,8 +515,8 @@ mod tests {
     #[test]
     fn fifo_basis_takes_oldest_lot_first() {
         let lots = vec![
-            (dec("100"), dec("101")),  // oldest, $1.01/u
-            (dec("50"), dec("60")),    // $1.20/u
+            (dec("100"), dec("101")), // oldest, $1.01/u
+            (dec("50"), dec("60")),   // $1.20/u
         ];
         // Dispose 30 units → all from the oldest lot.
         let basis = attribute_fifo_basis(&lots, dec("30"));
@@ -524,8 +526,8 @@ mod tests {
     #[test]
     fn fifo_basis_spans_multiple_lots() {
         let lots = vec![
-            (dec("100"), dec("100")),  // $1.00/u
-            (dec("100"), dec("120")),  // $1.20/u
+            (dec("100"), dec("100")), // $1.00/u
+            (dec("100"), dec("120")), // $1.20/u
         ];
         // Dispose 150 units → 100 from lot 1 ($100) + 50 from lot 2 ($60).
         let basis = attribute_fifo_basis(&lots, dec("150"));
@@ -611,9 +613,7 @@ mod tests {
         //  - 1 local_swap with a real tx_hash (becomes a Disposition row)
         //  - 1 fx_stablefx USDC→EURC (becomes the FxGainLoss row)
         //  - 1 leg with NULL tx_hash (must be excluded, counted)
-        let when = chrono::Utc
-            .with_ymd_and_hms(2026, 3, 1, 12, 0, 0)
-            .unwrap();
+        let when = chrono::Utc.with_ymd_and_hms(2026, 3, 1, 12, 0, 0).unwrap();
         sqlx::query(
             "INSERT INTO rebalance_legs
                  (rebalance_id, leg_index, kind, src_symbol, dest_symbol,

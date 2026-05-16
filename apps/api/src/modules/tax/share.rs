@@ -61,10 +61,7 @@ pub async fn create_share_token(
 /// Resolve a token to `(user_id, portfolio_id, year)`. Returns `None` if
 /// the row is missing, expired, or revoked — the handler treats all three
 /// as 404 to avoid leaking which tokens existed.
-pub async fn resolve_share_token(
-    pool: &PgPool,
-    token: &str,
-) -> Result<Option<(Uuid, Uuid, i32)>> {
+pub async fn resolve_share_token(pool: &PgPool, token: &str) -> Result<Option<(Uuid, Uuid, i32)>> {
     let row: Option<(Uuid, Uuid, i32)> = sqlx::query_as(
         "SELECT user_id, portfolio_id, year
          FROM tax_share_tokens
@@ -79,11 +76,7 @@ pub async fn resolve_share_token(
 }
 
 /// Revoke a token owned by `user_id`. Idempotent.
-pub async fn revoke_share_token(
-    pool: &PgPool,
-    user_id: Uuid,
-    token_id: Uuid,
-) -> Result<()> {
+pub async fn revoke_share_token(pool: &PgPool, user_id: Uuid, token_id: Uuid) -> Result<()> {
     sqlx::query(
         "UPDATE tax_share_tokens
             SET revoked_at = NOW()
