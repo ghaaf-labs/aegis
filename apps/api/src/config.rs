@@ -170,6 +170,12 @@ pub struct Config {
     /// already-persisted rows directly from Postgres and is *not* gated, so
     /// the model card keeps working even with the flag off.
     pub regime_backtest_enabled: bool,
+
+    /// F-CONF-7: gates the nightly calibration trainer, the per-decision
+    /// calibration apply step, and the critic's counterfactual second pass.
+    /// When off, the existing flat raw confidence is shown unchanged (no
+    /// new DB writes to `calibrations` or `calibrated_predictions`).
+    pub calibrated_conf_enabled: bool,
 }
 
 impl Config {
@@ -279,6 +285,7 @@ impl Config {
                 .unwrap_or_else(|_| "http://localhost:8080".into()),
 
             regime_backtest_enabled: parse_or("REGIME_BACKTEST_ENABLED", false)?,
+            calibrated_conf_enabled: parse_or("CALIBRATED_CONF_ENABLED", false)?,
         };
 
         cfg.validate()
@@ -427,6 +434,7 @@ mod tests {
             public_base_url: "http://localhost:3000".into(),
             api_base_url: "http://localhost:8080".into(),
             regime_backtest_enabled: false,
+            calibrated_conf_enabled: false,
         }
     }
 
