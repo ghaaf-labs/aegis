@@ -16,3 +16,12 @@
 
 pub mod handlers;
 pub mod service;
+pub mod types;
+
+// Re-exports for downstream agents (A3 handlers/middleware, A4 AUM stream).
+// The unused_imports allow is temporary; remove when consumers land.
+#[allow(unused_imports)]
+pub use types::{
+    Invoice, InvoiceStatus, LineItem, PerformanceBenchmark, PerformanceFee, PricingTier,
+    Subscription, SubscriptionStatus, Tier, TierCaps, UsageMeter,
+};
