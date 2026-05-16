@@ -35,21 +35,26 @@ pub fn spawn_price_ticker(http: Client, config: Arc<Config>, sse: SseSender, db:
 
             match crate::modules::market_data::service::fetch_snapshot(&http, &config).await {
                 Ok(snapshot) => {
-                    // Persist to price_history for real correlation, vol, backtests, etc.
+                    // Always persist (Phase 1 requirement). This must run even when no
+                    // UI clients are connected, otherwise backtests, outcome compressor,
+                    // scheduled regime flips, and calibration all get garbage/sparse data.
                     if let Err(e) = persist_price_history(&db, &snapshot.assets).await {
                         warn!("price_history persist failed (non-fatal): {e:#}");
                     }
 
-                    let captured = snapshot.captured_at;
-                    for asset in snapshot.assets {
-                        let tick = PriceTick {
-                            symbol: asset.symbol,
-                            price_usd: asset.price_usd,
-                            change_24h: asset.change_24h,
-                            source: "coingecko".into(),
-                            fetched_at: captured.max(Utc::now()),
-                        };
-                        let _ = sse.send(SseEvent::PriceTick(tick));
+                    // Only broadcast SSE if someone is listening (cheap bail for the broadcast part)
+                    if sse.receiver_count() > 0 {
+                        let captured = snapshot.captured_at;
+                        for asset in snapshot.assets {
+                            let tick = PriceTick {
+                                symbol: asset.symbol,
+                                price_usd: asset.price_usd,
+                                change_24h: asset.change_24h,
+                                source: "coingecko".into(),
+                                fetched_at: captured.max(Utc::now()),
+                            };
+                            let _ = sse.send(SseEvent::PriceTick(tick));
+                        }
                     }
                 }
                 Err(e) => warn!("sse ticker: market_data fetch failed: {e:#}"),

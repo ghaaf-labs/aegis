@@ -66,8 +66,13 @@ pub async fn classify(
     ai: &OpenRouterClient<'_>,
     snapshot: &MarketSnapshot,
     prompts: &crate::modules::ai::PromptRegistry,
+    db: Option<&crate::db::Db>,   // Phase 1: pass Some(&db) to get real vol/corr
 ) -> anyhow::Result<RegimeClassification> {
-    let signals = compute_signals(snapshot);
+    let signals = if let Some(db) = db {
+        compute_real_signals_from_history(db, snapshot).await
+    } else {
+        compute_signals(snapshot)
+    };
 
     let features = json!({
         "btc_vol_30d": signals.btc_vol_30d,
