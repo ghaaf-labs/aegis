@@ -68,6 +68,25 @@ through the executor is testnet USDC. What we _do_ claim:
 Every link above resolves to a public URL the judges can click — no demo
 videos hiding broken paths.
 
+## Revenue rails
+
+**AUM-fee stream (Pro 25 bps · Business 15 bps).** The Pro and Business
+tiers charge an annual AUM fee that streams continuously via Nanopayments
+on Arc — the literal pay-per-second metering use case the Nanopayments
+demo was built for. Lifecycle: a 24-hour ticker walks every active
+subscription, **snapshots** AUM from `portfolios.total_value_usd`,
+computes `accrued = aum × bps × Δt / (10_000 × 365.25 × 86400)` in
+`Decimal`, and persists an `aum_accruals` row (idempotent on
+`(subscription_id, period_start, period_end)`). The row is **rolled up**
+into the open invoice for the user's current monthly billing window
+(JSONB line item + `subtotal_usdc` bump). At period end the invoice
+transitions open → past_due (7-day grace) → **settled** by posting the
+total to the same Circle facilitator endpoint the per-rebalance fee
+already uses — payer = `users.arc_address`, payTo =
+`NANOPAYMENTS_SELLER_ADDRESS`. Gated behind `AUM_STREAM_ENABLED`
+(off by default; requires `BILLING_V2_ENABLED`). Sanity: a Pro user with
+constant $20k AUM accrues $0.13689/day, $4.107/month.
+
 ## How to reproduce the numbers
 
 ```bash
