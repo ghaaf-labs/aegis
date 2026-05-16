@@ -1,7 +1,7 @@
 use axum::{
     http::{HeaderValue, Method},
     middleware::from_fn_with_state,
-    routing::{get, post},
+    routing::{get, patch, post},
     Router,
 };
 use std::sync::Arc;
@@ -134,6 +134,19 @@ pub async fn build(db: Db, config: Config) -> Router {
         .route("/backtest/preview", post(backtest::handlers::preview))
         .route("/trustability/me", get(trustability::handlers::me))
         .route("/billing/referrals", get(billing::handlers::list_referrals))
+        .route(
+            "/billing/subscription",
+            get(billing::handlers::get_subscription),
+        )
+        .route(
+            "/billing/subscriptions",
+            post(billing::handlers::create_subscription),
+        )
+        .route(
+            "/billing/subscriptions/:id",
+            patch(billing::handlers::patch_subscription),
+        )
+        .route("/billing/invoices", get(billing::handlers::list_invoices))
         .route_layer(from_fn_with_state(state.clone(), require_auth));
 
     Router::new()
@@ -159,6 +172,8 @@ pub async fn build(db: Db, config: Config) -> Router {
         )
         .route("/treasury/usyc/rate", get(treasury::handlers::usyc_rate))
         .route("/fx/usdc-eurc", get(fx::handlers::basis))
+        // Public pricing catalogue — gated by BILLING_V2_ENABLED inside the handler.
+        .route("/billing/tiers", get(billing::handlers::list_tiers))
         // Public leaderboard — anonymous handles, no auth required.
         .route("/leaderboard", get(trustability::handlers::leaderboard))
         // Public diary + share-card data + unsubscribe — no auth.
