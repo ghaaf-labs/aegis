@@ -6,6 +6,11 @@ use aegis_api::{config, db, router};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // .env.local wins (gitignored personal overrides — real-exec keys etc.);
+    // .env fills the remaining defaults (committed hermetic baseline).
+    // Real env vars from shell / k8s secret / CI still beat both because
+    // dotenvy never overrides an already-set variable.
+    dotenvy::from_filename(".env.local").ok();
     dotenvy::dotenv().ok();
 
     tracing_subscriber::registry()

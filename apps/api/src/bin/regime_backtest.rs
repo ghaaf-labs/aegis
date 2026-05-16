@@ -54,6 +54,9 @@ fn parse_args() -> anyhow::Result<CliArgs> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Same load order as the main binary: .env.local (personal overrides,
+    // gitignored) wins over .env (committed defaults). Shell env beats both.
+    dotenvy::from_filename(".env.local").ok();
     dotenvy::dotenv().ok();
 
     tracing_subscriber::registry()
