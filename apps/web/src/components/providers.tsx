@@ -6,17 +6,27 @@ import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { usePortfolioStore } from "@/stores/portfolio";
 import { RealtimeBridge } from "@/components/realtime-bridge";
+import {
+  MOCK_PORTFOLIO,
+  MOCK_AGENT_DECISIONS,
+  MOCK_MARKET_SNAPSHOT,
+} from "@/lib/mock-data";
 
 // Only seed Zustand with mock data on the public /explore demo path. Authed
 // routes must hydrate from real server data so brand-new users see their own
 // (empty) portfolio, not the demo's $48k seed.
 function MockDataInitializer() {
   const pathname = usePathname();
-  const initMockData = usePortfolioStore((s) => s.initMockData);
+  const setPortfolios = usePortfolioStore((s) => s.setPortfolios);
+  const setDecisions = usePortfolioStore((s) => s.setDecisions);
+  const setMarketSnapshot = usePortfolioStore((s) => s.setMarketSnapshot);
   const isExplore = pathname?.startsWith("/explore") ?? false;
   useEffect(() => {
-    if (isExplore) initMockData();
-  }, [isExplore, initMockData]);
+    if (!isExplore) return;
+    setPortfolios([MOCK_PORTFOLIO]);
+    setDecisions(MOCK_AGENT_DECISIONS);
+    setMarketSnapshot(MOCK_MARKET_SNAPSHOT);
+  }, [isExplore, setPortfolios, setDecisions, setMarketSnapshot]);
   return null;
 }
 

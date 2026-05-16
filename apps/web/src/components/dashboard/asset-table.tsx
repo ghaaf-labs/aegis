@@ -10,7 +10,6 @@ import {
   formatNumber,
   changeColor,
 } from "@/lib/utils";
-import { MOCK_PRICES } from "@/lib/mock-data";
 
 interface Props {
   showActions?: boolean;
@@ -33,14 +32,9 @@ export function AssetTable({ showActions = false }: Props) {
       ? "text-yellow-400"
       : "text-white";
 
-  // Prefer live snapshot prices over mocks for freshness
-  const livePriceMap = snapshot
+  const priceMap = snapshot
     ? Object.fromEntries(snapshot.assets.map((a) => [a.symbol, a]))
     : {};
-  const priceMap = {
-    ...Object.fromEntries(MOCK_PRICES.map((p) => [p.symbol, p])),
-    ...livePriceMap,
-  };
 
   return (
     <Card>
@@ -146,7 +140,9 @@ export function AssetTable({ showActions = false }: Props) {
           </tbody>
         </table>
         <div className="px-5 py-2 text-[10px] text-text-mut font-mono border-t border-white/5">
-          Prices via CoinGecko · live snapshot
+          {snapshot
+            ? "Prices via CoinGecko · live snapshot"
+            : "Awaiting first price tick · via CoinGecko"}
         </div>
       </CardContent>
     </Card>

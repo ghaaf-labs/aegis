@@ -12,12 +12,6 @@ import type {
   PriceTick,
   WalletInfo,
 } from "@/types";
-import {
-  MOCK_PORTFOLIO,
-  MOCK_AGENT_DECISIONS,
-  MOCK_MARKET_SNAPSHOT,
-} from "@/lib/mock-data";
-
 export interface RegimeState {
   current: MarketRegime;
   previous: MarketRegime | null;
@@ -61,7 +55,6 @@ interface PortfolioState {
   setSseConnected: (v: boolean) => void;
   pushToolInvocation: (t: AgentToolInvoked) => void;
   pushAbstain: (a: AgentAbstained) => void;
-  initMockData: () => void;
 }
 
 const DEFAULT_REGIME: RegimeState = {
@@ -132,14 +125,6 @@ export const usePortfolioStore = create<PortfolioState>()(
         set((state) => ({
           abstains: [abstain, ...state.abstains].slice(0, 10),
         })),
-
-      initMockData: () =>
-        set({
-          portfolios: [MOCK_PORTFOLIO],
-          activePortfolioId: MOCK_PORTFOLIO.id,
-          decisions: MOCK_AGENT_DECISIONS,
-          marketSnapshot: MOCK_MARKET_SNAPSHOT,
-        }),
     }),
     { name: "aegis-portfolio" },
   ),
