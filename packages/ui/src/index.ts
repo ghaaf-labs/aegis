@@ -19,3 +19,6 @@ export {
   ModelBadge,
   ProvenanceLine,
 } from "./brutal/badges";
+
+export { Skeleton } from "./brutal/skeleton";
+export type { SkeletonProps } from "./brutal/skeleton";
