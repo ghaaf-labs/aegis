@@ -15,9 +15,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 use aegis_api::config::Config;
 use aegis_api::db;
 use aegis_api::modules::ai::{OpenRouterClient, PromptRegistry};
-use aegis_api::modules::risk_engine::regime_backtest::{
-    run_backtest, OpenRouterRegimeClassifier,
-};
+use aegis_api::modules::risk_engine::regime_backtest::{run_backtest, OpenRouterRegimeClassifier};
 
 #[derive(Debug)]
 struct CliArgs {
@@ -99,7 +97,10 @@ async fn main() -> anyhow::Result<()> {
     println!("Regime backtest complete");
     println!("  eval_run_id      : {}", run.eval_run_id);
     println!("  model_slug       : {}", run.model_slug);
-    println!("  period           : {} → {}", run.period_start, run.period_end);
+    println!(
+        "  period           : {} → {}",
+        run.period_start, run.period_end
+    );
     println!("  samples          : {}", run.samples_count);
     println!("  accuracy         : {:.4}", run.accuracy);
     println!("  precision (macro): {:.4}", run.precision_macro);

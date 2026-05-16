@@ -10,7 +10,7 @@ use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLay
 use crate::middleware::auth::require_auth;
 use crate::modules::{
     agent, ai, analytics, backtest, billing, diary, digest, faucet, fx, gateway, market_data,
-    paymaster, portfolio, rebalance, scheduler,
+    paymaster, portfolio, rebalance, risk_engine, scheduler,
     sse::{self, SseSender},
     tax, treasury, trustability, wallet,
 };
@@ -134,6 +134,16 @@ pub async fn build(db: Db, config: Config) -> Router {
         .route("/backtest/preview", post(backtest::handlers::preview))
         .route("/trustability/me", get(trustability::handlers::me))
         .route("/billing/referrals", get(billing::handlers::list_referrals))
+        // F-REG-4 — admin regime-backtest endpoints. Auth-required; also
+        // gated by REGIME_BACKTEST_ENABLED inside the handlers.
+        .route(
+            "/admin/regime/evaluations",
+            get(risk_engine::handlers::list_evaluations),
+        )
+        .route(
+            "/admin/regime/backtest",
+            post(risk_engine::handlers::kick_off_backtest),
+        )
         .route_layer(from_fn_with_state(state.clone(), require_auth));
 
     Router::new()
@@ -161,6 +171,11 @@ pub async fn build(db: Db, config: Config) -> Router {
         .route("/fx/usdc-eurc", get(fx::handlers::basis))
         // Public leaderboard — anonymous handles, no auth required.
         .route("/leaderboard", get(trustability::handlers::leaderboard))
+        // F-REG-4 — public read-only alias for the /about/regime model card.
+        .route(
+            "/about/regime/latest",
+            get(risk_engine::handlers::latest_public),
+        )
         // Public diary + share-card data + unsubscribe — no auth.
         .route("/diary/wallet/:wallet", get(diary::handlers::by_wallet))
         .route(

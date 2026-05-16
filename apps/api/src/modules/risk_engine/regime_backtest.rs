@@ -85,7 +85,10 @@ impl<'a> RegimeClassifier for OpenRouterRegimeClassifier<'a> {
             "btc_dominance": 50.0f64,
         });
         let mut ctx = HashMap::new();
-        ctx.insert("features_json", serde_json::to_string_pretty(&features_json)?);
+        ctx.insert(
+            "features_json",
+            serde_json::to_string_pretty(&features_json)?,
+        );
         let prompt = self.prompts.render(PromptKey::Regime, &ctx);
 
         let mut attempt = 0u32;
@@ -232,14 +235,7 @@ pub async fn run_backtest(
 
     let run = compute_metrics(samples.as_slice());
     let eval_run_id = Uuid::new_v4();
-    persist(
-        pool,
-        eval_run_id,
-        model_slug,
-        &run,
-        &samples,
-    )
-    .await?;
+    persist(pool, eval_run_id, model_slug, &run, &samples).await?;
 
     Ok(EvalRun {
         eval_run_id,
@@ -252,10 +248,7 @@ async fn fetch_btc_daily_series(pool: &Db, years: u32) -> anyhow::Result<Vec<Dai
     fetch_daily_series(pool, "BTC", years).await
 }
 
-async fn fetch_companion_series(
-    pool: &Db,
-    years: u32,
-) -> HashMap<&'static str, Vec<DailyPrice>> {
+async fn fetch_companion_series(pool: &Db, years: u32) -> HashMap<&'static str, Vec<DailyPrice>> {
     let mut out = HashMap::new();
     for sym in ["ETH", "SOL"] {
         if let Ok(s) = fetch_daily_series(pool, sym, years).await {
@@ -317,8 +310,7 @@ async fn walk_windows(
         let f = compute_features(btc, others, i);
         let realized = realized_label(&btc[i..]);
         let out = classifier.classify(&f).await?;
-        let observed_at = Utc
-            .from_utc_datetime(&f.as_of.and_hms_opt(0, 0, 0).unwrap_or_default());
+        let observed_at = Utc.from_utc_datetime(&f.as_of.and_hms_opt(0, 0, 0).unwrap_or_default());
         samples.push(EvalSample {
             observed_at,
             predicted_label: out.label,
@@ -385,7 +377,9 @@ fn compute_features(
 }
 
 fn log_returns(s: &[DailyPrice]) -> Vec<f64> {
-    s.windows(2).map(|w| (w[1].price / w[0].price).ln()).collect()
+    s.windows(2)
+        .map(|w| (w[1].price / w[0].price).ln())
+        .collect()
 }
 
 fn annualized_std(rets: &[f64]) -> f64 {
@@ -514,8 +508,14 @@ pub fn compute_metrics(samples: &[EvalSample]) -> EvalRun {
     for r in REGIMES {
         let idx = regime_index(r);
         let tp = confusion[idx][idx] as f64;
-        let fp = (0..3).filter(|&j| j != idx).map(|j| confusion[idx][j] as f64).sum::<f64>();
-        let fn_ = (0..3).filter(|&j| j != idx).map(|j| confusion[j][idx] as f64).sum::<f64>();
+        let fp = (0..3)
+            .filter(|&j| j != idx)
+            .map(|j| confusion[idx][j] as f64)
+            .sum::<f64>();
+        let fn_ = (0..3)
+            .filter(|&j| j != idx)
+            .map(|j| confusion[j][idx] as f64)
+            .sum::<f64>();
         let support = (tp + fn_) as u32;
         let precision = if tp + fp > 0.0 { tp / (tp + fp) } else { 0.0 };
         let recall = if tp + fn_ > 0.0 { tp / (tp + fn_) } else { 0.0 };
@@ -734,10 +734,11 @@ pub async fn list_latest(pool: &Db, limit: i64) -> anyhow::Result<Vec<ModelEvalu
 /// True iff there's at least one stored eval row for the regime task.
 #[allow(dead_code)]
 pub async fn has_any(pool: &Db) -> anyhow::Result<bool> {
-    let row: (bool,) = sqlx::query_as("SELECT EXISTS(SELECT 1 FROM model_evaluations WHERE task = $1)")
-        .bind(TASK)
-        .fetch_one(pool)
-        .await?;
+    let row: (bool,) =
+        sqlx::query_as("SELECT EXISTS(SELECT 1 FROM model_evaluations WHERE task = $1)")
+            .bind(TASK)
+            .fetch_one(pool)
+            .await?;
     Ok(row.0)
 }
 
@@ -909,7 +910,11 @@ mod tests {
             for r in REGIMES {
                 probs.insert(
                     r,
-                    if r == self.label { self.confidence } else { leftover },
+                    if r == self.label {
+                        self.confidence
+                    } else {
+                        leftover
+                    },
                 );
             }
             Ok(ClassifierOutput {
