@@ -51,7 +51,7 @@ Three sub-fixes shipped together (also closes `F-IRIS-1`):
 
 ## Circle Wallets API path staleness
 
-**Tag:** `F-WALLET-1` · **Status:** open · **Surfaced:** 2026-05-16 (N0.9 smoke)
+**Tag:** `F-WALLET-1` · **Status:** partially closed (centralised paths landed; live verification pending) · **Surfaced:** 2026-05-16 (N0.9 smoke) · **Updated:** 2026-05-17 (HS-3)
 
 Smoke against the real Circle API on 2026-05-16 with `CIRCLE_API_KEY=TEST_API_KEY:…` showed:
 
@@ -61,7 +61,13 @@ Smoke against the real Circle API on 2026-05-16 with `CIRCLE_API_KEY=TEST_API_KE
 
 **Likely cause**: Circle has reorganized Wallets-API endpoints between the v1 Programmable Wallets surface (which the codebase references) and the current Developer-Controlled-Wallets v1/w3s surface. The CircleProvider needs a path audit against the live Circle docs before the next signup flow ships.
 
-**Action** (do during N15 browser smoke, OR earlier if first signup attempt 404s): cross-reference each call site in `apps/api/src/modules/wallet/provider.rs` against `developers.circle.com/w3s` and update path strings. Tests will still pass under `MOCK_CIRCLE=true` so no regression risk locally.
+**HS-3 (2026-05-17)** — refactor only, no path flip:
+
+- Centralised the four call-site path strings into `apps/api/src/modules/wallet/provider.rs::paths` (a private `mod paths`). Flipping a path is now a 4-line edit instead of grep-and-replace across the file.
+- Documented the likely W3S target shape in the module header (`/v1/w3s/users`, `/v1/w3s/user/token`, `/v1/w3s/wallets`).
+- Did NOT change the path strings themselves — that requires a live verification against `CIRCLE_API_KEY` that this session can't perform safely. The flip should happen during N15 browser smoke OR earlier when the user attempts the first real signup. Tests under `MOCK_CIRCLE=true` continue to pass.
+
+**Remaining action** (gated on live access): hit each path under `https://api-sandbox.circle.com/v1/w3s/*` with curl + the real `CIRCLE_API_KEY`, confirm the request/response shape matches `CircleWalletResp`, and flip the four strings in `paths`. Then re-run the N0.9 smoke from the prior plan.
 
 ## Budget guard enforcement (call-time warn) — RESOLVED 2026-05-17
 
