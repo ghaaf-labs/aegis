@@ -1,0 +1,45 @@
+{
+  "binary": { "encoding": "hex", "data": [] },
+  "parsed": [
+    {
+      "id": "e62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43",
+      "price": {
+        "price": "6723418000000",
+        "conf": "1200000000",
+        "expo": -8,
+        "publish_time": 1747512345
+      },
+      "ema_price": {
+        "price": "6700000000000",
+        "conf": "1200000000",
+        "expo": -8,
+        "publish_time": 1747512345
+      },
+      "metadata": {
+        "slot": 312456789,
+        "proof_available_time": 1747512345,
+        "prev_publish_time": 1747512344
+      }
+    },
+    {
+      "id": "5de33a9112c2b700b8d30b8a3402c103578ccfa2765696471cc672bd5cf6ac52",
+      "price": {
+        "price": "50000000",
+        "conf": "5000000",
+        "expo": -8,
+        "publish_time": 1747512345
+      },
+      "ema_price": {
+        "price": "50000000",
+        "conf": "5000000",
+        "expo": -8,
+        "publish_time": 1747512345
+      },
+      "metadata": {
+        "slot": 312456789,
+        "proof_available_time": 1747512345,
+        "prev_publish_time": 1747512344
+      }
+    }
+  ]
+}

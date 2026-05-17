@@ -59,7 +59,7 @@ pub async fn harvestable_losses(
     .fetch_all(&state.db)
     .await?;
 
-    let snapshot = fetch_snapshot(&state.http, &state.config)
+    let snapshot = fetch_snapshot(state.prices.as_ref())
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("market snapshot: {e}")))?;
     let price_for = build_price_map(&snapshot);

@@ -603,7 +603,7 @@ async fn record_disposal_for_leg(state: &AppState, portfolio_id: Uuid, leg: &Leg
     // quantity is known only by the destination-chain swap router; the
     // executor's job is to close enough basis to keep harvest signals
     // accurate, not to be the source of truth for fills.
-    let snapshot = crate::modules::market_data::service::fetch_snapshot(&state.http, &state.config)
+    let snapshot = crate::modules::market_data::service::fetch_snapshot(state.prices.as_ref())
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("market snapshot: {e}")))?;
     let price = snapshot

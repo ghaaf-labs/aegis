@@ -12,6 +12,7 @@ pub mod market_data;
 pub mod observability;
 pub mod paymaster;
 pub mod portfolio;
+pub mod prices;
 pub mod rebalance;
 pub mod risk_engine;
 pub mod scheduler;

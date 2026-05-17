@@ -460,53 +460,37 @@ async fn propose_defensive_plan(
     Ok(Some(rebalance_id))
 }
 
-/// Sample the current stablecoin prices. USDC/EURC come from CoinGecko via
-/// the existing market-data snapshot; USYC defaults to 1.00 because Hashnote
-/// hasn't surfaced a public oracle yet.
+/// Sample the current stablecoin prices via the platform price provider.
+/// USDC/EURC come straight from the provider; USYC defaults to 1.00 because
+/// Hashnote hasn't surfaced a public oracle yet. EURC's USD price is converted
+/// through a 1.085 EUR/USD mid so the threshold semantics stay "EURC vs 1 EURC".
 ///
-/// Failures fall back to "1.00" for every symbol so a CoinGecko outage never
+/// Failures fall back to "1.00" for every symbol so an upstream outage never
 /// triggers a false depeg.
 async fn sample_stable_prices(state: &AppState) -> HashMap<String, f64> {
     let mut out: HashMap<String, f64> =
         PEG_ASSETS.iter().map(|s| ((*s).to_string(), 1.0)).collect();
 
-    // CoinGecko reports `usd-coin` + `euro-coin`; this is best-effort and
-    // explicitly tolerant — the fallback above already gives every asset a
-    // safe default if the request flakes.
-    let url =
-        "https://api.coingecko.com/api/v3/simple/price?ids=usd-coin,euro-coin&vs_currencies=usd";
-    let mut req = state.http.get(url);
-    if let Some(key) = &state.config.coingecko_api_key {
-        req = req.header("x-cg-demo-api-key", key);
-    }
-    match req.send().await {
-        Ok(resp) if resp.status().is_success() => {
-            if let Ok(json) = resp.json::<serde_json::Value>().await {
-                if let Some(p) = json
-                    .get("usd-coin")
-                    .and_then(|v| v.get("usd"))
-                    .and_then(|v| v.as_f64())
-                {
-                    out.insert("USDC".into(), p);
-                }
-                if let Some(p) = json
-                    .get("euro-coin")
-                    .and_then(|v| v.get("usd"))
-                    .and_then(|v| v.as_f64())
-                {
-                    // EURC's USD price isn't a depeg — convert via current
-                    // EUR-USD basis so the threshold semantics stay "EURC vs
-                    // 1 EURC". Approximate 1 EURC ≈ 1.085 USD as a stable
-                    // mid; the StableFX module owns the real basis but we
-                    // prefer a tolerant default over an extra dependency.
-                    let eur_usd = 1.085;
-                    let eurc_to_eur = p / eur_usd;
-                    out.insert("EURC".into(), eurc_to_eur);
+    let symbols: Vec<&_> = ["USDC", "EURC"]
+        .iter()
+        .filter_map(|t| crate::modules::prices::lookup_symbol(t))
+        .collect();
+    match state.prices.fetch_spot(&symbols).await {
+        Ok(quotes) => {
+            for q in quotes {
+                match q.ticker {
+                    "USDC" => {
+                        out.insert("USDC".into(), q.price_usd);
+                    }
+                    "EURC" => {
+                        let eur_usd = 1.085;
+                        out.insert("EURC".into(), q.price_usd / eur_usd);
+                    }
+                    _ => {}
                 }
             }
         }
-        Ok(resp) => debug!(status=%resp.status(), "peg monitor: stablecoin price fetch non-200"),
-        Err(e) => debug!(error=%e, "peg monitor: stablecoin price fetch failed"),
+        Err(e) => debug!(error=%e, "peg monitor: price provider fetch failed"),
     }
 
     out

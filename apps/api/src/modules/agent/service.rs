@@ -130,7 +130,7 @@ pub async fn analyze_portfolio(
     let user_profile = fetch_user_profile(state, portfolio.user_id).await?;
 
     let snapshot =
-        crate::modules::market_data::service::fetch_snapshot(&state.http, &state.config).await?;
+        crate::modules::market_data::service::fetch_snapshot(state.prices.as_ref()).await?;
 
     let ai = OpenRouterClient::new(&state.http, &state.config);
 
@@ -162,7 +162,7 @@ pub async fn analyze_portfolio(
         .await
         .map(|r| r.annualized_yield)
         .unwrap_or(0.0510);
-    let eurc_basis = fx::service::usdc_eurc_basis(&state.http, &state.config)
+    let eurc_basis = fx::service::usdc_eurc_basis(state.prices.as_ref(), &state.config)
         .await
         .map(|b| b.mid_rate)
         .unwrap_or(0.92);

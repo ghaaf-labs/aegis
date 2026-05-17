@@ -1,0 +1,32 @@
+{
+  "coins": {
+    "coingecko:bitcoin": {
+      "decimals": 8,
+      "symbol": "BTC",
+      "price": 67234.18,
+      "timestamp": 1747512345,
+      "confidence": 0.99
+    },
+    "coingecko:ethereum": {
+      "decimals": 18,
+      "symbol": "ETH",
+      "price": 3148.72,
+      "timestamp": 1747512345,
+      "confidence": 0.99
+    },
+    "coingecko:usd-coin": {
+      "decimals": 6,
+      "symbol": "USDC",
+      "price": 0.9998,
+      "timestamp": 1747512345,
+      "confidence": 0.99
+    },
+    "coingecko:euro-coin": {
+      "decimals": 6,
+      "symbol": "EURC",
+      "price": 1.0852,
+      "timestamp": 1747512345,
+      "confidence": 0.98
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "coins": {
+    "coingecko:bitcoin": 1.42,
+    "coingecko:ethereum": -0.83,
+    "coingecko:usd-coin": 0.01,
+    "coingecko:euro-coin": -0.04
+  }
+}
