@@ -2,13 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import {
-  Loader2,
-  RefreshCw,
-  TrendingUp,
-  TrendingDown,
-  AlertTriangle,
-} from "lucide-react";
+import { Loader2, RefreshCw, TrendingUp, TrendingDown } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -90,16 +84,16 @@ export function RebalanceModal({ open, onClose }: Props) {
 
         {!analyzed ? (
           <div className="space-y-4">
-            <div className="p-4 rounded-card bg-warn/10 border-brutal border-warn/30">
+            <div className="p-4 rounded-card bg-accent-agent/10 border-brutal border-accent-agent/30">
               <div className="flex items-start gap-2.5">
-                <AlertTriangle className="w-4 h-4 text-yellow-400 shrink-0 mt-0.5" />
+                <RefreshCw className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
                 <div>
-                  <p className="text-sm font-medium text-yellow-300 mb-1">
-                    Significant drift detected
+                  <p className="text-sm font-medium text-cyan-300 mb-1">
+                    Ready to analyze
                   </p>
                   <p className="text-xs text-gray-400">
                     {active?.name
-                      ? `Analyze "${active.name}" — the strategist + critic loop will propose a rebalance against your target allocation, market regime, and recent decisions.`
+                      ? `Run the strategist + critic loop on "${active.name}" — it will check your target allocation, current regime, and recent decisions before proposing any moves.`
                       : "Select a portfolio to analyze."}
                   </p>
                 </div>

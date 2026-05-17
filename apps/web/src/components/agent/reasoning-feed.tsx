@@ -137,6 +137,15 @@ export function AgentReasoningFeed() {
               <DecisionRow key={decision.id} decision={decision} index={i} />
             ))}
           </AnimatePresence>
+          {decisions.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-12 text-center px-6">
+              <Brain className="w-6 h-6 text-cyan-400/30 mb-3" />
+              <p className="text-xs font-mono text-text-mut">
+                No decisions yet — the agent will reason here when triggered by
+                drift, a regime flip, or your manual request.
+              </p>
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>

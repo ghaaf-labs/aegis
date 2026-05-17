@@ -37,6 +37,13 @@ export default function SignupPage() {
           <CreateWalletCard />
         </Suspense>
         <p className="mt-6 text-center text-xs font-mono text-text-mut">
+          Already have an account?{" "}
+          <Link href="/login" className="text-accent-pnl hover:underline">
+            Log back in
+          </Link>
+          .
+        </p>
+        <p className="mt-2 text-center text-xs font-mono text-text-mut">
           Just looking?{" "}
           <Link href="/explore" className="text-accent-agent hover:underline">
             Explore demo portfolios

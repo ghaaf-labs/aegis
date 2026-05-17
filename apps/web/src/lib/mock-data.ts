@@ -5,7 +5,7 @@ import type {
   AssetPrice,
 } from "@/types";
 
-export const MOCK_PRICES: AssetPrice[] = [
+const MOCK_PRICES: AssetPrice[] = [
   {
     symbol: "BTC",
     priceUsd: 67420.5,
@@ -212,16 +212,3 @@ export const MOCK_MARKET_SNAPSHOT: MarketSnapshot = {
   btcDominance: 54.3,
   capturedAt: new Date().toISOString(),
 };
-
-// Historical performance (30 days mock)
-export const MOCK_PERFORMANCE_DATA = Array.from({ length: 30 }, (_, i) => {
-  const date = new Date();
-  date.setDate(date.getDate() - (29 - i));
-  const base = 41_400;
-  const noise = Math.sin(i * 0.4) * 3_200 + Math.random() * 2_000 - 1_000;
-  return {
-    date: date.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-    value: Math.round(base + noise + i * 220),
-    benchmark: Math.round(base + i * 180 + Math.sin(i * 0.3) * 1_800),
-  };
-});

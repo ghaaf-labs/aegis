@@ -159,7 +159,7 @@ export function CreateWalletCard({ loginMode = false }: Props) {
         {mode === "otp-verify" && (
           <>
             <label className="block text-xs text-text-lo font-mono mb-2">
-              We emailed a code to {email}
+              We emailed a 6-digit code to {email}
             </label>
             <input
               value={code}
@@ -170,6 +170,12 @@ export function CreateWalletCard({ loginMode = false }: Props) {
               placeholder="000000"
               className="w-full px-3 py-2 bg-bg border-brutal border-border-default focus:border-border-hi rounded-sharp font-mono text-lg tracking-widest text-text-hi outline-none text-center"
             />
+            {code.length > 0 && code.length < 6 && (
+              <p className="mt-1 text-[11px] font-mono text-text-mut">
+                {6 - code.length} digit{6 - code.length !== 1 ? "s" : ""}{" "}
+                remaining
+              </p>
+            )}
           </>
         )}
 

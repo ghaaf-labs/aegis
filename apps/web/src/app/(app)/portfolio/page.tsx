@@ -1,11 +1,9 @@
 "use client";
-
-"use client";
-
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { Plus, RefreshCw } from "lucide-react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { AssetTable } from "@/components/dashboard/asset-table";
 import { RebalanceModal } from "@/components/portfolio/rebalance-modal";
@@ -23,19 +21,16 @@ export default function PortfolioPage() {
       <div className="flex flex-col items-center justify-center min-h-[40vh] text-center space-y-3">
         <p className="text-sm font-mono text-text-lo">No portfolio selected.</p>
         <p className="text-xs font-mono text-text-mut">
-          <button
-            onClick={() => router.push("/onboarding")}
-            className="text-accent-pnl hover:underline"
-          >
+          <Link href="/onboarding" className="text-accent-pnl hover:underline">
             Create a portfolio
-          </button>{" "}
+          </Link>{" "}
           or{" "}
-          <button
-            onClick={() => router.push("/strategies")}
+          <Link
+            href="/strategies"
             className="text-accent-agent hover:underline"
           >
             adopt a strategy
-          </button>{" "}
+          </Link>{" "}
           to get started.
         </p>
       </div>

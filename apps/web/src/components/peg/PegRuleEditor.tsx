@@ -151,11 +151,11 @@ export function PegRuleEditor() {
                       ${a.observedPrice.toFixed(4)} &lt; threshold $
                       {a.thresholdPrice.toFixed(4)}
                     </span>
-                    <span className="text-text-muted">
+                    <span className="text-text-mut">
                       &middot; {a.actionTaken.replace("_", " ")}
                     </span>
                   </span>
-                  <time className="text-text-muted">
+                  <time className="text-text-mut">
                     {new Date(a.observedAt).toLocaleTimeString()}
                   </time>
                 </li>
@@ -304,9 +304,9 @@ export function PegRuleEditor() {
         </BrutalCardHeader>
         <BrutalCardBody>
           {loading ? (
-            <p className="text-xs text-text-muted">Loading…</p>
+            <p className="text-xs text-text-mut">Loading…</p>
           ) : rules.length === 0 ? (
-            <p className="text-xs text-text-muted">
+            <p className="text-xs text-text-mut">
               No peg rules yet. Add one above.
             </p>
           ) : (
@@ -323,7 +323,7 @@ export function PegRuleEditor() {
                     <span className="font-mono">
                       &lt; ${rule.thresholdPrice.toFixed(4)}
                     </span>
-                    <span className="text-text-muted">
+                    <span className="text-text-mut">
                       window {rule.windowSeconds}s &middot;{" "}
                       {rule.actionKind.replace("_", " ")}
                       {rule.targetAsset ? ` → ${rule.targetAsset}` : ""}
