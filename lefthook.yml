@@ -26,6 +26,27 @@ pre-commit:
       glob: "*.{ts,tsx,js,jsx,md,json,yml,yaml,css}"
       run: pnpm exec prettier --write {staged_files}
       stage_fixed: true
+    # FE-CARD-1 — block rounded-(lg|xl|2xl) inside components/. Centralised
+    # cards live in @aegis/ui (rounded-sharp/rounded-card); the legacy
+    # rounded-lg/xl/2xl shapes are an explicit anti-pattern.
+    no-rounded-lg:
+      glob: "apps/web/src/components/**/*.tsx"
+      run: |
+        if grep -nE 'rounded-(lg|xl|2xl)' {staged_files} 2>/dev/null; then
+          echo "❌ rounded-(lg|xl|2xl) in apps/web/src/components/ — use rounded-sharp or rounded-card. See docs/04-design-system.md."
+          exit 1
+        fi
+    # FE-COLOR-1 — emerald in agent/decision/rebalance components is the
+    # PnL color leaking into agent surfaces. Tag a legit exception inline
+    # with `// PnL exception:` and the hook lets it through.
+    no-emerald-in-agent:
+      glob: "apps/web/src/components/{agent,decision,rebalance}/**/*.tsx"
+      run: |
+        # awk filter: ignore lines with the documented exception marker
+        if awk '!/PnL exception:/ && /(emerald|green)-/ { print FILENAME":"NR":"$0; found=1 } END { exit !found }' {staged_files} 2>/dev/null; then
+          echo "❌ emerald/green token in agent surface — use cyan/accent-agent. Tag with '// PnL exception:' if intentional."
+          exit 1
+        fi
 
 # Validate the branch name before push.
 # Also detect .env vs .env.example drift so .env.example never falls behind.
