@@ -39,6 +39,25 @@ Border radius: `2px` for buttons and pills, `4px` for cards. **Never** `rounded-
 
 Scale: `12 · 14 · 16 · 20 · 28 · 40` px. Tracking `-0.01em` on display sizes; default tracking otherwise.
 
+### Typography roles (FE-TYPO-1)
+
+A consistent role-to-class mapping so the same heading reads the same in every surface:
+
+| Role        | Tailwind classes                                  | Where it appears                                                |
+| ----------- | ------------------------------------------------- | --------------------------------------------------------------- |
+| Display     | `text-5xl md:text-6xl font-bold`                  | Landing hero only.                                              |
+| Page title  | `text-2xl md:text-3xl font-mono font-semibold`    | Top of every `(app)/` and `(public)/` page.                     |
+| Section     | `text-lg font-mono font-semibold`                 | Section headers inside a page (between cards).                  |
+| Body        | `text-sm text-text-hi`                            | Primary copy, modal descriptions, page subtitle.                |
+| Caption     | `text-xs text-text-lo`                            | Provenance lines, captions, secondary helper text.              |
+| Footer-mono | `text-[10px] font-mono uppercase tracking-widest` | Labels above values, status indicators, footnote-like markings. |
+
+Prefer one of these roles over a hand-rolled size; if a role doesn't fit, add it here first so the next surface inherits the same choice.
+
+### Data fetching (FE-API-1)
+
+Use `useApiQuery(key, fetcher)` from `apps/web/src/lib/use-api-query.ts` for client-side reads. Backed by a tiny in-memory `Map` cache with a default 30s staleAfterMs; refetch on next mount when stale. For writes, call the `apiClient.<method>()` singletons in `apps/web/src/lib/api.ts` directly — the wrapper is for reads only.
+
 ## The two-accent rule
 
 This is the rule that keeps the dual-accent system from looking like a casino:

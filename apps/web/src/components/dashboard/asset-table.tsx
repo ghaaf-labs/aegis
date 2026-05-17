@@ -1,6 +1,6 @@
 "use client";
 
-import { TrendingUp, TrendingDown, ArrowUpDown } from "lucide-react";
+import { TrendingUp, TrendingDown } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
@@ -10,13 +10,8 @@ import {
   formatNumber,
   changeColor,
 } from "@/lib/utils";
-import { MOCK_PRICES } from "@/lib/mock-data";
 
-interface Props {
-  showActions?: boolean;
-}
-
-export function AssetTable({ showActions = false }: Props) {
+export function AssetTable() {
   const portfolio = useActivePortfolio();
   const snapshot = usePortfolioStore((s) => s.marketSnapshot);
 
@@ -33,35 +28,35 @@ export function AssetTable({ showActions = false }: Props) {
       ? "text-yellow-400"
       : "text-white";
 
-  // Prefer live snapshot prices over mocks for freshness
-  const livePriceMap = snapshot
+  const priceMap = snapshot
     ? Object.fromEntries(snapshot.assets.map((a) => [a.symbol, a]))
     : {};
-  const priceMap = {
-    ...Object.fromEntries(MOCK_PRICES.map((p) => [p.symbol, p])),
-    ...livePriceMap,
-  };
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Holdings</CardTitle>
       </CardHeader>
-      <CardContent className="p-0">
-        <table className="w-full">
+      <CardContent className="p-0 overflow-x-auto">
+        <table className="w-full min-w-[640px]">
           <thead>
             <tr className="border-b border-white/5">
-              {[
-                "Asset",
-                "Price",
-                "24h",
-                "Holdings",
-                "Value",
-                "Weight vs Target",
-              ].map((h) => (
+              {(
+                [
+                  ["Asset", ""],
+                  ["Price", ""],
+                  ["24h", "hidden sm:table-cell"],
+                  ["Holdings", "hidden md:table-cell"],
+                  ["Value", ""],
+                  ["Weight vs Target", "hidden lg:table-cell"],
+                ] as const
+              ).map(([h, cls]) => (
                 <th
                   key={h}
-                  className="px-5 py-3 text-left text-[11px] font-medium text-gray-500 uppercase tracking-wider"
+                  className={
+                    "px-5 py-3 text-left text-[11px] font-medium text-gray-500 uppercase tracking-wider " +
+                    cls
+                  }
                 >
                   {h}
                 </th>
@@ -98,7 +93,7 @@ export function AssetTable({ showActions = false }: Props) {
                   >
                     {price ? formatCurrency(price.priceUsd) : "—"}
                   </td>
-                  <td className="px-5 py-3.5">
+                  <td className="px-5 py-3.5 hidden sm:table-cell">
                     {price && (
                       <span
                         className={`text-xs flex items-center gap-1 ${changeColor(price.change24h)}`}
@@ -112,13 +107,13 @@ export function AssetTable({ showActions = false }: Props) {
                       </span>
                     )}
                   </td>
-                  <td className="px-5 py-3.5 text-xs text-gray-400 font-mono">
+                  <td className="px-5 py-3.5 text-xs text-gray-400 font-mono hidden md:table-cell">
                     {formatNumber(alloc.quantity)}
                   </td>
                   <td className="px-5 py-3.5 text-sm text-white font-medium">
                     {formatCurrency(alloc.valueUsd)}
                   </td>
-                  <td className="px-5 py-3.5">
+                  <td className="px-5 py-3.5 hidden lg:table-cell">
                     <div className="flex items-center gap-2">
                       <div className="flex items-center gap-1">
                         <span className="text-xs text-gray-400 font-mono w-8">
@@ -146,7 +141,9 @@ export function AssetTable({ showActions = false }: Props) {
           </tbody>
         </table>
         <div className="px-5 py-2 text-[10px] text-text-mut font-mono border-t border-white/5">
-          Prices via CoinGecko · live snapshot
+          {snapshot
+            ? "Prices via CoinGecko · live snapshot"
+            : "Awaiting first price tick · via CoinGecko"}
         </div>
       </CardContent>
     </Card>

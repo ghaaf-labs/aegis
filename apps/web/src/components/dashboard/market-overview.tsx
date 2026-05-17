@@ -8,10 +8,20 @@ import { ProvenanceLine } from "@aegis/ui";
 
 export function MarketOverview() {
   const snapshot = usePortfolioStore((s) => s.marketSnapshot);
+  const livePrices = usePortfolioStore((s) => s.livePrices);
 
   if (!snapshot) return null;
 
-  const ageMs = Date.now() - new Date(snapshot.capturedAt).getTime();
+  // Overlay live SSE ticks on top of the snapshot capture. The snapshot is the
+  // historical anchor; live ticks freshen the price + 24h delta as they arrive.
+  const newestTickAt = Object.values(livePrices)
+    .map((t) => new Date(t.fetchedAt).getTime())
+    .reduce((max, t) => (t > max ? t : max), 0);
+  const effectiveCapturedAt =
+    newestTickAt > new Date(snapshot.capturedAt).getTime()
+      ? new Date(newestTickAt).toISOString()
+      : snapshot.capturedAt;
+  const ageMs = Date.now() - new Date(effectiveCapturedAt).getTime();
   const isStale = ageMs > 60_000; // > 1 minute
   const isVeryStale = ageMs > 300_000; // > 5 minutes
   const priceColor = isVeryStale
@@ -64,7 +74,15 @@ export function MarketOverview() {
         </div>
 
         <div className="border-t border-white/5 pt-3 space-y-2">
-          {snapshot.assets.slice(0, 4).map((asset) => {
+          {snapshot.assets.slice(0, 4).map((snapshotAsset) => {
+            const live = livePrices[snapshotAsset.symbol];
+            const asset = live
+              ? {
+                  ...snapshotAsset,
+                  priceUsd: live.priceUsd,
+                  change24h: live.change24h,
+                }
+              : snapshotAsset;
             const positive = asset.change24h >= 0;
             return (
               <div
@@ -97,8 +115,8 @@ export function MarketOverview() {
         {/* Provenance — trust surface (design system component) */}
         <div className="pt-2 border-t border-white/10">
           <ProvenanceLine
-            source="CoinGecko"
-            freshness={new Date(snapshot.capturedAt).toLocaleTimeString([], {
+            source={newestTickAt > 0 ? "CoinGecko · live tick" : "CoinGecko"}
+            freshness={new Date(effectiveCapturedAt).toLocaleTimeString([], {
               hour: "2-digit",
               minute: "2-digit",
             })}

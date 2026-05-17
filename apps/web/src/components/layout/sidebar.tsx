@@ -20,6 +20,7 @@ const BASE_NAV_ITEMS = [
   { href: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
   { href: "/portfolio", icon: PieChart, label: "Portfolio" },
   { href: "/settings", icon: Settings, label: "Settings" },
+  { href: "/settings/agent", icon: Shield, label: "Agent" },
 ];
 
 const NAV_ITEMS = PRICING_UI_ENABLED
@@ -33,10 +34,16 @@ export function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="w-[220px] shrink-0 flex flex-col border-r border-white/5 bg-gray-950/50">
+    <aside
+      className="w-[220px] shrink-0 flex flex-col border-r border-white/5 bg-gray-950/50"
+      aria-label="Primary navigation"
+    >
       {/* Logo */}
       <div className="flex items-center gap-2.5 px-5 py-5 border-b border-white/5">
-        <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center shrink-0">
+        <div
+          className="w-7 h-7 rounded-sharp bg-accent-agent flex items-center justify-center shrink-0"
+          aria-hidden="true"
+        >
           <Shield className="w-3.5 h-3.5 text-white" />
         </div>
         <span className="font-bold text-white text-sm tracking-tight">
@@ -55,14 +62,15 @@ export function Sidebar() {
             <Link
               key={href}
               href={href}
+              aria-current={active ? "page" : undefined}
               className={cn(
-                "flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all",
+                "flex items-center gap-3 px-3 py-2 rounded-sharp text-sm transition-all min-h-[44px]",
                 active
                   ? "bg-blue-600/15 text-blue-400 font-medium"
                   : "text-gray-500 hover:text-gray-300 hover:bg-white/5",
               )}
             >
-              <Icon className="w-4 h-4 shrink-0" />
+              <Icon className="w-4 h-4 shrink-0" aria-hidden="true" />
               {label}
             </Link>
           );
@@ -71,9 +79,9 @@ export function Sidebar() {
 
       {/* Agent status indicator */}
       <div className="px-4 py-4 border-t border-white/5">
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-500/5 border border-emerald-500/15">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="text-xs text-emerald-400 font-medium">
+        <div className="flex items-center gap-2 px-3 py-2 rounded-sharp bg-cyan-500/5 border border-cyan-500/30">
+          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+          <span className="text-xs text-cyan-300 font-mono uppercase tracking-widest">
             Agent active
           </span>
         </div>

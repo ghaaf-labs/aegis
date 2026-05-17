@@ -1,6 +1,13 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 
+// FE-SHAD-1 (phase 1): the four shadcn shims under components/ui/ now route
+// through neo-brutalism design tokens (border-brutal, rounded-card / -sharp,
+// bg-surface, bg-raised, accent-pnl / accent-agent) so every existing import
+// inherits the neo-brutalism contract without a call-site migration. The
+// wrapper files stay to keep call sites stable for this sprint; a phase-2
+// follow-up should delete them and import @aegis/ui primitives directly.
+
 const Card = React.forwardRef<
   HTMLDivElement,
   React.HTMLAttributes<HTMLDivElement>
@@ -8,7 +15,7 @@ const Card = React.forwardRef<
   <div
     ref={ref}
     className={cn(
-      "rounded-xl border border-white/8 bg-gray-950/60 backdrop-blur-sm text-card-foreground shadow-sm",
+      "border-brutal border-border-default rounded-card bg-surface text-text-default hover:shadow-brutal transition-[box-shadow] duration-100",
       className,
     )}
     {...props}
@@ -22,7 +29,10 @@ const CardHeader = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <div
     ref={ref}
-    className={cn("flex flex-col space-y-1 p-5 pb-3", className)}
+    className={cn(
+      "flex items-center justify-between px-4 py-3 border-b border-border-default",
+      className,
+    )}
     {...props}
   />
 ));
@@ -35,7 +45,7 @@ const CardTitle = React.forwardRef<
   <h3
     ref={ref}
     className={cn(
-      "text-sm font-semibold leading-none tracking-tight text-gray-400",
+      "text-sm font-mono font-semibold tracking-tight text-text-hi",
       className,
     )}
     {...props}
@@ -47,7 +57,7 @@ const CardContent = React.forwardRef<
   HTMLDivElement,
   React.HTMLAttributes<HTMLDivElement>
 >(({ className, ...props }, ref) => (
-  <div ref={ref} className={cn("p-5 pt-0", className)} {...props} />
+  <div ref={ref} className={cn("p-4", className)} {...props} />
 ));
 CardContent.displayName = "CardContent";
 

@@ -4,7 +4,7 @@ import { TrendingUp, TrendingDown, Wallet } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
 import { formatCurrency, formatPercent, changeColor } from "@/lib/utils";
-import { ProvenanceLine } from "@aegis/ui";
+import { ProvenanceLine, Skeleton } from "@aegis/ui";
 
 export function PortfolioSummaryCard() {
   const portfolio = useActivePortfolio();
@@ -14,7 +14,7 @@ export function PortfolioSummaryCard() {
     return (
       <Card className="col-span-1">
         <CardContent className="p-5">
-          <div className="h-24 shimmer rounded-lg" />
+          <Skeleton height="h-24" />
         </CardContent>
       </Card>
     );
@@ -59,13 +59,13 @@ export function PortfolioSummaryCard() {
         </div>
 
         <div className="mt-4 grid grid-cols-2 gap-3">
-          <div className="p-3 rounded-lg bg-white/3 border border-white/5">
+          <div className="p-3 rounded-sharp bg-raised border border-border-default">
             <p className="text-xs text-gray-500 mb-1">Assets</p>
             <p className="text-sm font-semibold text-white">
               {portfolio.allocations.length}
             </p>
           </div>
-          <div className="p-3 rounded-lg bg-white/3 border border-white/5">
+          <div className="p-3 rounded-sharp bg-raised border border-border-default">
             <p className="text-xs text-gray-500 mb-1">Risk Score</p>
             <div className="flex items-center gap-2">
               <p

@@ -11,13 +11,9 @@ import type {
   RegimeSignals,
   PriceTick,
   WalletInfo,
+  RebalanceStatus,
+  PegAlert,
 } from "@/types";
-import {
-  MOCK_PORTFOLIO,
-  MOCK_AGENT_DECISIONS,
-  MOCK_MARKET_SNAPSHOT,
-} from "@/lib/mock-data";
-
 export interface RegimeState {
   current: MarketRegime;
   previous: MarketRegime | null;
@@ -45,6 +41,10 @@ interface PortfolioState {
   toolInvocations: AgentToolInvoked[];
   /** Most-recent abstain events (capped at 10). */
   abstains: AgentAbstained[];
+  /** Latest status update per rebalance id — kept fresh by SSE. */
+  rebalanceStatuses: Record<string, RebalanceStatus>;
+  /** Most-recent peg-alert events (capped at 20). */
+  pegAlerts: PegAlert[];
 
   setPortfolios: (p: Portfolio[]) => void;
   addPortfolio: (p: Portfolio) => void;
@@ -61,7 +61,8 @@ interface PortfolioState {
   setSseConnected: (v: boolean) => void;
   pushToolInvocation: (t: AgentToolInvoked) => void;
   pushAbstain: (a: AgentAbstained) => void;
-  initMockData: () => void;
+  applyRebalanceStatus: (s: RebalanceStatus) => void;
+  pushPegAlert: (a: PegAlert) => void;
 }
 
 const DEFAULT_REGIME: RegimeState = {
@@ -88,6 +89,8 @@ export const usePortfolioStore = create<PortfolioState>()(
       unifiedUsdc: 0,
       toolInvocations: [],
       abstains: [],
+      rebalanceStatuses: {},
+      pegAlerts: [],
 
       setPortfolios: (portfolios) =>
         set((state) => ({
@@ -132,14 +135,17 @@ export const usePortfolioStore = create<PortfolioState>()(
         set((state) => ({
           abstains: [abstain, ...state.abstains].slice(0, 10),
         })),
-
-      initMockData: () =>
-        set({
-          portfolios: [MOCK_PORTFOLIO],
-          activePortfolioId: MOCK_PORTFOLIO.id,
-          decisions: MOCK_AGENT_DECISIONS,
-          marketSnapshot: MOCK_MARKET_SNAPSHOT,
-        }),
+      applyRebalanceStatus: (status) =>
+        set((state) => ({
+          rebalanceStatuses: {
+            ...state.rebalanceStatuses,
+            [status.id]: status,
+          },
+        })),
+      pushPegAlert: (alert) =>
+        set((state) => ({
+          pegAlerts: [alert, ...state.pegAlerts].slice(0, 20),
+        })),
     }),
     { name: "aegis-portfolio" },
   ),

@@ -58,6 +58,30 @@ jobs:
         env:
           NEXT_PUBLIC_API_URL: http://localhost:8080
 
+  # ── Frontend e2e (Playwright, advisory while specs stabilize) ───────────
+  web-e2e:
+    name: Web e2e (Playwright)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @aegis/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @aegis/web exec playwright test --reporter=line
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8080
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report
+          retention-days: 14
+
   # ── Frontend coverage (advisory, non-blocking) ───────────────────────────
   web-coverage:
     name: Web coverage (advisory)

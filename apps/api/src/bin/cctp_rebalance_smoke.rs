@@ -58,9 +58,10 @@ async fn main() -> anyhow::Result<()> {
     }
 
     tracing_subscriber::registry()
-        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            "aegis_api=info,cctp_rebalance_smoke=info".into()
-        }))
+        .with(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "aegis_api=info,cctp_rebalance_smoke=info".into()),
+        )
         .with(tracing_subscriber::fmt::layer().compact())
         .init();
 

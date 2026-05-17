@@ -127,7 +127,7 @@ export function ExecutionTrace({ rebalanceId, sseUrl }: ExecutionTraceProps) {
           <span
             className={
               status === "completed"
-                ? "text-emerald-300"
+                ? "text-cyan-300"
                 : status === "failed"
                   ? "text-rose-300"
                   : "text-cyan-300"
@@ -139,7 +139,7 @@ export function ExecutionTrace({ rebalanceId, sseUrl }: ExecutionTraceProps) {
       </header>
       <div className="h-1.5 bg-white/5 overflow-hidden">
         <div
-          className="h-full bg-emerald-400 transition-all duration-500"
+          className="h-full bg-cyan-400 transition-all duration-500"
           style={{ width: `${progressPct}%` }}
         />
       </div>
@@ -196,7 +196,7 @@ export function ExecutionTrace({ rebalanceId, sseUrl }: ExecutionTraceProps) {
                     : "Arc"}
                 </span>
                 {settlementTx.startsWith("0x") && (
-                  <span className="text-emerald-400 text-[10px] border border-emerald-500/30 px-1 rounded">
+                  <span className="text-cyan-400 text-[10px] border border-cyan-500/30 px-1 rounded">
                     on-chain
                   </span>
                 )}
@@ -241,12 +241,12 @@ function ShareBlock({ decisionId }: { decisionId: string }) {
     window.open(intentUrl, "_blank", "noopener,noreferrer");
   };
   return (
-    <div className="mt-4 border-2 border-emerald-500/30 bg-emerald-500/5 p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+    <div className="mt-4 border-2 border-cyan-500/30 bg-cyan-500/5 p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
       <div>
-        <p className="text-xs font-semibold text-emerald-200">
+        <p className="text-xs font-semibold text-cyan-200">
           Rebalance complete
         </p>
-        <p className="text-[11px] text-emerald-200/70 mt-0.5">
+        <p className="text-[11px] text-cyan-200/70 mt-0.5">
           Share what the agent did — the OG card pulls the regime + outcome
           automatically.
         </p>
@@ -254,7 +254,7 @@ function ShareBlock({ decisionId }: { decisionId: string }) {
       <button
         type="button"
         onClick={handle}
-        className="self-start sm:self-auto px-3 py-1.5 text-xs font-semibold border-2 border-emerald-300 bg-emerald-500 text-black hover:bg-emerald-400 transition-colors"
+        className="self-start sm:self-auto px-3 py-1.5 text-xs font-semibold border-2 border-cyan-300 bg-cyan-500 text-black hover:bg-cyan-400 transition-colors"
       >
         Share to X
       </button>

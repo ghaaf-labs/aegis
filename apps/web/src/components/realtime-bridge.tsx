@@ -9,7 +9,9 @@ import type {
   AgentToolInvoked,
   GatewayBalance,
   MarketRegime,
+  PegAlert,
   PriceTick,
+  RebalanceStatus,
   RegimeFlip,
   WalletInfo,
 } from "@/types";
@@ -35,6 +37,8 @@ export function RealtimeBridge() {
   const setSseConnected = usePortfolioStore((s) => s.setSseConnected);
   const pushToolInvocation = usePortfolioStore((s) => s.pushToolInvocation);
   const pushAbstain = usePortfolioStore((s) => s.pushAbstain);
+  const applyRebalanceStatus = usePortfolioStore((s) => s.applyRebalanceStatus);
+  const pushPegAlert = usePortfolioStore((s) => s.pushPegAlert);
 
   // The EventSource API doesn't support custom headers, so we put the token
   // in a query param. The handler in the server-side router could also read
@@ -85,6 +89,16 @@ export function RealtimeBridge() {
     [pushAbstain],
   );
 
+  const onRebalanceStatus = useCallback(
+    (data: RebalanceStatus) => applyRebalanceStatus(data),
+    [applyRebalanceStatus],
+  );
+
+  const onPegAlert = useCallback(
+    (data: PegAlert) => pushPegAlert(data),
+    [pushPegAlert],
+  );
+
   const { connected } = useEventSource(
     url,
     {
@@ -95,6 +109,8 @@ export function RealtimeBridge() {
       "wallet.created": onWalletCreated,
       "agent.tool.invoked": onAgentToolInvoked,
       "agent.abstained": onAgentAbstained,
+      "rebalance.status": onRebalanceStatus,
+      "peg.alert": onPegAlert,
     },
     { enabled },
   );

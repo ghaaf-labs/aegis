@@ -8,14 +8,21 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  Legend,
 } from "recharts";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { MOCK_PERFORMANCE_DATA } from "@/lib/mock-data";
 import { formatCurrency } from "@/lib/utils";
 import { ProvenanceLine } from "@aegis/ui";
 
+interface PerformancePoint {
+  date: string;
+  value: number;
+  benchmark: number;
+}
+
 export function PerformanceChart() {
+  const data: PerformancePoint[] = [];
+  const hasData = data.length > 0;
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between pb-3">
@@ -32,10 +39,17 @@ export function PerformanceChart() {
         </div>
       </CardHeader>
       <CardContent>
-        <div className="h-52">
+        <div className="h-52 relative">
+          {!hasData && (
+            <div className="absolute inset-0 flex items-center justify-center text-center pointer-events-none">
+              <div className="text-xs text-text-mut font-mono px-4">
+                No history yet — first rebalance lands here
+              </div>
+            </div>
+          )}
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart
-              data={MOCK_PERFORMANCE_DATA}
+              data={data}
               margin={{ top: 4, right: 4, left: 0, bottom: 0 }}
             >
               <defs>
@@ -84,7 +98,7 @@ export function PerformanceChart() {
                 content={({ active, payload, label }) => {
                   if (!active || !payload?.length) return null;
                   return (
-                    <div className="bg-gray-900 border border-white/10 rounded-lg p-3 text-xs space-y-1">
+                    <div className="bg-surface border-brutal border-border-default rounded-sharp p-3 text-xs space-y-1">
                       <p className="text-gray-400 font-medium">{label}</p>
                       {payload.map((p) => (
                         <p key={p.name} style={{ color: p.color }}>

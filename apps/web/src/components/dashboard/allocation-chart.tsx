@@ -65,7 +65,7 @@ export function AllocationChart({ compact = false }: Props) {
                     if (!active || !payload?.[0]) return null;
                     const d = payload[0].payload as (typeof data)[0];
                     return (
-                      <div className="bg-gray-900 border border-white/10 rounded-lg px-3 py-2 text-xs">
+                      <div className="bg-surface border-brutal border-border-default rounded-sharp px-3 py-2 text-xs">
                         <p className="font-semibold text-white">{d.name}</p>
                         <p className="text-gray-400">
                           {formatPercent(d.value, false)}

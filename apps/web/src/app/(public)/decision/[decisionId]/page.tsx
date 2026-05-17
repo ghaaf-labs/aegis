@@ -2,6 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ModelBadge } from "@aegis/ui";
 import type { DiaryEntry } from "@/types";
+import {
+  AuditTrail,
+  type DecisionFull,
+} from "@/components/decision/audit-trail";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 const PUBLIC_BASE = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
@@ -17,6 +21,18 @@ async function fetchDecision(id: string): Promise<DiaryEntry | null> {
     });
     if (!res.ok) return null;
     return (await res.json()) as DiaryEntry;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchDecisionFull(id: string): Promise<DecisionFull | null> {
+  try {
+    const res = await fetch(`${API_BASE}/diary/decision/${id}/full`, {
+      next: { revalidate: 60 },
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as DecisionFull;
   } catch {
     return null;
   }
@@ -55,7 +71,10 @@ export async function generateMetadata({
 
 export default async function DecisionPage({ params }: RouteParams) {
   const { decisionId } = await params;
-  const decision = await fetchDecision(decisionId);
+  const [decision, fullTrail] = await Promise.all([
+    fetchDecision(decisionId),
+    fetchDecisionFull(decisionId),
+  ]);
 
   if (!decision) {
     return (
@@ -139,6 +158,15 @@ export default async function DecisionPage({ params }: RouteParams) {
               tone="agent"
             />
           </section>
+        )}
+
+        {fullTrail && (
+          <div className="space-y-2">
+            <h2 className="text-xs font-mono uppercase tracking-widest text-text-lo">
+              Audit trail
+            </h2>
+            <AuditTrail data={fullTrail} />
+          </div>
         )}
 
         <section className="border-2 border-white/10 bg-[#141414] p-4">

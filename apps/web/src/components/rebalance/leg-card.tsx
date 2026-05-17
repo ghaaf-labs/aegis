@@ -29,7 +29,7 @@ const KIND_LABEL: Record<string, string> = {
 const STATUS_CLASSES: Record<LegStatus, string> = {
   pending: "bg-gray-800 text-gray-400",
   submitted: "bg-cyan-500/20 text-cyan-300 animate-pulse",
-  confirmed: "bg-emerald-500/20 text-emerald-300",
+  confirmed: "bg-cyan-500/20 text-cyan-300",
   failed: "bg-rose-500/20 text-rose-300",
 };
 
@@ -99,9 +99,7 @@ export function LegCard({
               chain={destChain.toUpperCase() as "ARC" | "BASE" | "AVAX"}
             />
           )}
-          <span className="ml-2 text-emerald-400">
-            ${amountUsdc.toFixed(2)}
-          </span>
+          <span className="ml-2 text-cyan-400">${amountUsdc.toFixed(2)}</span>
         </div>
         {explorer && (
           <a

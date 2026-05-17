@@ -8,7 +8,7 @@ import {
   BrutalCardHeader,
   BrutalPill,
 } from "@aegis/ui";
-import { taxApi, type TaxShareToken } from "@/lib/api";
+import { taxApi, type TaxShareToken, type TaxSummary } from "@/lib/api";
 import { usePortfolioStore } from "@/stores/portfolio";
 
 const TTL_DEFAULT_DAYS = 30;
@@ -35,6 +35,8 @@ export default function TaxSettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [summary, setSummary] = useState<TaxSummary | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   useEffect(() => {
     if (!portfolioId && (activeId ?? portfolios[0]?.id)) {
@@ -59,18 +61,44 @@ export default function TaxSettingsPage() {
     void reloadShares();
   }, [reloadShares]);
 
-  const onDownload = async () => {
+  // Refresh the wallet provenance whenever the selected portfolio/year flips.
+  useEffect(() => {
+    if (!portfolioId) {
+      setSummary(null);
+      return;
+    }
+    let cancelled = false;
+    taxApi
+      .summary(portfolioId, year)
+      .then((s) => {
+        if (!cancelled) setSummary(s);
+      })
+      .catch(() => {
+        if (!cancelled) setSummary(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [portfolioId, year]);
+
+  const performDownload = async () => {
     if (!portfolioId) return;
     setDownloading(true);
     setError(null);
     try {
       const { mockExcluded: m } = await taxApi.downloadCsv(portfolioId, year);
       setMockExcluded(m);
+      setConfirmOpen(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "download failed");
     } finally {
       setDownloading(false);
     }
+  };
+
+  const onDownloadClick = () => {
+    if (!portfolioId) return;
+    setConfirmOpen(true);
   };
 
   const onCreateShare = async () => {
@@ -150,9 +178,41 @@ export default function TaxSettingsPage() {
             </label>
           </div>
 
+          {summary && summary.wallets.length > 0 && (
+            <div className="border-brutal border-border-default bg-raised p-3 space-y-2">
+              <p className="text-xs font-mono uppercase tracking-widest text-text-lo">
+                Coverage
+              </p>
+              <ul className="space-y-1">
+                {summary.wallets.map((w) => (
+                  <li
+                    key={`${w.chain}-${w.address}`}
+                    className="flex items-center justify-between gap-2 text-xs font-mono"
+                  >
+                    <span className="text-text-hi">
+                      {w.chain.toUpperCase()} ·{" "}
+                      <span className="text-text-lo">
+                        {w.address.slice(0, 6)}…{w.address.slice(-4)}
+                      </span>
+                    </span>
+                    <span className="text-text-lo">
+                      {w.lotCount} lots ·{" "}
+                      {w.lastSyncedAt
+                        ? new Date(w.lastSyncedAt).toLocaleDateString()
+                        : "no sync"}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-[10px] text-text-mut leading-relaxed">
+                {summary.caveat}
+              </p>
+            </div>
+          )}
+
           <BrutalButton
             variant="pnl"
-            onClick={onDownload}
+            onClick={onDownloadClick}
             disabled={!portfolioId || downloading}
           >
             {downloading ? "Preparing…" : "Download CSV"}
@@ -166,6 +226,56 @@ export default function TaxSettingsPage() {
           ) : null}
         </BrutalCardBody>
       </BrutalCard>
+
+      {confirmOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="tax-confirm-title"
+        >
+          <BrutalCard className="max-w-md w-full">
+            <BrutalCardHeader>
+              <span
+                id="tax-confirm-title"
+                className="text-sm font-mono text-text-hi"
+              >
+                Confirm tax export
+              </span>
+            </BrutalCardHeader>
+            <BrutalCardBody className="space-y-3 text-xs text-text-lo">
+              <p>
+                This CSV covers{" "}
+                <span className="text-text-hi font-mono">
+                  {summary?.wallets.length ?? 0} wallets
+                </span>{" "}
+                and{" "}
+                <span className="text-text-hi font-mono">
+                  {summary?.totalLotCount ?? 0} lots
+                </span>{" "}
+                across portfolio {portfolioId.slice(0, 8)}… for year {year}.
+                Includes USDC↔EURC FX dispositions per the 2026 1099-DA final
+                rules (wallet-by-wallet basis).
+              </p>
+              <div className="flex gap-2 justify-end pt-2">
+                <BrutalButton
+                  variant="ghost"
+                  onClick={() => setConfirmOpen(false)}
+                >
+                  Cancel
+                </BrutalButton>
+                <BrutalButton
+                  variant="pnl"
+                  onClick={() => void performDownload()}
+                  disabled={downloading}
+                >
+                  {downloading ? "Preparing…" : "Download"}
+                </BrutalButton>
+              </div>
+            </BrutalCardBody>
+          </BrutalCard>
+        </div>
+      )}
 
       <BrutalCard>
         <BrutalCardHeader>

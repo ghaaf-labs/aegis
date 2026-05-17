@@ -209,6 +209,24 @@ export const agentApi = {
     }),
 };
 
+export interface AgentPauseStatus {
+  pausedAt: string | null;
+}
+
+export const userAgentApi = {
+  status: () => request<AgentPauseStatus>("/users/me/agent", { authed: true }),
+  pause: () =>
+    request<AgentPauseStatus>("/users/me/agent/pause", {
+      method: "POST",
+      authed: true,
+    }),
+  resume: () =>
+    request<AgentPauseStatus>("/users/me/agent/resume", {
+      method: "POST",
+      authed: true,
+    }),
+};
+
 // ── Rebalance ──────────────────────────────────────────────────────────────
 
 export interface RebalancePlanResponse {
@@ -352,11 +370,30 @@ export interface TaxShareCreated {
   expiresAt: string;
 }
 
+export interface WalletSummaryRow {
+  chain: string;
+  address: string;
+  lotCount: number;
+  lastSyncedAt: string | null;
+}
+
+export interface TaxSummary {
+  year: number;
+  wallets: WalletSummaryRow[];
+  totalLotCount: number;
+  caveat: string;
+}
+
 export const taxApi = {
   harvestable: (portfolioId: string) =>
     request<HarvestableLoss[]>(`/tax/harvestable/${portfolioId}`, {
       authed: true,
     }),
+  summary: (portfolioId: string, year: number) =>
+    request<TaxSummary>(
+      `/tax/summary?portfolioId=${portfolioId}&year=${year}`,
+      { authed: true },
+    ),
   /**
    * Trigger a CSV download via the browser. Bypasses the JSON `request`
    * helper because the response is a file, not JSON. Returns the number

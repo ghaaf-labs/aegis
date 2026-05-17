@@ -48,7 +48,7 @@ export default function PortfolioPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
         <div className="space-y-6">
-          <AssetTable showActions />
+          <AssetTable />
         </div>
         <div className="space-y-4">
           <AllocationChart compact />

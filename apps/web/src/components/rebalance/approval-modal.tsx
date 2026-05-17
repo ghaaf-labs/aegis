@@ -96,7 +96,7 @@ export function ApprovalModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="w-full max-w-xl bg-[#141414] border-2 border-white/15 shadow-[8px_8px_0_0_#000]">
+      <div className="w-full sm:max-w-xl max-h-[90dvh] overflow-y-auto bg-[#141414] border-2 border-white/15 shadow-[8px_8px_0_0_#000]">
         <header className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
           <div>
             <h2 className="text-base font-semibold text-white">
@@ -152,7 +152,7 @@ export function ApprovalModal({
                       }
                     >
                       {isCalibrated ? "calibrated " : "confidence "}
-                      <span className="text-emerald-300">{headlinePct}%</span>
+                      <span className="text-cyan-300">{headlinePct}%</span>
                       {isCalibrated && (
                         <span className="text-gray-500"> (raw {rawPct}%)</span>
                       )}
@@ -164,7 +164,7 @@ export function ApprovalModal({
                     aria-label={`Calibrated confidence ${headlinePct}%`}
                   >
                     <div
-                      className="h-full bg-emerald-400"
+                      className="h-full bg-cyan-400"
                       style={{
                         width: `${Math.min(100, Math.max(0, headlinePct))}%`,
                       }}
