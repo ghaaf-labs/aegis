@@ -339,7 +339,7 @@ impl Config {
             api_base_url: std::env::var("API_BASE_URL")
                 .unwrap_or_else(|_| "http://localhost:8080".into()),
 
-            regime_backtest_enabled: parse_or("REGIME_BACKTEST_ENABLED", false)?,
+            regime_backtest_enabled: parse_or("REGIME_BACKTEST_ENABLED", true)?,
             peg_defense_enabled: parse_or("PEG_DEFENSE_ENABLED", true)?,
             peg_monitor_tick_secs: parse_or("PEG_MONITOR_TICK_SECS", 10)?,
             peg_fire_cooldown_secs: parse_or("PEG_FIRE_COOLDOWN_SECS", 1800)?,
@@ -508,7 +508,7 @@ mod tests {
             digest_secret: "test-secret".into(),
             public_base_url: "http://localhost:3000".into(),
             api_base_url: "http://localhost:8080".into(),
-            regime_backtest_enabled: false,
+            regime_backtest_enabled: true,
             peg_defense_enabled: true,
             peg_monitor_tick_secs: 10,
             peg_fire_cooldown_secs: 1800,

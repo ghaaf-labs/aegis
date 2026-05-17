@@ -149,6 +149,70 @@ pub async fn latest_public(
     }))
 }
 
+#[derive(Debug, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct BacktestSample {
+    pub observed_at: DateTime<Utc>,
+    pub predicted_label: String,
+    pub realized_label: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BacktestSamplesResponse {
+    pub eval_run_id: Option<Uuid>,
+    pub model_slug: Option<String>,
+    pub samples: Vec<BacktestSample>,
+}
+
+/// FF-1 — public timeseries for the regime backtest UI. Returns up to
+/// `limit` samples (default 200, max 2000) from the most recent eval run,
+/// ordered by `observed_at`. No auth required; flag-gated so a fresh
+/// deploy without backtest data 404s cleanly.
+pub async fn backtest_samples_public(
+    State(state): State<AppState>,
+    Query(q): Query<EvaluationsQuery>,
+) -> Result<Json<BacktestSamplesResponse>> {
+    if !state.config.regime_backtest_enabled {
+        return Err(AppError::NotFound(
+            "regime backtest endpoints are disabled".into(),
+        ));
+    }
+    let limit = q.limit.unwrap_or(200).clamp(1, 2000);
+
+    let latest = list_latest(&state.db, 1)
+        .await
+        .map_err(AppError::Internal)?
+        .into_iter()
+        .next();
+    let Some(run) = latest else {
+        return Ok(Json(BacktestSamplesResponse {
+            eval_run_id: None,
+            model_slug: None,
+            samples: Vec::new(),
+        }));
+    };
+
+    let samples: Vec<BacktestSample> = sqlx::query_as(
+        "SELECT observed_at, predicted_label, realized_label \
+         FROM model_evaluation_samples \
+         WHERE eval_run_id = $1 \
+         ORDER BY observed_at ASC \
+         LIMIT $2",
+    )
+    .bind(run.eval_run_id)
+    .bind(limit)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))?;
+
+    Ok(Json(BacktestSamplesResponse {
+        eval_run_id: Some(run.eval_run_id),
+        model_slug: Some(run.model_slug),
+        samples,
+    }))
+}
+
 // ═════════════════════════════════════════════════════════════════════════
 // Peg defense (F-PEG-4)
 // ═════════════════════════════════════════════════════════════════════════

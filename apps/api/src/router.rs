@@ -244,6 +244,11 @@ pub async fn build(db: Db, config: Config) -> Router {
             "/about/regime/latest",
             get(risk_engine::handlers::latest_public),
         )
+        // FF-1 — public timeseries for the regime backtest UI.
+        .route(
+            "/about/regime/backtest/samples",
+            get(risk_engine::handlers::backtest_samples_public),
+        )
         // Public diary + share-card data + unsubscribe — no auth.
         .route("/diary/wallet/:wallet", get(diary::handlers::by_wallet))
         .route(
