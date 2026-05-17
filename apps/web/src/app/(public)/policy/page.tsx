@@ -230,11 +230,7 @@ export default function PolicyPage() {
 
         <footer className="mt-10 border-t border-border-default pt-6 text-xs font-mono text-text-mut">
           <p>
-            Full operational policy and constitution clauses live in the repo at{" "}
-            <code className="text-text-lo">
-              docs/11-agent-outcome-policy.md
-            </code>{" "}
-            and{" "}
+            The agent&apos;s hard constraints are published at{" "}
             <Link
               href="/about/constitution"
               className="text-accent-agent hover:underline underline-offset-4"
