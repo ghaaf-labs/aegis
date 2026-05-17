@@ -312,13 +312,24 @@ impl<'a> CctpClient<'a> {
         const MIN_FINALITY_STANDARD: u32 = 2000;
         let max_fee = U256::ZERO;
 
+        // destinationCaller = bytes32(0) means any address can call
+        // MessageTransmitter.receiveMessage on the destination chain.
+        // The hook body (mintRecipient + swap params) is baked into the
+        // message at burn time and cannot be manipulated by the relayer,
+        // so unrestricted relay is safe for this flow. Setting this to
+        // `executor_on_dest` (as we did initially) would require the
+        // RebalanceExecutor contract to expose a function that forwards
+        // to `receiveMessage` — it doesn't, so non-zero values here lock
+        // the message out of any path to mint. See F-CCTP-5.
+        let destination_caller = alloy::primitives::FixedBytes::<32>::ZERO;
+
         let receipt = contract
             .depositForBurnWithHook(
                 U256::from(amount),
                 dest.domain_id(),
                 executor_on_dest.into_word(),
                 usdc,
-                executor_on_dest.into_word(),
+                destination_caller,
                 max_fee,
                 MIN_FINALITY_STANDARD,
                 hook_data,

@@ -107,16 +107,54 @@ possible in principle but not pursued; testnet burn is a sunk cost.
 **Re-smoke against the corrected domain** — pending; will populate
 the row below and amend the date on the next commit.
 
-| Field          | Value (re-smoke against corrected domain)                                                                                                                                                         |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Size           | 5 USDC bridge (scaled down — 20 of 25 USDC on Base Sepolia were already burned on the failed first attempt)                                                                                       |
-| Build          | `EXECUTION_MOCK=false MOCK_CIRCLE=false CCTP_ATTESTATION_TIMEOUT_SECS=1500 cargo run --features real-cctp --bin cctp_rebalance_smoke`                                                             |
-| rebalance_id   | `9dc4414f-7ec0-428a-a1d5-0f7faf5aae29`                                                                                                                                                            |
-| Burn tx hash   | `0x16b04e14ed38e58c07e23e5d274d4cbefb00de8d37dd3c4f93d19f6210e3cda5`                                                                                                                              |
-| Base explorer  | https://sepolia.basescan.org/tx/0x16b04e14ed38e58c07e23e5d274d4cbefb00de8d37dd3c4f93d19f6210e3cda5                                                                                                |
-| Burn timestamp | 2026-05-17 08:40 UTC                                                                                                                                                                              |
-| Mint tx hash   | _pending Standard finality (~13-25 min on Base Sepolia, variable). Resume via the new `n6_cctp_resume` binary once attestation clears; idempotent re-runs safe per the council fix in `a938a3c`._ |
-| Wall-clock E2E | Burn submitted <2s; Standard finality on Base Sepolia has been ~15-20 min in this session window; `receiveMessage` on Arc ~5s once attestation lands.                                             |
+| Field          | Value (re-smoke against corrected domain)                                                                                                                                |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Size           | 5 USDC bridge (scaled down — 20 of 25 USDC on Base Sepolia were already burned on the failed first attempt)                                                              |
+| Build          | `EXECUTION_MOCK=false MOCK_CIRCLE=false CCTP_ATTESTATION_TIMEOUT_SECS=1500 cargo run --features real-cctp --bin cctp_rebalance_smoke`                                    |
+| rebalance_id   | `9dc4414f-7ec0-428a-a1d5-0f7faf5aae29`                                                                                                                                   |
+| Burn tx hash   | `0x16b04e14ed38e58c07e23e5d274d4cbefb00de8d37dd3c4f93d19f6210e3cda5`                                                                                                     |
+| Base explorer  | https://sepolia.basescan.org/tx/0x16b04e14ed38e58c07e23e5d274d4cbefb00de8d37dd3c4f93d19f6210e3cda5                                                                       |
+| Burn timestamp | 2026-05-17 08:40 UTC                                                                                                                                                     |
+| Mint tx hash   | _**Stuck** — third bug surfaced: receiveMessage reverted with `Invalid caller for message`. See "Bug #3" below. 5 USDC lost on testnet._                                 |
+| Wall-clock E2E | Burn submitted <2s; Standard finality on Base Sepolia took ~20 min (attestation completed at ~09:00 UTC); `receiveMessage` reverted in <1s on the caller-mismatch check. |
+
+**Bug #3 — destinationCaller restricted the mint to a contract with no relay function (fixed in this commit, `F-CCTP-5`)**
+
+`cross_chain.rs::real_deposit_for_burn` set `destinationCaller =
+executor_on_dest` (the RebalanceExecutor on Arc). Per CCTP V2 spec,
+non-zero `destinationCaller` restricts who may call
+`MessageTransmitter.receiveMessage` to that specific address. Our
+`RebalanceExecutor` (`infra/contracts/src/RebalanceExecutor.sol`)
+implements the downstream `IMessageHandlerV2.handleReceiveMessage`
+hook but exposes no public function that forwards into
+`MessageTransmitter.receiveMessage` — so the message is unmintable
+from any EOA-driven relay. Iris attestation completed (`status:
+complete`); `receiveMessage` from our EOA reverted with `Invalid
+caller for message`.
+
+Fix in `cross_chain.rs`: `destinationCaller = bytes32(0)` (any
+relayer permitted). The hook body is baked into the message at burn
+time and the relayer cannot alter it, so unrestricted relay
+preserves the trust model. F-CCTP-6 (parked): a future
+`RebalanceExecutor.relay()` wrapper would re-enable
+`destinationCaller = executor_on_dest` for an extra layer of
+relayer authorization, at the cost of an extra contract deploy.
+
+**Cumulative HS-4 burn evidence (3 burns, 3 bugs, 45 USDC sunk)**
+
+| Burn tx                                                              | Block          | Domain | DestCaller   | Bug surfaced               | USDC stuck |
+| -------------------------------------------------------------------- | -------------- | ------ | ------------ | -------------------------- | ---------- |
+| `0xc713c87b…8825395` (prior session, 2026-05-16)                     | (Base Sepolia) | 13     | executor_arc | F-CCTP-2 (Arc=13)          | 20         |
+| `0x6579f80402…ff019fc96e36`                                          | 41,618,751     | 13     | executor_arc | F-CCTP-2 (Arc=13)          | 20         |
+| `0x16b04e14ed38e58c07e23e5d274d4cbefb00de8d37dd3c4f93d19f6210e3cda5` | (~08:40 UTC)   | 26     | executor_arc | F-CCTP-5 (caller mismatch) | 5          |
+
+All three burns landed cleanly on Base Sepolia — proving the CCTP V2
+`sol!` interface, the deployed TokenMessenger compatibility, the
+allowance-skip fix (`F-CCTP-?` in `a938a3c`), and the Arc=26 domain
+correction (`F-CCTP-2` in `e7f27af`). The mint half waits on the
+fourth burn (with this commit's `destinationCaller = bytes32(0)` fix
+applied) plus a Base Sepolia USDC top-up — current EOA balance is
+0 USDC after the 25-USDC sunk-cost run.
 
 Known surprises: Paymaster fee preview will show the Sprint-2 mocked
 ~$0.117 USD (Arc 0.012 + Base 0.105) vs actual Base Sepolia chain

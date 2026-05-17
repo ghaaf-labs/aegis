@@ -21,6 +21,18 @@ The matching `JWT_SECRET` (which was also leaked in the same commit) has already
 
 Note: scrubbing history via filter-repo cleaned `origin/main`, but the historical `feat/sprint-*` branches and `fix/post-submission-audit` on origin still contain `2d768d7` in their git ancestry. If those branches are not needed, delete them on origin to fully purge. They're stale/merged already.
 
+## CCTP V2 destinationCaller routing — RESOLVED 2026-05-17
+
+**Tag:** `F-CCTP-5` · **Status:** resolved · **Surfaced:** 2026-05-17 (HS-4 re-smoke) · **Closed:** 2026-05-17
+
+The CCTP V2 burn in `cross_chain.rs::real_deposit_for_burn` set `destinationCaller = executor_on_dest` (the RebalanceExecutor contract address on the destination chain). Per Circle's V2 spec, `destinationCaller != bytes32(0)` restricts who may call `MessageTransmitter.receiveMessage` on the destination chain to that specific address. Our `RebalanceExecutor` (`infra/contracts/src/RebalanceExecutor.sol`) implements `IMessageHandlerV2.handleReceiveMessage` (the downstream hook) but exposes no function that forwards into `MessageTransmitter.receiveMessage`. The message is therefore unmintable from any EOA-driven flow — including our `n6_cctp_resume` binary.
+
+Result on the third HS-4 attempt: burn `0x16b04e1…3cda5` succeeded, iris attestation completed (`status: complete`), `receiveMessage` from our EOA reverted with `Invalid caller for message`. 5 USDC stuck on Base side.
+
+**Fix**: `destinationCaller = bytes32(0)` so any address may relay. The hook body (mint recipient + swap params) is baked into the message at burn time and cannot be manipulated by the relayer, so unrestricted relay preserves the same end-state guarantees. Future burns produced by this code path land mintably from any caller. Committed alongside this F-CCTP-5 entry.
+
+**Followup `F-CCTP-6` (parked)**: in a production sprint, add a `relay()` wrapper to `RebalanceExecutor.sol` that calls `MessageTransmitter.receiveMessage` and re-enable `destinationCaller = address(this)` so only the executor contract can submit. That tightens the trust surface (no MEV-style replay of the same hook with attacker-controlled gas/timing) at the cost of an extra deploy step.
+
 ## USYC Teller allowlist gate (`NotPermissioned`)
 
 **Tag:** `F-USYC-1` · **Status:** open · **Surfaced:** 2026-05-17 (HS-5 smoke)
