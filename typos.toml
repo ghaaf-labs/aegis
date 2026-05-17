@@ -19,6 +19,9 @@ extend-ignore-re = [
     "CCTP",
     "MSCA",
     "stETH",
+    # Truncated contract addresses written as `0x8FE6B999…2DAA` in docs.
+    # Avoids spurious hits like `DAA` → `DATA` on hex literals.
+    "0x[0-9A-Fa-f]+(?:[…\\.]+[0-9A-Fa-f]+)?",
 ]
 
 [files]
