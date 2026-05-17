@@ -71,6 +71,28 @@ async fn main() -> Result<()> {
 
     let client = CctpClient::new(&http, &cfg);
 
+    // Idempotency guard: re-running with the same args after the mint has
+    // already landed would re-submit receiveMessage on-chain. CCTP V2's
+    // usedNonces check would revert (no double-mint risk), but the operator
+    // would see a confusing "execution reverted" error and waste gas on a
+    // no-op tx. Short-circuit cleanly when the mint leg is already confirmed.
+    let existing_mint: Option<(String, String)> = sqlx::query_as(
+        "SELECT status, COALESCE(tx_hash, '')
+         FROM rebalance_legs
+         WHERE rebalance_id = $1 AND kind = 'cross_chain_mint'",
+    )
+    .bind(rebalance_id)
+    .fetch_optional(&pool)
+    .await?;
+    if let Some((status, tx)) = &existing_mint {
+        if status == "confirmed" && !tx.is_empty() {
+            info!(mint_tx = %tx, "mint leg already confirmed — nothing to do");
+            println!();
+            println!("MINT_TX = {} (already confirmed)", tx);
+            return Ok(());
+        }
+    }
+
     info!(burn_tx = %burn_tx, src = %src, "polling iris-api for attestation");
     let attestation = client
         .wait_for_attestation(src_key.domain_id(), &burn_tx)
@@ -90,6 +112,7 @@ async fn main() -> Result<()> {
         "UPDATE rebalance_legs
             SET tx_hash = $1, status = 'confirmed', updated_at = NOW()
             WHERE rebalance_id = $2 AND kind = 'cross_chain_mint'
+              AND status != 'confirmed'
             RETURNING leg_index",
     )
     .bind(&mint.tx_hash)

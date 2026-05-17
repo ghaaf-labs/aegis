@@ -510,7 +510,7 @@ After a `local_swap` or `redeem_usyc` leg confirms (a sell), the executor doesn'
 
 **H9. CCTP V2 attestation URL is missing the source-domain segment.**
 Circle's real endpoint is `/v2/messages/{srcDomainId}/{message_hash}`. The original poll URL omitted `srcDomainId`. With `EXECUTION_MOCK=true` the function returns the mock fixture and never hits the network, so CI was clean — but the first real testnet run would 404.
-**Fix:** `wait_for_attestation` now takes `src_domain: u32`; executor passes `ChainKey::domain_id()` (Arc=13, Base=6, mirrors `CHAIN_DOMAINS` in shared constants). URL formatted as `/v2/messages/{src_domain}/{message_hash}`.
+**Fix:** `wait_for_attestation` now takes `src_domain: u32`; executor passes `ChainKey::domain_id()` (Arc=26, Base=6, mirrors `CHAIN_DOMAINS` in shared constants — Arc was corrected from a stale 13 to 26 in commit `e7f27af` after the on-chain `MessageTransmitter.localDomain()` probe; see `F-CCTP-2`). URL formatted as `/v2/messages/{src_domain}/{message_hash}`.
 
 **H10. Execution-trace component doesn't filter by plan id.**
 The SSE handler applies every `rebalance.leg.update` event to the current leg list keyed by `legIndex`. If the user navigates from plan A to plan B while still subscribed, A's events corrupt B's view.
