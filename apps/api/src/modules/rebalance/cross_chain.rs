@@ -21,7 +21,7 @@ use crate::modules::rebalance::models::ChainKey;
 #[cfg(feature = "real-cctp")]
 use alloy::{
     primitives::{Address, Bytes, U256},
-    providers::ProviderBuilder,
+    providers::{ProviderBuilder, WalletProvider},
     signers::local::PrivateKeySigner,
     sol,
     sol_types::SolValue,
@@ -270,17 +270,32 @@ impl<'a> CctpClient<'a> {
         // depositForBurn calls `USDC.transferFrom(msg.sender, tokenMessenger,
         // amount + fee)` internally — even with maxFee=0 the contract may
         // round-trip through a fee branch, so approve with headroom rather
-        // than the exact amount.
+        // than the exact amount. Skip the approve if a previous run already
+        // left sufficient allowance, both to save gas and to avoid the
+        // pre-flight race some testnet RPCs hit when the approve receipt is
+        // mined but eth_estimateGas reads stale state.
         let usdc_token = IERC20::new(usdc, &provider);
         let approve_amount = U256::from(amount).saturating_mul(U256::from(2u64));
-        let _approve_receipt = usdc_token
-            .approve(token_messenger, approve_amount)
-            .send()
+        let signer_addr = provider.default_signer_address();
+        let current_allowance = usdc_token
+            .allowance(signer_addr, token_messenger)
+            .call()
             .await
-            .map_err(|e| anyhow::anyhow!("USDC approve send error: {e}"))?
-            .get_receipt()
-            .await
-            .map_err(|e| anyhow::anyhow!("USDC approve receipt error: {e}"))?;
+            .map(|r| r._0)
+            .unwrap_or(U256::ZERO);
+        if current_allowance < approve_amount {
+            let _approve_receipt = usdc_token
+                .approve(token_messenger, approve_amount)
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("USDC approve send error: {e}"))?
+                .get_receipt()
+                .await
+                .map_err(|e| anyhow::anyhow!("USDC approve receipt error: {e}"))?;
+            // Brief settle so depositForBurn's pre-flight sees the new
+            // allowance even on testnet RPCs that lag a block.
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        }
 
         let contract = ICCTPV2TokenMessenger::new(token_messenger, &provider);
 
