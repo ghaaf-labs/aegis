@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { redirect } from "next/navigation";
 import { PRICING_UI_ENABLED } from "@/lib/flags";
 import { PricingPageClient } from "./pricing-client";
 
@@ -16,7 +16,7 @@ export const metadata: Metadata = {
 
 export default function PricingPage() {
   if (!PRICING_UI_ENABLED) {
-    notFound();
+    redirect("/settings/billing");
   }
   return <PricingPageClient />;
 }

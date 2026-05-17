@@ -30,6 +30,26 @@ export function AllocationChart({ compact = false }: Props) {
     valueUsd: a.valueUsd,
   }));
 
+  const isEmpty = data.length === 0 || data.every((d) => d.value === 0);
+
+  if (isEmpty) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Allocation</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-center h-32 text-center">
+            <p className="text-xs text-text-mut font-mono px-4">
+              No allocations yet — adopt a strategy or deposit USDC to get
+              started
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <Card>
       <CardHeader>
