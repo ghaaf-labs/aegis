@@ -65,6 +65,7 @@ export function CreateWalletCard() {
       );
       setToken(resp.token);
       setWallet(resp.wallet);
+      localStorage.setItem("aegis_email", email.trim());
       await analyticsApi.track("wallet.created", {
         method: "passkey",
         referrerHandle: referrerHandle || null,
@@ -107,6 +108,7 @@ export function CreateWalletCard() {
       );
       setToken(resp.token);
       setWallet(resp.wallet);
+      localStorage.setItem("aegis_email", email.trim());
       await analyticsApi.track("wallet.created", {
         method: "otp",
         referrerHandle: referrerHandle || null,
