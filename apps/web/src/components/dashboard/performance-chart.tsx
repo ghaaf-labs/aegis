@@ -132,12 +132,14 @@ export function PerformanceChart() {
           </ResponsiveContainer>
         </div>
 
-        <div className="pt-2 border-t border-white/10">
-          <ProvenanceLine
-            source="on-chain outcomes + counterfactual replay"
-            freshness="live"
-          />
-        </div>
+        {hasData && (
+          <div className="pt-2 border-t border-white/10">
+            <ProvenanceLine
+              source="on-chain outcomes + counterfactual replay"
+              freshness="live"
+            />
+          </div>
+        )}
       </CardContent>
     </Card>
   );

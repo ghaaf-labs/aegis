@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-export interface DecisionLeg {
+interface DecisionLeg {
   legIndex: number;
   kind: string;
   srcChain: string | null;

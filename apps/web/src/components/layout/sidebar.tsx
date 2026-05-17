@@ -1,5 +1,8 @@
 "use client";
 
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -12,6 +15,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PRICING_UI_ENABLED } from "@/lib/flags";
+import { userAgentApi } from "@/lib/api";
 
 // /agent and /activity were placeholder Sprint 1 nav items whose routes
 // were never built — clicking them 404'd. The dashboard already shows the
@@ -34,6 +38,14 @@ const NAV_ITEMS = PRICING_UI_ENABLED
 
 export function Sidebar() {
   const pathname = usePathname();
+  const [agentPaused, setAgentPaused] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    userAgentApi
+      .status()
+      .then((s) => setAgentPaused(s.pausedAt !== null))
+      .catch(() => {});
+  }, []);
 
   return (
     <aside
@@ -81,12 +93,21 @@ export function Sidebar() {
 
       {/* Agent status indicator */}
       <div className="px-4 py-4 border-t border-white/5">
-        <div className="flex items-center gap-2 px-3 py-2 rounded-sharp bg-cyan-500/5 border border-cyan-500/30">
-          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-          <span className="text-xs text-cyan-300 font-mono uppercase tracking-widest">
-            Agent active
-          </span>
-        </div>
+        {agentPaused ? (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-sharp bg-amber-500/5 border border-amber-500/30">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+            <span className="text-xs text-amber-300 font-mono uppercase tracking-widest">
+              Agent paused
+            </span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-sharp bg-cyan-500/5 border border-cyan-500/30">
+            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+            <span className="text-xs text-cyan-300 font-mono uppercase tracking-widest">
+              Agent active
+            </span>
+          </div>
+        )}
       </div>
     </aside>
   );

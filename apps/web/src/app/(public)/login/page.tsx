@@ -4,9 +4,8 @@ import Link from "next/link";
 import { CreateWalletCard } from "@/components/wallet/create-wallet-card";
 
 export const metadata = {
-  title: "Aegis · Sign up",
-  description:
-    "Create your Circle Wallet — passkey or email code, no seed phrase.",
+  title: "Aegis · Log in",
+  description: "Log back into your Aegis account with your email or passkey.",
 };
 
 function WalletCardSkeleton() {
@@ -15,7 +14,7 @@ function WalletCardSkeleton() {
   );
 }
 
-export default function SignupPage() {
+export default function LoginPage() {
   return (
     <div className="min-h-screen bg-bg text-text-default flex items-center justify-center p-6">
       <div className="w-full max-w-md">
@@ -30,23 +29,16 @@ export default function SignupPage() {
             Aegis
           </span>
         </Link>
-        {/* CreateWalletCard reads `?ref=` via useSearchParams (referral
-            attribution, Sprint 4). Next.js 15 requires a Suspense boundary
-            around any child that calls useSearchParams during SSG. */}
+        <p className="text-center text-sm text-text-lo font-mono mb-6">
+          Welcome back — use the same email or passkey you signed up with.
+        </p>
         <Suspense fallback={<WalletCardSkeleton />}>
-          <CreateWalletCard />
+          <CreateWalletCard loginMode />
         </Suspense>
         <p className="mt-6 text-center text-xs font-mono text-text-mut">
-          Already have an account?{" "}
-          <Link href="/login" className="text-accent-pnl hover:underline">
-            Log back in
-          </Link>
-          .
-        </p>
-        <p className="mt-2 text-center text-xs font-mono text-text-mut">
-          Just looking?{" "}
-          <Link href="/explore" className="text-accent-agent hover:underline">
-            Explore demo portfolios
+          New here?{" "}
+          <Link href="/signup" className="text-accent-pnl hover:underline">
+            Create a wallet
           </Link>
           .
         </p>

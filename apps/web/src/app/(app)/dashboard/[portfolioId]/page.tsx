@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useParams } from "next/navigation";
 import { PortfolioSummaryCard } from "@/components/dashboard/portfolio-summary-card";
@@ -46,6 +46,14 @@ export default function PortfolioDashboardPage() {
     null,
   );
   const diaryPublic = localDiaryPublic ?? diaryQuery.data?.diaryPublic ?? false;
+
+  const storedEmail = useMemo(
+    () =>
+      typeof window !== "undefined"
+        ? (localStorage.getItem("aegis_email") ?? "")
+        : "",
+    [],
+  );
 
   return (
     <motion.div
@@ -93,7 +101,7 @@ export default function PortfolioDashboardPage() {
         variants={fadeUp}
         className="grid grid-cols-1 md:grid-cols-2 gap-4"
       >
-        <DigestOptIn />
+        <DigestOptIn defaultEmail={storedEmail} />
         <div /> {/* spacer to keep grid alignment until more settings land */}
       </motion.div>
 
