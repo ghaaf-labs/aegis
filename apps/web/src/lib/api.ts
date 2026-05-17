@@ -227,6 +227,33 @@ export const userAgentApi = {
     }),
 };
 
+// ── Strategies marketplace (SM-2) ─────────────────────────────────────────
+
+export interface StrategyPublic {
+  id: string;
+  name: string;
+  description: string;
+  riskBand: "low" | "medium" | "high";
+  minHorizonMonths: number;
+  targetAllocation: Record<string, number>;
+  isCurated: boolean;
+  createdAt: string;
+}
+
+export interface AdoptResponse {
+  portfolioId: string;
+}
+
+export const strategiesApi = {
+  list: () => request<StrategyPublic[]>("/strategies"),
+  get: (id: string) => request<StrategyPublic>(`/strategies/${id}`),
+  adopt: (id: string) =>
+    request<AdoptResponse>(`/strategies/${id}/adopt`, {
+      method: "POST",
+      authed: true,
+    }),
+};
+
 // ── Rebalance ──────────────────────────────────────────────────────────────
 
 export interface RebalancePlanResponse {
