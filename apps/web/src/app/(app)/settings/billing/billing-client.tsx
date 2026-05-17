@@ -53,7 +53,10 @@ export function BillingSettingsClient() {
     billingApi
       .listReferrals()
       .then(setReferrals)
-      .catch(() => {});
+      .catch((e: unknown) => {
+        if ((e as { status?: number })?.status !== 401)
+          console.error("listReferrals failed", e);
+      });
   }, [fetchBilling]);
 
   const effectiveTiers = tiers.length > 0 ? tiers : DEFAULT_PRICING_TIERS;
@@ -256,13 +259,9 @@ export function BillingSettingsClient() {
                     key={r.id}
                     className="flex items-center justify-between text-[11px] font-mono text-text-lo border-b border-border-subtle pb-1"
                   >
-                    <span>
-                      {new Date(r.createdAt).toLocaleDateString()}
-                    </span>
+                    <span>{new Date(r.createdAt).toLocaleDateString()}</span>
                     <span
-                      className={
-                        r.paidAt ? "text-pnl-green" : "text-amber-400"
-                      }
+                      className={r.paidAt ? "text-pnl-green" : "text-amber-400"}
                     >
                       {r.paidAt ? "paid" : "pending"} · $
                       {r.rewardUsdc.toFixed(2)}

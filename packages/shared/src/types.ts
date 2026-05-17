@@ -365,6 +365,7 @@ export interface PegAlert {
 
 /** Mirrors `billing::service::ReferralCreditedPayload`. Audience = referrer. */
 export interface ReferralCredited {
+  referrerUserId: string;
   newUserId: string;
   rewardUsdc: number;
   /** Present when the Nanopayment settled; null when still pending. */
