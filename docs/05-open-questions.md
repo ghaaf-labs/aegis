@@ -69,6 +69,16 @@ Smoke against the real Circle API on 2026-05-16 with `CIRCLE_API_KEY=TEST_API_KE
 
 **Remaining action** (gated on live access): hit each path under `https://api-sandbox.circle.com/v1/w3s/*` with curl + the real `CIRCLE_API_KEY`, confirm the request/response shape matches `CircleWalletResp`, and flip the four strings in `paths`. Then re-run the N0.9 smoke from the prior plan.
 
+## FX live with CoinGecko fallback — RESOLVED 2026-05-17
+
+**Tag:** `F-FX-1` · **Status:** resolved · **Surfaced:** 2026-05-16 · **Closed:** 2026-05-17 (HS-6)
+
+`fx::service::usdc_eurc_basis` is no longer a hardcoded 0.9217. The default path hits CoinGecko `/api/v3/simple/price?ids=usd-coin,euro-coin&vs_currencies=usd`, derives the mid rate from `usdc_usd / eurc_usd`, and rounds to 4 decimals. 30s in-memory cache fits comfortably under CoinGecko's free-tier ceiling. Any error degrades to the prior steady 0.9217 with `source: "coingecko-fallback"` so the agent prompt always has a number.
+
+New env `STABLEFX_INSTITUTIONAL_ACCESS=false` (default false) carries the flag for the future RFQ-first path — institutional StableFX access is still KYB-gated and not yet open. When flipped, the service logs a debug line and still falls through to CoinGecko because the RFQ wire hasn't landed.
+
+Frontend: approval modal renders a warn-toned caveat banner whenever any leg has `srcSymbol == "EURC" || destSymbol == "EURC"` so users see the institutional-pending posture before approving.
+
 ## Budget guard enforcement (call-time warn) — RESOLVED 2026-05-17
 
 **Tag:** `F-COST-2` · **Status:** resolved · **Surfaced:** 2026-05-16 by F-COST-1 · **Closed:** 2026-05-17

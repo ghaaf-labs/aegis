@@ -641,6 +641,7 @@ mod tests {
             calibrated_conf_enabled: false,
             constitution_enabled: false,
             openrouter_budget_guard_usd: 0.05,
+            stablefx_institutional_access: false,
         };
         c.execution_mock = true;
         c
