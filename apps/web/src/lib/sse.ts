@@ -96,6 +96,7 @@ export function useEventSource(
         "tax.harvest.proposed",
         "gateway.balance",
         "wallet.created",
+        "referral.credited",
         "peg.alert",
       ];
       for (const type of eventTypes) {

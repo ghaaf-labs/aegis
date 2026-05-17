@@ -17,6 +17,7 @@ import { UpgradeModal } from "@/components/billing/UpgradeModal";
 import { InvoiceList } from "@/components/billing/InvoiceList";
 import { useBillingStore } from "@/stores/billing";
 import { usePortfolioStore } from "@/stores/portfolio";
+import { billingApi, type ReferralsResponse } from "@/lib/api";
 import type { Tier } from "@/types";
 
 function tierLabel(t: Tier): string {
@@ -45,8 +46,14 @@ export function BillingSettingsClient() {
     msg: string;
   } | null>(null);
 
+  const [referrals, setReferrals] = useState<ReferralsResponse | null>(null);
+
   useEffect(() => {
     void fetchBilling();
+    billingApi
+      .listReferrals()
+      .then(setReferrals)
+      .catch(() => {});
   }, [fetchBilling]);
 
   const effectiveTiers = tiers.length > 0 ? tiers : DEFAULT_PRICING_TIERS;
@@ -219,6 +226,57 @@ export function BillingSettingsClient() {
       <section>
         <InvoiceList invoices={invoices} />
       </section>
+
+      {referrals && (
+        <BrutalCard>
+          <BrutalCardHeader>
+            <span className="text-sm font-semibold text-text-hi">
+              Referral earnings
+            </span>
+            <BrutalPill tone="agent">
+              {referrals.rows.length} referral
+              {referrals.rows.length !== 1 ? "s" : ""}
+            </BrutalPill>
+          </BrutalCardHeader>
+          <BrutalCardBody>
+            <dl className="grid grid-cols-2 gap-4 text-xs font-mono mb-4">
+              <Stat
+                label="Paid out"
+                value={`$${referrals.totalPaidUsdc.toFixed(2)} USDC`}
+              />
+              <Stat
+                label="Pending"
+                value={`$${referrals.totalPendingUsdc.toFixed(2)} USDC`}
+              />
+            </dl>
+            {referrals.rows.length > 0 && (
+              <div className="space-y-1 max-h-40 overflow-y-auto">
+                {referrals.rows.slice(0, 10).map((r) => (
+                  <div
+                    key={r.id}
+                    className="flex items-center justify-between text-[11px] font-mono text-text-lo border-b border-border-subtle pb-1"
+                  >
+                    <span>
+                      {new Date(r.createdAt).toLocaleDateString()}
+                    </span>
+                    <span
+                      className={
+                        r.paidAt ? "text-pnl-green" : "text-amber-400"
+                      }
+                    >
+                      {r.paidAt ? "paid" : "pending"} · $
+                      {r.rewardUsdc.toFixed(2)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="mt-3">
+              <ProvenanceLine source="Circle Nanopayments · referral rewards" />
+            </div>
+          </BrutalCardBody>
+        </BrutalCard>
+      )}
 
       {pendingTier && (
         <UpgradeModal
