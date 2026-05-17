@@ -31,8 +31,12 @@ export const HARVEST_THRESHOLD_USD = 50; // strategist gets a harvest signal whe
 // Deploy script and overwritten in this file as part of S3.5. Mainnet entries
 // stay empty until a production deploy is on the table.
 
+// Verified against deployed MessageTransmitter.localDomain() on each
+// chain. Arc testnet returns 26, not 13 — the latter was a stale guess
+// that surfaced only when an attested CCTP V2 message reverted with
+// "Invalid destination domain" on Arc.
 export const CHAIN_DOMAINS = {
-  arc: 13,
+  arc: 26,
   base: 6,
 } as const;
 

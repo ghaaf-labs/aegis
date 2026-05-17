@@ -91,9 +91,13 @@ impl ChainKey {
     }
     /// Circle CCTP V2 domain id. Source domain for the attestation URL.
     /// Mirrors `CHAIN_DOMAINS` in `packages/shared/src/constants.ts`.
+    /// Verified against the deployed Arc testnet MessageTransmitter
+    /// (`localDomain() = 26`); 13 was a stale guess that silently
+    /// passed CI (no on-chain test) and surfaced only when an
+    /// attested message reverted with "Invalid destination domain".
     pub fn domain_id(&self) -> u32 {
         match self {
-            Self::Arc => 13,
+            Self::Arc => 26,
             Self::Base => 6,
         }
     }

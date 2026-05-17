@@ -47,28 +47,78 @@ than a scramble.
 > requires real testnet USDC + a valid `CIRCLE_API_KEY`. Recipe is
 > reproducible from any clean DB.
 
-### HS-4 · first real CCTP V2 rebalance (Base Sepolia → Arc testnet) — pending
+### HS-4 · first real CCTP V2 rebalance (Base Sepolia → Arc testnet) — first burn confirmed; mint blocked by code bug, re-smoke in flight
 
-| Field            | Value                                                                                                    |
-| ---------------- | -------------------------------------------------------------------------------------------------------- |
-| Direction        | Base Sepolia → Arc testnet                                                                               |
-| Size             | 10 USDC (forces past the planner's $5 dust threshold and the 5% drift threshold)                         |
-| Setup            | `DATABASE_URL=… ARC_EOA=0x… BASE_EOA=0x… ./scripts/seed-n6-smoke.sh`                                     |
-| JWT mint         | `cargo run --bin forge_test_jwt -- aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa > /tmp/jwt`                      |
-| Build            | `cargo run --features real-cctp` with `EXECUTION_MOCK=false MOCK_CIRCLE=false BILLING_V2_ENABLED=false`  |
-| Plan endpoint    | `POST /portfolios/bbbbbbbb-…/rebalance/plan` (auth: Bearer JWT)                                          |
-| Execute endpoint | `POST /rebalance/<id>/execute`                                                                           |
-| Burn tx hash     | _pending — fill in from `rebalance_legs.tx_hash WHERE rebalance_id = ... AND kind = 'cross_chain_burn'`_ |
-| Mint tx hash     | _pending — same query, `kind = 'cross_chain_mint'`_                                                      |
-| Base explorer    | `https://sepolia.basescan.org/tx/<burn-tx>`                                                              |
-| Arc explorer     | `https://testnet.arcscan.app/tx/<mint-tx>`                                                               |
-| Wall-clock E2E   | _pending — typical 15-30s per CCTP V2 (3s burn + 8-20s attestation + 2s mint)_                           |
-| Date             | _pending_                                                                                                |
+The first end-to-end attempt surfaced two real bugs that have since
+been fixed. The burn-only evidence proves CCTP V2 sol! interfaces +
+deployed TokenMessenger compatibility; the mint side waits on the
+re-smoke that runs against the corrected Arc domain id.
 
-Known surprises to call out when filling this in: Paymaster fee preview
-will show the Sprint-2 mocked ~$0.117 USD (Arc 0.012 + Base 0.105) vs
-actual Base Sepolia chain gas of ~$0.000007. Documented as `F-PAYMASTER-1`
-followup; not a blocker for the smoke.
+| Field          | Value                                                                                                                                                           |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Direction      | Base Sepolia → Arc testnet                                                                                                                                      |
+| Size           | 20 USDC bridge (full $20 portfolio targeted 100% EURC → cross-chain leg fires)                                                                                  |
+| Setup          | `ARC_EOA + BASE_EOA derived from CHAIN_PRIVATE_KEY_*; ./scripts/seed-n6-smoke.sh` seeds user + portfolio                                                        |
+| Goal flip      | `UPDATE portfolios SET goal = jsonb_set(goal, '{targetAllocation}', '{"EURC": 100}') WHERE id = ...`                                                            |
+| Build          | `EXECUTION_MOCK=false MOCK_CIRCLE=false cargo run --features real-cctp --bin cctp_rebalance_smoke`                                                              |
+| rebalance_id   | `8ddea142-4108-4107-944d-40a872579219`                                                                                                                          |
+| Burn tx hash   | `0x6579f80402d8c6ba2022a19f7ab8edc0ce2523518ec2f8814702ff019fc96e36`                                                                                            |
+| Base explorer  | https://sepolia.basescan.org/tx/0x6579f80402d8c6ba2022a19f7ab8edc0ce2523518ec2f8814702ff019fc96e36                                                              |
+| Burn block     | 41,618,751 (gas used 118,778; status 1)                                                                                                                         |
+| CCTP message   | `bd62404d3d60242034ed360d6a0d82480bc0d125112d04b58a2c342537df0b26` (cctpVersion 2)                                                                              |
+| Burn timestamp | 2026-05-17 08:13:22 UTC                                                                                                                                         |
+| Mint tx hash   | _stuck — message embedded `destinationDomain=13` which Arc rejected. See "Bug #2" below. 20 USDC lost on testnet; re-smoke below uses the corrected domain 26._ |
+| Arc explorer   | n/a for this attempt                                                                                                                                            |
+| Date           | 2026-05-17 (burn); domain fix + re-smoke same day                                                                                                               |
+
+**Bug #1 — pre-flight allowance race (fixed in commit `65d832e`)**
+
+The first burn attempt reverted in pre-flight with `ERC20: transfer
+amount exceeds allowance` even though `approve(token_messenger,
+2*amount)` was called synchronously before `depositForBurnWithHook`.
+Root cause: on the Base Sepolia RPC used here, `eth_estimateGas` ran
+against state from a block before the approve was mined. Fix in
+`cross_chain.rs::real_deposit_for_burn` now reads the existing
+allowance first, only approves if insufficient, and inserts a 3s
+settle after the approve receipt before the burn — both saving gas
+on retries and avoiding the RPC pre-flight race.
+
+**Bug #2 — wrong Arc CCTP V2 domain id (fixed in this commit)**
+
+Burn 0x6579… submitted with `destinationDomain = 13` per
+`ChainKey::Arc.domain_id() = 13` in the Rust code (and a matching
+`arc: 13` in `packages/shared/src/constants.ts`). The iris attestation
+landed (`cctpVersion: 2`, `status: complete`), but the
+`receiveMessage` call on Arc reverted with `Invalid destination
+domain`. Root cause: Arc testnet's deployed MessageTransmitter
+returns `localDomain() = 26`, not 13. The 13 was a stale guess that
+silently passed CI because no test fired against a real chain — the
+mock executor never invokes `MessageTransmitter::receiveMessage`.
+Domain 13 is in fact OP Mainnet per Circle's V2 registry, so the
+attested message could never have landed on Arc.
+
+Fix lands in `apps/api/src/modules/rebalance/models.rs` (`Arc => 26`)
+plus `packages/shared/src/constants.ts` (`arc: 26`), both verified
+against the on-chain `MessageTransmitter.localDomain()` query. The
+20 USDC burned with the old domain stays burned on the Base side —
+recovery on a destination chain matching domain 13 (OP Sepolia) is
+possible in principle but not pursued; testnet burn is a sunk cost.
+
+**Re-smoke against the corrected domain** — pending; will populate
+the row below and amend the date on the next commit.
+
+| Field          | Value (re-smoke)                                                                                                                                   |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Size           | 5 USDC bridge (remaining Base Sepolia EOA budget after the lost burn)                                                                              |
+| Build          | `EXECUTION_MOCK=false MOCK_CIRCLE=false cargo run --features real-cctp --bin cctp_rebalance_smoke`                                                 |
+| Burn tx hash   | _pending re-smoke_                                                                                                                                 |
+| Mint tx hash   | _pending re-smoke_                                                                                                                                 |
+| Wall-clock E2E | Burn <2s; Standard finality on Base Sepolia 13-25 min (variable, has been ~20 min this session); receiveMessage on Arc ~5s once attestation lands. |
+
+Known surprises: Paymaster fee preview will show the Sprint-2 mocked
+~$0.117 USD (Arc 0.012 + Base 0.105) vs actual Base Sepolia chain
+gas of ~$0.000007. Documented as `F-PAYMASTER-1` followup; not a
+blocker for the smoke.
 
 ### HS-5 · first real USYC park (Arc testnet) — pending
 

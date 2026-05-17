@@ -21,6 +21,22 @@ The matching `JWT_SECRET` (which was also leaked in the same commit) has already
 
 Note: scrubbing history via filter-repo cleaned `origin/main`, but the historical `feat/sprint-*` branches and `fix/post-submission-audit` on origin still contain `2d768d7` in their git ancestry. If those branches are not needed, delete them on origin to fully purge. They're stale/merged already.
 
+## Arc CCTP V2 domain id — RESOLVED 2026-05-17
+
+**Tag:** `F-CCTP-2` · **Status:** resolved · **Surfaced:** 2026-05-17 (HS-4 smoke) · **Closed:** 2026-05-17
+
+`ChainKey::Arc.domain_id()` returned `13` (and `CHAIN_DOMAINS.arc = 13` in `packages/shared/src/constants.ts`), but Arc testnet's deployed CCTP V2 MessageTransmitter at `0xE737e5cEBEEBa77EFE34D4aa090756590b1CE275` returns `localDomain() = 26`. A real burn submitted from Base Sepolia embedded `destinationDomain = 13`; the iris attestation completed but `receiveMessage` on Arc reverted with `Invalid destination domain`. Per Circle's V2 registry, domain 13 is OP Mainnet, not Arc — the attested message could never have landed on Arc.
+
+The bug passed CI because:
+
+- No on-chain integration test asserts `MessageTransmitter.localDomain() == ChainKey::*.domain_id()` for each chain.
+- Mock-mode `wait_for_attestation` + `receive_message` never invoke the destination-chain transmitter.
+- The single in-process round-trip test uses `EXECUTION_MOCK=true` and a hand-crafted mock attestation.
+
+Fix lands in `apps/api/src/modules/rebalance/models.rs` (`Self::Arc => 26`) plus `packages/shared/src/constants.ts` (`arc: 26`), verified against the on-chain `localDomain()` query before commit. The 20 USDC burned with the stale domain stays burned on Base — `0x6579f80402d8c6ba2022a19f7ab8edc0ce2523518ec2f8814702ff019fc96e36` is the sunk-cost evidence that the CCTP V2 sol! interface + deployed TokenMessenger work end-to-end on the burn side.
+
+**Followup `F-CCTP-3` (parked)**: add a one-time boot-time check that compares `MessageTransmitter.localDomain()` for each configured chain against `ChainKey::*.domain_id()` and fails fast on mismatch. The check needs RPC access at boot, which conflicts with the current `EXECUTION_MOCK=true` default — gate it behind `--features real-cctp` and only run when `execution_mock == false`.
+
 ## CCTP V2 contract surface — RESOLVED 2026-05-16
 
 **Tag:** `F-CCTP-1` (with `F-IRIS-1`) · **Status:** resolved · **Surfaced:** 2026-05-16 · **Closed:** 2026-05-16
