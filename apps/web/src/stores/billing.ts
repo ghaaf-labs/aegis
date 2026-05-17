@@ -16,13 +16,6 @@ interface BillingState {
   reset: () => void;
 }
 
-/** Derive the user's current tier. Falls back to "free" when no subscription
- * row exists — the API does not insert a Free row at signup, so we must not
- * crash the UI on a 204 response. */
-export function currentTier(s: Pick<BillingState, "subscription">): Tier {
-  return s.subscription?.tier ?? "free";
-}
-
 export const useBillingStore = create<BillingState>()(
   devtools(
     (set, get) => ({

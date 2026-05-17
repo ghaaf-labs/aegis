@@ -12,7 +12,3 @@ function readFlag(name: string): boolean {
 }
 
 export const PRICING_UI_ENABLED = readFlag("NEXT_PUBLIC_PRICING_UI_ENABLED");
-
-export const flags = {
-  pricingUi: PRICING_UI_ENABLED,
-} as const;
