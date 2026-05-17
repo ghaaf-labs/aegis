@@ -431,10 +431,10 @@ async fn propose_defensive_plan(
     // `triggered_by='peg_alert'` is a new variant; shared TS type already accepts
     // unknown strings via the `(string & {})` union.
     let reasoning = format!(
-        "Peg-defense: {asset} observed at or below {thr:.4} for the configured window; \
+        "Peg-defense: {asset} observed at or below {threshold:.4} for the configured window; \
          shifting {pct}% of portfolio from {asset} into {target}.",
         asset = depegged_asset,
-        thr = rule.threshold_price,
+        threshold = rule.threshold_price,
         pct = (depegged_weight * 100.0).round() as i64,
         target = target_asset,
     );
