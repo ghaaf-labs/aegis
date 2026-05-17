@@ -25,7 +25,7 @@ export function AllocationChart({ compact = false }: Props) {
 
   if (!portfolio) return null;
 
-  const data = portfolio.allocations.map((a) => ({
+  const data = (portfolio.allocations ?? []).map((a) => ({
     name: a.symbol,
     value: a.currentWeight,
     valueUsd: a.valueUsd,
