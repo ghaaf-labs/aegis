@@ -66,39 +66,46 @@ async function request<T>(path: string, opts: FetchOptions = {}): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-// ── Wallet auth (replaces legacy email/password authApi) ──────────────────
+// ── Wallet auth (Circle W3S User-Controlled) ──────────────────────────────
+
+/**
+ * Returned by `POST /auth/wallet/create` and `/auth/wallet/login`. The
+ * `bundle` is consumed by `@circle-fin/w3s-pw-web-sdk` to complete the PIN
+ * ceremony; `wallet` is `null` until that completes (poll `/auth/wallet/status`).
+ */
+export interface UserTokenBundle {
+  userToken: string;
+  encryptionKey: string;
+  appId: string;
+  /** Present on new-user signup, absent on returning-user login. */
+  challengeId: string | null;
+}
 
 export interface WalletAuthResponse {
   token: string;
-  wallet: WalletInfo;
   user: { id: string; email: string; riskTolerance: string };
+  wallet: WalletInfo | null;
+  bundle: UserTokenBundle;
+  isNewUser: boolean;
+}
+
+export interface WalletStatusResponse {
+  wallet: WalletInfo | null;
 }
 
 export const walletApi = {
-  createPasskey: (
-    email: string,
-    passkeyAttestation: unknown,
-    referrerHandle?: string,
-  ) =>
+  create: (email: string, referrerHandle?: string) =>
     request<WalletAuthResponse>("/auth/wallet/create", {
       method: "POST",
-      body: { email, passkeyAttestation, referrerHandle },
+      body: { email, referrerHandle },
     }),
-  loginPasskey: (email: string, passkeyAssertion: unknown) =>
+  login: (email: string) =>
     request<WalletAuthResponse>("/auth/wallet/login", {
       method: "POST",
-      body: { email, passkeyAssertion },
+      body: { email },
     }),
-  startOtp: (email: string) =>
-    request<{ email: string; challengeId: string; expiresIn: number }>(
-      "/auth/wallet/otp/start",
-      { method: "POST", body: { email } },
-    ),
-  verifyOtp: (email: string, code: string, referrerHandle?: string) =>
-    request<WalletAuthResponse>("/auth/wallet/otp/verify", {
-      method: "POST",
-      body: { email, code, referrerHandle },
-    }),
+  status: () =>
+    request<WalletStatusResponse>("/auth/wallet/status", { authed: true }),
   me: () =>
     request<{ id: string; email: string; riskTolerance: string }>("/auth/me", {
       authed: true,
