@@ -45,6 +45,14 @@ export default function StrategiesPage() {
     <main className="min-h-screen bg-bg text-text-default px-6 py-10">
       <div className="max-w-5xl mx-auto space-y-6">
         <header className="space-y-2">
+          {authed && (
+            <Link
+              href="/dashboard"
+              className="text-xs font-mono text-accent-agent hover:underline"
+            >
+              ← Back to dashboard
+            </Link>
+          )}
           <p className="text-[10px] font-mono uppercase tracking-widest text-accent-agent">
             Strategy marketplace
           </p>

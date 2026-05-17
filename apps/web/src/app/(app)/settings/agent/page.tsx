@@ -97,7 +97,7 @@ export default function AgentSettingsPage() {
           </p>
           <p>
             See{" "}
-            <a className="underline" href="/policy">
+            <a className="text-accent-agent hover:underline" href="/policy">
               /policy
             </a>{" "}
             for the full outcome posture.

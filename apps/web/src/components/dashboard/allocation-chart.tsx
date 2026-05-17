@@ -6,13 +6,14 @@ import { useActivePortfolio } from "@/stores/portfolio";
 import { formatPercent } from "@/lib/utils";
 import { ProvenanceLine } from "@aegis/ui";
 
-const COLORS = [
-  "#3b82f6",
-  "#8b5cf6",
-  "#06b6d4",
-  "#10b981",
-  "#f59e0b",
-  "#ef4444",
+// Chart palette sourced from design-system tokens + complementary shades.
+const CHART_COLORS = [
+  "#00E0FF", // accent-agent
+  "#FFB800", // warn
+  "#FF2D7A", // risk
+  "#00FF88", // accent-pnl
+  "#A855F7", // violet
+  "#F97316", // orange
 ];
 
 interface Props {
@@ -75,7 +76,7 @@ export function AllocationChart({ compact = false }: Props) {
                   {data.map((_, index) => (
                     <Cell
                       key={`cell-${index}`}
-                      fill={COLORS[index % COLORS.length]}
+                      fill={CHART_COLORS[index % CHART_COLORS.length]}
                       opacity={0.9}
                     />
                   ))}
@@ -107,7 +108,9 @@ export function AllocationChart({ compact = false }: Props) {
                 <div className="flex items-center gap-2 min-w-0">
                   <span
                     className="w-2 h-2 rounded-full shrink-0"
-                    style={{ background: COLORS[i % COLORS.length] }}
+                    style={{
+                      background: CHART_COLORS[i % CHART_COLORS.length],
+                    }}
                   />
                   <span className="text-xs text-gray-400 font-mono truncate">
                     {item.name}

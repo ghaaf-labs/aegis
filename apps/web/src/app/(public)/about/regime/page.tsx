@@ -241,7 +241,7 @@ function ConfusionMatrix({ confusion }: { confusion: Confusion }) {
           Confusion matrix
         </span>
         <span className="text-[10px] text-text-mut font-mono">
-          rows = predicted · columns = realized
+          rows = actual · columns = predicted
         </span>
       </BrutalCardHeader>
       <BrutalCardBody className="p-0 overflow-x-auto">
@@ -251,7 +251,7 @@ function ConfusionMatrix({ confusion }: { confusion: Confusion }) {
               <th className="text-left px-4 py-2"> </th>
               {labels.map((c) => (
                 <th key={`col-${c}`} className="text-right px-4 py-2">
-                  Realized {REGIME_LABEL[c]}
+                  Predicted {REGIME_LABEL[c]}
                 </th>
               ))}
             </tr>
@@ -265,7 +265,7 @@ function ConfusionMatrix({ confusion }: { confusion: Confusion }) {
                   className="border-b border-border-default/40 last:border-0"
                 >
                   <td className="px-4 py-2 text-text-hi">
-                    Predicted {REGIME_LABEL[label]}
+                    Actual {REGIME_LABEL[label]}
                   </td>
                   {row.map((cell, ci) => {
                     const onDiagonal = ri === ci;

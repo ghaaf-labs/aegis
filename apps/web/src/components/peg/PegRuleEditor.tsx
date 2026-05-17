@@ -70,6 +70,7 @@ export function PegRuleEditor() {
   const storePegAlerts = usePortfolioStore((s) => s.pegAlerts);
   const [dismissed, setDismissed] = useState(false);
   const alerts = dismissed ? [] : storePegAlerts;
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   // Mirror the wrapper's error into local state so the existing error
   // banner stays the only place the user sees failures.
@@ -109,18 +110,14 @@ export function PegRuleEditor() {
     }
   }
 
-  async function onDelete(rule: PegRule) {
-    if (
-      typeof window !== "undefined" &&
-      !window.confirm(`Delete the ${rule.asset} peg rule?`)
-    ) {
-      return;
-    }
+  async function onDelete(ruleId: string) {
     try {
-      await pegApi.remove(rule.id);
-      setRules((prev) => prev.filter((r) => r.id !== rule.id));
+      await pegApi.remove(ruleId);
+      setRules((prev) => prev.filter((r) => r.id !== ruleId));
+      setConfirmDeleteId(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "failed to delete rule");
+      setConfirmDeleteId(null);
     }
   }
 
@@ -342,13 +339,35 @@ export function PegRuleEditor() {
                     >
                       {rule.pausedAt ? "Resume" : "Pause"}
                     </BrutalButton>
-                    <BrutalButton
-                      variant="ghost"
-                      onClick={() => onDelete(rule)}
-                      aria-label="Delete peg rule"
-                    >
-                      Delete
-                    </BrutalButton>
+                    {confirmDeleteId === rule.id ? (
+                      <span className="flex items-center gap-1">
+                        <span className="text-[10px] font-mono text-text-lo">
+                          Confirm?
+                        </span>
+                        <BrutalButton
+                          variant="danger"
+                          onClick={() => void onDelete(rule.id)}
+                          aria-label="Confirm delete peg rule"
+                        >
+                          Yes
+                        </BrutalButton>
+                        <BrutalButton
+                          variant="ghost"
+                          onClick={() => setConfirmDeleteId(null)}
+                          aria-label="Cancel delete"
+                        >
+                          No
+                        </BrutalButton>
+                      </span>
+                    ) : (
+                      <BrutalButton
+                        variant="ghost"
+                        onClick={() => setConfirmDeleteId(rule.id)}
+                        aria-label="Delete peg rule"
+                      >
+                        Delete
+                      </BrutalButton>
+                    )}
                   </div>
                 </li>
               ))}

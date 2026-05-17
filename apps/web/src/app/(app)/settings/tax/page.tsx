@@ -28,6 +28,7 @@ export default function TaxSettingsPage() {
     [currentYear],
   );
 
+  const [mounted, setMounted] = useState(false);
   const [portfolioId, setPortfolioId] = useState<string>("");
   const [year, setYear] = useState<number>(currentYear);
   const [mockExcluded, setMockExcluded] = useState<number | null>(null);
@@ -37,6 +38,10 @@ export default function TaxSettingsPage() {
   const [creating, setCreating] = useState(false);
   const [summary, setSummary] = useState<TaxSummary | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (!portfolioId && (activeId ?? portfolios[0]?.id)) {
@@ -151,7 +156,9 @@ export default function TaxSettingsPage() {
                 onChange={(e) => setPortfolioId(e.target.value)}
                 className="mt-1 block w-full bg-surface border-brutal border-border-default rounded-sharp px-2 py-1 text-sm text-text-default"
               >
-                {portfolios.length === 0 ? (
+                {!mounted ? (
+                  <option value="">Loading…</option>
+                ) : portfolios.length === 0 ? (
                   <option value="">(no portfolios)</option>
                 ) : (
                   portfolios.map((p) => (

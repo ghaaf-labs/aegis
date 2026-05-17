@@ -7,6 +7,7 @@ import {
   BrutalPill,
 } from "@aegis/ui";
 import { DEMO_BUNDLES } from "@/lib/explore-data";
+import { DashboardLink } from "@/components/layout/dashboard-link";
 
 export const metadata = {
   title: "Aegis · Explore demo portfolios",
@@ -67,13 +68,14 @@ export default function ExploreIndex() {
           ))}
         </div>
 
-        <div className="pt-4">
+        <div className="pt-4 flex items-center gap-4">
           <Link
             href="/signup"
             className="inline-flex items-center gap-2 px-4 py-2 bg-accent-pnl text-black font-mono font-semibold rounded-sharp border-brutal border-black shadow-brutal-sm hover:shadow-brutal"
           >
             Sign up to build your own
           </Link>
+          <DashboardLink />
         </div>
       </div>
     </div>
