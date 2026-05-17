@@ -21,6 +21,19 @@ The matching `JWT_SECRET` (which was also leaked in the same commit) has already
 
 Note: scrubbing history via filter-repo cleaned `origin/main`, but the historical `feat/sprint-*` branches and `fix/post-submission-audit` on origin still contain `2d768d7` in their git ancestry. If those branches are not needed, delete them on origin to fully purge. They're stale/merged already.
 
+## USYC Teller allowlist gate (`NotPermissioned`)
+
+**Tag:** `F-USYC-1` · **Status:** open · **Surfaced:** 2026-05-17 (HS-5 smoke)
+
+`usyc_park_smoke --amount 5` against Arc testnet (with `--features real-usyc EXECUTION_MOCK=false`) reverts with `NotPermissioned()` (selector `0x7f63bd0f`). The Hashnote USYC Teller at `0x9fdF14c5B14173D74C08Af27AebFf39240dC105A` enforces a contract-level depositor allowlist — expected for an institutional T-Bill product. Aegis's hackathon EOA `0xf22C…aa24` isn't on the list.
+
+The Rust side is proven correct by this revert: `real-usyc` feature compiles against the deployed Teller, `treasury::service::park_in_usyc` plumbing reaches the chain, the alloy call surfaces the raw selector as a clean `AppError::Internal`. The blocker is purely credentialing.
+
+**Action**: submit a Hashnote testnet allowlist request for the Aegis EOA. Re-run `usyc_park_smoke` once the allowlist update lands. Until then:
+
+- The `MOCK_CIRCLE=true` path keeps the UI demo end-to-end.
+- The strategist's USYC sleeve surfaces a "pending custodian onboarding" caveat in approval modals when `real-usyc` is enabled (see `apps/api/src/modules/treasury/service.rs::park_in_usyc` — currently it bails on revert; a future iteration could surface the caveat upstream and degrade to a USDC-only plan instead of failing the whole rebalance).
+
 ## Arc CCTP V2 domain id — RESOLVED 2026-05-17
 
 **Tag:** `F-CCTP-2` · **Status:** resolved · **Surfaced:** 2026-05-17 (HS-4 smoke) · **Closed:** 2026-05-17

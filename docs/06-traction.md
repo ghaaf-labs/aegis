@@ -107,32 +107,44 @@ possible in principle but not pursued; testnet burn is a sunk cost.
 **Re-smoke against the corrected domain** — pending; will populate
 the row below and amend the date on the next commit.
 
-| Field          | Value (re-smoke)                                                                                                                                   |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Size           | 5 USDC bridge (remaining Base Sepolia EOA budget after the lost burn)                                                                              |
-| Build          | `EXECUTION_MOCK=false MOCK_CIRCLE=false cargo run --features real-cctp --bin cctp_rebalance_smoke`                                                 |
-| Burn tx hash   | _pending re-smoke_                                                                                                                                 |
-| Mint tx hash   | _pending re-smoke_                                                                                                                                 |
-| Wall-clock E2E | Burn <2s; Standard finality on Base Sepolia 13-25 min (variable, has been ~20 min this session); receiveMessage on Arc ~5s once attestation lands. |
+| Field          | Value (re-smoke against corrected domain)                                                                                                                                                         |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Size           | 5 USDC bridge (scaled down — 20 of 25 USDC on Base Sepolia were already burned on the failed first attempt)                                                                                       |
+| Build          | `EXECUTION_MOCK=false MOCK_CIRCLE=false CCTP_ATTESTATION_TIMEOUT_SECS=1500 cargo run --features real-cctp --bin cctp_rebalance_smoke`                                                             |
+| rebalance_id   | `9dc4414f-7ec0-428a-a1d5-0f7faf5aae29`                                                                                                                                                            |
+| Burn tx hash   | `0x16b04e14ed38e58c07e23e5d274d4cbefb00de8d37dd3c4f93d19f6210e3cda5`                                                                                                                              |
+| Base explorer  | https://sepolia.basescan.org/tx/0x16b04e14ed38e58c07e23e5d274d4cbefb00de8d37dd3c4f93d19f6210e3cda5                                                                                                |
+| Burn timestamp | 2026-05-17 08:40 UTC                                                                                                                                                                              |
+| Mint tx hash   | _pending Standard finality (~13-25 min on Base Sepolia, variable). Resume via the new `n6_cctp_resume` binary once attestation clears; idempotent re-runs safe per the council fix in `a938a3c`._ |
+| Wall-clock E2E | Burn submitted <2s; Standard finality on Base Sepolia has been ~15-20 min in this session window; `receiveMessage` on Arc ~5s once attestation lands.                                             |
 
 Known surprises: Paymaster fee preview will show the Sprint-2 mocked
 ~$0.117 USD (Arc 0.012 + Base 0.105) vs actual Base Sepolia chain
 gas of ~$0.000007. Documented as `F-PAYMASTER-1` followup; not a
 blocker for the smoke.
 
-### HS-5 · first real USYC park (Arc testnet) — pending
+### HS-5 · first real USYC park (Arc testnet) — blocked on allowlist (`NotPermissioned`)
 
-| Field            | Value                                                                                         |
-| ---------------- | --------------------------------------------------------------------------------------------- |
-| Action           | `IUsycTeller::deposit` against Hashnote Teller on Arc testnet                                 |
-| Size             | 5 USDC                                                                                        |
-| Build            | `cargo run --features "real-cctp real-usyc"`                                                  |
-| Endpoint         | `POST /portfolios/<id>/treasury/park` `{amountUsdc: 5}`                                       |
-| Pre-flight check | `cast call $USYC_TELLER_ARC "asset()(address)" --rpc-url $ARC_RPC_URL` → returns USDC address |
-| Deposit tx hash  | _pending_                                                                                     |
-| Arc explorer     | `https://testnet.arcscan.app/tx/<deposit-tx>`                                                 |
-| USYC balance     | _pending — `cast call $USYC_TOKEN_ARC "balanceOf(address)(uint256)" $ARC_EOA`_                |
-| Date             | _pending_                                                                                     |
+| Field            | Value                                                                                                                                                                                                                                                                                   |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Action           | `IUsycTeller::deposit` against Hashnote Teller on Arc testnet                                                                                                                                                                                                                           |
+| Size             | 5 USDC                                                                                                                                                                                                                                                                                  |
+| Build            | `EXECUTION_MOCK=false cargo run --features "real-cctp real-usyc" --bin usyc_park_smoke -- --amount 5`                                                                                                                                                                                   |
+| Smoke binary     | New `apps/api/src/bin/usyc_park_smoke.rs` (this commit) — calls `treasury::service::park_in_usyc` directly. Bypasses the HTTP layer + Circle Wallets.                                                                                                                                   |
+| Pre-flight check | `cast call $USYC_TELLER_ARC "asset()(address)" --rpc-url $ARC_RPC_URL` returns `USDC_ARC` ✓                                                                                                                                                                                             |
+| Result           | **Reverted: `NotPermissioned()` (selector `0x7f63bd0f`)**                                                                                                                                                                                                                               |
+| Root cause       | Hashnote's USYC Teller permissions depositors at the contract level. The Aegis hackathon EOA `0xf22C…aa24` is not on the allowlist. This is expected for an institutional-grade T-Bill product; allowlisting requires KYB onboarding with Hashnote, which isn't open for hackathon use. |
+| Deposit tx hash  | _N/A — no tx submitted; revert caught at simulation_                                                                                                                                                                                                                                    |
+| USYC balance     | `0` (`cast call $USYC_TOKEN_ARC "balanceOf(address)(uint256)" $ARC_EOA`)                                                                                                                                                                                                                |
+| Date             | 2026-05-17 (smoke run + revert confirmed)                                                                                                                                                                                                                                               |
+| Followup         | `F-USYC-1` — submit a Hashnote testnet allowlist request, then re-run `usyc_park_smoke`. Until then, `MOCK_CIRCLE=true` mock path keeps the UI demo end-to-end and the strategist's USYC sleeve is documented as "pending custodian onboarding" in approval modals.                     |
+
+Code state proven by this run: `real-usyc` cargo feature compiles
+against alloy + the deployed Teller, `treasury::service::park_in_usyc`
+plumbing reaches the chain, the revert is surfaced as a clean
+`AppError::Internal` with the raw selector preserved for ops. The
+last mile (an allowlisted deposit) is a credentialing task, not a
+code task.
 
 ## Browser smoke walkthrough (N15)
 
