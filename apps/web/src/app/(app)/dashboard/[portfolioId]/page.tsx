@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useParams } from "next/navigation";
 import { PortfolioSummaryCard } from "@/components/dashboard/portfolio-summary-card";
@@ -47,13 +47,10 @@ export default function PortfolioDashboardPage() {
   );
   const diaryPublic = localDiaryPublic ?? diaryQuery.data?.diaryPublic ?? false;
 
-  const storedEmail = useMemo(
-    () =>
-      typeof window !== "undefined"
-        ? (localStorage.getItem("aegis_email") ?? "")
-        : "",
-    [],
-  );
+  const [storedEmail, setStoredEmail] = useState("");
+  useEffect(() => {
+    setStoredEmail(localStorage.getItem("aegis_email") ?? "");
+  }, []);
 
   return (
     <motion.div
