@@ -40,6 +40,50 @@ The `${…}` placeholders get filled in at submission time. The point of
 freezing the table here is to make the submission a 30-second update rather
 than a scramble.
 
+## Live testnet evidence
+
+> The scaffolding for the first end-to-end real-mode rebalance lands in
+> HS-4 / HS-5; the live execution itself is a user-driven smoke that
+> requires real testnet USDC + a valid `CIRCLE_API_KEY`. Recipe is
+> reproducible from any clean DB.
+
+### HS-4 · first real CCTP V2 rebalance (Base Sepolia → Arc testnet) — pending
+
+| Field            | Value                                                                                                    |
+| ---------------- | -------------------------------------------------------------------------------------------------------- |
+| Direction        | Base Sepolia → Arc testnet                                                                               |
+| Size             | 10 USDC (forces past the planner's $5 dust threshold and the 5% drift threshold)                         |
+| Setup            | `DATABASE_URL=… ARC_EOA=0x… BASE_EOA=0x… ./scripts/seed-n6-smoke.sh`                                     |
+| JWT mint         | `cargo run --bin forge_test_jwt -- aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa > /tmp/jwt`                      |
+| Build            | `cargo run --features real-cctp` with `EXECUTION_MOCK=false MOCK_CIRCLE=false BILLING_V2_ENABLED=false`  |
+| Plan endpoint    | `POST /portfolios/bbbbbbbb-…/rebalance/plan` (auth: Bearer JWT)                                          |
+| Execute endpoint | `POST /rebalance/<id>/execute`                                                                           |
+| Burn tx hash     | _pending — fill in from `rebalance_legs.tx_hash WHERE rebalance_id = ... AND kind = 'cross_chain_burn'`_ |
+| Mint tx hash     | _pending — same query, `kind = 'cross_chain_mint'`_                                                      |
+| Base explorer    | `https://sepolia.basescan.org/tx/<burn-tx>`                                                              |
+| Arc explorer     | `https://testnet.arcscan.app/tx/<mint-tx>`                                                               |
+| Wall-clock E2E   | _pending — typical 15-30s per CCTP V2 (3s burn + 8-20s attestation + 2s mint)_                           |
+| Date             | _pending_                                                                                                |
+
+Known surprises to call out when filling this in: Paymaster fee preview
+will show the Sprint-2 mocked ~$0.117 USD (Arc 0.012 + Base 0.105) vs
+actual Base Sepolia chain gas of ~$0.000007. Documented as `F-PAYMASTER-1`
+followup; not a blocker for the smoke.
+
+### HS-5 · first real USYC park (Arc testnet) — pending
+
+| Field            | Value                                                                                         |
+| ---------------- | --------------------------------------------------------------------------------------------- |
+| Action           | `IUsycTeller::deposit` against Hashnote Teller on Arc testnet                                 |
+| Size             | 5 USDC                                                                                        |
+| Build            | `cargo run --features "real-cctp real-usyc"`                                                  |
+| Endpoint         | `POST /portfolios/<id>/treasury/park` `{amountUsdc: 5}`                                       |
+| Pre-flight check | `cast call $USYC_TELLER_ARC "asset()(address)" --rpc-url $ARC_RPC_URL` → returns USDC address |
+| Deposit tx hash  | _pending_                                                                                     |
+| Arc explorer     | `https://testnet.arcscan.app/tx/<deposit-tx>`                                                 |
+| USYC balance     | _pending — `cast call $USYC_TOKEN_ARC "balanceOf(address)(uint256)" $ARC_EOA`_                |
+| Date             | _pending_                                                                                     |
+
 ## Quotes from real testers
 
 > _Three quotes from people outside our team who used Aegis in the event
