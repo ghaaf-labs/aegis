@@ -90,25 +90,21 @@ Three sub-fixes shipped together (also closes `F-IRIS-1`):
 
 **Remaining orchestration follow-up**: smoke binary's poll timeout was 240s, which dropped the in-process executor task before the 13-minute Standard finality cleared. Bumped to `cctp_attestation_timeout_secs + 60s` so end-to-end runs to completion. For the production API server this is moot — `scheduler::spawn_outcome_compressor` re-polls open rebalances on boot.
 
-## Circle Wallets API path staleness
+## Circle Wallets API path staleness — RESOLVED 2026-05-17
 
-**Tag:** `F-WALLET-1` · **Status:** partially closed (centralised paths landed; live verification pending) · **Surfaced:** 2026-05-16 (N0.9 smoke) · **Updated:** 2026-05-17 (HS-3)
+**Tag:** `F-WALLET-1` · **Status:** resolved · **Surfaced:** 2026-05-16 (N0.9 smoke) · **Closed:** 2026-05-17 (backend-platform-usable)
 
-Smoke against the real Circle API on 2026-05-16 with `CIRCLE_API_KEY=TEST_API_KEY:…` showed:
+The earlier 401/404 storm was a host bug, not a permissions bug: `.env` was pointing `CIRCLE_BASE_URL` at `https://api-sandbox.circle.com` (the legacy Payments host) while the W3S Programmable-Wallets product lives at `https://api.circle.com`. Per Circle docs, sandbox vs production is keyed by the `TEST_API_KEY:` / `LIVE_API_KEY:` prefix on the API key — not by separate hosts.
 
-- TLS + DNS to `https://api-sandbox.circle.com` works.
-- `Bearer {api_key}` auth header format is correct (no 401/403 returned).
-- The specific paths `apps/api/src/modules/wallet/provider.rs` builds — `/v1/wallets/otp/start`, `/v1/health`, `/v1/ping` — all return Circle's structured 404 `{code:-1, message:"Resource not found"}`.
+Verification: live `GET /v1/w3s/{config/entity,users,wallets}` against `api.circle.com` with the existing `TEST_API_KEY:cd732deb...` returned **HTTP 200** on all three. The `tests/live_circle_w3s.rs` smoke encodes this check (`#[ignore]` by default; `cargo test --test live_circle_w3s -- --ignored`).
 
-**Likely cause**: Circle has reorganized Wallets-API endpoints between the v1 Programmable Wallets surface (which the codebase references) and the current Developer-Controlled-Wallets v1/w3s surface. The CircleProvider needs a path audit against the live Circle docs before the next signup flow ships.
+Implementation:
 
-**HS-3 (2026-05-17)** — refactor only, no path flip:
-
-- Centralised the four call-site path strings into `apps/api/src/modules/wallet/provider.rs::paths` (a private `mod paths`). Flipping a path is now a 4-line edit instead of grep-and-replace across the file.
-- Documented the likely W3S target shape in the module header (`/v1/w3s/users`, `/v1/w3s/user/token`, `/v1/w3s/wallets`).
-- Did NOT change the path strings themselves — that requires a live verification against `CIRCLE_API_KEY` that this session can't perform safely. The flip should happen during N15 browser smoke OR earlier when the user attempts the first real signup. Tests under `MOCK_CIRCLE=true` continue to pass.
-
-**Remaining action** (gated on live access): hit each path under `https://api-sandbox.circle.com/v1/w3s/*` with curl + the real `CIRCLE_API_KEY`, confirm the request/response shape matches `CircleWalletResp`, and flip the four strings in `paths`. Then re-run the N0.9 smoke from the prior plan.
+- Flipped default `circle_base_url` to `https://api.circle.com` in `apps/api/src/config.rs` and updated `.env`.
+- Rewrote `apps/api/src/modules/wallet/provider.rs` for the W3S User-Controlled flow — `ensure_user` → `issue_user_token` → `fetch_user_wallets`. `UserTokenBundle` returned to the browser carries `userToken + encryptionKey + appId + challengeId` for `@circle-fin/w3s-pw-web-sdk` to consume.
+- Deleted the legacy OTP routes (`/auth/wallet/otp/*`) and added `GET /auth/wallet/status` for the browser to poll after the SDK completes the PIN challenge.
+- Frontend `apps/web/src/components/wallet/create-wallet-card.tsx` now dynamically imports `W3SSdk`, runs the challenge in the browser, and polls `/auth/wallet/status` until both ARC and BASE addresses are provisioned.
+- New `CIRCLE_APP_ID` env required when `MOCK_CIRCLE=false` (validated at boot).
 
 ## FX live with CoinGecko fallback — RESOLVED 2026-05-17
 
