@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getToken } from "@/lib/api";
 import { defaultSseUrl, useEventSource } from "@/lib/sse";
 import { pegApi } from "@/lib/api";
+import { useApiQuery } from "@/lib/use-api-query";
 import type { PegActionKind, PegAlert, PegAssetSymbol, PegRule } from "@/types";
 
 const ASSETS: PegAssetSymbol[] = ["USDC", "EURC", "USYC"];
@@ -47,9 +48,22 @@ const DEFAULT_DRAFT: DraftRule = {
  * agent variant; pause is the red `danger` variant.
  */
 export function PegRuleEditor() {
-  const [rules, setRules] = useState<PegRule[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const rulesQuery = useApiQuery<PegRule[]>("peg.rules", () => pegApi.list());
+  // Local overlay for optimistic mutations after onCreate / onPause /
+  // onDelete. Falls back to the wrapper's cached data on initial load.
+  const [localRules, setLocalRules] = useState<PegRule[] | null>(null);
+  const rules = localRules ?? rulesQuery.data ?? [];
+  const loading = rulesQuery.isLoading && !rulesQuery.data;
+  const setRules = (next: PegRule[] | ((prev: PegRule[]) => PegRule[])) =>
+    setLocalRules((prev) => {
+      const base = prev ?? rulesQuery.data ?? [];
+      return typeof next === "function"
+        ? (next as (p: PegRule[]) => PegRule[])(base)
+        : next;
+    });
+  const [error, setError] = useState<string | null>(
+    rulesQuery.error?.message ?? null,
+  );
   const [draft, setDraft] = useState<DraftRule>(DEFAULT_DRAFT);
   const [submitting, setSubmitting] = useState(false);
   const [alerts, setAlerts] = useState<PegAlert[]>([]);
@@ -69,24 +83,11 @@ export function PegRuleEditor() {
     { enabled: !!token },
   );
 
+  // Mirror the wrapper's error into local state so the existing error
+  // banner stays the only place the user sees failures.
   useEffect(() => {
-    let cancelled = false;
-    pegApi
-      .list()
-      .then((rows) => {
-        if (cancelled) return;
-        setRules(rows);
-        setError(null);
-      })
-      .catch((e: unknown) => {
-        if (cancelled) return;
-        setError(e instanceof Error ? e.message : "failed to load rules");
-      })
-      .finally(() => !cancelled && setLoading(false));
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    if (rulesQuery.error) setError(rulesQuery.error.message);
+  }, [rulesQuery.error]);
 
   async function onCreate() {
     if (submitting) return;
