@@ -54,7 +54,7 @@ A short summary of the categories:
 - **Volatility floor / ceiling** — portfolio target volatility kept inside the goal-stated band.
 - **Drift threshold** — no rebalance proposed below the configured drift (default 5%).
 - **Wash sale guard** — tax-loss harvest won't trigger a buy of a substantially identical asset within 30 days.
-- **Peg defense** — depegged-asset weight rotates into the rule's `target_asset` automatically only for Pro/Business tiers with pre-approved rules. Otherwise an alert fires and waits for user approval.
+- **Peg defense** — depegged-asset weight rotates into the rule's `target_asset` automatically only for Pro/Business tiers with pre-approved rules. Otherwise an alert fires and waits for user approval. **`PEG_DEFENSE_ENABLED=true` is default-on as of 2026-05-17 (FF-3)**; configure rules at `/settings/peg`. The Pro/Business auto-execute path (`F-PEG-8`) remains gated until the tier integration test lands.
 
 ## 6. Why this page exists
 

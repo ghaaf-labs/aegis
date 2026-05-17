@@ -157,9 +157,17 @@ pub struct Config {
     /// next call to the cheaper Haiku tier. Default $0.05/decision —
     /// roughly the cost ceiling of a typical strategist + critic pass
     /// at v4-flash + Haiku 4.5 mid-2026 pricing.
-    /// TODO(F-COST-2): enforce at call time in agent/service.rs.
+    /// Enforced at call time in `modules/ai/client.rs::check_budget_guard`
+    /// (HS-2 / F-COST-2 closed 2026-05-17): structured warn fires when
+    /// per-call cost exceeds this number.
     #[allow(dead_code)]
     pub openrouter_budget_guard_usd: f64,
+    /// HS-6 — when true, the FX module attempts a Circle StableFX RFQ
+    /// before falling back to CoinGecko spot. Default `false`; institutional
+    /// access is KYB-gated and not yet open to retail Aegis. Keeping the
+    /// env in place so flipping it later is a 1-line config change.
+    #[allow(dead_code)]
+    pub stablefx_institutional_access: bool,
 
     // ── Sprint 3: digest ──────────────────────────────────────────────────
     /// Hour of day (UTC) when the digest worker fires. 0–23.
@@ -318,6 +326,7 @@ impl Config {
             scheduler_cooldown_secs: parse_or("SCHEDULER_COOLDOWN_SECS", 1800)?,
             harvest_threshold_usd: parse_or("HARVEST_THRESHOLD_USD", 50.0)?,
             openrouter_budget_guard_usd: parse_or("OPENROUTER_BUDGET_GUARD_USD", 0.05)?,
+            stablefx_institutional_access: parse_or("STABLEFX_INSTITUTIONAL_ACCESS", false)?,
 
             digest_hour_utc: parse_or("DIGEST_HOUR_UTC", 8)?,
             resend_api_key: std::env::var("RESEND_API_KEY").unwrap_or_default(),
@@ -330,11 +339,11 @@ impl Config {
             api_base_url: std::env::var("API_BASE_URL")
                 .unwrap_or_else(|_| "http://localhost:8080".into()),
 
-            regime_backtest_enabled: parse_or("REGIME_BACKTEST_ENABLED", false)?,
-            peg_defense_enabled: parse_or("PEG_DEFENSE_ENABLED", false)?,
+            regime_backtest_enabled: parse_or("REGIME_BACKTEST_ENABLED", true)?,
+            peg_defense_enabled: parse_or("PEG_DEFENSE_ENABLED", true)?,
             peg_monitor_tick_secs: parse_or("PEG_MONITOR_TICK_SECS", 10)?,
             peg_fire_cooldown_secs: parse_or("PEG_FIRE_COOLDOWN_SECS", 1800)?,
-            tax_export_v1_enabled: parse_or("TAX_EXPORT_V1_ENABLED", false)?,
+            tax_export_v1_enabled: parse_or("TAX_EXPORT_V1_ENABLED", true)?,
             aum_stream_enabled: parse_or("AUM_STREAM_ENABLED", false)?,
             calibrated_conf_enabled: parse_or("CALIBRATED_CONF_ENABLED", false)?,
             constitution_enabled: parse_or("CONSTITUTION_ENABLED", false)?,
@@ -492,17 +501,18 @@ mod tests {
             scheduler_cooldown_secs: 1800,
             harvest_threshold_usd: 50.0,
             openrouter_budget_guard_usd: 0.05,
+            stablefx_institutional_access: false,
             digest_hour_utc: 8,
             resend_api_key: String::new(),
             digest_from: "Aegis <noreply@aegis.local>".into(),
             digest_secret: "test-secret".into(),
             public_base_url: "http://localhost:3000".into(),
             api_base_url: "http://localhost:8080".into(),
-            regime_backtest_enabled: false,
-            peg_defense_enabled: false,
+            regime_backtest_enabled: true,
+            peg_defense_enabled: true,
             peg_monitor_tick_secs: 10,
             peg_fire_cooldown_secs: 1800,
-            tax_export_v1_enabled: false,
+            tax_export_v1_enabled: true,
             aum_stream_enabled: false,
             calibrated_conf_enabled: false,
             constitution_enabled: false,

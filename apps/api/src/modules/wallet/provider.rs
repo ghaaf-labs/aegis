@@ -1,5 +1,15 @@
 //! Circle WaaS provider — pluggable so `MOCK_CIRCLE=true` keeps local dev
 //! moving when the sandbox is unreachable.
+//!
+//! F-WALLET-1 (audited 2026-05-17): the path strings below are centralised in
+//! `paths` so the next live smoke can patch them in one place when Circle's
+//! W3S product reorg lands. Per the 2026-05-16 smoke, the legacy
+//! `/v1/wallets/...` paths return Circle's structured 404; the new W3S
+//! product uses `/v1/w3s/...` patterns
+//! (`/v1/w3s/users`, `/v1/w3s/user/token`, `/v1/w3s/wallets`, etc.). We
+//! leave the legacy strings here as the call shape the rest of the module
+//! depends on; flipping them is a 4-line edit in `paths` once the W3S
+//! contract is verified against a live `CIRCLE_API_KEY`.
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -10,6 +20,18 @@ use uuid::Uuid;
 use crate::config::Config;
 use crate::error::AppError;
 use crate::modules::wallet::models::{OtpStartResponse, WalletInfo};
+
+/// Centralised Circle path strings. Update here when F-WALLET-1 closes.
+mod paths {
+    /// POST — create a wallet from a WebAuthn attestation.
+    pub const WALLETS_CREATE: &str = "/wallets";
+    /// POST — authenticate an existing wallet via WebAuthn assertion.
+    pub const WALLETS_AUTH: &str = "/wallets/authenticate";
+    /// POST — start the email-OTP challenge.
+    pub const OTP_START: &str = "/wallets/otp/start";
+    /// POST — verify the OTP code and materialise the wallet.
+    pub const OTP_VERIFY: &str = "/wallets/otp/verify";
+}
 
 #[async_trait]
 pub trait WalletProvider: Send + Sync {
@@ -109,7 +131,7 @@ impl WalletProvider for CircleProvider<'_> {
     ) -> crate::error::Result<WalletInfo> {
         let resp: CircleWalletResp = self
             .post(
-                "/wallets",
+                paths::WALLETS_CREATE,
                 &CreateWalletReq {
                     email,
                     chains: &["arc-testnet", "base-sepolia"],
@@ -127,7 +149,7 @@ impl WalletProvider for CircleProvider<'_> {
     ) -> crate::error::Result<WalletInfo> {
         let resp: CircleWalletResp = self
             .post(
-                "/wallets/authenticate",
+                paths::WALLETS_AUTH,
                 &serde_json::json!({
                     "email": email,
                     "assertion": passkey_assertion,
@@ -150,7 +172,7 @@ impl WalletProvider for CircleProvider<'_> {
         }
 
         let resp: CircleOtpResp = self
-            .post("/wallets/otp/start", &serde_json::json!({ "email": email }))
+            .post(paths::OTP_START, &serde_json::json!({ "email": email }))
             .await?;
         Ok(OtpStartResponse {
             email: email.to_string(),
@@ -162,7 +184,7 @@ impl WalletProvider for CircleProvider<'_> {
     async fn verify_otp(&self, email: &str, code: &str) -> crate::error::Result<WalletInfo> {
         let resp: CircleWalletResp = self
             .post(
-                "/wallets/otp/verify",
+                paths::OTP_VERIFY,
                 &serde_json::json!({
                     "email": email,
                     "code": code,

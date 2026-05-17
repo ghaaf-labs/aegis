@@ -16,6 +16,7 @@ pub mod rebalance;
 pub mod risk_engine;
 pub mod scheduler;
 pub mod sse;
+pub mod strategies;
 pub mod tax;
 pub mod treasury;
 pub mod trustability;

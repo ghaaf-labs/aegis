@@ -730,6 +730,7 @@ async fn run_strategist_with_tools(
                 prompt_tokens,
                 completion_tokens,
                 latency_ms,
+                cost_usd,
             } => {
                 total_prompt = total_prompt.saturating_add(prompt_tokens);
                 total_completion = total_completion.saturating_add(completion_tokens);
@@ -741,6 +742,7 @@ async fn run_strategist_with_tools(
                     prompt_tokens: total_prompt,
                     completion_tokens: total_completion,
                     latency_ms: total_latency,
+                    cost_usd,
                 });
             }
             ChatToolResult::Calls {
@@ -750,6 +752,7 @@ async fn run_strategist_with_tools(
                 prompt_tokens,
                 completion_tokens,
                 latency_ms,
+                cost_usd: _,
             } => {
                 total_prompt = total_prompt.saturating_add(prompt_tokens);
                 total_completion = total_completion.saturating_add(completion_tokens);
@@ -797,6 +800,7 @@ async fn run_strategist_with_tools(
         model_slug,
         prompt_tokens: total_prompt,
         completion_tokens: total_completion,
+        cost_usd: None,
         latency_ms: total_latency,
     })
 }

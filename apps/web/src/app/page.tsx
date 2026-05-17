@@ -102,6 +102,15 @@ export default function LandingPage() {
               Explore demo
             </Button>
           </Link>
+          <Link href="/strategies">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-gray-400 hover:text-white"
+            >
+              Browse strategies
+            </Button>
+          </Link>
           <Link href="/signup">
             <Button
               size="sm"

@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   CreditCard,
   LayoutDashboard,
+  LayoutGrid,
   PieChart,
   Settings,
   Shield,
@@ -19,6 +20,7 @@ import { PRICING_UI_ENABLED } from "@/lib/flags";
 const BASE_NAV_ITEMS = [
   { href: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
   { href: "/portfolio", icon: PieChart, label: "Portfolio" },
+  { href: "/strategies", icon: LayoutGrid, label: "Strategies" },
   { href: "/settings", icon: Settings, label: "Settings" },
   { href: "/settings/agent", icon: Shield, label: "Agent" },
 ];

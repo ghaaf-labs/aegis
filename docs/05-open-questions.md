@@ -51,7 +51,7 @@ Three sub-fixes shipped together (also closes `F-IRIS-1`):
 
 ## Circle Wallets API path staleness
 
-**Tag:** `F-WALLET-1` · **Status:** open · **Surfaced:** 2026-05-16 (N0.9 smoke)
+**Tag:** `F-WALLET-1` · **Status:** partially closed (centralised paths landed; live verification pending) · **Surfaced:** 2026-05-16 (N0.9 smoke) · **Updated:** 2026-05-17 (HS-3)
 
 Smoke against the real Circle API on 2026-05-16 with `CIRCLE_API_KEY=TEST_API_KEY:…` showed:
 
@@ -61,17 +61,35 @@ Smoke against the real Circle API on 2026-05-16 with `CIRCLE_API_KEY=TEST_API_KE
 
 **Likely cause**: Circle has reorganized Wallets-API endpoints between the v1 Programmable Wallets surface (which the codebase references) and the current Developer-Controlled-Wallets v1/w3s surface. The CircleProvider needs a path audit against the live Circle docs before the next signup flow ships.
 
-**Action** (do during N15 browser smoke, OR earlier if first signup attempt 404s): cross-reference each call site in `apps/api/src/modules/wallet/provider.rs` against `developers.circle.com/w3s` and update path strings. Tests will still pass under `MOCK_CIRCLE=true` so no regression risk locally.
+**HS-3 (2026-05-17)** — refactor only, no path flip:
 
-## Budget guard enforcement (call-time downshift)
+- Centralised the four call-site path strings into `apps/api/src/modules/wallet/provider.rs::paths` (a private `mod paths`). Flipping a path is now a 4-line edit instead of grep-and-replace across the file.
+- Documented the likely W3S target shape in the module header (`/v1/w3s/users`, `/v1/w3s/user/token`, `/v1/w3s/wallets`).
+- Did NOT change the path strings themselves — that requires a live verification against `CIRCLE_API_KEY` that this session can't perform safely. The flip should happen during N15 browser smoke OR earlier when the user attempts the first real signup. Tests under `MOCK_CIRCLE=true` continue to pass.
 
-**Tag:** `F-COST-2` · **Status:** open · **Surfaced:** 2026-05-16 by F-COST-1
+**Remaining action** (gated on live access): hit each path under `https://api-sandbox.circle.com/v1/w3s/*` with curl + the real `CIRCLE_API_KEY`, confirm the request/response shape matches `CircleWalletResp`, and flip the four strings in `paths`. Then re-run the N0.9 smoke from the prior plan.
 
-F-COST-1 (the DeepSeek price-cliff defuse) added `OPENROUTER_BUDGET_GUARD_USD` (default `$0.05`) to `Config` but did NOT enforce it at call time — the value is read at boot and the field is plumbed through, but no code consults it yet. The TODO is marked at `apps/api/src/config.rs::openrouter_budget_guard_usd` in the doc comment.
+## FX live with CoinGecko fallback — RESOLVED 2026-05-17
 
-**What's missing**: in `apps/api/src/modules/agent/service.rs`, after each `OpenRouterClient::chat` returns, compute the call's cost-USD (OpenRouter returns `usage.cost` in the response — needs plumbing through `ChatToolResult`) and compare to the guard. When exceeded, route the next call in the same decision to a cheaper Haiku tier and persist a `tier_features.downshifted: true` marker in the decision metadata so the UI can surface it.
+**Tag:** `F-FX-1` · **Status:** resolved · **Surfaced:** 2026-05-16 · **Closed:** 2026-05-17 (HS-6)
 
-Cheap escape valve: if enforcement is too risky, just log a `warn!` for now and ticket a dashboard alert. The guard config itself is already valuable as an operator signal.
+`fx::service::usdc_eurc_basis` is no longer a hardcoded 0.9217. The default path hits CoinGecko `/api/v3/simple/price?ids=usd-coin,euro-coin&vs_currencies=usd`, derives the mid rate from `usdc_usd / eurc_usd`, and rounds to 4 decimals. 30s in-memory cache fits comfortably under CoinGecko's free-tier ceiling. Any error degrades to the prior steady 0.9217 with `source: "coingecko-fallback"` so the agent prompt always has a number.
+
+New env `STABLEFX_INSTITUTIONAL_ACCESS=false` (default false) carries the flag for the future RFQ-first path — institutional StableFX access is still KYB-gated and not yet open. When flipped, the service logs a debug line and still falls through to CoinGecko because the RFQ wire hasn't landed.
+
+Frontend: approval modal renders a warn-toned caveat banner whenever any leg has `srcSymbol == "EURC" || destSymbol == "EURC"` so users see the institutional-pending posture before approving.
+
+## Budget guard enforcement (call-time warn) — RESOLVED 2026-05-17
+
+**Tag:** `F-COST-2` · **Status:** resolved · **Surfaced:** 2026-05-16 by F-COST-1 · **Closed:** 2026-05-17
+
+Took the warn-path escape valve. `apps/api/src/modules/ai/client.rs::check_budget_guard` runs after every successful OpenRouter completion (both `chat()` and `chat_with_tools()`):
+
+- `usage.cost` is parsed from the OpenRouter response (`Option<f64>`; absent on free routes treated as zero).
+- When `cost > config.openrouter_budget_guard_usd`, a structured `tracing::warn!` with `target: "agent.cost.guard_exceeded"` fires carrying `model_slug`, `cost_usd`, `guard_usd`, `latency_ms`. Operator-side alerting can subscribe to that target without any further code change.
+- `ChatResponse.cost_usd` + `ChatToolResult::{Final, Calls}.cost_usd` carry the per-call cost forward so per-decision telemetry can aggregate it later (e.g. a future "spend per decision" UI surface) without re-fetching.
+
+Auto-downshift mid-decision (the originally-scoped behavior) was de-scoped: warn-then-watch is the cheap path and the dashboard alert is sufficient until decision volume justifies the complexity. Re-open the ticket if production traffic produces a sustained-overage pattern.
 
 ## Regime classifier accuracy
 
