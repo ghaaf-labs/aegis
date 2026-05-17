@@ -91,7 +91,7 @@ export function PortfolioSummaryCard() {
             )}
           </div>
 
-          <div className="pt-2 border-t border-white/10">
+          <div className="col-span-2 pt-2 border-t border-white/10">
             <ProvenanceLine
               source="Gateway unified balance + on-chain positions"
               freshness="live"

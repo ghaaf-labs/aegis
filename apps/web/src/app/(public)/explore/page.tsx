@@ -69,7 +69,7 @@ export default function ExploreIndex() {
 
         <div className="pt-4">
           <Link
-            href="/"
+            href="/signup"
             className="inline-flex items-center gap-2 px-4 py-2 bg-accent-pnl text-black font-mono font-semibold rounded-sharp border-brutal border-black shadow-brutal-sm hover:shadow-brutal"
           >
             Sign up to build your own

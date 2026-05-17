@@ -60,7 +60,7 @@ export default async function ExploreDemoPage({ params }: PageProps) {
             </span>
           </div>
           <Link
-            href="/"
+            href="/signup"
             className="inline-flex items-center gap-1 text-xs font-mono font-semibold text-accent-pnl hover:underline"
           >
             Sign up to build your own
@@ -193,7 +193,7 @@ export default async function ExploreDemoPage({ params }: PageProps) {
             unified USDC, USYC for yield, and StableFX for the EUR sleeve.
           </p>
           <Link
-            href="/"
+            href="/signup"
             className="inline-flex items-center gap-2 px-4 py-2 bg-accent-pnl text-black font-mono font-semibold rounded-sharp border-brutal border-black shadow-brutal-sm hover:shadow-brutal"
           >
             Build your own portfolio
