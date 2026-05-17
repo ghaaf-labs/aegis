@@ -92,19 +92,19 @@ Bypass any local hook: `git commit --no-verify` or `git push --no-verify` — us
 
 Every flag defaults `false` / mock-on so `main` stays trunk-shippable. Real-execution paths require both the runtime flag _and_ (for chain calls) a matching cargo `--features` build. Source of truth: `apps/api/src/config.rs` + `Config::validate()`.
 
-| Env var                   | Default | Cargo feature | Depends on                | What flipping it does                                                                 |
-| ------------------------- | ------- | ------------- | ------------------------- | ------------------------------------------------------------------------------------- |
-| `EXECUTION_MOCK`          | `true`  | —             | —                         | When `false`: rebalance executor + treasury skip mocks and use real RPC + signers.    |
-| `MOCK_CIRCLE`             | `true`  | —             | —                         | When `false`: Circle Wallets, Gateway, Paymaster, FX hit live Circle APIs.            |
-| `BILLING_V2_ENABLED`      | `false` | —             | —                         | Real Nanopayments fee settle/refund, referral payouts, subscription tier gating.      |
-| `AUM_STREAM_ENABLED`      | `false` | —             | `BILLING_V2_ENABLED=true` | Nightly AUM-fee accrual ticker — premature pre-revenue.                               |
-| `REGIME_BACKTEST_ENABLED` | `false` | —             | —                         | Mounts `/about/regime/backtest` reading the precomputed 5y backtest.                  |
-| `PEG_DEFENSE_ENABLED`     | `false` | —             | —                         | Peg monitor proposes a defensive rebalance plan when a stable depegs.                 |
-| `TAX_EXPORT_V1_ENABLED`   | `false` | —             | —                         | Mounts `/tax/export.csv` for the 1099-DA per-wallet basis export.                     |
-| `CALIBRATED_CONF_ENABLED` | `false` | —             | ≥50 real decisions        | Surfaces calibrated confidence instead of raw model confidence in the approval modal. |
-| `CONSTITUTION_ENABLED`    | `false` | —             | —                         | Constitution evaluator runs at decision-time, vetoes off-policy plans.                |
-| —                         | —       | `real-cctp`   | `EXECUTION_MOCK=false`    | Compile in alloy + CCTP V2 sol! interfaces. Without this, cross-chain legs no-op.     |
-| —                         | —       | `real-usyc`   | `EXECUTION_MOCK=false`    | Compile in Hashnote Teller mint/redeem. Without this, USYC park/redeem are mock.      |
+| Env var                   | Default | Cargo feature | Depends on                | What flipping it does                                                                               |
+| ------------------------- | ------- | ------------- | ------------------------- | --------------------------------------------------------------------------------------------------- |
+| `EXECUTION_MOCK`          | `true`  | —             | —                         | When `false`: rebalance executor + treasury skip mocks and use real RPC + signers.                  |
+| `MOCK_CIRCLE`             | `true`  | —             | —                         | When `false`: Circle Wallets, Gateway, Paymaster, FX hit live Circle APIs.                          |
+| `BILLING_V2_ENABLED`      | `false` | —             | —                         | Real Nanopayments fee settle/refund, referral payouts, subscription tier gating.                    |
+| `AUM_STREAM_ENABLED`      | `false` | —             | `BILLING_V2_ENABLED=true` | Nightly AUM-fee accrual ticker — premature pre-revenue.                                             |
+| `REGIME_BACKTEST_ENABLED` | `false` | —             | —                         | Mounts `/about/regime/backtest` reading the precomputed 5y backtest.                                |
+| `PEG_DEFENSE_ENABLED`     | `false` | —             | —                         | Peg monitor proposes a defensive rebalance plan when a stable depegs.                               |
+| `TAX_EXPORT_V1_ENABLED`   | `true`  | —             | —                         | Mounts `/tax/export.csv` for the 1099-DA per-wallet basis export. Default-on per FF-2 (2026-05-17). |
+| `CALIBRATED_CONF_ENABLED` | `false` | —             | ≥50 real decisions        | Surfaces calibrated confidence instead of raw model confidence in the approval modal.               |
+| `CONSTITUTION_ENABLED`    | `false` | —             | —                         | Constitution evaluator runs at decision-time, vetoes off-policy plans.                              |
+| —                         | —       | `real-cctp`   | `EXECUTION_MOCK=false`    | Compile in alloy + CCTP V2 sol! interfaces. Without this, cross-chain legs no-op.                   |
+| —                         | —       | `real-usyc`   | `EXECUTION_MOCK=false`    | Compile in Hashnote Teller mint/redeem. Without this, USYC park/redeem are mock.                    |
 
 Build matrix recipes:
 
