@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+"use client";
+
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronDown, Bell, Plus, Wifi, WifiOff } from "lucide-react";
 import { BrutalButton, BrutalPill, ChainBadge } from "@aegis/ui";
@@ -19,6 +21,18 @@ export function Header() {
   const wallet = usePortfolioStore((s) => s.wallet);
 
   const [open, setOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const notifRef = useRef<HTMLDivElement>(null);
+  const pegAlerts = usePortfolioStore((s) => s.pegAlerts);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (notifRef.current && !notifRef.current.contains(e.target as Node))
+        setNotifOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
 
   // Fetch unified balance on first render — Gateway SSE keeps it fresh after.
   useEffect(() => {
@@ -111,7 +125,7 @@ export function Header() {
               </p>
             </div>
             {wallet && (
-              <div>
+              <div title="Undeployed USDC across Arc + Base. Portfolio Value reflects invested positions — Gateway USDC is uninvested cash.">
                 <p className="text-[10px] text-text-mut font-mono">
                   GATEWAY USDC
                   <span className="ml-1 inline-flex gap-1">
@@ -137,13 +151,54 @@ export function Header() {
           )}
           <span>{sseConnected ? "LIVE" : "OFFLINE"}</span>
         </BrutalPill>
-        <BrutalButton
-          variant="ghost"
-          className="text-text-lo"
-          aria-label="Notifications"
-        >
-          <Bell className="w-4 h-4" />
-        </BrutalButton>
+        <div ref={notifRef} className="relative">
+          <BrutalButton
+            variant="ghost"
+            className="text-text-lo relative"
+            aria-label="Notifications"
+            onClick={() => setNotifOpen((v) => !v)}
+          >
+            <Bell className="w-4 h-4" />
+            {pegAlerts.length > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-risk" />
+            )}
+          </BrutalButton>
+          {notifOpen && (
+            <div className="absolute right-0 top-full mt-2 w-72 border-brutal border-border-default bg-surface shadow-brutal z-50 rounded-sharp">
+              <div className="px-3 py-2 border-b border-border-default flex items-center justify-between">
+                <span className="text-[10px] font-mono uppercase tracking-widest text-text-mut">
+                  Notifications
+                </span>
+                {pegAlerts.length > 0 && (
+                  <span className="text-[10px] font-mono text-risk">
+                    {pegAlerts.length} peg alert
+                    {pegAlerts.length !== 1 ? "s" : ""}
+                  </span>
+                )}
+              </div>
+              {pegAlerts.length === 0 ? (
+                <div className="px-3 py-4 text-xs font-mono text-text-mut text-center">
+                  No notifications
+                </div>
+              ) : (
+                <ul className="max-h-56 overflow-y-auto">
+                  {pegAlerts.slice(0, 8).map((a, i) => (
+                    <li
+                      key={`${a.ruleId}-${a.observedAt}-${i}`}
+                      className="px-3 py-2 border-b border-border-default last:border-b-0 text-xs font-mono"
+                    >
+                      <span className="text-risk font-semibold">{a.asset}</span>
+                      <span className="text-text-lo ml-2">
+                        ${a.observedPrice.toFixed(4)} &lt; $
+                        {a.thresholdPrice.toFixed(4)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
         {wallet && (
           <div
             className="w-7 h-7 rounded-sharp bg-accent-agent flex items-center justify-center border-brutal border-black"

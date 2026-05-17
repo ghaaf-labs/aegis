@@ -1,16 +1,46 @@
 "use client";
 
+"use client";
+
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { Plus, RefreshCw } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { AssetTable } from "@/components/dashboard/asset-table";
 import { RebalanceModal } from "@/components/portfolio/rebalance-modal";
 import { RiskScoreCard } from "@/components/portfolio/risk-score-card";
 import { AllocationChart } from "@/components/dashboard/allocation-chart";
+import { useActivePortfolio } from "@/stores/portfolio";
 
 export default function PortfolioPage() {
+  const router = useRouter();
   const [rebalanceOpen, setRebalanceOpen] = useState(false);
+  const portfolio = useActivePortfolio();
+
+  if (!portfolio) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[40vh] text-center space-y-3">
+        <p className="text-sm font-mono text-text-lo">No portfolio selected.</p>
+        <p className="text-xs font-mono text-text-mut">
+          <button
+            onClick={() => router.push("/onboarding")}
+            className="text-accent-pnl hover:underline"
+          >
+            Create a portfolio
+          </button>{" "}
+          or{" "}
+          <button
+            onClick={() => router.push("/strategies")}
+            className="text-accent-agent hover:underline"
+          >
+            adopt a strategy
+          </button>{" "}
+          to get started.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <motion.div
@@ -31,6 +61,8 @@ export default function PortfolioPage() {
             variant="outline"
             size="sm"
             className="border-white/10 text-gray-300 hover:bg-white/5"
+            onClick={() => router.push("/onboarding")}
+            title="Add new asset via onboarding"
           >
             <Plus className="w-4 h-4 mr-2" />
             Add asset

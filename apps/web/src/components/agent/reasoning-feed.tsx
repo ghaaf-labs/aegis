@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Brain,
@@ -13,10 +14,12 @@ import {
   Wrench,
   HandIcon,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { usePortfolioStore } from "@/stores/portfolio";
+import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
+import { agentApi } from "@/lib/api";
 import { timeAgo } from "@/lib/utils";
 import type {
   AgentAbstained,
@@ -66,9 +69,25 @@ const REGIME_CLASS: Record<MarketRegime, string> = {
 
 export function AgentReasoningFeed() {
   const decisions = usePortfolioStore((s) => s.decisions);
+  const setDecisions = usePortfolioStore((s) => s.setDecisions);
   const sseConnected = usePortfolioStore((s) => s.sseConnected);
   const toolInvocations = usePortfolioStore((s) => s.toolInvocations);
   const abstains = usePortfolioStore((s) => s.abstains);
+  const portfolio = useActivePortfolio();
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    if (!portfolio || refreshing) return;
+    setRefreshing(true);
+    try {
+      const fresh = await agentApi.decisions(portfolio.id);
+      setDecisions(fresh);
+    } catch {
+      // best-effort
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   return (
     <Card className="flex flex-col">
@@ -95,8 +114,13 @@ export function AgentReasoningFeed() {
             variant="ghost"
             size="sm"
             className="text-gray-500 hover:text-gray-300 h-7 px-2"
+            onClick={() => void handleRefresh()}
+            disabled={refreshing || !portfolio}
+            title="Refresh decisions"
           >
-            <RefreshCw className="w-3.5 h-3.5" />
+            <RefreshCw
+              className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`}
+            />
           </Button>
         </div>
       </CardHeader>
@@ -185,6 +209,7 @@ function DecisionRow({
   decision: AgentDecision;
   index: number;
 }) {
+  const router = useRouter();
   const trigger: AgentTrigger = decision.triggeredBy;
   const triggerVariant = TRIGGER_VARIANTS[trigger] ?? "secondary";
   const triggerLabel = TRIGGER_LABELS[trigger] ?? trigger;
@@ -266,7 +291,10 @@ function DecisionRow({
 
       <TelemetryFooter decision={decision} />
 
-      <button className="mt-2 flex items-center gap-1 text-[11px] text-cyan-400/60 hover:text-cyan-400 group-hover:opacity-100 opacity-0 transition-all">
+      <button
+        onClick={() => router.push(`/decision/${decision.id}`)}
+        className="mt-2 flex items-center gap-1 text-[11px] text-cyan-400/60 hover:text-cyan-400 group-hover:opacity-100 opacity-0 transition-all"
+      >
         View full analysis
         <ChevronRight className="w-3 h-3" />
       </button>

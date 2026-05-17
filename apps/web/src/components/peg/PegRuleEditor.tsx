@@ -7,13 +7,12 @@ import {
   BrutalCardHeader,
   BrutalPill,
 } from "@aegis/ui";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
-import { getToken } from "@/lib/api";
-import { defaultSseUrl, useEventSource } from "@/lib/sse";
 import { pegApi } from "@/lib/api";
 import { useApiQuery } from "@/lib/use-api-query";
-import type { PegActionKind, PegAlert, PegAssetSymbol, PegRule } from "@/types";
+import { usePortfolioStore } from "@/stores/portfolio";
+import type { PegActionKind, PegAssetSymbol, PegRule } from "@/types";
 
 const ASSETS: PegAssetSymbol[] = ["USDC", "EURC", "USYC"];
 const ACTIONS: Array<{ kind: PegActionKind; label: string }> = [
@@ -66,22 +65,11 @@ export function PegRuleEditor() {
   );
   const [draft, setDraft] = useState<DraftRule>(DEFAULT_DRAFT);
   const [submitting, setSubmitting] = useState(false);
-  const [alerts, setAlerts] = useState<PegAlert[]>([]);
-
-  const token = typeof window !== "undefined" ? getToken() : null;
-  const sseUrl = useMemo(
-    () =>
-      `${defaultSseUrl()}${token ? `?token=${encodeURIComponent(token)}` : ""}`,
-    [token],
-  );
-
-  useEventSource(
-    sseUrl,
-    {
-      "peg.alert": (data) => setAlerts((prev) => [data, ...prev].slice(0, 20)),
-    } as Parameters<typeof useEventSource>[1],
-    { enabled: !!token },
-  );
+  // peg.alert SSE events are dispatched through the app-level SSE connection
+  // in the portfolio store — no second connection needed (avoids JWT-in-URL).
+  const storePegAlerts = usePortfolioStore((s) => s.pegAlerts);
+  const [dismissed, setDismissed] = useState(false);
+  const alerts = dismissed ? [] : storePegAlerts;
 
   // Mirror the wrapper's error into local state so the existing error
   // banner stays the only place the user sees failures.
@@ -144,7 +132,7 @@ export function PegRuleEditor() {
             <h3 className="text-sm font-semibold">Live peg alerts</h3>
             <BrutalButton
               variant="ghost"
-              onClick={() => setAlerts([])}
+              onClick={() => setDismissed(true)}
               aria-label="Dismiss all peg alerts"
             >
               Dismiss all
