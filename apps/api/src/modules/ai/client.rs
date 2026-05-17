@@ -66,6 +66,11 @@ struct RawUsage {
     prompt_tokens: u32,
     #[serde(default)]
     completion_tokens: u32,
+    /// OpenRouter returns the per-call cost in USD when their accounting
+    /// settled the route. Field name is `cost`. Absent for some providers /
+    /// free routes — we treat absence as zero.
+    #[serde(default)]
+    cost: Option<f64>,
 }
 
 /// A single chat completion result, carrying telemetry alongside the content.
@@ -79,6 +84,10 @@ pub struct ChatResponse {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub latency_ms: u64,
+    /// USD cost OpenRouter charged for this call. `None` when the field is
+    /// absent (some providers + free routes). Treat absence as zero for
+    /// guard comparisons.
+    pub cost_usd: Option<f64>,
 }
 
 impl ChatResponse {
@@ -169,12 +178,20 @@ impl<'a> OpenRouterClient<'a> {
         let usage = raw.usage.unwrap_or_default();
         let model_slug = raw.model.unwrap_or_else(|| requested_slug.to_string());
 
+        check_budget_guard(
+            self.config.openrouter_budget_guard_usd,
+            usage.cost,
+            &model_slug,
+            latency_ms,
+        );
+
         Ok(ChatResponse {
             content: choice.message.content,
             model_slug,
             prompt_tokens: usage.prompt_tokens,
             completion_tokens: usage.completion_tokens,
             latency_ms,
+            cost_usd: usage.cost,
         })
     }
 
@@ -260,6 +277,16 @@ impl<'a> OpenRouterClient<'a> {
             .pointer("/usage/completion_tokens")
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32;
+        let cost_usd = raw
+            .pointer("/usage/cost")
+            .and_then(|v| v.as_f64());
+
+        check_budget_guard(
+            self.config.openrouter_budget_guard_usd,
+            cost_usd,
+            &model_slug,
+            latency_ms,
+        );
 
         let message = raw
             .pointer("/choices/0/message")
@@ -292,6 +319,7 @@ impl<'a> OpenRouterClient<'a> {
                 prompt_tokens,
                 completion_tokens,
                 latency_ms,
+                cost_usd,
             });
         }
 
@@ -306,8 +334,35 @@ impl<'a> OpenRouterClient<'a> {
             prompt_tokens,
             completion_tokens,
             latency_ms,
+            cost_usd,
         })
     }
+}
+
+/// F-COST-2 enforcement: log a structured warning when an OpenRouter call's
+/// settled USD cost exceeds the configured guard. We intentionally only
+/// log + emit a tracing event — no auto-downshift mid-decision; the warn
+/// path is the cheap escape valve documented in docs/05-open-questions.md.
+/// Operator-side alerting can subscribe to the `agent.cost.guard_exceeded`
+/// tracing event without touching code.
+fn check_budget_guard(
+    guard_usd: f64,
+    cost_usd: Option<f64>,
+    model_slug: &str,
+    latency_ms: u64,
+) {
+    let Some(cost) = cost_usd else { return };
+    if cost <= guard_usd {
+        return;
+    }
+    tracing::warn!(
+        target: "agent.cost.guard_exceeded",
+        model_slug = %model_slug,
+        cost_usd = cost,
+        guard_usd = guard_usd,
+        latency_ms = latency_ms,
+        "openrouter call exceeded budget guard"
+    );
 }
 
 /// One tool invocation the model wants to run.
@@ -331,6 +386,7 @@ pub enum ChatToolResult {
         prompt_tokens: u32,
         completion_tokens: u32,
         latency_ms: u64,
+        cost_usd: Option<f64>,
     },
     Calls {
         calls: Vec<ToolCall>,
@@ -342,6 +398,7 @@ pub enum ChatToolResult {
         prompt_tokens: u32,
         completion_tokens: u32,
         latency_ms: u64,
+        cost_usd: Option<f64>,
     },
 }
 
@@ -377,9 +434,20 @@ mod tests {
             prompt_tokens: 1,
             completion_tokens: 2,
             latency_ms: 3,
+            cost_usd: Some(0.001),
         };
         let _ = r.clone();
         assert!(format!("{r:?}").contains("model_slug"));
+    }
+
+    #[test]
+    fn check_budget_guard_warns_when_over() {
+        // Compiles + does not panic — the warn is a tracing event; capturing
+        // it inline would require a subscriber. The smoke is that the path
+        // is reachable and never errors.
+        check_budget_guard(0.01, Some(0.05), "deepseek/test", 100);
+        check_budget_guard(0.01, Some(0.001), "deepseek/test", 100);
+        check_budget_guard(0.01, None, "deepseek/test", 100);
     }
 
     #[test]

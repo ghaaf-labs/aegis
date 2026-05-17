@@ -63,15 +63,17 @@ Smoke against the real Circle API on 2026-05-16 with `CIRCLE_API_KEY=TEST_API_KE
 
 **Action** (do during N15 browser smoke, OR earlier if first signup attempt 404s): cross-reference each call site in `apps/api/src/modules/wallet/provider.rs` against `developers.circle.com/w3s` and update path strings. Tests will still pass under `MOCK_CIRCLE=true` so no regression risk locally.
 
-## Budget guard enforcement (call-time downshift)
+## Budget guard enforcement (call-time warn) — RESOLVED 2026-05-17
 
-**Tag:** `F-COST-2` · **Status:** open · **Surfaced:** 2026-05-16 by F-COST-1
+**Tag:** `F-COST-2` · **Status:** resolved · **Surfaced:** 2026-05-16 by F-COST-1 · **Closed:** 2026-05-17
 
-F-COST-1 (the DeepSeek price-cliff defuse) added `OPENROUTER_BUDGET_GUARD_USD` (default `$0.05`) to `Config` but did NOT enforce it at call time — the value is read at boot and the field is plumbed through, but no code consults it yet. The TODO is marked at `apps/api/src/config.rs::openrouter_budget_guard_usd` in the doc comment.
+Took the warn-path escape valve. `apps/api/src/modules/ai/client.rs::check_budget_guard` runs after every successful OpenRouter completion (both `chat()` and `chat_with_tools()`):
 
-**What's missing**: in `apps/api/src/modules/agent/service.rs`, after each `OpenRouterClient::chat` returns, compute the call's cost-USD (OpenRouter returns `usage.cost` in the response — needs plumbing through `ChatToolResult`) and compare to the guard. When exceeded, route the next call in the same decision to a cheaper Haiku tier and persist a `tier_features.downshifted: true` marker in the decision metadata so the UI can surface it.
+- `usage.cost` is parsed from the OpenRouter response (`Option<f64>`; absent on free routes treated as zero).
+- When `cost > config.openrouter_budget_guard_usd`, a structured `tracing::warn!` with `target: "agent.cost.guard_exceeded"` fires carrying `model_slug`, `cost_usd`, `guard_usd`, `latency_ms`. Operator-side alerting can subscribe to that target without any further code change.
+- `ChatResponse.cost_usd` + `ChatToolResult::{Final, Calls}.cost_usd` carry the per-call cost forward so per-decision telemetry can aggregate it later (e.g. a future "spend per decision" UI surface) without re-fetching.
 
-Cheap escape valve: if enforcement is too risky, just log a `warn!` for now and ticket a dashboard alert. The guard config itself is already valuable as an operator signal.
+Auto-downshift mid-decision (the originally-scoped behavior) was de-scoped: warn-then-watch is the cheap path and the dashboard alert is sufficient until decision volume justifies the complexity. Re-open the ticket if production traffic produces a sustained-overage pattern.
 
 ## Regime classifier accuracy
 
