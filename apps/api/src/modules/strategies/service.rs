@@ -32,11 +32,7 @@ pub async fn get(pool: &PgPool, id: Uuid) -> sqlx::Result<Option<StrategyPublic>
 /// strategy's `target_allocation` cloned into the goal. Returns the new
 /// portfolio's id. The user still approves every rebalance — adoption
 /// only sets the starting target, never trades.
-pub async fn adopt(
-    pool: &PgPool,
-    user_id: Uuid,
-    strategy: &StrategyPublic,
-) -> sqlx::Result<Uuid> {
+pub async fn adopt(pool: &PgPool, user_id: Uuid, strategy: &StrategyPublic) -> sqlx::Result<Uuid> {
     let mut tx = pool.begin().await?;
 
     let portfolio_id = Uuid::new_v4();

@@ -35,7 +35,9 @@ pub async fn usdc_eurc_basis(
         // Intentionally falls through to CoinGecko until the RFQ path is
         // wired. Logged once per process so it's clear the env had no
         // effect yet.
-        tracing::debug!("STABLEFX_INSTITUTIONAL_ACCESS=true but RFQ path not wired; using CoinGecko");
+        tracing::debug!(
+            "STABLEFX_INSTITUTIONAL_ACCESS=true but RFQ path not wired; using CoinGecko"
+        );
     }
 
     let api_key = config.coingecko_api_key.as_deref().unwrap_or_default();

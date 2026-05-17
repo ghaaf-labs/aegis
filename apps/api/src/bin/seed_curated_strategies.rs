@@ -61,8 +61,7 @@ fn curated() -> Vec<Row> {
             // Stable UUIDs so the binary is idempotent.
             id: Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap(),
             name: "Conservative Treasury",
-            description:
-                "Operating-cash treasury with a yield-bearing T-Bill sleeve. \
+            description: "Operating-cash treasury with a yield-bearing T-Bill sleeve. \
                 Suited for DAOs and SMBs that need principal preservation but \
                 want USYC's ~5% yield on idle USDC.",
             risk_band: "low",
@@ -72,8 +71,7 @@ fn curated() -> Vec<Row> {
         Row {
             id: Uuid::parse_str("22222222-2222-2222-2222-222222222222").unwrap(),
             name: "Balanced",
-            description:
-                "Long-only stablecoin-anchored portfolio with majors exposure. \
+            description: "Long-only stablecoin-anchored portfolio with majors exposure. \
                 Half the book sits in income-generating USDC + USYC; the other \
                 half rides BTC + ETH for asymmetric upside.",
             risk_band: "medium",
@@ -83,8 +81,7 @@ fn curated() -> Vec<Row> {
         Row {
             id: Uuid::parse_str("33333333-3333-3333-3333-333333333333").unwrap(),
             name: "DAO Reserve",
-            description:
-                "Multi-currency reserve for an internet-native organization with \
+            description: "Multi-currency reserve for an internet-native organization with \
                 multi-jurisdiction operating expenses. USDC + EURC keeps payroll \
                 in either denomination; USYC carries the yield sleeve.",
             risk_band: "low",

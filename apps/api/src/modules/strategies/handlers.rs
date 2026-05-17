@@ -11,9 +11,7 @@ use crate::error::{AppError, Result};
 use crate::middleware::auth::Claims;
 use crate::router::AppState;
 
-pub async fn list(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<StrategyPublic>>> {
+pub async fn list(State(state): State<AppState>) -> Result<Json<Vec<StrategyPublic>>> {
     let rows = service::list_public(&state.db)
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))?;

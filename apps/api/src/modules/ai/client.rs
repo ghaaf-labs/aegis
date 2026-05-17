@@ -277,9 +277,7 @@ impl<'a> OpenRouterClient<'a> {
             .pointer("/usage/completion_tokens")
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32;
-        let cost_usd = raw
-            .pointer("/usage/cost")
-            .and_then(|v| v.as_f64());
+        let cost_usd = raw.pointer("/usage/cost").and_then(|v| v.as_f64());
 
         check_budget_guard(
             self.config.openrouter_budget_guard_usd,
@@ -345,12 +343,7 @@ impl<'a> OpenRouterClient<'a> {
 /// path is the cheap escape valve documented in docs/05-open-questions.md.
 /// Operator-side alerting can subscribe to the `agent.cost.guard_exceeded`
 /// tracing event without touching code.
-fn check_budget_guard(
-    guard_usd: f64,
-    cost_usd: Option<f64>,
-    model_slug: &str,
-    latency_ms: u64,
-) {
+fn check_budget_guard(guard_usd: f64, cost_usd: Option<f64>, model_slug: &str, latency_ms: u64) {
     let Some(cost) = cost_usd else { return };
     if cost <= guard_usd {
         return;

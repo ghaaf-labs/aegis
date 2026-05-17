@@ -152,10 +152,7 @@ pub async fn build(db: Db, config: Config) -> Router {
             post(agent::pause_handlers::resume),
         )
         // SM-2 — strategies marketplace adoption is authed (creates a portfolio).
-        .route(
-            "/strategies/:id/adopt",
-            post(strategies::handlers::adopt),
-        )
+        .route("/strategies/:id/adopt", post(strategies::handlers::adopt))
         .route("/backtest/preview", post(backtest::handlers::preview))
         .route("/trustability/me", get(trustability::handlers::me))
         .route("/billing/referrals", get(billing::handlers::list_referrals))
