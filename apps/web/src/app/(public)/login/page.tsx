@@ -33,7 +33,7 @@ export default function LoginPage() {
           Welcome back — use the same email or passkey you signed up with.
         </p>
         <Suspense fallback={<WalletCardSkeleton />}>
-          <CreateWalletCard />
+          <CreateWalletCard loginMode />
         </Suspense>
         <p className="mt-6 text-center text-xs font-mono text-text-mut">
           New here?{" "}

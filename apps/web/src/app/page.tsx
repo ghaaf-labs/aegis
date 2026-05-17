@@ -13,8 +13,7 @@ import {
   Trophy,
   FileSpreadsheet,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { BrutalButton, BrutalPill } from "@aegis/ui";
 import { PRICING_UI_ENABLED } from "@/lib/flags";
 
 const fadeUp = {
@@ -90,57 +89,42 @@ export default function LandingPage() {
       {/* Nav */}
       <nav className="relative z-10 flex items-center justify-between px-6 py-5 max-w-7xl mx-auto">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center">
-            <Shield className="w-4 h-4 text-white" />
+          <div className="w-8 h-8 rounded-sharp bg-accent-agent flex items-center justify-center border-brutal border-black">
+            <Shield className="w-4 h-4 text-black" />
           </div>
-          <span className="font-bold text-lg tracking-tight">Aegis</span>
+          <span className="font-bold text-lg tracking-tight text-text-hi">
+            Aegis
+          </span>
         </div>
         <div className="flex items-center gap-3">
           {PRICING_UI_ENABLED && (
-            <Link href="/pricing">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-gray-400 hover:text-white"
-              >
-                Pricing
-              </Button>
+            <Link
+              href="/pricing"
+              className="text-xs font-mono text-text-lo hover:text-text-hi"
+            >
+              Pricing
             </Link>
           )}
-          <Link href="/explore">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-gray-400 hover:text-white"
-            >
-              Explore demo
-            </Button>
+          <Link
+            href="/explore"
+            className="text-xs font-mono text-text-lo hover:text-text-hi"
+          >
+            Explore demo
           </Link>
-          <Link href="/strategies">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-gray-400 hover:text-white"
-            >
-              Browse strategies
-            </Button>
+          <Link
+            href="/strategies"
+            className="text-xs font-mono text-text-lo hover:text-text-hi"
+          >
+            Browse strategies
           </Link>
-          <Link href="/leaderboard">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-gray-400 hover:text-white"
-            >
-              Leaderboard
-            </Button>
+          <Link
+            href="/leaderboard"
+            className="text-xs font-mono text-text-lo hover:text-text-hi"
+          >
+            Leaderboard
           </Link>
           <Link href="/signup">
-            <Button
-              size="sm"
-              className="bg-blue-600 hover:bg-blue-500 text-white"
-            >
-              Get started
-            </Button>
+            <BrutalButton variant="pnl">Get started</BrutalButton>
           </Link>
         </div>
       </nav>
@@ -153,10 +137,12 @@ export default function LandingPage() {
           variants={fadeUp}
           custom={0}
         >
-          <Badge className="mb-6 bg-blue-500/10 text-blue-400 border-blue-500/20 hover:bg-blue-500/20">
-            <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-blue-400 inline-block animate-pulse" />
-            AI Agent Active
-          </Badge>
+          <div className="mb-6 inline-flex">
+            <BrutalPill tone="agent">
+              <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-accent-agent inline-block animate-pulse" />
+              AI Agent Active
+            </BrutalPill>
+          </div>
         </motion.div>
 
         <motion.h1
@@ -167,9 +153,7 @@ export default function LandingPage() {
           className="text-6xl md:text-7xl font-bold tracking-tight mb-6 leading-[1.05]"
         >
           Your crypto portfolio,{" "}
-          <span className="bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-violet-400 to-cyan-400">
-            managed by AI
-          </span>
+          <span className="text-accent-agent">managed by AI</span>
         </motion.h1>
 
         <motion.p
@@ -217,22 +201,13 @@ export default function LandingPage() {
           className="flex items-center justify-center gap-4"
         >
           <Link href="/signup">
-            <Button
-              size="lg"
-              className="bg-blue-600 hover:bg-blue-500 text-white h-12 px-8 text-base font-medium"
-            >
+            <BrutalButton variant="pnl">
               Start for free
               <ArrowRight className="ml-2 w-4 h-4" />
-            </Button>
+            </BrutalButton>
           </Link>
           <Link href="/explore">
-            <Button
-              variant="outline"
-              size="lg"
-              className="h-12 px-8 text-base border-white/10 text-gray-300 hover:bg-white/5"
-            >
-              View demo
-            </Button>
+            <BrutalButton variant="ghost">View demo</BrutalButton>
           </Link>
         </motion.div>
       </section>
@@ -244,31 +219,31 @@ export default function LandingPage() {
         transition={{ delay: 0.5, duration: 0.7 }}
         className="relative z-10 max-w-6xl mx-auto px-6 mb-32"
       >
-        <div className="relative rounded-2xl overflow-hidden border border-white/10 bg-gray-950/80 backdrop-blur-sm shadow-2xl shadow-black/50">
+        <div className="border-brutal border-border-default bg-surface shadow-brutal">
           <div className="flex items-center gap-1.5 px-4 py-3 border-b border-white/5">
-            <div className="w-3 h-3 rounded-full bg-red-500/60" />
-            <div className="w-3 h-3 rounded-full bg-yellow-500/60" />
-            <div className="w-3 h-3 rounded-full bg-green-500/60" />
-            <span className="ml-3 text-xs text-gray-500 font-mono">
+            <span className="text-xs text-text-mut font-mono">
               aegis.app/dashboard
             </span>
           </div>
           <div className="p-6 grid grid-cols-3 gap-4 min-h-[280px]">
             <div className="col-span-2 space-y-4">
-              <div className="h-8 w-48 rounded-md bg-white/5 shimmer" />
+              <div className="h-8 w-48 rounded-sharp bg-white/5 shimmer" />
               <div className="grid grid-cols-3 gap-3">
                 {[...Array(3)].map((_, i) => (
-                  <div key={i} className="h-24 rounded-xl bg-white/5 shimmer" />
+                  <div
+                    key={i}
+                    className="h-24 rounded-sharp bg-white/5 shimmer"
+                  />
                 ))}
               </div>
-              <div className="h-32 rounded-xl bg-white/5 shimmer" />
+              <div className="h-32 rounded-sharp bg-white/5 shimmer" />
             </div>
             <div className="space-y-3">
-              <div className="h-8 w-32 rounded-md bg-white/5 shimmer" />
+              <div className="h-8 w-32 rounded-sharp bg-white/5 shimmer" />
               {[...Array(4)].map((_, i) => (
                 <div
                   key={i}
-                  className="h-16 rounded-xl bg-white/5 shimmer"
+                  className="h-16 rounded-sharp bg-white/5 shimmer"
                   style={{ animationDelay: `${i * 0.3}s` }}
                 />
               ))}
@@ -302,10 +277,10 @@ export default function LandingPage() {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ delay: i * 0.08 }}
-              className="p-6 rounded-2xl border border-white/8 bg-white/3 hover:bg-white/5 transition-colors group"
+              className="p-6 border-brutal border-border-default bg-surface hover:bg-raised transition-colors group"
             >
-              <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center mb-4 group-hover:bg-blue-500/20 transition-colors">
-                <feature.icon className="w-5 h-5 text-blue-400" />
+              <div className="w-10 h-10 rounded-sharp bg-accent-agent/10 flex items-center justify-center mb-4 group-hover:bg-accent-agent/20 transition-colors border-brutal border-accent-agent/20">
+                <feature.icon className="w-5 h-5 text-accent-agent" />
               </div>
               <h3 className="font-semibold text-white mb-2">{feature.title}</h3>
               <p className="text-sm text-gray-400 leading-relaxed">
@@ -322,7 +297,7 @@ export default function LandingPage() {
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          className="p-12 rounded-3xl border border-white/10 bg-gradient-to-b from-blue-600/10 to-violet-600/5"
+          className="p-12 border-brutal border-border-default bg-surface"
         >
           <h2 className="text-4xl font-bold mb-4">
             Ready to let AI manage your portfolio?
@@ -332,13 +307,10 @@ export default function LandingPage() {
             rest.
           </p>
           <Link href="/signup">
-            <Button
-              size="lg"
-              className="bg-blue-600 hover:bg-blue-500 text-white h-12 px-10 text-base"
-            >
+            <BrutalButton variant="pnl">
               Get started for free
               <ArrowRight className="ml-2 w-4 h-4" />
-            </Button>
+            </BrutalButton>
           </Link>
         </motion.div>
       </section>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { StrategyCard } from "@/components/strategies/strategy-card";
@@ -21,8 +21,13 @@ export default function StrategiesPage() {
   );
   const [adopting, setAdopting] = useState<string | null>(null);
   const [adoptError, setAdoptError] = useState<string | null>(null);
-
-  const authed = typeof window !== "undefined" && getToken() !== null;
+  // Defer auth check to after hydration so SSR and first paint both show the
+  // public CTA; the authed "Adopt" button only appears once we can read
+  // localStorage (avoids a "Sign up" flash for logged-in users).
+  const [authed, setAuthed] = useState(false);
+  useEffect(() => {
+    setAuthed(getToken() !== null);
+  }, []);
 
   const onAdopt = async (id: string) => {
     setAdopting(id);

@@ -15,15 +15,12 @@ import { usePortfolioStore } from "@/stores/portfolio";
 
 type Mode = "passkey" | "otp-start" | "otp-verify";
 
-/**
- * Two-path wallet onboarding:
- *
- *  • Passkey (WebAuthn) when `navigator.credentials` is available.
- *  • Email OTP fallback otherwise.
- *
- * Both end in `setToken` + Zustand wallet state + `wallet.created` analytic.
- */
-export function CreateWalletCard() {
+interface Props {
+  /** When true, the passkey path calls loginPasskey instead of createPasskey. */
+  loginMode?: boolean;
+}
+
+export function CreateWalletCard({ loginMode = false }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const referrerHandle = searchParams?.get("ref")?.trim().toLowerCase();
@@ -58,19 +55,21 @@ export function CreateWalletCard() {
         kind: "webauthn",
         platform: window.navigator?.userAgent ?? "unknown",
       };
-      const resp = await walletApi.createPasskey(
-        email.trim(),
-        passkey,
-        referrerHandle || undefined,
-      );
+      const resp = loginMode
+        ? await walletApi.loginPasskey(email.trim(), passkey)
+        : await walletApi.createPasskey(
+            email.trim(),
+            passkey,
+            referrerHandle || undefined,
+          );
       setToken(resp.token);
       setWallet(resp.wallet);
       localStorage.setItem("aegis_email", email.trim());
-      await analyticsApi.track("wallet.created", {
+      await analyticsApi.track(loginMode ? "wallet.login" : "wallet.created", {
         method: "passkey",
-        referrerHandle: referrerHandle || null,
+        referrerHandle: loginMode ? null : (referrerHandle ?? null),
       });
-      router.push("/onboarding");
+      router.push(loginMode ? "/dashboard" : "/onboarding");
     } catch (e) {
       // If the passkey path fails (user cancellation, sandbox hiccup, server
       // rejection), drop into the OTP flow with the same email instead of
@@ -109,11 +108,11 @@ export function CreateWalletCard() {
       setToken(resp.token);
       setWallet(resp.wallet);
       localStorage.setItem("aegis_email", email.trim());
-      await analyticsApi.track("wallet.created", {
+      await analyticsApi.track(loginMode ? "wallet.login" : "wallet.created", {
         method: "otp",
-        referrerHandle: referrerHandle || null,
+        referrerHandle: loginMode ? null : (referrerHandle ?? null),
       });
-      router.push("/onboarding");
+      router.push(loginMode ? "/dashboard" : "/onboarding");
     } catch (e) {
       setError((e as Error).message);
     } finally {
