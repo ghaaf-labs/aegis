@@ -10,6 +10,8 @@ import {
   Zap,
   BarChart3,
   Bot,
+  Trophy,
+  FileSpreadsheet,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -61,6 +63,18 @@ const FEATURES = [
     description:
       "Set your goal once. The agent monitors 24/7 and proposes — you click Approve. Single modal, USDC fee preview, no surprises.",
   },
+  {
+    icon: FileSpreadsheet,
+    title: "Tax-loss harvesting + 1099-DA",
+    description:
+      "The strategist spots open lots at a loss and proposes a harvest. Export a 1099-DA-ready CSV or share a time-limited link with your accountant.",
+  },
+  {
+    icon: Trophy,
+    title: "Trustability score + peg defense",
+    description:
+      "A rolling score grades the agent's decisions against realized outcomes. Peg-defense rules auto-propose rebalances the moment a stablecoin drifts.",
+  },
 ];
 
 export default function LandingPage() {
@@ -109,6 +123,15 @@ export default function LandingPage() {
               className="text-gray-400 hover:text-white"
             >
               Browse strategies
+            </Button>
+          </Link>
+          <Link href="/leaderboard">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-gray-400 hover:text-white"
+            >
+              Leaderboard
             </Button>
           </Link>
           <Link href="/signup">
@@ -174,6 +197,7 @@ export default function LandingPage() {
             "USYC",
             "Paymaster",
             "StableFX",
+            "Nanopayments",
             "OpenRouter",
           ].map((label) => (
             <span

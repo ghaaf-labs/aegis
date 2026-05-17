@@ -252,6 +252,7 @@ export type SseEvent =
   | { type: "tax.harvest.proposed"; data: HarvestableLoss }
   | { type: "gateway.balance"; data: GatewayBalance }
   | { type: "wallet.created"; data: WalletInfo }
+  | { type: "referral.credited"; data: ReferralCredited }
   | { type: "peg.alert"; data: PegAlert };
 
 export type SseEventType = SseEvent["type"];
@@ -360,6 +361,15 @@ export interface PegAlert {
   observedAt: string;
   actionTaken: PegActionKind;
   rebalanceId?: string;
+}
+
+/** Mirrors `billing::service::ReferralCreditedPayload`. Audience = referrer. */
+export interface ReferralCredited {
+  referrerUserId: string;
+  newUserId: string;
+  rewardUsdc: number;
+  /** Present when the Nanopayment settled; null when still pending. */
+  txHash: string | null;
 }
 
 // ── Cross-chain rebalance execution (Sprint 3) ─────────────────────────────

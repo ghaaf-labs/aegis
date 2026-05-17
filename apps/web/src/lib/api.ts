@@ -143,6 +143,10 @@ export interface CreatePortfolioInput {
   goal: PortfolioGoal;
 }
 
+export interface UpdatePortfolioInput {
+  name?: string;
+}
+
 export const portfolioApi = {
   list: () => request<Portfolio[]>("/portfolios", { authed: true }),
   get: (id: string) =>
@@ -163,6 +167,14 @@ export const portfolioApi = {
       body: payload,
       authed: true,
     }),
+  update: (id: string, payload: UpdatePortfolioInput) =>
+    request<Portfolio>(`/portfolios/${id}`, {
+      method: "PUT",
+      body: payload,
+      authed: true,
+    }),
+  delete: (id: string) =>
+    request<void>(`/portfolios/${id}`, { method: "DELETE", authed: true }),
   rebalance: (id: string) =>
     request<AgentDecision>(`/portfolios/${id}/rebalance`, {
       method: "POST",
@@ -598,6 +610,21 @@ export const analyticsApi = {
 
 // ── Billing v2 ────────────────────────────────────────────────────────────
 
+export interface ReferralRow {
+  id: string;
+  newUserId: string;
+  rewardUsdc: number;
+  paidAt: string | null;
+  txHash: string | null;
+  createdAt: string;
+}
+
+export interface ReferralsResponse {
+  rows: ReferralRow[];
+  totalPaidUsdc: number;
+  totalPendingUsdc: number;
+}
+
 export interface PatchSubscriptionBody {
   /** ISO timestamp; when set, schedules cancellation at period end. */
   cancelAt?: string | null;
@@ -641,6 +668,10 @@ export const billingApi = {
 
   /** Public — pricing page renders this for anonymous visitors. */
   listTiers: () => request<PricingTier[]>("/billing/tiers"),
+
+  /** Referral earnings for the current user (GET /billing/referrals). */
+  listReferrals: () =>
+    request<ReferralsResponse>("/billing/referrals", { authed: true }),
 };
 
 // ── Health ─────────────────────────────────────────────────────────────────
