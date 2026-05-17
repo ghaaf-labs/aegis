@@ -64,7 +64,7 @@ export function AssetTable() {
             </tr>
           </thead>
           <tbody>
-            {portfolio.allocations.map((alloc, i) => {
+            {(portfolio.allocations ?? []).map((alloc, i) => {
               const price = priceMap[alloc.symbol];
               const drift = alloc.currentWeight - alloc.targetWeight;
               const driftAbs = Math.abs(drift);
@@ -73,7 +73,9 @@ export function AssetTable() {
                 <tr
                   key={alloc.symbol}
                   className={`border-b border-white/3 hover:bg-white/2 transition-colors ${
-                    i === portfolio.allocations.length - 1 ? "border-0" : ""
+                    i === (portfolio.allocations?.length ?? 0) - 1
+                      ? "border-0"
+                      : ""
                   }`}
                 >
                   <td className="px-5 py-3.5">
