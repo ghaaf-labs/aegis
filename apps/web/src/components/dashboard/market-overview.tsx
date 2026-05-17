@@ -10,7 +10,31 @@ export function MarketOverview() {
   const snapshot = usePortfolioStore((s) => s.marketSnapshot);
   const livePrices = usePortfolioStore((s) => s.livePrices);
 
-  if (!snapshot) return null;
+  if (!snapshot) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Market</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 animate-pulse">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="flex items-center justify-between">
+              <span className="h-2.5 w-24 rounded bg-white/10" />
+              <span className="h-2.5 w-16 rounded bg-white/10" />
+            </div>
+          ))}
+          <div className="border-t border-white/5 pt-3 space-y-2">
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="flex items-center justify-between">
+                <span className="h-2 w-10 rounded bg-white/10" />
+                <span className="h-2 w-20 rounded bg-white/10" />
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   // Overlay live SSE ticks on top of the snapshot capture. The snapshot is the
   // historical anchor; live ticks freshen the price + 24h delta as they arrive.

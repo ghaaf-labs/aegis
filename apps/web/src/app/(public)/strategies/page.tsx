@@ -68,12 +68,20 @@ export default function StrategiesPage() {
         {isLoading && !data ? (
           <p className="text-xs font-mono text-text-mut">Loading…</p>
         ) : (data ?? []).length === 0 ? (
-          <section className="border-2 border-white/10 bg-[#141414] p-6 text-sm text-text-lo">
-            No curated strategies yet. Run{" "}
-            <code className="text-cyan-300">
-              cargo run --bin seed_curated_strategies
-            </code>{" "}
-            against the dev DB to populate.
+          <section className="border-2 border-white/10 bg-[#141414] p-8 text-center space-y-2">
+            <p className="text-sm font-mono text-text-lo">
+              No strategies available yet — check back soon.
+            </p>
+            <p className="text-xs font-mono text-text-mut">
+              Curated allocations are added regularly. You can always{" "}
+              <Link
+                href="/onboarding"
+                className="text-accent-pnl hover:underline"
+              >
+                build a custom portfolio
+              </Link>{" "}
+              from scratch.
+            </p>
           </section>
         ) : (
           <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
