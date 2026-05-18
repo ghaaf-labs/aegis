@@ -40,12 +40,20 @@ impl<'a> WalletService<'a> {
 
     /// New-user signup. Idempotent if called twice with the same email — the
     /// second call returns a fresh bundle bound to the existing user row.
+    /// A user row that exists but has no wallet (W3S ceremony was aborted
+    /// before Circle returned addresses) is treated as a fresh signup so the
+    /// browser SDK gets a real challenge_id and the user can recover instead
+    /// of polling forever.
     pub async fn init_signup(&self, email: &str) -> crate::error::Result<WalletAuthResponse> {
         validate_email(email)?;
 
-        let (user, is_new_user) = self.upsert_user_record(email).await?;
+        let (user, was_inserted) = self.upsert_user_record(email).await?;
+        let needs_challenge = was_inserted || user.wallet_id.is_none();
         self.provider.ensure_user(user.id).await?;
-        let bundle = self.provider.issue_user_token(user.id, is_new_user).await?;
+        let bundle = self
+            .provider
+            .issue_user_token(user.id, needs_challenge)
+            .await?;
         let token = mint_token(&user, self.config)?;
         let wallet = wallet_from_user(&user);
 
@@ -54,7 +62,7 @@ impl<'a> WalletService<'a> {
             user: public(&user),
             wallet,
             bundle,
-            is_new_user,
+            is_new_user: was_inserted,
         })
     }
 

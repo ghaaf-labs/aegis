@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Mail, Loader2 } from "lucide-react";
 import {
@@ -51,6 +51,16 @@ export function CreateWalletCard({ loginMode = false }: Props) {
   const [mode, setMode] = useState<Mode>("email");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Pre-fill the email field from localStorage when we have it — the SPA
+  // remembers the address from the last successful signup/login, but the
+  // form starts blank otherwise and the user has no way to know which
+  // address they registered (especially after the JWT cookie expires).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = window.localStorage.getItem("aegis_email");
+    if (saved) setEmail(saved);
+  }, []);
 
   const finish = async (
     method: "passkey" | "returning",
