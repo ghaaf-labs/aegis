@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { portfolioApi, walletApi } from "@/lib/api";
+import { marketApi, portfolioApi, walletApi } from "@/lib/api";
 import { usePortfolioStore } from "@/stores/portfolio";
 
 /**
@@ -23,6 +23,7 @@ export function PortfolioLoader() {
   const setPortfolios = usePortfolioStore((s) => s.setPortfolios);
   const setPortfoliosLoaded = usePortfolioStore((s) => s.setPortfoliosLoaded);
   const setWallet = usePortfolioStore((s) => s.setWallet);
+  const setMarketSnapshot = usePortfolioStore((s) => s.setMarketSnapshot);
   const patchPortfolio = usePortfolioStore((s) => s.patchPortfolio);
   const activePortfolioId = usePortfolioStore((s) => s.activePortfolioId);
 
@@ -44,7 +45,16 @@ export function PortfolioLoader() {
       .catch(() => {
         /* unauthed or wallet pending — leave store null */
       });
-  }, [setPortfolios, setPortfoliosLoaded, setWallet]);
+    // Market snapshot drives MarketOverview, AssetTable prices, etc. SSE only
+    // emits per-tick deltas — without the initial snapshot the panels render
+    // as loading skeletons forever.
+    marketApi
+      .snapshot()
+      .then(setMarketSnapshot)
+      .catch(() => {
+        /* upstream provider may rate-limit — panels degrade to skeleton */
+      });
+  }, [setPortfolios, setPortfoliosLoaded, setWallet, setMarketSnapshot]);
 
   // Whenever the active portfolio changes, fetch detail + merge allocations.
   useEffect(() => {

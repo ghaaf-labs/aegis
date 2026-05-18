@@ -6,9 +6,15 @@ import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
 import { formatCurrency, formatPercent, changeColor } from "@/lib/utils";
 import { ProvenanceLine, Skeleton } from "@aegis/ui";
 
+/// EURC's mid-market USD price for the Total Wealth headline. Cheap stable
+/// approximation — the FX module's authoritative rate is read elsewhere.
+const EURC_USD_APPROX = 1.085;
+
 export function PortfolioSummaryCard() {
   const portfolio = useActivePortfolio();
   const snapshot = usePortfolioStore((s) => s.marketSnapshot);
+  const unifiedUsdc = usePortfolioStore((s) => s.unifiedUsdc);
+  const unifiedEurc = usePortfolioStore((s) => s.unifiedEurc);
 
   if (!portfolio) {
     return (
@@ -34,6 +40,16 @@ export function PortfolioSummaryCard() {
   const isPositive = portfolio.totalPnlUsd >= 0;
   const TrendIcon = isPositive ? TrendingUp : TrendingDown;
 
+  // "Total Value" is the sum of invested positions + idle Gateway cash —
+  // otherwise a freshly funded user sees $0 across the board and concludes
+  // the platform is broken. Prefer the live EURC price off the market
+  // snapshot when available; fall back to a stable ~1.085 mid otherwise.
+  const eurcUsd =
+    snapshot?.assets.find((a) => a.symbol === "EURC")?.priceUsd ??
+    EURC_USD_APPROX;
+  const idleCashUsd = unifiedUsdc + unifiedEurc * eurcUsd;
+  const totalWealthUsd = portfolio.totalValueUsd + idleCashUsd;
+
   return (
     <Card>
       <CardHeader>
@@ -44,8 +60,16 @@ export function PortfolioSummaryCard() {
       </CardHeader>
       <CardContent>
         <p className={`text-3xl font-bold mb-1 ${priceColor}`}>
-          {formatCurrency(portfolio.totalValueUsd)}
+          {formatCurrency(totalWealthUsd)}
         </p>
+        {idleCashUsd > 0 && (
+          <p className="text-[11px] font-mono text-text-mut mb-1">
+            {formatCurrency(portfolio.totalValueUsd, { compact: true })}{" "}
+            invested
+            {" · "}
+            {formatCurrency(idleCashUsd, { compact: true })} idle cash
+          </p>
+        )}
         <div
           className={`flex items-center gap-1.5 text-sm ${changeColor(portfolio.totalPnlUsd)}`}
         >

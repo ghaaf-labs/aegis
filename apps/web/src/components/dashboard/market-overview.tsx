@@ -136,10 +136,16 @@ export function MarketOverview() {
           })}
         </div>
 
-        {/* Provenance — trust surface (design system component) */}
+        {/* Provenance — trust surface (design system component). Source name
+            comes off the live SSE tick when one has arrived; otherwise the
+            initial snapshot was fetched via the same DefiLlama provider. */}
         <div className="pt-2 border-t border-white/10">
           <ProvenanceLine
-            source={newestTickAt > 0 ? "CoinGecko · live tick" : "CoinGecko"}
+            source={
+              newestTickAt > 0
+                ? `${Object.values(livePrices)[0]?.source ?? "DefiLlama"} · live tick`
+                : "DefiLlama"
+            }
             freshness={new Date(effectiveCapturedAt).toLocaleTimeString([], {
               hour: "2-digit",
               minute: "2-digit",
