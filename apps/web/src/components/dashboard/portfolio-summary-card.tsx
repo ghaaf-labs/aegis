@@ -97,27 +97,38 @@ export function PortfolioSummaryCard() {
           </div>
           <div className="p-3 rounded-sharp bg-raised border border-border-default">
             <p className="text-xs text-gray-500 mb-1">Risk Score</p>
-            <div className="flex items-center gap-2">
-              <p
-                className={`text-sm font-semibold ${portfolio.riskScore < 40 ? "text-emerald-400" : portfolio.riskScore < 65 ? "text-yellow-400" : "text-red-400"}`}
-              >
-                {portfolio.riskScore}/100
-              </p>
-              {isVeryStale && (
-                <span className="text-red-400 text-[10px]">stale</span>
-              )}
-              {isStale && !isVeryStale && (
-                <span className="text-yellow-400 text-[10px]">stale</span>
-              )}
-            </div>
-            {snapshot && (
-              <p className="text-[10px] text-gray-500 mt-0.5">
-                as of{" "}
-                {new Date(snapshot.capturedAt).toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
-              </p>
+            {portfolio.totalValueUsd > 0.5 ? (
+              <>
+                <div className="flex items-center gap-2">
+                  <p
+                    className={`text-sm font-semibold ${portfolio.riskScore < 40 ? "text-emerald-400" : portfolio.riskScore < 65 ? "text-yellow-400" : "text-red-400"}`}
+                  >
+                    {portfolio.riskScore}/100
+                  </p>
+                  {isVeryStale && (
+                    <span className="text-red-400 text-[10px]">stale</span>
+                  )}
+                  {isStale && !isVeryStale && (
+                    <span className="text-yellow-400 text-[10px]">stale</span>
+                  )}
+                </div>
+                {snapshot && (
+                  <p className="text-[10px] text-gray-500 mt-0.5">
+                    as of{" "}
+                    {new Date(snapshot.capturedAt).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </p>
+                )}
+              </>
+            ) : (
+              <>
+                <p className="text-sm font-semibold text-text-mut">—</p>
+                <p className="text-[10px] text-gray-500 mt-0.5">
+                  computed after first deploy
+                </p>
+              </>
             )}
           </div>
 
