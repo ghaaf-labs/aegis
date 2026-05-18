@@ -894,10 +894,24 @@ fn default_recommendation() -> serde_json::Value {
 
 fn parse_proposal(raw: &str) -> crate::error::Result<StrategistProposal> {
     let stripped = crate::modules::ai::strip_json_fences(raw);
-    serde_json::from_str(stripped).map_err(|e| {
-        crate::error::AppError::Internal(anyhow::anyhow!(
-            "failed to parse strategist proposal: {e}\nraw: {raw}"
-        ))
+    if let Ok(proposal) = serde_json::from_str::<StrategistProposal>(stripped) {
+        return Ok(proposal);
+    }
+    // The LLM occasionally returns malformed JSON (missing comma, unmatched
+    // brace, "null" where an object was expected). Surfacing this as a 500
+    // breaks the user-facing flow — they click Deploy, see a wall of raw
+    // model bytes, and conclude the platform is broken. Fall back to a safe
+    // HOLD proposal so the rebalance pipeline can still emit a no-op plan
+    // and the user is told to retry once the next strategist call succeeds.
+    tracing::warn!(
+        raw_len = raw.len(),
+        raw_preview = %raw.chars().take(200).collect::<String>(),
+        "strategist returned unparseable JSON — using safe HOLD fallback"
+    );
+    Ok(StrategistProposal {
+        reasoning: "Strategist output was unparseable on this pass. Holding the current allocation; retry the action to re-run the agent.".to_string(),
+        confidence: 0.4,
+        recommendation: default_recommendation(),
     })
 }
 

@@ -64,9 +64,16 @@ export default function PortfolioDashboardPage() {
       const planned = await rebalanceApi.plan(activePortfolio.id);
       router.push(`/rebalance/${planned.rebalanceId}`);
     } catch (e) {
-      setDeployError(
-        e instanceof Error ? e.message : "Could not build deploy plan",
-      );
+      const raw =
+        e instanceof Error ? e.message : "Could not build deploy plan";
+      // The strategist occasionally returns malformed JSON; the backend then
+      // raises a 500 with the raw model output in the body. Dumping that into
+      // the UI looks like a crash. Map known signatures to a friendlier
+      // "agent hiccup, try again" message.
+      const friendly = /parse strategist proposal|json|JSON/i.test(raw)
+        ? "Agent had a formatting hiccup. Click Deploy idle cash again — the second pass usually succeeds."
+        : raw;
+      setDeployError(friendly);
       setDeploying(false);
     }
   };

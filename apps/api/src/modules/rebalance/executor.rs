@@ -230,6 +230,22 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
             }
         }
 
+        // Buy-side holdings writeback: USDC → asset legs increment the
+        // corresponding allocations row. Without this Portfolio Value
+        // stays $0 even after real on-chain swaps confirm, which makes
+        // the entire dashboard look broken to the user. Recompute the
+        // portfolio total after every buy so a *partial* plan (e.g.
+        // USYC leg reverts on Arc but BTC/ETH/SOL already settled) still
+        // surfaces the holdings the user actually owns.
+        if is_buy_leg(kind, &leg) {
+            if let Err(e) = record_acquisition_for_leg(state, portfolio_id, &leg).await {
+                tracing::warn!(leg_id=?leg.id, error=%e, "allocations: acquisition writeback failed");
+            }
+            if let Err(e) = recompute_portfolio_total_value(state, portfolio_id).await {
+                tracing::warn!(?portfolio_id, error=%e, "portfolios: total_value_usd recompute failed");
+            }
+        }
+
         sqlx::query(
             "UPDATE rebalances
                 SET completed_legs = completed_legs + 1
@@ -582,6 +598,115 @@ fn is_sell_leg(kind: LegKind, leg: &LegRow) -> bool {
         LegKind::LocalSwap | LegKind::RedeemUsyc | LegKind::FxStablefx
     ) && leg.dest_symbol.as_deref() == Some("USDC")
         && leg.src_symbol.as_deref() != Some("USDC")
+}
+
+/// A buy-side leg acquires a non-USDC asset for USDC. Covers local swaps,
+/// USYC park, EURC FX, and cross-chain burns whose hook performs the
+/// destination swap (dest_symbol carries the volatile target).
+fn is_buy_leg(kind: LegKind, leg: &LegRow) -> bool {
+    let dest = leg.dest_symbol.as_deref().unwrap_or("");
+    if dest.is_empty() || dest == "USDC" {
+        return false;
+    }
+    matches!(
+        kind,
+        LegKind::LocalSwap | LegKind::ParkUsyc | LegKind::FxStablefx | LegKind::CrossChainBurn
+    )
+}
+
+/// Increment `allocations.quantity` by the asset amount acquired on a buy
+/// leg. Best-effort — failures here log and continue; the on-chain leg is
+/// already settled. Quantity is approximated as `amount_usdc / spot_price`
+/// since we don't parse on-chain swap output amounts.
+async fn record_acquisition_for_leg(
+    state: &AppState,
+    portfolio_id: Uuid,
+    leg: &LegRow,
+) -> Result<()> {
+    let Some(symbol) = leg.dest_symbol.as_deref() else {
+        return Ok(());
+    };
+    // USYC and other stablecoins aren't in price_history — treat as $1.
+    let fallback_price = if matches!(symbol, "USYC" | "USDC" | "EURC") {
+        1.0
+    } else {
+        0.0
+    };
+    let spot_price = latest_spot_price(state, symbol)
+        .await
+        .unwrap_or(fallback_price);
+    if spot_price <= 0.0 {
+        return Ok(());
+    }
+    let acquired_qty = leg.amount_usdc / spot_price;
+
+    let result = sqlx::query(
+        "UPDATE allocations
+            SET quantity = quantity + $3,
+                value_usd = (quantity + $3) * $4,
+                updated_at = NOW()
+          WHERE portfolio_id = $1 AND asset_symbol = $2",
+    )
+    .bind(portfolio_id)
+    .bind(symbol)
+    .bind(acquired_qty)
+    .bind(spot_price)
+    .execute(&state.db)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        // No matching allocations row — happens if the target weights changed
+        // mid-flight. Insert a fresh row so the holding isn't silently lost.
+        sqlx::query(
+            "INSERT INTO allocations (id, portfolio_id, asset_symbol, quantity,
+                                       target_weight, current_weight, value_usd)
+             VALUES ($1, $2, $3, $4, 0, 0, $5)
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(Uuid::new_v4())
+        .bind(portfolio_id)
+        .bind(symbol)
+        .bind(acquired_qty)
+        .bind(acquired_qty * spot_price)
+        .execute(&state.db)
+        .await?;
+    }
+    Ok(())
+}
+
+/// Recompute `portfolios.total_value_usd` as the sum of `allocations.value_usd`.
+/// Called after every plan completes so the headline reflects the post-trade
+/// portfolio. PnL is left for a separate cost-basis-aware computation.
+async fn recompute_portfolio_total_value(state: &AppState, portfolio_id: Uuid) -> Result<()> {
+    sqlx::query(
+        "UPDATE portfolios
+            SET total_value_usd = COALESCE(
+                (SELECT SUM(value_usd) FROM allocations WHERE portfolio_id = $1),
+                0
+            ),
+            updated_at = NOW()
+          WHERE id = $1",
+    )
+    .bind(portfolio_id)
+    .execute(&state.db)
+    .await?;
+    Ok(())
+}
+
+/// Most recent USD price from `price_history` for the given symbol. Returns
+/// `None` when the symbol isn't tracked (USYC, etc.). `price_history.price_usd`
+/// is `numeric(20,8)` — cast to DOUBLE PRECISION here so sqlx can decode into
+/// f64 without raising a type-mismatch.
+async fn latest_spot_price(state: &AppState, symbol: &str) -> Option<f64> {
+    sqlx::query_scalar::<_, f64>(
+        "SELECT price_usd::DOUBLE PRECISION FROM price_history
+          WHERE symbol = $1 ORDER BY fetched_at DESC LIMIT 1",
+    )
+    .bind(symbol)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
 }
 
 async fn record_disposal_for_leg(state: &AppState, portfolio_id: Uuid, leg: &LegRow) -> Result<()> {
