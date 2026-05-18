@@ -28,28 +28,45 @@ export function AssetTable() {
       ? "text-yellow-400"
       : "text-white";
 
-  const priceMap = snapshot
-    ? Object.fromEntries(snapshot.assets.map((a) => [a.symbol, a]))
-    : {};
+  // USYC is a tokenized USD instrument from Hashnote — not on DefiLlama's
+  // free feed, so the snapshot omits it. Fall back to $1.00 (the floor;
+  // accrued yield is small relative to the dashboard scale) so the row
+  // doesn't read as "broken price feed".
+  const snapshotAssets = snapshot?.assets ?? [];
+  const priceMap = Object.fromEntries(
+    snapshotAssets.map((a) => [a.symbol, a]),
+  ) as Record<string, (typeof snapshotAssets)[number] | undefined>;
+  if (!priceMap.USYC) {
+    priceMap.USYC = {
+      symbol: "USYC",
+      priceUsd: 1.0,
+      change24h: 0,
+      change7d: 0,
+      marketCap: 0,
+      volume24h: 0,
+      updatedAt: snapshot?.capturedAt ?? new Date().toISOString(),
+    };
+  }
 
   // Compute live current weight per allocation from holdings × spot price.
   // The stored `currentWeight` column is initialized to the target on
   // portfolio creation and not maintained by the executor, so reading it
   // would show "50% vs 50%" even when the user holds 0 units.
-  const liveWeights = (() => {
-    const allocs = portfolio.allocations ?? [];
-    const values = allocs.map((a) => {
-      const price = priceMap[a.symbol]?.priceUsd ?? 0;
-      return price * a.quantity;
-    });
-    const total = values.reduce((sum, v) => sum + v, 0);
-    return Object.fromEntries(
-      allocs.map((a, i) => [
-        a.symbol,
-        total > 0 ? ((values[i] ?? 0) / total) * 100 : 0,
-      ]),
-    );
-  })();
+  const allocList = portfolio.allocations ?? [];
+  const investedValues = allocList.map((a) => {
+    const price = priceMap[a.symbol]?.priceUsd ?? 0;
+    return price * a.quantity;
+  });
+  const totalInvestedUsd = investedValues.reduce((sum, v) => sum + v, 0);
+  const isUninvested = totalInvestedUsd < 0.5;
+  const liveWeights: Record<string, number> = Object.fromEntries(
+    allocList.map((a, i) => [
+      a.symbol,
+      totalInvestedUsd > 0
+        ? ((investedValues[i] ?? 0) / totalInvestedUsd) * 100
+        : 0,
+    ]),
+  );
 
   return (
     <Card>
@@ -137,26 +154,32 @@ export function AssetTable() {
                     {formatCurrency(valueUsd)}
                   </td>
                   <td className="px-5 py-3.5 hidden lg:table-cell">
-                    <div className="flex items-center gap-2">
-                      <div className="flex items-center gap-1">
-                        <span className="text-xs text-gray-400 font-mono w-10">
-                          {currentWeight.toFixed(1)}%
-                        </span>
-                        <span className="text-gray-600 text-xs">vs</span>
-                        <span className="text-xs text-gray-500 font-mono w-10">
-                          {alloc.targetWeight.toFixed(0)}%
-                        </span>
+                    {isUninvested ? (
+                      <span className="text-xs text-gray-500 font-mono">
+                        target {alloc.targetWeight.toFixed(0)}%
+                      </span>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs text-gray-400 font-mono w-10">
+                            {currentWeight.toFixed(1)}%
+                          </span>
+                          <span className="text-gray-600 text-xs">vs</span>
+                          <span className="text-xs text-gray-500 font-mono w-10">
+                            {alloc.targetWeight.toFixed(0)}%
+                          </span>
+                        </div>
+                        {driftAbs > 3 && (
+                          <Badge
+                            variant={driftAbs > 10 ? "danger" : "warning"}
+                            className="text-[10px] px-1.5 py-0"
+                          >
+                            {drift > 0 ? "+" : ""}
+                            {drift.toFixed(1)}%
+                          </Badge>
+                        )}
                       </div>
-                      {driftAbs > 3 && (
-                        <Badge
-                          variant={driftAbs > 10 ? "danger" : "warning"}
-                          className="text-[10px] px-1.5 py-0"
-                        >
-                          {drift > 0 ? "+" : ""}
-                          {drift.toFixed(1)}%
-                        </Badge>
-                      )}
-                    </div>
+                    )}
                   </td>
                 </tr>
               );

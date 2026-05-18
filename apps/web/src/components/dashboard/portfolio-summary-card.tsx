@@ -70,17 +70,23 @@ export function PortfolioSummaryCard() {
             {formatCurrency(idleCashUsd, { compact: true })} idle cash
           </p>
         )}
-        <div
-          className={`flex items-center gap-1.5 text-sm ${changeColor(portfolio.totalPnlUsd)}`}
-        >
-          <TrendIcon className="w-3.5 h-3.5" />
-          <span className="font-medium">
-            {formatCurrency(portfolio.totalPnlUsd, { compact: true })}
-          </span>
-          <span className="text-gray-500">·</span>
-          <span>{formatPercent(portfolio.totalPnlPct)}</span>
-          <span className="text-gray-500 text-xs ml-1">all time</span>
-        </div>
+        {portfolio.totalValueUsd > 0.5 ? (
+          <div
+            className={`flex items-center gap-1.5 text-sm ${changeColor(portfolio.totalPnlUsd)}`}
+          >
+            <TrendIcon className="w-3.5 h-3.5" />
+            <span className="font-medium">
+              {formatCurrency(portfolio.totalPnlUsd, { compact: true })}
+            </span>
+            <span className="text-gray-500">·</span>
+            <span>{formatPercent(portfolio.totalPnlPct)}</span>
+            <span className="text-gray-500 text-xs ml-1">all time</span>
+          </div>
+        ) : (
+          <p className="text-[11px] font-mono text-text-mut">
+            Awaiting first deploy — PnL starts ticking after legs confirm.
+          </p>
+        )}
 
         <div className="mt-4 grid grid-cols-2 gap-3">
           <div className="p-3 rounded-sharp bg-raised border border-border-default">

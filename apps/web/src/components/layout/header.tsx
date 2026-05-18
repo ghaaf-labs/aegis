@@ -95,17 +95,19 @@ export function Header() {
                 {formatCurrency(portfolio.totalValueUsd)}
               </p>
             </div>
-            <div>
-              <p className="text-[10px] text-text-mut font-mono">
-                ALL-TIME PNL
-              </p>
-              <p
-                className={`text-sm font-mono font-semibold tabular-nums ${changeColor(portfolio.totalPnlUsd)}`}
-              >
-                {formatCurrency(portfolio.totalPnlUsd)} (
-                {formatPercent(portfolio.totalPnlPct)})
-              </p>
-            </div>
+            {portfolio.totalValueUsd > 0.5 && (
+              <div>
+                <p className="text-[10px] text-text-mut font-mono">
+                  ALL-TIME PNL
+                </p>
+                <p
+                  className={`text-sm font-mono font-semibold tabular-nums ${changeColor(portfolio.totalPnlUsd)}`}
+                >
+                  {formatCurrency(portfolio.totalPnlUsd)} (
+                  {formatPercent(portfolio.totalPnlPct)})
+                </p>
+              </div>
+            )}
             {wallet && (
               <div title="Undeployed USDC + EURC across Arc + Base. Portfolio Value reflects invested positions — Gateway holdings are uninvested cash.">
                 <p className="text-[10px] text-text-mut font-mono">

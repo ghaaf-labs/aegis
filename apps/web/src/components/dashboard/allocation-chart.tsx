@@ -82,7 +82,7 @@ export function AllocationChart({ compact = false }: Props) {
           Allocation
           {isUninvested && (
             <span className="ml-2 text-[10px] font-mono text-text-mut uppercase tracking-wider">
-              · target
+              target
             </span>
           )}
         </CardTitle>
