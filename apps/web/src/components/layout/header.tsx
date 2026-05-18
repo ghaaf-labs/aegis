@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDown, Bell, Plus, Wifi, WifiOff, LogOut } from "lucide-react";
+import { Bell, Wifi, WifiOff, LogOut } from "lucide-react";
 import { BrutalButton, BrutalPill, ChainBadge } from "@aegis/ui";
 import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
 import { formatCurrency, formatPercent, changeColor } from "@/lib/utils";
@@ -11,8 +11,6 @@ import { gatewayApi, walletApi } from "@/lib/api";
 export function Header() {
   const router = useRouter();
   const portfolio = useActivePortfolio();
-  const portfolios = usePortfolioStore((s) => s.portfolios);
-  const setActive = usePortfolioStore((s) => s.setActivePortfolio);
   const sseConnected = usePortfolioStore((s) => s.sseConnected);
   const unifiedUsdc = usePortfolioStore((s) => s.unifiedUsdc);
   const unifiedEurc = usePortfolioStore((s) => s.unifiedEurc);
@@ -22,7 +20,6 @@ export function Header() {
   const setWallet = usePortfolioStore((s) => s.setWallet);
   const setPortfolios = usePortfolioStore((s) => s.setPortfolios);
 
-  const [open, setOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [userOpen, setUserOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
@@ -80,51 +77,11 @@ export function Header() {
     <header className="flex items-center justify-between px-6 py-3 border-b-brutal border-border-default bg-surface shrink-0">
       <div className="flex items-center gap-4">
         {portfolio && (
-          <div className="relative">
-            <button
-              onClick={() => setOpen((v) => !v)}
-              className="flex items-center gap-2 px-3 py-1.5 border-brutal border-border-default rounded-sharp bg-bg hover:border-border-hi"
-            >
-              <span className="text-xs text-text-lo font-mono">Portfolio</span>
-              <span className="text-sm font-semibold text-text-hi">
-                {portfolio.name}
-              </span>
-              <ChevronDown className="w-3 h-3 text-text-lo" />
-            </button>
-            {open && (
-              <div className="absolute top-full left-0 mt-2 w-64 border-brutal border-border-default bg-surface shadow-brutal rounded-card z-50">
-                {portfolios.map((p) => (
-                  <button
-                    key={p.id}
-                    onClick={() => {
-                      setActive(p.id);
-                      setOpen(false);
-                      router.push(`/dashboard/${p.id}`);
-                    }}
-                    className={`block w-full text-left px-3 py-2 text-sm font-mono border-b border-border-default last:border-b-0 hover:bg-raised ${
-                      p.id === portfolio.id
-                        ? "text-accent-pnl"
-                        : "text-text-default"
-                    }`}
-                  >
-                    {p.name}
-                    <span className="ml-2 text-text-mut text-xs">
-                      {formatCurrency(p.totalValueUsd)}
-                    </span>
-                  </button>
-                ))}
-                <button
-                  onClick={() => {
-                    setOpen(false);
-                    router.push("/onboarding");
-                  }}
-                  className="flex items-center gap-2 w-full text-left px-3 py-2 text-sm font-mono text-accent-agent hover:bg-raised"
-                >
-                  <Plus className="w-3 h-3" />
-                  New portfolio
-                </button>
-              </div>
-            )}
+          <div className="flex items-center gap-2 px-3 py-1.5 border-brutal border-border-default rounded-sharp bg-bg">
+            <span className="text-xs text-text-lo font-mono">Portfolio</span>
+            <span className="text-sm font-semibold text-text-hi">
+              {portfolio.name}
+            </span>
           </div>
         )}
 

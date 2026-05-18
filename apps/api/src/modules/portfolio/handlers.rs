@@ -47,27 +47,52 @@ pub async fn get(
     }))
 }
 
+/// Upsert the user's single portfolio. Aegis is one-portfolio-per-user; if
+/// the user already has one this handler replaces its name, goal, and
+/// allocations rather than creating a second. Returns 201 when freshly
+/// created, 200 when an existing portfolio was overwritten.
 pub async fn create(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
     Json(body): Json<CreatePortfolioRequest>,
 ) -> crate::error::Result<(StatusCode, Json<Portfolio>)> {
-    // Tier gate: Free is capped at 1 portfolio. No-op when flag is OFF so the
-    // existing golden-path tests keep passing.
-    if state.config.billing_v2_enabled {
-        let tier = crate::middleware::tier::resolve_tier(&state.db, claims.sub).await?;
-        crate::middleware::tier::enforce_portfolios_cap(&state.db, claims.sub, tier).await?;
-    }
     let goal_value = body.goal.clone().unwrap_or(serde_json::json!({}));
-    let portfolio = sqlx::query_as::<_, Portfolio>(
-        "INSERT INTO portfolios (id, user_id, name, goal) VALUES ($1, $2, $3, $4) RETURNING *",
-    )
-    .bind(Uuid::new_v4())
-    .bind(claims.sub)
-    .bind(&body.name)
-    .bind(&goal_value)
-    .fetch_one(&state.db)
-    .await?;
+
+    let existing: Option<Uuid> =
+        sqlx::query_scalar("SELECT id FROM portfolios WHERE user_id = $1 LIMIT 1")
+            .bind(claims.sub)
+            .fetch_optional(&state.db)
+            .await?;
+
+    let mut tx = state.db.begin().await?;
+    let (portfolio, status) = if let Some(id) = existing {
+        let updated = sqlx::query_as::<_, Portfolio>(
+            "UPDATE portfolios SET name = $1, goal = $2, updated_at = NOW()
+             WHERE id = $3 RETURNING *",
+        )
+        .bind(&body.name)
+        .bind(&goal_value)
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+        sqlx::query("DELETE FROM allocations WHERE portfolio_id = $1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        (updated, StatusCode::OK)
+    } else {
+        let created = sqlx::query_as::<_, Portfolio>(
+            "INSERT INTO portfolios (id, user_id, name, goal) VALUES ($1, $2, $3, $4)
+             RETURNING *",
+        )
+        .bind(Uuid::new_v4())
+        .bind(claims.sub)
+        .bind(&body.name)
+        .bind(&goal_value)
+        .fetch_one(&mut *tx)
+        .await?;
+        (created, StatusCode::CREATED)
+    };
 
     for alloc in &body.allocations {
         sqlx::query(
@@ -79,11 +104,12 @@ pub async fn create(
         .bind(&alloc.symbol)
         .bind(alloc.quantity)
         .bind(alloc.target_weight)
-        .execute(&state.db)
+        .execute(&mut *tx)
         .await?;
     }
 
-    Ok((StatusCode::CREATED, Json(portfolio)))
+    tx.commit().await?;
+    Ok((status, Json(portfolio)))
 }
 
 pub async fn update(
