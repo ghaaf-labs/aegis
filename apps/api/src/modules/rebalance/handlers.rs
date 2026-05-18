@@ -342,18 +342,7 @@ async fn load_gateway_pool(state: &AppState, user_id: Uuid) -> HashMap<ChainKey,
     pool.insert(ChainKey::Arc, 0.0);
     pool.insert(ChainKey::Base, 0.0);
 
-    let wallet_id: Option<String> = sqlx::query_scalar("SELECT wallet_id FROM users WHERE id = $1")
-        .bind(user_id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten();
-    let Some(wallet_id) = wallet_id else {
-        return pool;
-    };
-
-    match crate::modules::gateway::service::fetch_balance(&state.http, &state.config, &wallet_id)
-        .await
+    match crate::modules::gateway::service::fetch_balance(&state.http, &state.config, user_id).await
     {
         Ok(b) => {
             for (chain, amount) in b.per_chain {

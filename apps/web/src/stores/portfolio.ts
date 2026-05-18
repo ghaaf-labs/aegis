@@ -39,6 +39,8 @@ interface PortfolioState {
   /** Wallet info from Circle Wallets create / login. */
   wallet: WalletInfo | null;
   unifiedUsdc: number;
+  /** Sum of EURC across every chain the user holds a wallet on. */
+  unifiedEurc: number;
   /** Most-recent strategist tool invocations (capped at 20). */
   toolInvocations: AgentToolInvoked[];
   /** Most-recent abstain events (capped at 10). */
@@ -62,6 +64,7 @@ interface PortfolioState {
   setRegime: (next: Partial<RegimeState>) => void;
   applyPriceTick: (tick: PriceTick) => void;
   setUnifiedUsdc: (v: number) => void;
+  setUnifiedEurc: (v: number) => void;
   setWallet: (w: WalletInfo | null) => void;
   setIsRebalancing: (v: boolean) => void;
   selectDecision: (id: string | null) => void;
@@ -95,6 +98,7 @@ export const usePortfolioStore = create<PortfolioState>()(
       sseConnected: false,
       wallet: null,
       unifiedUsdc: 0,
+      unifiedEurc: 0,
       toolInvocations: [],
       abstains: [],
       rebalanceStatuses: {},
@@ -139,6 +143,7 @@ export const usePortfolioStore = create<PortfolioState>()(
           livePrices: { ...state.livePrices, [tick.symbol]: tick },
         })),
       setUnifiedUsdc: (unifiedUsdc) => set({ unifiedUsdc }),
+      setUnifiedEurc: (unifiedEurc) => set({ unifiedEurc }),
       setWallet: (wallet) => set({ wallet }),
       setIsRebalancing: (isRebalancing) => set({ isRebalancing }),
       selectDecision: (selectedDecisionId) => set({ selectedDecisionId }),

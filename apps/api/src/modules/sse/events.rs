@@ -165,7 +165,11 @@ pub struct GatewayBalance {
     /// Audience filter.
     pub user_id: Uuid,
     pub unified_usdc: f64,
+    /// Headline EURC balance — same shape as USDC, summed across chains.
+    pub unified_eurc: f64,
     pub per_chain: std::collections::HashMap<String, f64>,
+    /// EURC per chain — same keys as `per_chain` (e.g. "arc", "base").
+    pub per_chain_eurc: std::collections::HashMap<String, f64>,
     pub observed_at: DateTime<Utc>,
 }
 

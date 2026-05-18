@@ -142,7 +142,12 @@ export const faucetApi = {
 
 export interface UnifiedBalance {
   unifiedUsdc: number;
+  /** Sum of EURC across all chains. */
+  unifiedEurc: number;
+  /** USDC per chain — keys are lowercased chain shorthands ("arc", "base"). */
   perChain: Record<string, number>;
+  /** EURC per chain — same key set as `perChain`. */
+  perChainEurc: Record<string, number>;
   arcAddress?: string | null;
   baseAddress?: string | null;
 }

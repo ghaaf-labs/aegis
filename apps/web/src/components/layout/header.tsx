@@ -15,7 +15,9 @@ export function Header() {
   const setActive = usePortfolioStore((s) => s.setActivePortfolio);
   const sseConnected = usePortfolioStore((s) => s.sseConnected);
   const unifiedUsdc = usePortfolioStore((s) => s.unifiedUsdc);
+  const unifiedEurc = usePortfolioStore((s) => s.unifiedEurc);
   const setUnifiedUsdc = usePortfolioStore((s) => s.setUnifiedUsdc);
+  const setUnifiedEurc = usePortfolioStore((s) => s.setUnifiedEurc);
   const wallet = usePortfolioStore((s) => s.wallet);
   const setWallet = usePortfolioStore((s) => s.setWallet);
   const setPortfolios = usePortfolioStore((s) => s.setPortfolios);
@@ -48,6 +50,7 @@ export function Header() {
     setWallet(null);
     setPortfolios([]);
     setUnifiedUsdc(0);
+    setUnifiedEurc(0);
     localStorage.removeItem("aegis_email");
     router.push("/login");
   };
@@ -58,7 +61,11 @@ export function Header() {
     let alive = true;
     void gatewayApi
       .balance()
-      .then((b) => alive && setUnifiedUsdc(b.unifiedUsdc))
+      .then((b) => {
+        if (!alive) return;
+        setUnifiedUsdc(b.unifiedUsdc);
+        setUnifiedEurc(b.unifiedEurc);
+      })
       .catch((err) => {
         // Best-effort hydration; SSE will overwrite this once the channel
         // opens. Surface in dev so we can spot persistent gateway outages.
@@ -143,16 +150,21 @@ export function Header() {
               </p>
             </div>
             {wallet && (
-              <div title="Undeployed USDC across Arc + Base. Portfolio Value reflects invested positions — Gateway USDC is uninvested cash.">
+              <div title="Undeployed USDC + EURC across Arc + Base. Portfolio Value reflects invested positions — Gateway holdings are uninvested cash.">
                 <p className="text-[10px] text-text-mut font-mono">
-                  GATEWAY USDC
+                  GATEWAY
                   <span className="ml-1 inline-flex gap-1">
                     <ChainBadge chain="ARC" />
                     <ChainBadge chain="BASE" />
                   </span>
                 </p>
                 <p className="text-sm font-mono font-semibold text-accent-pnl tabular-nums">
-                  ${unifiedUsdc.toFixed(2)}
+                  ${unifiedUsdc.toFixed(2)} USDC
+                  {unifiedEurc > 0 && (
+                    <span className="text-text-lo">
+                      {" · "}€{unifiedEurc.toFixed(2)} EURC
+                    </span>
+                  )}
                 </p>
               </div>
             )}

@@ -56,8 +56,9 @@ export default function PortfolioDashboardPage() {
   }, []);
 
   const unifiedUsdc = usePortfolioStore((s) => s.unifiedUsdc);
+  const unifiedEurc = usePortfolioStore((s) => s.unifiedEurc);
   const wallet = usePortfolioStore((s) => s.wallet);
-  const showFaucet = !!wallet && unifiedUsdc === 0;
+  const showFaucet = !!wallet && unifiedUsdc === 0 && unifiedEurc === 0;
 
   return (
     <motion.div

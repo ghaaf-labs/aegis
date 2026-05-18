@@ -38,7 +38,7 @@ pub fn spawn_balance_ticker(db: Db, http: Client, config: Arc<Config>, sse: SseS
             }
 
             let users = match sqlx::query_as::<_, ActiveWallet>(
-                "SELECT id, wallet_id FROM users WHERE wallet_id IS NOT NULL",
+                "SELECT id FROM users WHERE wallet_id IS NOT NULL",
             )
             .fetch_all(&db)
             .await
@@ -51,12 +51,11 @@ pub fn spawn_balance_ticker(db: Db, http: Client, config: Arc<Config>, sse: SseS
             };
 
             for u in users {
-                match fetch_balance(&http, &config, &u.wallet_id).await {
+                match fetch_balance(&http, &config, u.id).await {
                     Ok(balance) => broadcast(&sse, u.id, &balance),
-                    Err(e) => debug!(
-                        "gateway ticker: fetch for {} (wallet {}) failed: {e}",
-                        u.id, u.wallet_id
-                    ),
+                    Err(e) => {
+                        debug!("gateway ticker: fetch for user {} failed: {e}", u.id)
+                    }
                 }
             }
         }
@@ -66,5 +65,4 @@ pub fn spawn_balance_ticker(db: Db, http: Client, config: Arc<Config>, sse: SseS
 #[derive(sqlx::FromRow)]
 struct ActiveWallet {
     id: Uuid,
-    wallet_id: String,
 }
