@@ -306,7 +306,7 @@ export function ApprovalModal({
             (l) => l.srcSymbol === "EURC" || l.destSymbol === "EURC",
           ) && (
             <div className="border-brutal border-warn/40 bg-warn/10 p-3 mb-4 text-[11px] font-mono text-warn">
-              EURC routes via CoinGecko spot rate while institutional Circle
+              EURC routes via DefiLlama spot rate while institutional Circle
               StableFX access is pending. Slippage may exceed institutional
               execution by ~3-5 bps.
             </div>

@@ -96,7 +96,9 @@ pub const SYMBOLS: &[Symbol] = &[
     Symbol {
         ticker: "MATIC",
         defillama_key: "coingecko:matic-network",
-        pyth_feed_id: "0x5de33a9112c2b700b8d30b8a3402c103578ccfa2765696471cc672bd5cf6ac52",
+        // Pyth Hermes doesn't carry a MATIC/USD feed in the public catalogue;
+        // DefiLlama covers it. Leaving blank skips the Pyth request.
+        pyth_feed_id: "",
         cg_id_legacy: "matic-network",
     },
     Symbol {
@@ -126,7 +128,8 @@ pub const SYMBOLS: &[Symbol] = &[
     Symbol {
         ticker: "FRAX",
         defillama_key: "coingecko:frax",
-        pyth_feed_id: "0xc3d5d8d6d17081b3d0bbca6e2fa3a6704bb9a9561d9f9e1dc52db47629f862ad",
+        // FRAX/USD isn't published on Pyth Hermes; DefiLlama covers it.
+        pyth_feed_id: "",
         cg_id_legacy: "frax",
     },
     Symbol {

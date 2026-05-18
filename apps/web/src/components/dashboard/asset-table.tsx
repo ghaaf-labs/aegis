@@ -144,8 +144,8 @@ export function AssetTable() {
         </table>
         <div className="px-5 py-2 text-[10px] text-text-mut font-mono border-t border-white/5">
           {snapshot
-            ? "Prices via CoinGecko · live snapshot"
-            : "Awaiting first price tick · via CoinGecko"}
+            ? "Prices via DefiLlama · live snapshot"
+            : "Awaiting first price tick · via DefiLlama"}
         </div>
       </CardContent>
     </Card>

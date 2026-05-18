@@ -16,8 +16,10 @@ pub struct GatewayBalance {
     pub base_address: Option<String>,
 }
 
-/// Fetch unified USDC balance for a wallet. Mock returns deterministic
-/// numbers keyed on the wallet_id so the demo stays stable.
+/// Fetch unified USDC balance for a wallet via Circle's W3S balances endpoint.
+/// An empty wallet (no funded tokens yet) returns a zero balance rather than
+/// a 5xx — that's the correct semantic for "this user just signed up and
+/// hasn't deposited anything." Network or auth errors propagate as Internal.
 pub async fn fetch_balance(
     http: &reqwest::Client,
     config: &Config,
@@ -28,30 +30,76 @@ pub async fn fetch_balance(
     }
 
     #[derive(Deserialize)]
-    struct CircleGatewayResp {
-        #[serde(rename = "unifiedUsdc")]
-        unified_usdc: f64,
-        #[serde(rename = "perChain")]
-        per_chain: HashMap<String, f64>,
+    struct Envelope {
+        data: Data,
     }
-    let resp: CircleGatewayResp = http
-        .get(format!(
-            "{}/v1/gateway/wallets/{wallet_id}/balance",
-            config.circle_base_url
-        ))
+    #[derive(Deserialize)]
+    struct Data {
+        #[serde(default, rename = "tokenBalances")]
+        token_balances: Vec<TokenBalance>,
+    }
+    #[derive(Deserialize)]
+    struct TokenBalance {
+        #[serde(default)]
+        amount: String,
+        token: Token,
+    }
+    #[derive(Deserialize)]
+    struct Token {
+        #[serde(default)]
+        symbol: String,
+        #[serde(default)]
+        blockchain: String,
+    }
+
+    let url = format!(
+        "{}/v1/w3s/wallets/{wallet_id}/balances",
+        config.circle_base_url
+    );
+    let resp = http
+        .get(&url)
         .header("Authorization", format!("Bearer {}", config.circle_api_key))
         .send()
         .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("gateway net: {e}")))?
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("gateway net: {e}")))?;
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::NOT_FOUND {
+        // Wallet has no funded balances yet — treat as zero rather than 500.
+        return Ok(GatewayBalance {
+            unified_usdc: 0.0,
+            per_chain: HashMap::new(),
+            arc_address: None,
+            base_address: None,
+        });
+    }
+    let envelope: Envelope = resp
         .error_for_status()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("gateway status: {e}")))?
         .json()
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("gateway decode: {e}")))?;
 
+    let mut per_chain: HashMap<String, f64> = HashMap::new();
+    let mut total = 0.0;
+    for tb in envelope.data.token_balances {
+        if !tb.token.symbol.eq_ignore_ascii_case("USDC") {
+            continue;
+        }
+        let amount: f64 = tb.amount.parse().unwrap_or(0.0);
+        let chain_key = match tb.token.blockchain.as_str() {
+            "ARC-TESTNET" | "ARC" => "arc".to_string(),
+            "BASE-SEPOLIA" | "BASE" => "base".to_string(),
+            other if !other.is_empty() => other.to_ascii_lowercase(),
+            _ => "unknown".to_string(),
+        };
+        *per_chain.entry(chain_key).or_insert(0.0) += amount;
+        total += amount;
+    }
+
     Ok(GatewayBalance {
-        unified_usdc: resp.unified_usdc,
-        per_chain: resp.per_chain,
+        unified_usdc: total,
+        per_chain,
         arc_address: None,
         base_address: None,
     })
