@@ -20,21 +20,28 @@ import { usePortfolioStore } from "@/stores/portfolio";
 
 type Mode = "email" | "challenge" | "polling";
 
+interface Props {
+  /** When true, the card calls `walletApi.login` and redirects to /dashboard
+   * instead of /onboarding. Returning users don't need to re-set their PIN —
+   * the W3S bundle has `challengeId = null` and the SDK ceremony is skipped. */
+  loginMode?: boolean;
+}
+
 /**
  * Circle W3S User-Controlled wallet onboarding.
  *
- * 1. User enters email → POST `/auth/wallet/create` → server returns a
- *    `UserTokenBundle` (userToken + encryptionKey + appId + challengeId).
+ * 1. User enters email → POST `/auth/wallet/{create,login}` → server returns
+ *    a `UserTokenBundle` (userToken + encryptionKey + appId + challengeId).
  * 2. Browser dynamically imports `@circle-fin/w3s-pw-web-sdk`, instantiates
  *    `W3SSdk`, calls `setAuthentication(...)` then `execute(challengeId)` to
  *    drive the PIN ceremony. The SDK signs the wallet creation request.
  * 3. We poll `/auth/wallet/status` every 2s until Circle has provisioned both
- *    ARC and BASE addresses, then redirect to onboarding.
+ *    ARC and BASE addresses, then redirect.
  *
  * Returning users (`isNewUser=false`) skip step 2 — the bundle has no
  * challengeId and the wallet is already on the response.
  */
-export function CreateWalletCard() {
+export function CreateWalletCard({ loginMode = false }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const referrerHandle = searchParams?.get("ref")?.trim().toLowerCase();
@@ -55,11 +62,12 @@ export function CreateWalletCard() {
     },
   ) => {
     setWallet(wallet);
-    await analyticsApi.track("wallet.created", {
+    localStorage.setItem("aegis_email", email.trim());
+    await analyticsApi.track(loginMode ? "wallet.login" : "wallet.created", {
       method,
-      referrerHandle: referrerHandle || null,
+      referrerHandle: loginMode ? null : (referrerHandle ?? null),
     });
-    router.push("/onboarding");
+    router.push(loginMode ? "/dashboard" : "/onboarding");
   };
 
   const runChallengeAndPoll = async (bundle: UserTokenBundle) => {
@@ -116,13 +124,12 @@ export function CreateWalletCard() {
     setSubmitting(true);
     setError(null);
     try {
-      const resp = await walletApi.create(
-        email.trim(),
-        referrerHandle || undefined,
-      );
+      const resp = loginMode
+        ? await walletApi.login(email.trim())
+        : await walletApi.create(email.trim(), referrerHandle || undefined);
       setToken(resp.token);
-      // If the user already had a wallet (re-running signup with the same
-      // email), the response carries it inline — skip the SDK ceremony.
+      // If the user already had a wallet (login, or re-running signup with the
+      // same email), the response carries it inline — skip the SDK ceremony.
       if (resp.wallet) {
         await finish(resp.isNewUser ? "passkey" : "returning", resp.wallet);
         return;
@@ -147,7 +154,9 @@ export function CreateWalletCard() {
           )}
           <span className="text-sm font-semibold text-text-hi">
             {mode === "email"
-              ? "Create wallet"
+              ? loginMode
+                ? "Sign in"
+                : "Create wallet"
               : mode === "challenge"
                 ? "Set your PIN"
                 : "Provisioning wallets…"}
@@ -196,7 +205,7 @@ export function CreateWalletCard() {
               onClick={() => void submitEmail()}
               disabled={!email || submitting}
             >
-              {submitting ? "Starting…" : "Continue"}
+              {submitting ? "Starting…" : loginMode ? "Sign in" : "Continue"}
             </BrutalButton>
           </div>
         )}

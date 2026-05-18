@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Trophy } from "lucide-react";
 import { ModelBadge } from "@aegis/ui";
+import { DashboardLink } from "@/components/layout/dashboard-link";
 
 export const metadata: Metadata = {
   title: "Aegis · Leaderboard",
@@ -97,6 +98,9 @@ export default async function LeaderboardPage() {
             Create your own
           </Link>
         </p>
+        <div className="mt-2 text-center">
+          <DashboardLink />
+        </div>
       </div>
     </main>
   );

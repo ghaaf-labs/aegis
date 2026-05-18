@@ -51,7 +51,7 @@ export default function AgentSettingsPage() {
     <div className="flex flex-col gap-6 max-w-3xl">
       <header>
         <h1 className="text-2xl font-bold tracking-tight">Agent control</h1>
-        <p className="text-sm text-text-muted">
+        <p className="text-sm text-text-mut">
           One-toggle pause for every scheduled agent trigger — drift watcher,
           regime monitor, peg defense, scheduler tick. Manual rebalances and
           ad-hoc analyses are unaffected so you can still hand-drive when
@@ -97,7 +97,7 @@ export default function AgentSettingsPage() {
           </p>
           <p>
             See{" "}
-            <a className="underline" href="/policy">
+            <a className="text-accent-agent hover:underline" href="/policy">
               /policy
             </a>{" "}
             for the full outcome posture.

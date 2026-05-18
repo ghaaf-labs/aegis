@@ -47,6 +47,11 @@ export default function PortfolioDashboardPage() {
   );
   const diaryPublic = localDiaryPublic ?? diaryQuery.data?.diaryPublic ?? false;
 
+  const [storedEmail, setStoredEmail] = useState("");
+  useEffect(() => {
+    setStoredEmail(localStorage.getItem("aegis_email") ?? "");
+  }, []);
+
   return (
     <motion.div
       initial="hidden"
@@ -93,7 +98,7 @@ export default function PortfolioDashboardPage() {
         variants={fadeUp}
         className="grid grid-cols-1 md:grid-cols-2 gap-4"
       >
-        <DigestOptIn />
+        <DigestOptIn defaultEmail={storedEmail} />
         <div /> {/* spacer to keep grid alignment until more settings land */}
       </motion.div>
 

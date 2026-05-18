@@ -6,13 +6,14 @@ import { useActivePortfolio } from "@/stores/portfolio";
 import { formatPercent } from "@/lib/utils";
 import { ProvenanceLine } from "@aegis/ui";
 
-const COLORS = [
-  "#3b82f6",
-  "#8b5cf6",
-  "#06b6d4",
-  "#10b981",
-  "#f59e0b",
-  "#ef4444",
+// Chart palette sourced from design-system tokens + complementary shades.
+const CHART_COLORS = [
+  "#00E0FF", // accent-agent
+  "#FFB800", // warn
+  "#FF2D7A", // risk
+  "#00FF88", // accent-pnl
+  "#A855F7", // violet
+  "#F97316", // orange
 ];
 
 interface Props {
@@ -24,11 +25,31 @@ export function AllocationChart({ compact = false }: Props) {
 
   if (!portfolio) return null;
 
-  const data = portfolio.allocations.map((a) => ({
+  const data = (portfolio.allocations ?? []).map((a) => ({
     name: a.symbol,
     value: a.currentWeight,
     valueUsd: a.valueUsd,
   }));
+
+  const isEmpty = data.length === 0 || data.every((d) => d.value === 0);
+
+  if (isEmpty) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Allocation</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-center h-32 text-center">
+            <p className="text-xs text-text-mut font-mono px-4">
+              No allocations yet — adopt a strategy or deposit USDC to get
+              started
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>
@@ -55,7 +76,7 @@ export function AllocationChart({ compact = false }: Props) {
                   {data.map((_, index) => (
                     <Cell
                       key={`cell-${index}`}
-                      fill={COLORS[index % COLORS.length]}
+                      fill={CHART_COLORS[index % CHART_COLORS.length]}
                       opacity={0.9}
                     />
                   ))}
@@ -78,22 +99,24 @@ export function AllocationChart({ compact = false }: Props) {
             </ResponsiveContainer>
           </div>
 
-          <div className="flex-1 space-y-1.5">
+          <div className="flex-1 min-w-0 space-y-1.5">
             {data.map((item, i) => (
               <div
                 key={item.name}
-                className="flex items-center justify-between"
+                className="flex items-center justify-between gap-2"
               >
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 min-w-0">
                   <span
                     className="w-2 h-2 rounded-full shrink-0"
-                    style={{ background: COLORS[i % COLORS.length] }}
+                    style={{
+                      background: CHART_COLORS[i % CHART_COLORS.length],
+                    }}
                   />
-                  <span className="text-xs text-gray-400 font-mono">
+                  <span className="text-xs text-gray-400 font-mono truncate">
                     {item.name}
                   </span>
                 </div>
-                <span className="text-xs text-white font-medium">
+                <span className="text-xs text-white font-medium shrink-0">
                   {formatPercent(item.value, false)}
                 </span>
               </div>

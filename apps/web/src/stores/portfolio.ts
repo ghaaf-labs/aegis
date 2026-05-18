@@ -25,6 +25,8 @@ export interface RegimeState {
 interface PortfolioState {
   /** All portfolios for the logged-in user. */
   portfolios: Portfolio[];
+  /** True once portfolioApi.list() has resolved at least once this session. */
+  portfoliosLoaded: boolean;
   activePortfolioId: PortfolioId | null;
   decisions: AgentDecision[];
   marketSnapshot: MarketSnapshot | null;
@@ -47,6 +49,7 @@ interface PortfolioState {
   pegAlerts: PegAlert[];
 
   setPortfolios: (p: Portfolio[]) => void;
+  setPortfoliosLoaded: (v: boolean) => void;
   addPortfolio: (p: Portfolio) => void;
   setActivePortfolio: (id: PortfolioId | null) => void;
   setDecisions: (d: AgentDecision[]) => void;
@@ -77,6 +80,7 @@ export const usePortfolioStore = create<PortfolioState>()(
   devtools(
     (set) => ({
       portfolios: [],
+      portfoliosLoaded: false,
       activePortfolioId: null,
       decisions: [],
       marketSnapshot: null,
@@ -95,9 +99,11 @@ export const usePortfolioStore = create<PortfolioState>()(
       setPortfolios: (portfolios) =>
         set((state) => ({
           portfolios,
+          portfoliosLoaded: true,
           activePortfolioId:
             state.activePortfolioId ?? portfolios[0]?.id ?? null,
         })),
+      setPortfoliosLoaded: (portfoliosLoaded) => set({ portfoliosLoaded }),
       addPortfolio: (portfolio) =>
         set((state) => ({
           portfolios: [

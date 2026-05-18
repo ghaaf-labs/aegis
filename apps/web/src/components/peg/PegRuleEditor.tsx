@@ -7,13 +7,12 @@ import {
   BrutalCardHeader,
   BrutalPill,
 } from "@aegis/ui";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
-import { getToken } from "@/lib/api";
-import { defaultSseUrl, useEventSource } from "@/lib/sse";
 import { pegApi } from "@/lib/api";
 import { useApiQuery } from "@/lib/use-api-query";
-import type { PegActionKind, PegAlert, PegAssetSymbol, PegRule } from "@/types";
+import { usePortfolioStore } from "@/stores/portfolio";
+import type { PegActionKind, PegAssetSymbol, PegRule } from "@/types";
 
 const ASSETS: PegAssetSymbol[] = ["USDC", "EURC", "USYC"];
 const ACTIONS: Array<{ kind: PegActionKind; label: string }> = [
@@ -66,22 +65,12 @@ export function PegRuleEditor() {
   );
   const [draft, setDraft] = useState<DraftRule>(DEFAULT_DRAFT);
   const [submitting, setSubmitting] = useState(false);
-  const [alerts, setAlerts] = useState<PegAlert[]>([]);
-
-  const token = typeof window !== "undefined" ? getToken() : null;
-  const sseUrl = useMemo(
-    () =>
-      `${defaultSseUrl()}${token ? `?token=${encodeURIComponent(token)}` : ""}`,
-    [token],
-  );
-
-  useEventSource(
-    sseUrl,
-    {
-      "peg.alert": (data) => setAlerts((prev) => [data, ...prev].slice(0, 20)),
-    } as Parameters<typeof useEventSource>[1],
-    { enabled: !!token },
-  );
+  // peg.alert SSE events are dispatched through the app-level SSE connection
+  // in the portfolio store — no second connection needed (avoids JWT-in-URL).
+  const storePegAlerts = usePortfolioStore((s) => s.pegAlerts);
+  const [dismissed, setDismissed] = useState(false);
+  const alerts = dismissed ? [] : storePegAlerts;
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   // Mirror the wrapper's error into local state so the existing error
   // banner stays the only place the user sees failures.
@@ -121,18 +110,14 @@ export function PegRuleEditor() {
     }
   }
 
-  async function onDelete(rule: PegRule) {
-    if (
-      typeof window !== "undefined" &&
-      !window.confirm(`Delete the ${rule.asset} peg rule?`)
-    ) {
-      return;
-    }
+  async function onDelete(ruleId: string) {
     try {
-      await pegApi.remove(rule.id);
-      setRules((prev) => prev.filter((r) => r.id !== rule.id));
+      await pegApi.remove(ruleId);
+      setRules((prev) => prev.filter((r) => r.id !== ruleId));
+      setConfirmDeleteId(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "failed to delete rule");
+      setConfirmDeleteId(null);
     }
   }
 
@@ -144,7 +129,7 @@ export function PegRuleEditor() {
             <h3 className="text-sm font-semibold">Live peg alerts</h3>
             <BrutalButton
               variant="ghost"
-              onClick={() => setAlerts([])}
+              onClick={() => setDismissed(true)}
               aria-label="Dismiss all peg alerts"
             >
               Dismiss all
@@ -163,11 +148,11 @@ export function PegRuleEditor() {
                       ${a.observedPrice.toFixed(4)} &lt; threshold $
                       {a.thresholdPrice.toFixed(4)}
                     </span>
-                    <span className="text-text-muted">
+                    <span className="text-text-mut">
                       &middot; {a.actionTaken.replace("_", " ")}
                     </span>
                   </span>
-                  <time className="text-text-muted">
+                  <time className="text-text-mut">
                     {new Date(a.observedAt).toLocaleTimeString()}
                   </time>
                 </li>
@@ -316,9 +301,9 @@ export function PegRuleEditor() {
         </BrutalCardHeader>
         <BrutalCardBody>
           {loading ? (
-            <p className="text-xs text-text-muted">Loading…</p>
+            <p className="text-xs text-text-mut">Loading…</p>
           ) : rules.length === 0 ? (
-            <p className="text-xs text-text-muted">
+            <p className="text-xs text-text-mut">
               No peg rules yet. Add one above.
             </p>
           ) : (
@@ -335,7 +320,7 @@ export function PegRuleEditor() {
                     <span className="font-mono">
                       &lt; ${rule.thresholdPrice.toFixed(4)}
                     </span>
-                    <span className="text-text-muted">
+                    <span className="text-text-mut">
                       window {rule.windowSeconds}s &middot;{" "}
                       {rule.actionKind.replace("_", " ")}
                       {rule.targetAsset ? ` → ${rule.targetAsset}` : ""}
@@ -354,13 +339,35 @@ export function PegRuleEditor() {
                     >
                       {rule.pausedAt ? "Resume" : "Pause"}
                     </BrutalButton>
-                    <BrutalButton
-                      variant="ghost"
-                      onClick={() => onDelete(rule)}
-                      aria-label="Delete peg rule"
-                    >
-                      Delete
-                    </BrutalButton>
+                    {confirmDeleteId === rule.id ? (
+                      <span className="flex items-center gap-1">
+                        <span className="text-[10px] font-mono text-text-lo">
+                          Confirm?
+                        </span>
+                        <BrutalButton
+                          variant="danger"
+                          onClick={() => void onDelete(rule.id)}
+                          aria-label="Confirm delete peg rule"
+                        >
+                          Yes
+                        </BrutalButton>
+                        <BrutalButton
+                          variant="ghost"
+                          onClick={() => setConfirmDeleteId(null)}
+                          aria-label="Cancel delete"
+                        >
+                          No
+                        </BrutalButton>
+                      </span>
+                    ) : (
+                      <BrutalButton
+                        variant="ghost"
+                        onClick={() => setConfirmDeleteId(rule.id)}
+                        aria-label="Delete peg rule"
+                      >
+                        Delete
+                      </BrutalButton>
+                    )}
                   </div>
                 </li>
               ))}

@@ -62,7 +62,7 @@ export function PortfolioSummaryCard() {
           <div className="p-3 rounded-sharp bg-raised border border-border-default">
             <p className="text-xs text-gray-500 mb-1">Assets</p>
             <p className="text-sm font-semibold text-white">
-              {portfolio.allocations.length}
+              {portfolio.allocations?.length ?? 0}
             </p>
           </div>
           <div className="p-3 rounded-sharp bg-raised border border-border-default">
@@ -91,7 +91,7 @@ export function PortfolioSummaryCard() {
             )}
           </div>
 
-          <div className="pt-2 border-t border-white/10">
+          <div className="col-span-2 pt-2 border-t border-white/10">
             <ProvenanceLine
               source="Gateway unified balance + on-chain positions"
               freshness="live"
