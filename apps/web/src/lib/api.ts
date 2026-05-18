@@ -166,20 +166,41 @@ export interface UpdatePortfolioInput {
   name?: string;
 }
 
+/** Wire shape of an allocation from the backend. The Rust serializer emits
+ *  `assetSymbol` and `id` / `portfolioId`; the shared TS `Allocation` type
+ *  uses `symbol` / `assetId`. We normalise to the shared shape inside
+ *  `portfolioApi.get` so every consumer reads `symbol`. */
+interface WireAllocation {
+  id: string;
+  portfolioId: string;
+  assetSymbol: string;
+  quantity: number;
+  targetWeight: number;
+  currentWeight: number;
+  valueUsd: number;
+}
+
 export const portfolioApi = {
   list: () => request<Portfolio[]>("/portfolios", { authed: true }),
-  get: (id: string) =>
-    request<{
-      portfolio: Portfolio;
-      allocations: Array<{
-        assetId: string;
-        symbol: string;
-        quantity: number;
-        targetWeight: number;
-        currentWeight: number;
-        valueUsd: number;
-      }>;
-    }>(`/portfolios/${id}`, { authed: true }),
+  get: async (id: string): Promise<Portfolio> => {
+    // The backend returns the full Portfolio inline with an `allocations`
+    // array. Allocations come in with `assetSymbol`; normalise to `symbol`
+    // so AllocationChart / AssetTable / RiskScoreCard can read them.
+    const raw = await request<
+      Omit<Portfolio, "allocations"> & { allocations: WireAllocation[] }
+    >(`/portfolios/${id}`, { authed: true });
+    return {
+      ...raw,
+      allocations: raw.allocations.map((a) => ({
+        assetId: a.id,
+        symbol: a.assetSymbol as Portfolio["allocations"][number]["symbol"],
+        quantity: a.quantity,
+        targetWeight: a.targetWeight,
+        currentWeight: a.currentWeight,
+        valueUsd: a.valueUsd,
+      })),
+    };
+  },
   create: (payload: CreatePortfolioInput) =>
     request<Portfolio>("/portfolios", {
       method: "POST",

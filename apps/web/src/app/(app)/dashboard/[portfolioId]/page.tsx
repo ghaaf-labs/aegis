@@ -36,6 +36,8 @@ export default function PortfolioDashboardPage() {
 
   useEffect(() => {
     if (params?.portfolioId) setActive(params.portfolioId);
+    // Allocation hydration is handled by PortfolioLoader (mounted in the
+    // (app) layout) — it watches activePortfolioId and re-fetches detail.
   }, [params?.portfolioId, setActive]);
 
   const diaryQuery = useApiQuery(

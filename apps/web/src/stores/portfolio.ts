@@ -50,6 +50,10 @@ interface PortfolioState {
 
   setPortfolios: (p: Portfolio[]) => void;
   setPortfoliosLoaded: (v: boolean) => void;
+  /** Merge a partial update into the portfolio with the given id. Used by
+   * the dashboard to layer allocations from `/portfolios/:id` onto the
+   * list-shape entry from `/portfolios`. */
+  patchPortfolio: (id: PortfolioId, patch: Partial<Portfolio>) => void;
   addPortfolio: (p: Portfolio) => void;
   setActivePortfolio: (id: PortfolioId | null) => void;
   setDecisions: (d: AgentDecision[]) => void;
@@ -104,6 +108,12 @@ export const usePortfolioStore = create<PortfolioState>()(
             state.activePortfolioId ?? portfolios[0]?.id ?? null,
         })),
       setPortfoliosLoaded: (portfoliosLoaded) => set({ portfoliosLoaded }),
+      patchPortfolio: (id, patch) =>
+        set((state) => ({
+          portfolios: state.portfolios.map((p) =>
+            p.id === id ? { ...p, ...patch } : p,
+          ),
+        })),
       addPortfolio: (portfolio) =>
         set((state) => ({
           portfolios: [
