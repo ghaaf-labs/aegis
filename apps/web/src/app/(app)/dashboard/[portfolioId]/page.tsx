@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import { Loader2, Rocket } from "lucide-react";
 import { PortfolioSummaryCard } from "@/components/dashboard/portfolio-summary-card";
 import { AllocationChart } from "@/components/dashboard/allocation-chart";
 import { AssetTable } from "@/components/dashboard/asset-table";
@@ -14,9 +15,11 @@ import { DigestOptIn } from "@/components/settings/digest-opt-in";
 import { TrustabilityCard } from "@/components/dashboard/trustability-card";
 import { LivePill } from "@/components/realtime/live-pill";
 import { FaucetButton } from "@/components/wallet/faucet-button";
-import { portfolioApi } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { portfolioApi, rebalanceApi } from "@/lib/api";
 import { useApiQuery } from "@/lib/use-api-query";
-import { usePortfolioStore } from "@/stores/portfolio";
+import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
+import { formatCurrency } from "@/lib/utils";
 
 const stagger = { visible: { transition: { staggerChildren: 0.08 } } };
 const fadeUp = {
@@ -58,7 +61,33 @@ export default function PortfolioDashboardPage() {
   const unifiedUsdc = usePortfolioStore((s) => s.unifiedUsdc);
   const unifiedEurc = usePortfolioStore((s) => s.unifiedEurc);
   const wallet = usePortfolioStore((s) => s.wallet);
+  const snapshot = usePortfolioStore((s) => s.marketSnapshot);
+  const activePortfolio = useActivePortfolio();
+  const router = useRouter();
+  const [deploying, setDeploying] = useState(false);
+  const [deployError, setDeployError] = useState<string | null>(null);
+
+  const eurcUsd =
+    snapshot?.assets.find((a) => a.symbol === "EURC")?.priceUsd ?? 1.085;
+  const idleCashUsd = unifiedUsdc + unifiedEurc * eurcUsd;
+  const investedUsd = activePortfolio?.totalValueUsd ?? 0;
   const showFaucet = !!wallet && unifiedUsdc === 0 && unifiedEurc === 0;
+  const showDeploy = idleCashUsd > 5 && investedUsd <= 5 && !!activePortfolio;
+
+  const handleDeploy = async () => {
+    if (!activePortfolio) return;
+    setDeploying(true);
+    setDeployError(null);
+    try {
+      const planned = await rebalanceApi.plan(activePortfolio.id);
+      router.push(`/rebalance/${planned.rebalanceId}`);
+    } catch (e) {
+      setDeployError(
+        e instanceof Error ? e.message : "Could not build deploy plan",
+      );
+      setDeploying(false);
+    }
+  };
 
   return (
     <motion.div
@@ -92,6 +121,46 @@ export default function PortfolioDashboardPage() {
             </p>
           </div>
           <FaucetButton />
+        </motion.div>
+      )}
+
+      {showDeploy && (
+        <motion.div
+          variants={fadeUp}
+          className="border-brutal border-accent-pnl/40 bg-accent-pnl/5 p-4 rounded-sharp flex flex-wrap items-center justify-between gap-3"
+        >
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-text-hi font-mono">
+              Deploy {formatCurrency(idleCashUsd)} idle cash into your target
+              mix
+            </p>
+            <p className="text-xs text-text-lo font-mono mt-1">
+              Builds a CCTP + Hooks plan that allocates Gateway USDC and EURC
+              across your target weights. Review on the next screen before any
+              on-chain move.
+            </p>
+            {deployError && (
+              <p className="text-xs text-risk font-mono mt-2">{deployError}</p>
+            )}
+          </div>
+          <Button
+            size="sm"
+            onClick={handleDeploy}
+            disabled={deploying}
+            className="bg-emerald-600 hover:bg-emerald-500 text-white"
+          >
+            {deploying ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Building plan…
+              </>
+            ) : (
+              <>
+                <Rocket className="w-4 h-4 mr-2" />
+                Deploy idle cash
+              </>
+            )}
+          </Button>
         </motion.div>
       )}
 

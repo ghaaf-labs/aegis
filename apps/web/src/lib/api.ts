@@ -63,7 +63,14 @@ async function request<T>(path: string, opts: FetchOptions = {}): Promise<T> {
     }
     throw new Error(`${res.status}: ${detail}`);
   }
-  return res.json() as Promise<T>;
+  // 202/204 + zero-length bodies (e.g. /rebalance/:id/execute) have nothing
+  // to parse — return undefined cast to T rather than throwing on JSON parse.
+  if (res.status === 204 || res.status === 202) {
+    return undefined as T;
+  }
+  const text = await res.text();
+  if (!text) return undefined as T;
+  return JSON.parse(text) as T;
 }
 
 // ── Wallet auth (Circle W3S User-Controlled) ──────────────────────────────

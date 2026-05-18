@@ -30,7 +30,23 @@ use super::models::{
 /// `target_weights`. Returns an empty Vec if no leg exceeds the drift / dust
 /// thresholds — that's the no-op signal callers expect.
 pub fn plan_legs(input: &PlanInput) -> Vec<PlannedLeg> {
-    let mut deltas: Vec<SymbolDelta> = symbol_deltas(input)
+    let idle_total: f64 = input.usdc_per_chain.values().copied().sum();
+
+    // First-deploy: a freshly-funded user has zero invested positions but real
+    // USDC sitting in Gateway. Without this branch the planner emits nothing
+    // (current == target == 0 → all deltas are zero) and the user's $216
+    // never reaches the BTC/ETH/SOL/USYC mix they asked for.
+    let first_deploy = input.portfolio_value_usd <= input.dust_threshold_usd
+        && idle_total > input.dust_threshold_usd
+        && !input.target_weights.is_empty();
+
+    let deltas_source = if first_deploy {
+        first_deploy_deltas(input, idle_total)
+    } else {
+        symbol_deltas(input)
+    };
+
+    let mut deltas: Vec<SymbolDelta> = deltas_source
         .into_iter()
         .filter(|d| d.weight_drift.abs() >= input.drift_threshold)
         .filter(|d| d.value_delta_usd.abs() >= input.dust_threshold_usd)
@@ -40,11 +56,35 @@ pub fn plan_legs(input: &PlanInput) -> Vec<PlannedLeg> {
         return Vec::new();
     }
 
-    // Sells first — they free up USDC that buys can spend in the same plan.
+    // Sells first (negative deltas) so they free up USDC for same-plan buys.
+    // Among buys: USYC and EURC are routed *last*. Their final leg calls an
+    // external integration (Hashnote Teller, Arc StableFX) — when those
+    // revert on testnet the executor halts the plan, so putting them at the
+    // tail keeps a Teller failure from blocking the BTC/ETH/SOL legs.
     deltas.sort_by(|a, b| {
-        a.value_delta_usd
-            .partial_cmp(&b.value_delta_usd)
-            .unwrap_or(std::cmp::Ordering::Equal)
+        use std::cmp::Ordering;
+        let a_sell = a.value_delta_usd < 0.0;
+        let b_sell = b.value_delta_usd < 0.0;
+        match (a_sell, b_sell) {
+            (true, false) => Ordering::Less,
+            (false, true) => Ordering::Greater,
+            (true, true) => a
+                .value_delta_usd
+                .partial_cmp(&b.value_delta_usd)
+                .unwrap_or(Ordering::Equal),
+            (false, false) => {
+                let a_yield = matches!(a.symbol.as_str(), "USYC" | "EURC");
+                let b_yield = matches!(b.symbol.as_str(), "USYC" | "EURC");
+                match (a_yield, b_yield) {
+                    (true, false) => Ordering::Greater,
+                    (false, true) => Ordering::Less,
+                    _ => a
+                        .value_delta_usd
+                        .partial_cmp(&b.value_delta_usd)
+                        .unwrap_or(Ordering::Equal),
+                }
+            }
+        }
     });
 
     let mut legs: Vec<PlannedLeg> = Vec::new();
@@ -70,6 +110,26 @@ struct SymbolDelta {
     symbol: String,
     weight_drift: f64,
     value_delta_usd: f64,
+}
+
+/// First-deploy deltas: treat the idle USDC pool as the deployable capital and
+/// emit a buy for every non-USDC target symbol weighted at `target * idle`.
+/// USDC is excluded because it's the source of funds — no swap needed.
+fn first_deploy_deltas(input: &PlanInput, idle_total: f64) -> Vec<SymbolDelta> {
+    let mut symbols: Vec<&String> = input.target_weights.keys().collect();
+    symbols.sort();
+    symbols
+        .into_iter()
+        .filter(|s| s.as_str() != "USDC")
+        .map(|symbol| {
+            let target = input.target_weights.get(symbol).copied().unwrap_or(0.0);
+            SymbolDelta {
+                symbol: symbol.clone(),
+                weight_drift: target,
+                value_delta_usd: target * idle_total,
+            }
+        })
+        .collect()
 }
 
 fn symbol_deltas(input: &PlanInput) -> Vec<SymbolDelta> {
@@ -153,70 +213,104 @@ fn append_buy_legs(
         to_acquire -= used_local;
     }
 
+    let is_volatile = !matches!(d.symbol.as_str(), "USYC" | "EURC" | "USDC");
+
     // Bridge any shortfall from the other chain.
     let other_chain = if target_chain == ChainKey::Arc {
         ChainKey::Base
     } else {
         ChainKey::Arc
     };
-    if to_acquire > 0.0 {
+    let to_bridge = if to_acquire > 0.0 {
         let available_other = usdc_pool.get(&other_chain).copied().unwrap_or(0.0);
-        let to_bridge = available_other.min(to_acquire);
-        if to_bridge > 0.0 {
-            // For volatile assets, attach the hook parameters to the burn leg so the
-            // RebalanceExecutor on the destination performs the atomic USDC → asset swap.
-            // For special stables (USYC, EURC) we keep the old bridge-then-special-leg pattern.
-            let is_volatile = !matches!(d.symbol.as_str(), "USYC" | "EURC" | "USDC");
+        available_other.min(to_acquire)
+    } else {
+        0.0
+    };
 
-            let (burn_dest_symbol, burn_min_out) = if is_volatile {
-                let min_out = prices.get(&d.symbol).map(|&price| {
-                    if price > 0.0 {
-                        (to_bridge / price) * 0.95
-                    } else {
-                        0.0
-                    }
-                });
-                (Some(d.symbol.clone()), min_out)
+    // For volatile assets in a mixed buy (some USDC already local on target chain,
+    // some bridged from the other chain) the bridge+hook only swaps the bridged
+    // amount — the local portion still needs its own swap leg. Older code
+    // returned early after the hook and silently dropped the local portion.
+    if is_volatile && used_local > 0.0 {
+        let min_out = prices.get(&d.symbol).map(|&price| {
+            if price > 0.0 {
+                (used_local / price) * 0.95
             } else {
-                (Some("USDC".into()), None)
-            };
-
-            legs.push(PlannedLeg {
-                leg_index: *next_idx,
-                kind: LegKind::CrossChainBurn,
-                src_chain: Some(other_chain),
-                dest_chain: Some(target_chain),
-                src_symbol: Some("USDC".into()),
-                dest_symbol: burn_dest_symbol,
-                amount_usdc: to_bridge,
-                min_out: burn_min_out,
-            });
-            *next_idx += 1;
-
-            legs.push(PlannedLeg {
-                leg_index: *next_idx,
-                kind: LegKind::CrossChainMint,
-                src_chain: Some(other_chain),
-                dest_chain: Some(target_chain),
-                src_symbol: Some("USDC".into()),
-                dest_symbol: Some("USDC".into()),
-                amount_usdc: to_bridge,
-                min_out: None,
-            });
-            *next_idx += 1;
-
-            *usdc_pool.entry(other_chain).or_insert(0.0) -= to_bridge;
-
-            // If we attached the hook to the burn for a volatile asset, skip the separate
-            // local swap — the hook will perform it atomically on the destination.
-            if is_volatile {
-                return; // we already consumed the full amount for this delta
+                0.0
             }
-        }
+        });
+        legs.push(PlannedLeg {
+            leg_index: *next_idx,
+            kind: LegKind::LocalSwap,
+            src_chain: Some(target_chain),
+            dest_chain: Some(target_chain),
+            src_symbol: Some("USDC".into()),
+            dest_symbol: Some(d.symbol.clone()),
+            amount_usdc: used_local,
+            min_out,
+        });
+        *next_idx += 1;
     }
 
-    // Finally, the swap on the destination chain (only for local USDC or special stables
-    // when we didn't use the hook for the final leg).
+    if to_bridge > 0.0 {
+        // Volatile: attach hook params to the burn so the destination
+        // RebalanceExecutor swaps USDC→asset atomically with the mint.
+        // Stables (USYC, EURC): plain USDC bridge; a separate special leg
+        // below handles the final park/FX on the destination chain.
+        let (burn_dest_symbol, burn_min_out) = if is_volatile {
+            let min_out = prices.get(&d.symbol).map(|&price| {
+                if price > 0.0 {
+                    (to_bridge / price) * 0.95
+                } else {
+                    0.0
+                }
+            });
+            (Some(d.symbol.clone()), min_out)
+        } else {
+            (Some("USDC".into()), None)
+        };
+
+        legs.push(PlannedLeg {
+            leg_index: *next_idx,
+            kind: LegKind::CrossChainBurn,
+            src_chain: Some(other_chain),
+            dest_chain: Some(target_chain),
+            src_symbol: Some("USDC".into()),
+            dest_symbol: burn_dest_symbol,
+            amount_usdc: to_bridge,
+            min_out: burn_min_out,
+        });
+        *next_idx += 1;
+
+        legs.push(PlannedLeg {
+            leg_index: *next_idx,
+            kind: LegKind::CrossChainMint,
+            src_chain: Some(other_chain),
+            dest_chain: Some(target_chain),
+            src_symbol: Some("USDC".into()),
+            dest_symbol: Some("USDC".into()),
+            amount_usdc: to_bridge,
+            min_out: None,
+        });
+        *next_idx += 1;
+
+        *usdc_pool.entry(other_chain).or_insert(0.0) -= to_bridge;
+    }
+
+    if is_volatile {
+        // Volatile final leg(s) already emitted above (local_swap for the
+        // used_local portion + cross-chain hook for the bridged portion).
+        return;
+    }
+
+    // Stable final leg: park USDC → USYC, swap USDC → EURC, or local USDC swap.
+    // Amount = used_local + to_bridge; the bridged USDC has arrived on the
+    // target chain via the mint above.
+    let consumed = used_local + to_bridge;
+    if consumed <= 0.0 {
+        return;
+    }
     let kind = match d.symbol.as_str() {
         "USYC" => LegKind::ParkUsyc,
         "EURC" => LegKind::FxStablefx,
@@ -225,7 +319,7 @@ fn append_buy_legs(
 
     let min_out = prices.get(&d.symbol).map(|&price| {
         if price > 0.0 {
-            (amount / price) * 0.95
+            (consumed / price) * 0.95
         } else {
             0.0
         }
@@ -238,7 +332,7 @@ fn append_buy_legs(
         dest_chain: Some(target_chain),
         src_symbol: Some("USDC".into()),
         dest_symbol: Some(d.symbol.clone()),
-        amount_usdc: amount,
+        amount_usdc: consumed,
         min_out,
     });
     *next_idx += 1;
@@ -403,6 +497,39 @@ mod tests {
             total < 10_000.0,
             "leg amounts must sum to less than portfolio value (got {total})"
         );
+    }
+
+    #[test]
+    fn first_deploy_emits_buys_from_idle_usdc() {
+        // Fresh portfolio: $0 invested, $200 USDC sitting in Gateway, target
+        // 50/30/10/10 BTC/ETH/SOL/USYC. Planner must emit buy legs covering
+        // each non-USDC target weighted at target*idle.
+        let i = input(
+            0.0,
+            &[],
+            &[("BTC", 0.50), ("ETH", 0.30), ("SOL", 0.10), ("USYC", 0.10)],
+            50.0,
+            150.0,
+        );
+        let legs = plan_legs(&i);
+        assert!(!legs.is_empty(), "first-deploy must produce legs");
+        let total_buy_usdc: f64 = legs
+            .iter()
+            .filter(|l| {
+                matches!(
+                    l.kind,
+                    LegKind::LocalSwap | LegKind::ParkUsyc | LegKind::CrossChainBurn
+                )
+            })
+            .map(|l| l.amount_usdc)
+            .sum();
+        assert!(
+            (total_buy_usdc - 200.0).abs() < 0.01,
+            "buy legs must consume ~$200 of idle USDC, got {total_buy_usdc}"
+        );
+        // USDC is not bought from USDC — skip.
+        assert!(legs.iter().all(|l| l.dest_symbol.as_deref() != Some("USDC")
+            || matches!(l.kind, LegKind::CrossChainMint)));
     }
 
     #[test]
