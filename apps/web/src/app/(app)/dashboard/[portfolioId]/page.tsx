@@ -13,6 +13,7 @@ import { DiaryVisibilityToggle } from "@/components/settings/diary-visibility-to
 import { DigestOptIn } from "@/components/settings/digest-opt-in";
 import { TrustabilityCard } from "@/components/dashboard/trustability-card";
 import { LivePill } from "@/components/realtime/live-pill";
+import { FaucetButton } from "@/components/wallet/faucet-button";
 import { portfolioApi } from "@/lib/api";
 import { useApiQuery } from "@/lib/use-api-query";
 import { usePortfolioStore } from "@/stores/portfolio";
@@ -52,6 +53,10 @@ export default function PortfolioDashboardPage() {
     setStoredEmail(localStorage.getItem("aegis_email") ?? "");
   }, []);
 
+  const unifiedUsdc = usePortfolioStore((s) => s.unifiedUsdc);
+  const wallet = usePortfolioStore((s) => s.wallet);
+  const showFaucet = !!wallet && unifiedUsdc === 0;
+
   return (
     <motion.div
       initial="hidden"
@@ -68,6 +73,24 @@ export default function PortfolioDashboardPage() {
         </h1>
         <LivePill />
       </motion.div>
+
+      {showFaucet && (
+        <motion.div
+          variants={fadeUp}
+          className="border-brutal border-accent-agent/40 bg-accent-agent/5 p-4 rounded-sharp flex flex-wrap items-center justify-between gap-3"
+        >
+          <div>
+            <p className="text-sm font-semibold text-text-hi font-mono">
+              Empty wallet — fund with testnet USDC to drive the agent
+            </p>
+            <p className="text-xs text-text-lo font-mono mt-1">
+              Claims 100 USDC from Circle&apos;s Arc Sepolia faucet. Required
+              before rebalances + agent decisions move real positions.
+            </p>
+          </div>
+          <FaucetButton />
+        </motion.div>
+      )}
 
       <motion.div
         variants={fadeUp}

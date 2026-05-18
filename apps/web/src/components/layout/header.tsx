@@ -2,11 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDown, Bell, Plus, Wifi, WifiOff } from "lucide-react";
+import { ChevronDown, Bell, Plus, Wifi, WifiOff, LogOut } from "lucide-react";
 import { BrutalButton, BrutalPill, ChainBadge } from "@aegis/ui";
 import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
 import { formatCurrency, formatPercent, changeColor } from "@/lib/utils";
-import { gatewayApi } from "@/lib/api";
+import { gatewayApi, walletApi } from "@/lib/api";
 
 export function Header() {
   const router = useRouter();
@@ -17,20 +17,40 @@ export function Header() {
   const unifiedUsdc = usePortfolioStore((s) => s.unifiedUsdc);
   const setUnifiedUsdc = usePortfolioStore((s) => s.setUnifiedUsdc);
   const wallet = usePortfolioStore((s) => s.wallet);
+  const setWallet = usePortfolioStore((s) => s.setWallet);
+  const setPortfolios = usePortfolioStore((s) => s.setPortfolios);
 
   const [open, setOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [userOpen, setUserOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
+  const userRef = useRef<HTMLDivElement>(null);
   const pegAlerts = usePortfolioStore((s) => s.pegAlerts);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (notifRef.current && !notifRef.current.contains(e.target as Node))
         setNotifOpen(false);
+      if (userRef.current && !userRef.current.contains(e.target as Node))
+        setUserOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, []);
+
+  const handleLogout = async () => {
+    setUserOpen(false);
+    try {
+      await walletApi.logout();
+    } catch {
+      // Backend already-401 is fine — we just need to clear local state.
+    }
+    setWallet(null);
+    setPortfolios([]);
+    setUnifiedUsdc(0);
+    localStorage.removeItem("aegis_email");
+    router.push("/login");
+  };
 
   // Fetch unified balance on first render — Gateway SSE keeps it fresh after.
   useEffect(() => {
@@ -198,13 +218,51 @@ export function Header() {
           )}
         </div>
         {wallet && (
-          <div
-            className="w-7 h-7 rounded-sharp bg-accent-agent flex items-center justify-center border-brutal border-black"
-            title={wallet.arcAddress}
-          >
-            <span className="text-xs font-mono font-semibold text-black">
-              {wallet.walletId.slice(-2).toUpperCase()}
-            </span>
+          <div ref={userRef} className="relative">
+            <button
+              onClick={() => setUserOpen((v) => !v)}
+              className="w-7 h-7 rounded-sharp bg-accent-agent flex items-center justify-center border-brutal border-black hover:opacity-90"
+              title="Account menu"
+              aria-label="Account menu"
+            >
+              <span className="text-xs font-mono font-semibold text-black">
+                {wallet.walletId.slice(-2).toUpperCase()}
+              </span>
+            </button>
+            {userOpen && (
+              <div className="absolute right-0 top-full mt-2 w-72 border-brutal border-border-default bg-surface shadow-brutal z-50 rounded-sharp">
+                <div className="px-3 py-2 border-b border-border-default">
+                  <p className="text-[10px] font-mono uppercase tracking-widest text-text-mut">
+                    Wallet
+                  </p>
+                  <p
+                    className="text-xs font-mono text-text-hi truncate"
+                    title={wallet.walletId}
+                  >
+                    {wallet.walletId}
+                  </p>
+                  <p
+                    className="text-[10px] font-mono text-text-lo mt-1 truncate"
+                    title={wallet.arcAddress}
+                  >
+                    ARC {wallet.arcAddress}
+                  </p>
+                  <p
+                    className="text-[10px] font-mono text-text-lo truncate"
+                    title={wallet.baseAddress}
+                  >
+                    BASE {wallet.baseAddress}
+                  </p>
+                </div>
+                <button
+                  onClick={() => void handleLogout()}
+                  className="flex items-center gap-2 w-full text-left px-3 py-2 text-sm font-mono text-risk hover:bg-raised"
+                >
+                  <LogOut className="w-3 h-3" />
+                  Log out
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

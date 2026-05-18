@@ -6,26 +6,46 @@ use crate::config::Config;
 use crate::db::Db;
 use crate::error::AppError;
 
+/// Public Circle testnet faucet. There is no W3S API to drip USDC from a
+/// server — Circle's faucet is web-only — so real-mode claims hand the user
+/// a deep-link to `https://faucet.circle.com` instead of pretending to mint.
+const CIRCLE_FAUCET_URL: &str = "https://faucet.circle.com";
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FaucetClaimResult {
     pub amount_usdc: f64,
     pub chain: String,
+    /// On-chain mint hash when the faucet really minted. `None` in real mode
+    /// (Circle's faucet is web-only) and in mock mode.
     pub tx_hash: Option<String>,
     pub remaining_today_usdc: f64,
     pub claimed_at: DateTime<Utc>,
+    /// Public URL the user should open to actually pull USDC into the wallet.
+    /// `None` in mock mode (synthetic balance applies immediately); `Some` in
+    /// real mode (user must complete the claim on Circle's faucet site).
+    pub claim_url: Option<String>,
+    /// Wallet address the user should paste into the faucet, surfaced so the
+    /// UI doesn't have to re-fetch.
+    pub arc_address: Option<String>,
 }
 
-/// Claim USDC from the faucet for the user's Arc address.
+/// Record an intent to claim USDC from the faucet.
+///
+/// In **mock mode**, this is the whole story — the gateway service returns a
+/// synthetic 100 USDC balance so the demo flows work without external state.
+///
+/// In **real mode**, Circle doesn't expose a server-side faucet endpoint
+/// (only the public web faucet at `https://faucet.circle.com`). We record the
+/// intent for the rate-limit counter, then return `claim_url` so the UI can
+/// hand off to Circle's site with the user's address. The on-chain mint
+/// happens out-of-band; the gateway poller picks it up on the next tick.
 ///
 /// Rate limit: at most `Config::faucet_max_usdc_per_day` per 24h rolling
-/// window per user. Reads claims from `analytics_events` (event_name =
-/// 'faucet.claimed'); falls back to a memory-only flag in mock mode if the
-/// analytics module hasn't been migrated yet.
+/// window per user, counted off `analytics_events.faucet.claimed` rows.
 pub async fn claim(
     db: &Db,
     config: &Config,
-    http: &reqwest::Client,
     user_id: Uuid,
     arc_address: &str,
 ) -> crate::error::Result<FaucetClaimResult> {
@@ -57,10 +77,10 @@ pub async fn claim(
     }
 
     let amount = remaining.min(100.0);
-    let tx_hash = if config.circle_mock {
+    let claim_url = if config.circle_mock {
         None
     } else {
-        Some(call_circle_faucet(http, config, arc_address, amount).await?)
+        Some(CIRCLE_FAUCET_URL.to_string())
     };
 
     sqlx::query(
@@ -72,7 +92,7 @@ pub async fn claim(
         "amountUsdc": amount,
         "chain": "arc-testnet",
         "address": arc_address,
-        "txHash": tx_hash,
+        "txHash": Option::<String>::None,
     }))
     .execute(db)
     .await?;
@@ -80,38 +100,10 @@ pub async fn claim(
     Ok(FaucetClaimResult {
         amount_usdc: amount,
         chain: "arc-testnet".into(),
-        tx_hash,
+        tx_hash: None,
         remaining_today_usdc: remaining - amount,
         claimed_at: now,
+        claim_url,
+        arc_address: Some(arc_address.to_string()),
     })
-}
-
-async fn call_circle_faucet(
-    http: &reqwest::Client,
-    config: &Config,
-    address: &str,
-    amount: f64,
-) -> crate::error::Result<String> {
-    #[derive(serde::Deserialize)]
-    struct FaucetResp {
-        #[serde(rename = "txHash")]
-        tx_hash: String,
-    }
-    let resp: FaucetResp = http
-        .post(format!("{}/v1/faucet/usdc", config.circle_base_url))
-        .header("Authorization", format!("Bearer {}", config.circle_api_key))
-        .json(&serde_json::json!({
-            "address": address,
-            "chain": "arc-testnet",
-            "amount": amount,
-        }))
-        .send()
-        .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("faucet network: {e}")))?
-        .error_for_status()
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("faucet status: {e}")))?
-        .json()
-        .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("faucet decode: {e}")))?;
-    Ok(resp.tx_hash)
 }

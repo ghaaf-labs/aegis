@@ -18,13 +18,6 @@ pub async fn claim_usdc(
     let arc_address = arc_address
         .ok_or_else(|| crate::error::AppError::BadRequest("user has no wallet".into()))?;
 
-    let result = claim(
-        &state.db,
-        &state.config,
-        &state.http,
-        claims.sub,
-        &arc_address,
-    )
-    .await?;
+    let result = claim(&state.db, &state.config, claims.sub, &arc_address).await?;
     Ok(Json(result))
 }

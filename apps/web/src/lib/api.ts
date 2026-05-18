@@ -110,6 +110,13 @@ export const walletApi = {
     request<{ id: string; email: string; riskTolerance: string }>("/auth/me", {
       authed: true,
     }),
+  logout: async () => {
+    await fetch(`${BASE_URL}/auth/logout`, {
+      method: "POST",
+      credentials: "include",
+    });
+    setToken(null);
+  },
 };
 
 // ── Faucet ─────────────────────────────────────────────────────────────────
@@ -120,6 +127,11 @@ export interface FaucetClaim {
   txHash?: string | null;
   remainingTodayUsdc: number;
   claimedAt: string;
+  /** Set in real mode — open this URL to complete the on-chain claim on
+   *  Circle's public faucet. Null in mock mode (synthetic balance applied). */
+  claimUrl?: string | null;
+  /** ARC address the user should paste into the faucet. */
+  arcAddress?: string | null;
 }
 export const faucetApi = {
   claim: () =>
