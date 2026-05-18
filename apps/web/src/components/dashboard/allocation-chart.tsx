@@ -2,7 +2,7 @@
 
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { useActivePortfolio } from "@/stores/portfolio";
+import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
 import { formatPercent } from "@/lib/utils";
 import { ProvenanceLine } from "@aegis/ui";
 
@@ -22,18 +22,42 @@ interface Props {
 
 export function AllocationChart({ compact = false }: Props) {
   const portfolio = useActivePortfolio();
+  const snapshot = usePortfolioStore((s) => s.marketSnapshot);
 
   if (!portfolio) return null;
 
-  const data = (portfolio.allocations ?? []).map((a) => ({
-    name: a.symbol,
-    value: a.currentWeight,
-    valueUsd: a.valueUsd,
+  const priceMap = snapshot
+    ? Object.fromEntries(snapshot.assets.map((a) => [a.symbol, a.priceUsd]))
+    : {};
+
+  // Re-derive current weight from holdings × price each render — the stored
+  // `current_weight` column is initialised to the target and isn't kept fresh
+  // by the executor, so reading it would paint a fictional pie.
+  const allocations = portfolio.allocations ?? [];
+  const investedUsdBySymbol = allocations.map((a) => ({
+    symbol: a.symbol,
+    target: a.targetWeight,
+    valueUsd: (priceMap[a.symbol] ?? 0) * a.quantity,
   }));
+  const totalInvestedUsd = investedUsdBySymbol.reduce(
+    (sum, a) => sum + a.valueUsd,
+    0,
+  );
 
-  const isEmpty = data.length === 0 || data.every((d) => d.value === 0);
+  const isUninvested = totalInvestedUsd < 0.5; // ~half a dollar of dust
+  const data = isUninvested
+    ? allocations.map((a) => ({
+        name: a.symbol,
+        value: a.targetWeight,
+        valueUsd: 0,
+      }))
+    : investedUsdBySymbol.map((a) => ({
+        name: a.symbol,
+        value: (a.valueUsd / totalInvestedUsd) * 100,
+        valueUsd: a.valueUsd,
+      }));
 
-  if (isEmpty) {
+  if (data.length === 0 || data.every((d) => d.value === 0)) {
     return (
       <Card>
         <CardHeader>
@@ -53,8 +77,15 @@ export function AllocationChart({ compact = false }: Props) {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Allocation</CardTitle>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle>
+          Allocation
+          {isUninvested && (
+            <span className="ml-2 text-[10px] font-mono text-text-mut uppercase tracking-wider">
+              · target
+            </span>
+          )}
+        </CardTitle>
       </CardHeader>
       <CardContent>
         <div
@@ -125,7 +156,11 @@ export function AllocationChart({ compact = false }: Props) {
 
           <div className="pt-2 border-t border-white/10">
             <ProvenanceLine
-              source="current portfolio allocations"
+              source={
+                isUninvested
+                  ? "target allocation · no positions yet"
+                  : "current holdings × DefiLlama prices"
+              }
               freshness="live"
             />
           </div>

@@ -23,6 +23,14 @@ export function PerformanceChart() {
   const data: PerformancePoint[] = [];
   const hasData = data.length > 0;
 
+  // Until a portfolio has at least one rebalance + 24h of outcome
+  // history, this chart has nothing to render. Showing an empty "No
+  // history yet" panel was permanently occupying a whole dashboard row
+  // with zero information value — hide it instead.
+  if (!hasData) {
+    return null;
+  }
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between pb-3">

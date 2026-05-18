@@ -60,6 +60,11 @@ export function TrustabilityCard() {
   const { row, label } = data;
   const sign = row.trustabilityDelta > 0 ? "+" : "";
   const tone = label ? LABEL_TONE[label] : LABEL_TONE.stable;
+  // Calibration floor — the histogram-bin calibrator needs ≥50 outcomes
+  // before the trust score is meaningful. Showing "0.00%" with 5 decisions
+  // looks like the agent is broken; show the sample-size progress instead.
+  const CALIBRATION_FLOOR = 50;
+  const isPreCalibration = row.decisionsExecuted < CALIBRATION_FLOOR;
 
   return (
     <Shell>
@@ -67,25 +72,53 @@ export function TrustabilityCard() {
         <span className="text-[11px] uppercase tracking-wider text-cyan-300/70 font-mono">
           Agent trust score
         </span>
-        <span
-          className={`text-[10px] font-mono uppercase tracking-wider border px-1.5 py-0.5 ${tone}`}
-        >
-          {label}
-        </span>
+        {!isPreCalibration && (
+          <span
+            className={`text-[10px] font-mono uppercase tracking-wider border px-1.5 py-0.5 ${tone}`}
+          >
+            {label}
+          </span>
+        )}
       </div>
-      <div className="mt-2 flex items-baseline gap-2">
-        <span className="text-3xl font-mono text-text-hi tabular-nums">
-          {sign}
-          {row.trustabilityDelta.toFixed(2)}%
-        </span>
-        <span className="text-[11px] text-text-lo">vs counterfactual · 7d</span>
-      </div>
+      {isPreCalibration ? (
+        <div className="mt-2">
+          <div className="flex items-baseline gap-2">
+            <span className="text-3xl font-mono text-text-mut tabular-nums">
+              {row.decisionsExecuted}
+              <span className="text-text-lo text-lg">
+                {" / "}
+                {CALIBRATION_FLOOR}
+              </span>
+            </span>
+            <span className="text-[11px] text-text-lo">decisions</span>
+          </div>
+          <p className="text-[10px] text-text-mut mt-2 font-mono leading-relaxed">
+            Trust score unlocks at {CALIBRATION_FLOOR} executed decisions — the
+            calibrator needs that sample to compare agent outcomes against the
+            counterfactual.
+          </p>
+        </div>
+      ) : (
+        <div className="mt-2 flex items-baseline gap-2">
+          <span className="text-3xl font-mono text-text-hi tabular-nums">
+            {sign}
+            {row.trustabilityDelta.toFixed(2)}%
+          </span>
+          <span className="text-[11px] text-text-lo">
+            vs counterfactual · 7d
+          </span>
+        </div>
+      )}
       <div className="mt-3 grid grid-cols-3 gap-2 text-[11px] font-mono">
         <Stat label="decisions" value={String(row.decisionsExecuted)} />
         <Stat label="models routed" value={String(row.distinctModels)} />
         <Stat
           label="avg 7d return"
-          value={`${row.avg7dReturn >= 0 ? "+" : ""}${row.avg7dReturn.toFixed(2)}%`}
+          value={
+            isPreCalibration
+              ? "—"
+              : `${row.avg7dReturn >= 0 ? "+" : ""}${row.avg7dReturn.toFixed(2)}%`
+          }
         />
       </div>
     </Shell>

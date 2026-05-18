@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { marketApi, portfolioApi, walletApi } from "@/lib/api";
+import { agentApi, marketApi, portfolioApi, walletApi } from "@/lib/api";
 import { usePortfolioStore } from "@/stores/portfolio";
 
 /**
@@ -24,6 +24,7 @@ export function PortfolioLoader() {
   const setPortfoliosLoaded = usePortfolioStore((s) => s.setPortfoliosLoaded);
   const setWallet = usePortfolioStore((s) => s.setWallet);
   const setMarketSnapshot = usePortfolioStore((s) => s.setMarketSnapshot);
+  const setDecisions = usePortfolioStore((s) => s.setDecisions);
   const patchPortfolio = usePortfolioStore((s) => s.patchPortfolio);
   const activePortfolioId = usePortfolioStore((s) => s.activePortfolioId);
 
@@ -67,7 +68,14 @@ export function PortfolioLoader() {
         // surfaces as a debug log; the panels gracefully degrade to empty.
         console.warn("portfolio detail fetch failed", e);
       });
-  }, [activePortfolioId, patchPortfolio]);
+    // Hydrate the AI Reasoning feed. Without this the dashboard says "No
+    // decisions yet" even when the agent has run dozens of times — SSE only
+    // ever delivers *new* decisions, never history.
+    agentApi
+      .decisions(activePortfolioId)
+      .then(setDecisions)
+      .catch((e) => console.warn("agent decisions fetch failed", e));
+  }, [activePortfolioId, patchPortfolio, setDecisions]);
 
   return null;
 }

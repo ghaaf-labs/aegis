@@ -78,20 +78,29 @@ export function MarketOverview() {
         <CardTitle>Market</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
+        {snapshot.totalMarketCapUsd > 0 && (
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-500">Total Market Cap</span>
+            <span className="text-xs font-medium text-white">
+              {formatCurrency(snapshot.totalMarketCapUsd, { compact: true })}
+            </span>
+          </div>
+        )}
+        {snapshot.btcDominance > 0 && (
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-500">BTC Dominance</span>
+            <span className="text-xs font-medium text-white">
+              {snapshot.btcDominance.toFixed(1)}%
+            </span>
+          </div>
+        )}
         <div className="flex items-center justify-between">
-          <span className="text-xs text-gray-500">Total Market Cap</span>
-          <span className="text-xs font-medium text-white">
-            {formatCurrency(snapshot.totalMarketCapUsd, { compact: true })}
+          <span
+            className="text-xs text-gray-500"
+            title="Crypto Fear & Greed Index — alternative.me, daily"
+          >
+            Fear & Greed
           </span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-gray-500">BTC Dominance</span>
-          <span className="text-xs font-medium text-white">
-            {snapshot.btcDominance.toFixed(1)}%
-          </span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-xs text-gray-500">Fear & Greed</span>
           <span className={`text-xs font-semibold ${fearColor}`}>
             {snapshot.fearGreedIndex} · {fearLabel}
           </span>

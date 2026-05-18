@@ -10,14 +10,11 @@ import { AssetTable } from "@/components/dashboard/asset-table";
 import { AgentReasoningFeed } from "@/components/agent/reasoning-feed";
 import { PerformanceChart } from "@/components/dashboard/performance-chart";
 import { MarketOverview } from "@/components/dashboard/market-overview";
-import { DiaryVisibilityToggle } from "@/components/settings/diary-visibility-toggle";
-import { DigestOptIn } from "@/components/settings/digest-opt-in";
 import { TrustabilityCard } from "@/components/dashboard/trustability-card";
 import { LivePill } from "@/components/realtime/live-pill";
 import { FaucetButton } from "@/components/wallet/faucet-button";
 import { Button } from "@/components/ui/button";
-import { portfolioApi, rebalanceApi } from "@/lib/api";
-import { useApiQuery } from "@/lib/use-api-query";
+import { rebalanceApi } from "@/lib/api";
 import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
 import { formatCurrency } from "@/lib/utils";
 
@@ -42,21 +39,6 @@ export default function PortfolioDashboardPage() {
     // Allocation hydration is handled by PortfolioLoader (mounted in the
     // (app) layout) — it watches activePortfolioId and re-fetches detail.
   }, [params?.portfolioId, setActive]);
-
-  const diaryQuery = useApiQuery(
-    `portfolio.diaryPublic.${params?.portfolioId ?? ""}`,
-    () => portfolioApi.getDiaryPublic(params!.portfolioId),
-    { enabled: !!params?.portfolioId },
-  );
-  const [localDiaryPublic, setLocalDiaryPublic] = useState<boolean | null>(
-    null,
-  );
-  const diaryPublic = localDiaryPublic ?? diaryQuery.data?.diaryPublic ?? false;
-
-  const [storedEmail, setStoredEmail] = useState("");
-  useEffect(() => {
-    setStoredEmail(localStorage.getItem("aegis_email") ?? "");
-  }, []);
 
   const unifiedUsdc = usePortfolioStore((s) => s.unifiedUsdc);
   const unifiedEurc = usePortfolioStore((s) => s.unifiedEurc);
@@ -187,29 +169,6 @@ export default function PortfolioDashboardPage() {
       >
         <AssetTable />
         <AgentReasoningFeed />
-      </motion.div>
-
-      <motion.div
-        variants={fadeUp}
-        className="grid grid-cols-1 md:grid-cols-2 gap-4"
-      >
-        <DigestOptIn defaultEmail={storedEmail} />
-        <div /> {/* spacer to keep grid alignment until more settings land */}
-      </motion.div>
-
-      <motion.div variants={fadeUp}>
-        <DiaryVisibilityToggle
-          key={`diary-${params?.portfolioId}-${diaryPublic}`}
-          initialPublic={diaryPublic}
-          onChange={async (next) => {
-            if (!params?.portfolioId) return;
-            const res = await portfolioApi.setDiaryPublic(
-              params.portfolioId,
-              next,
-            );
-            setLocalDiaryPublic(res.diaryPublic);
-          }}
-        />
       </motion.div>
     </motion.div>
   );

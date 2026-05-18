@@ -43,11 +43,43 @@ pub async fn fetch_snapshot(provider: &dyn PriceProvider) -> anyhow::Result<Mark
 
     Ok(MarketSnapshot {
         assets,
-        fear_greed_index: 65,
+        fear_greed_index: fetch_fear_greed_index().await,
         total_market_cap_usd: total_cap,
         btc_dominance,
         captured_at: Utc::now(),
     })
+}
+
+/// Fetch the crypto Fear & Greed Index from alternative.me — free, no auth,
+/// updated daily. Returns 50 (neutral) if the request fails so we never
+/// surface a misleading bullish/bearish read when we have no real signal.
+/// Previously this was hard-coded to 65 ("Greed") — a lie to every user.
+async fn fetch_fear_greed_index() -> u8 {
+    #[derive(serde::Deserialize)]
+    struct Envelope {
+        data: Vec<Item>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Item {
+        value: String,
+    }
+    match reqwest::Client::new()
+        .get("https://api.alternative.me/fng/?limit=1")
+        .timeout(std::time::Duration::from_secs(3))
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+    {
+        Ok(resp) => match resp.json::<Envelope>().await {
+            Ok(e) => e
+                .data
+                .first()
+                .and_then(|i| i.value.parse::<u8>().ok())
+                .unwrap_or(50),
+            Err(_) => 50,
+        },
+        Err(_) => 50,
+    }
 }
 
 /// Persists the current price snapshot into `price_history`. `source` is the

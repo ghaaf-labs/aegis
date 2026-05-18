@@ -32,6 +32,25 @@ export function AssetTable() {
     ? Object.fromEntries(snapshot.assets.map((a) => [a.symbol, a]))
     : {};
 
+  // Compute live current weight per allocation from holdings × spot price.
+  // The stored `currentWeight` column is initialized to the target on
+  // portfolio creation and not maintained by the executor, so reading it
+  // would show "50% vs 50%" even when the user holds 0 units.
+  const liveWeights = (() => {
+    const allocs = portfolio.allocations ?? [];
+    const values = allocs.map((a) => {
+      const price = priceMap[a.symbol]?.priceUsd ?? 0;
+      return price * a.quantity;
+    });
+    const total = values.reduce((sum, v) => sum + v, 0);
+    return Object.fromEntries(
+      allocs.map((a, i) => [
+        a.symbol,
+        total > 0 ? ((values[i] ?? 0) / total) * 100 : 0,
+      ]),
+    );
+  })();
+
   return (
     <Card>
       <CardHeader>
@@ -66,7 +85,9 @@ export function AssetTable() {
           <tbody>
             {(portfolio.allocations ?? []).map((alloc, i) => {
               const price = priceMap[alloc.symbol];
-              const drift = alloc.currentWeight - alloc.targetWeight;
+              const currentWeight = liveWeights[alloc.symbol] ?? 0;
+              const valueUsd = (price?.priceUsd ?? 0) * alloc.quantity;
+              const drift = currentWeight - alloc.targetWeight;
               const driftAbs = Math.abs(drift);
 
               return (
@@ -113,16 +134,16 @@ export function AssetTable() {
                     {formatNumber(alloc.quantity)}
                   </td>
                   <td className="px-5 py-3.5 text-sm text-white font-medium">
-                    {formatCurrency(alloc.valueUsd)}
+                    {formatCurrency(valueUsd)}
                   </td>
                   <td className="px-5 py-3.5 hidden lg:table-cell">
                     <div className="flex items-center gap-2">
                       <div className="flex items-center gap-1">
-                        <span className="text-xs text-gray-400 font-mono w-8">
-                          {alloc.currentWeight.toFixed(1)}%
+                        <span className="text-xs text-gray-400 font-mono w-10">
+                          {currentWeight.toFixed(1)}%
                         </span>
                         <span className="text-gray-600 text-xs">vs</span>
-                        <span className="text-xs text-gray-500 font-mono w-8">
+                        <span className="text-xs text-gray-500 font-mono w-10">
                           {alloc.targetWeight.toFixed(0)}%
                         </span>
                       </div>
