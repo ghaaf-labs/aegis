@@ -109,17 +109,23 @@ export function TrustabilityCard() {
           </span>
         </div>
       )}
-      <div className="mt-3 grid grid-cols-3 gap-2 text-[11px] font-mono">
-        <Stat label="decisions" value={String(row.decisionsExecuted)} />
+      <div
+        className={`mt-3 grid gap-2 text-[11px] font-mono ${
+          isPreCalibration ? "grid-cols-1" : "grid-cols-3"
+        }`}
+      >
+        {/* `decisions` is already in the headline (N / 50) when pre-cal — */}
+        {/* showing it again in this grid was redundant noise. */}
+        {!isPreCalibration && (
+          <Stat label="decisions" value={String(row.decisionsExecuted)} />
+        )}
         <Stat label="models routed" value={String(row.distinctModels)} />
-        <Stat
-          label="avg 7d return"
-          value={
-            isPreCalibration
-              ? "—"
-              : `${row.avg7dReturn >= 0 ? "+" : ""}${row.avg7dReturn.toFixed(2)}%`
-          }
-        />
+        {!isPreCalibration && (
+          <Stat
+            label="avg 7d return"
+            value={`${row.avg7dReturn >= 0 ? "+" : ""}${row.avg7dReturn.toFixed(2)}%`}
+          />
+        )}
       </div>
     </Shell>
   );

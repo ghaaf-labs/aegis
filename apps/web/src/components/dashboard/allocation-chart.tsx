@@ -78,10 +78,10 @@ export function AllocationChart({ compact = false }: Props) {
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle>
-          Allocation
+        <CardTitle className="flex items-center gap-2">
+          <span>Allocation</span>
           {isUninvested && (
-            <span className="ml-2 text-[10px] font-mono text-text-mut uppercase tracking-wider">
+            <span className="text-[10px] font-mono text-text-mut uppercase tracking-wider border border-text-mut/30 px-1.5 py-0.5 rounded-sharp">
               target
             </span>
           )}
@@ -153,17 +153,17 @@ export function AllocationChart({ compact = false }: Props) {
               </div>
             ))}
           </div>
+        </div>
 
-          <div className="pt-2 border-t border-white/10">
-            <ProvenanceLine
-              source={
-                isUninvested
-                  ? "target allocation · no positions yet"
-                  : "current holdings × DefiLlama prices"
-              }
-              freshness="live"
-            />
-          </div>
+        <div className="mt-4 pt-3 border-t border-white/10">
+          <ProvenanceLine
+            source={
+              isUninvested
+                ? "target allocation · no positions yet"
+                : "current holdings × DefiLlama prices"
+            }
+            freshness="live"
+          />
         </div>
       </CardContent>
     </Card>

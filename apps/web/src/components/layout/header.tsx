@@ -10,7 +10,7 @@ import {
   LogOut,
   Wallet as WalletIcon,
 } from "lucide-react";
-import { BrutalButton, BrutalPill, ChainBadge } from "@aegis/ui";
+import { BrutalButton, BrutalPill } from "@aegis/ui";
 import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
 import { formatCurrency, formatPercent, changeColor } from "@/lib/utils";
 import { gatewayApi, walletApi } from "@/lib/api";
@@ -117,25 +117,8 @@ export function Header() {
                 </p>
               </div>
             )}
-            {wallet && (
-              <div title="Undeployed USDC + EURC across Arc + Base. Portfolio Value reflects invested positions — Gateway holdings are uninvested cash.">
-                <p className="text-[10px] text-text-mut font-mono">
-                  GATEWAY
-                  <span className="ml-1 inline-flex gap-1">
-                    <ChainBadge chain="ARC" />
-                    <ChainBadge chain="BASE" />
-                  </span>
-                </p>
-                <p className="text-sm font-mono font-semibold text-accent-pnl tabular-nums">
-                  ${unifiedUsdc.toFixed(2)} USDC
-                  {unifiedEurc > 0 && (
-                    <span className="text-text-lo">
-                      {" · "}€{unifiedEurc.toFixed(2)} EURC
-                    </span>
-                  )}
-                </p>
-              </div>
-            )}
+            {/* Wallet balance + per-chain breakdown lives on the Net Worth
+                card now — keeping a duplicate here clutters the header. */}
           </div>
         )}
       </div>
@@ -205,9 +188,7 @@ export function Header() {
               title="Account menu"
               aria-label="Account menu"
             >
-              <span className="text-xs font-mono font-semibold text-black">
-                {wallet.walletId.slice(-2).toUpperCase()}
-              </span>
+              <WalletIcon className="w-3.5 h-3.5 text-black" />
             </button>
             {userOpen && (
               <div className="absolute right-0 top-full mt-2 w-80 border-brutal border-border-default bg-surface shadow-brutal z-50 rounded-sharp">
