@@ -66,66 +66,71 @@ export function TrustabilityCard() {
   const CALIBRATION_FLOOR = 50;
   const isPreCalibration = row.decisionsExecuted < CALIBRATION_FLOOR;
 
+  // Horizontal layout — the card used to be full-width vertical with one
+  // tiny "models routed" stat dangling at the bottom; now headline lives on
+  // the left, explainer in the middle, and stat tile on the right.
   return (
     <Shell>
-      <div className="flex items-baseline justify-between">
-        <span className="text-[11px] uppercase tracking-wider text-cyan-300/70 font-mono">
-          Agent trust score
-        </span>
-        {!isPreCalibration && (
-          <span
-            className={`text-[10px] font-mono uppercase tracking-wider border px-1.5 py-0.5 ${tone}`}
-          >
-            {label}
-          </span>
-        )}
-      </div>
-      {isPreCalibration ? (
-        <div className="mt-2">
-          <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-mono text-text-mut tabular-nums">
-              {row.decisionsExecuted}
-              <span className="text-text-lo text-lg">
-                {" / "}
-                {CALIBRATION_FLOOR}
-              </span>
+      <div className="grid grid-cols-1 md:grid-cols-[auto_1fr_auto] md:items-center gap-6">
+        <div>
+          <div className="flex items-baseline justify-between gap-3 mb-2">
+            <span className="text-[11px] uppercase tracking-wider text-cyan-300/70 font-mono">
+              Agent trust score
             </span>
-            <span className="text-[11px] text-text-lo">decisions</span>
+            {!isPreCalibration && (
+              <span
+                className={`text-[10px] font-mono uppercase tracking-wider border px-1.5 py-0.5 ${tone}`}
+              >
+                {label}
+              </span>
+            )}
           </div>
-          <p className="text-[10px] text-text-mut mt-2 font-mono leading-relaxed">
-            Trust score unlocks at {CALIBRATION_FLOOR} executed decisions — the
-            calibrator needs that sample to compare agent outcomes against the
-            counterfactual.
-          </p>
+          {isPreCalibration ? (
+            <div className="flex items-baseline gap-2">
+              <span className="text-3xl font-mono text-text-mut tabular-nums">
+                {row.decisionsExecuted}
+                <span className="text-text-lo text-lg">
+                  {" / "}
+                  {CALIBRATION_FLOOR}
+                </span>
+              </span>
+              <span className="text-[11px] text-text-lo">decisions</span>
+            </div>
+          ) : (
+            <div className="flex items-baseline gap-2">
+              <span className="text-3xl font-mono text-text-hi tabular-nums">
+                {sign}
+                {row.trustabilityDelta.toFixed(2)}%
+              </span>
+              <span className="text-[11px] text-text-lo">
+                vs counterfactual · 7d
+              </span>
+            </div>
+          )}
         </div>
-      ) : (
-        <div className="mt-2 flex items-baseline gap-2">
-          <span className="text-3xl font-mono text-text-hi tabular-nums">
-            {sign}
-            {row.trustabilityDelta.toFixed(2)}%
-          </span>
-          <span className="text-[11px] text-text-lo">
-            vs counterfactual · 7d
-          </span>
+
+        <p className="text-[11px] text-text-mut font-mono leading-relaxed">
+          {isPreCalibration
+            ? `Trust score unlocks at ${CALIBRATION_FLOOR} executed decisions — the calibrator needs that sample to compare agent outcomes against the counterfactual.`
+            : "Realized vs counterfactual outcome delta over the trailing 7-day window."}
+        </p>
+
+        <div
+          className={`grid gap-2 text-[11px] font-mono ${
+            isPreCalibration ? "grid-cols-1" : "grid-cols-3"
+          }`}
+        >
+          {!isPreCalibration && (
+            <Stat label="decisions" value={String(row.decisionsExecuted)} />
+          )}
+          <Stat label="models routed" value={String(row.distinctModels)} />
+          {!isPreCalibration && (
+            <Stat
+              label="avg 7d return"
+              value={`${row.avg7dReturn >= 0 ? "+" : ""}${row.avg7dReturn.toFixed(2)}%`}
+            />
+          )}
         </div>
-      )}
-      <div
-        className={`mt-3 grid gap-2 text-[11px] font-mono ${
-          isPreCalibration ? "grid-cols-1" : "grid-cols-3"
-        }`}
-      >
-        {/* `decisions` is already in the headline (N / 50) when pre-cal — */}
-        {/* showing it again in this grid was redundant noise. */}
-        {!isPreCalibration && (
-          <Stat label="decisions" value={String(row.decisionsExecuted)} />
-        )}
-        <Stat label="models routed" value={String(row.distinctModels)} />
-        {!isPreCalibration && (
-          <Stat
-            label="avg 7d return"
-            value={`${row.avg7dReturn >= 0 ? "+" : ""}${row.avg7dReturn.toFixed(2)}%`}
-          />
-        )}
       </div>
     </Shell>
   );
