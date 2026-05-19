@@ -6,11 +6,11 @@ import { trustabilityApi, type TrustabilityResponse } from "@/lib/api";
 import { ProvenanceLine } from "@aegis/ui";
 
 const LABEL_TONE: Record<string, string> = {
-  excellent: "text-emerald-300 border-emerald-500/30 bg-emerald-500/5",
-  strong: "text-emerald-200/90 border-emerald-500/20 bg-emerald-500/3",
-  stable: "text-white border-white/15 bg-white/3",
-  shaky: "text-amber-300 border-amber-500/30 bg-amber-500/5",
-  underperforming: "text-rose-300 border-rose-500/30 bg-rose-500/5",
+  excellent: "text-accent-pnl border-emerald-500/30 bg-emerald-500/5",
+  strong: "text-accent-pnl/70 border-emerald-500/20 bg-emerald-500/3",
+  stable: "text-text-hi border-white/15 bg-white/3",
+  shaky: "text-warn border-amber-500/30 bg-amber-500/5",
+  underperforming: "text-risk border-rose-500/30 bg-rose-500/5",
 };
 
 /**
@@ -74,7 +74,7 @@ export function TrustabilityCard() {
       <div className="grid grid-cols-1 md:grid-cols-[auto_1fr_auto] md:items-center gap-6">
         <div>
           <div className="flex items-baseline justify-between gap-3 mb-2">
-            <span className="text-[11px] uppercase tracking-wider text-cyan-300/70 font-mono">
+            <span className="text-[11px] uppercase tracking-wider text-accent-agent/70 font-mono">
               Agent trust score
             </span>
             {!isPreCalibration && (
@@ -140,7 +140,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="border-2 border-white/10 bg-[#141414] p-4 space-y-1">
       <div className="flex items-center gap-2 mb-1">
-        <ShieldCheck className="w-3.5 h-3.5 text-cyan-400" />
+        <ShieldCheck className="w-3.5 h-3.5 text-accent-agent" />
         <span className="text-xs font-semibold text-text-hi">Trustability</span>
       </div>
       {children}

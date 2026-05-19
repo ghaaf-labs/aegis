@@ -51,7 +51,7 @@ export class ErrorBoundary extends Component<Props, State> {
           className="border-2 border-rose-500/30 bg-rose-500/5 max-w-xl w-full p-6 flex flex-col gap-4"
         >
           <div>
-            <p className="text-xs font-mono uppercase tracking-widest text-rose-300">
+            <p className="text-xs font-mono uppercase tracking-widest text-risk">
               Something broke
             </p>
             <p className="mt-1 text-sm text-text-hi font-mono break-words">
@@ -61,7 +61,7 @@ export class ErrorBoundary extends Component<Props, State> {
           <button
             type="button"
             onClick={this.reset}
-            className="self-start px-3 py-1.5 text-xs font-mono uppercase tracking-widest border-2 border-cyan-500/40 text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/20"
+            className="self-start px-3 py-1.5 text-xs font-mono uppercase tracking-widest border-2 border-cyan-500/40 text-accent-agent bg-cyan-500/10 hover:bg-cyan-500/20"
           >
             {this.props.retryLabel ?? "Try again"}
           </button>

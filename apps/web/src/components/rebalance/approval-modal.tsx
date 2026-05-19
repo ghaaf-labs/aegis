@@ -99,11 +99,11 @@ export function ApprovalModal({
       <div className="w-full sm:max-w-xl max-h-[90dvh] overflow-y-auto bg-[#141414] border-2 border-white/15 shadow-[8px_8px_0_0_#000]">
         <header className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
           <div>
-            <h2 className="text-base font-semibold text-white">
+            <h2 className="text-base font-semibold text-text-hi">
               Approve rebalance
             </h2>
             {portfolioName && (
-              <p className="text-[11px] font-mono text-gray-400 mt-1">
+              <p className="text-[11px] font-mono text-text-lo mt-1">
                 {portfolioName}
               </p>
             )}
@@ -111,7 +111,7 @@ export function ApprovalModal({
           <button
             type="button"
             onClick={onClose}
-            className="text-gray-400 hover:text-white"
+            className="text-text-lo hover:text-text-hi"
             aria-label="Close"
           >
             ×
@@ -132,7 +132,7 @@ export function ApprovalModal({
               return (
                 <div className="mb-4 border border-white/10 bg-black/40 p-3 font-mono text-[11px] space-y-2">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-cyan-400 uppercase tracking-wider">
+                    <span className="text-accent-agent uppercase tracking-wider">
                       Agent
                     </span>
                     {decision.modelSlug && (
@@ -144,7 +144,7 @@ export function ApprovalModal({
                       </span>
                     )}
                     <span
-                      className="ml-auto text-gray-400"
+                      className="ml-auto text-text-lo"
                       title={
                         isCalibrated
                           ? `Histogram-bin calibrated · raw ${rawPct}%`
@@ -152,9 +152,9 @@ export function ApprovalModal({
                       }
                     >
                       {isCalibrated ? "calibrated " : "confidence "}
-                      <span className="text-cyan-300">{headlinePct}%</span>
+                      <span className="text-accent-agent">{headlinePct}%</span>
                       {isCalibrated && (
-                        <span className="text-gray-500"> (raw {rawPct}%)</span>
+                        <span className="text-text-mut"> (raw {rawPct}%)</span>
                       )}
                     </span>
                   </div>
@@ -172,7 +172,7 @@ export function ApprovalModal({
                   </div>
 
                   {decision.reasoning && (
-                    <p className="text-gray-300 leading-relaxed">
+                    <p className="text-text-default leading-relaxed">
                       {decision.reasoning}
                     </p>
                   )}
@@ -180,7 +180,7 @@ export function ApprovalModal({
                   {/* F-CON-4: constitution clause IDs (veto reasons). */}
                   {clauseIds.length > 0 && (
                     <div className="border-t border-white/5 pt-2 space-y-1">
-                      <p className="text-[10px] uppercase tracking-wider text-rose-400">
+                      <p className="text-[10px] uppercase tracking-wider text-risk">
                         Critic veto reasons (constitution)
                       </p>
                       <div className="flex flex-wrap gap-1">
@@ -207,8 +207,8 @@ export function ApprovalModal({
                     )}
 
                   {decision.criticVerdict && (
-                    <p className="text-[10px] text-amber-300/90 border-t border-white/5 pt-2">
-                      <span className="uppercase tracking-wider text-amber-400 mr-1.5">
+                    <p className="text-[10px] text-warn/90 border-t border-white/5 pt-2">
+                      <span className="uppercase tracking-wider text-warn mr-1.5">
                         Critic
                       </span>
                       (
@@ -225,12 +225,12 @@ export function ApprovalModal({
                       <button
                         type="button"
                         onClick={() => setCounterfactualOpen((v) => !v)}
-                        className="text-[10px] uppercase tracking-wider text-cyan-300 hover:text-cyan-200"
+                        className="text-[10px] uppercase tracking-wider text-accent-agent hover:text-accent-agent/70"
                       >
                         {counterfactualOpen ? "▾" : "▸"} Why this might be wrong
                       </button>
                       {counterfactualOpen && (
-                        <p className="mt-1.5 text-[11px] text-cyan-100/90 bg-cyan-500/5 border border-cyan-500/20 px-2 py-1.5">
+                        <p className="mt-1.5 text-[11px] text-accent-agent/60 bg-cyan-500/5 border border-cyan-500/20 px-2 py-1.5">
                           {decision.counterfactual}
                         </p>
                       )}
@@ -238,7 +238,7 @@ export function ApprovalModal({
                   )}
                   {isCalibrated && (
                     <p
-                      className="text-[10px] text-gray-500"
+                      className="text-[10px] text-text-mut"
                       title="Calibration source persisted in `calibrations` table"
                     >
                       Calibration: histogram-bin · via model_evaluations
@@ -252,12 +252,12 @@ export function ApprovalModal({
             (l) =>
               l.kind === "cross_chain_burn" || l.kind === "cross_chain_mint",
           ) && (
-            <div className="mb-3 inline-flex items-center gap-2 rounded border border-cyan-500/40 bg-cyan-500/10 px-3 py-1 text-[11px] font-mono text-cyan-300">
+            <div className="mb-3 inline-flex items-center gap-2 rounded border border-cyan-500/40 bg-cyan-500/10 px-3 py-1 text-[11px] font-mono text-accent-agent">
               Real on-chain execution • CCTP V2 Fast Transfer + Hooks
             </div>
           )}
 
-          <p className="text-sm text-gray-300 mb-3">
+          <p className="text-sm text-text-default mb-3">
             The agent has planned <strong>{plan.totalLegs}</strong> leg
             {plan.totalLegs === 1 ? "" : "s"} to bring your portfolio to its
             target. One click executes everything; SSE will stream per-leg
@@ -271,10 +271,10 @@ export function ApprovalModal({
                 className="flex justify-between text-xs font-mono border border-white/5 p-2"
               >
                 <span className="flex items-center gap-1.5">
-                  <span className="text-gray-500">
+                  <span className="text-text-mut">
                     {String(leg.legIndex + 1).padStart(2, "0")}
                   </span>
-                  <span className="text-white">
+                  <span className="text-text-hi">
                     {KIND_LABEL[leg.kind] ?? leg.kind}
                   </span>
                   {leg.srcChain && (
@@ -292,9 +292,9 @@ export function ApprovalModal({
                     />
                   )}
                 </span>
-                <span className="text-gray-400">
+                <span className="text-text-lo">
                   {leg.srcSymbol} → {leg.destSymbol}
-                  <span className="text-emerald-400 ml-2">
+                  <span className="text-accent-pnl ml-2">
                     ${leg.amountUsdc.toFixed(2)}
                   </span>
                 </span>
@@ -315,22 +315,22 @@ export function ApprovalModal({
           <BacktestPreview portfolioId={portfolioId ?? null} />
 
           <div className="bg-black/40 border border-white/5 p-3 text-xs font-mono mb-4">
-            <div className="flex justify-between text-gray-400">
+            <div className="flex justify-between text-text-lo">
               <span title="Indicative gas estimate — not a binding quote. Actual settlement fee is published in the trace once the leg confirms.">
                 Paymaster (USDC gas)*
               </span>
-              <span className="text-emerald-300">
+              <span className="text-accent-pnl">
                 ≈ ${estimatedFeeUsdc.toFixed(4)} USDC
               </span>
             </div>
-            <div className="flex justify-between text-gray-400 mt-1">
+            <div className="flex justify-between text-text-lo mt-1">
               <span>Total amount routed</span>
-              <span className="text-white">
+              <span className="text-text-hi">
                 $
                 {plan.legs.reduce((acc, l) => acc + l.amountUsdc, 0).toFixed(2)}
               </span>
             </div>
-            <div className="text-[10px] text-gray-500 mt-2">
+            <div className="text-[10px] text-text-mut mt-2">
               via{" "}
               {feeSource === "paymaster" ? "Circle Paymaster" : "plan estimate"}
               {feeFetchedAt && (
@@ -344,10 +344,10 @@ export function ApprovalModal({
             {/* Protocol fee — Nanopayments 25bps story for judging */}
             {plan && plan.legs && plan.legs.length > 0 && (
               <div className="mt-3 text-sm flex justify-between border-t border-white/10 pt-2">
-                <span className="text-amber-400">
+                <span className="text-warn">
                   Protocol fee (25 bps via Nanopayments x402)
                 </span>
-                <span className="font-mono text-amber-400">
+                <span className="font-mono text-warn">
                   ≈ $
                   {(
                     plan.legs.reduce((s, l) => s + l.amountUsdc, 0) * 0.0025
@@ -360,8 +360,8 @@ export function ApprovalModal({
             {/* Total estimated cost to user */}
             {plan && plan.legs && plan.legs.length > 0 && (
               <div className="mt-2 pt-2 border-t border-white/10 flex justify-between text-sm font-semibold">
-                <span className="text-white">Total estimated cost</span>
-                <span className="font-mono text-white">
+                <span className="text-text-hi">Total estimated cost</span>
+                <span className="font-mono text-text-hi">
                   ≈ $
                   {(
                     estimatedFeeUsdc +
@@ -374,7 +374,7 @@ export function ApprovalModal({
           </div>
 
           {error && (
-            <p className="text-xs text-rose-300 font-mono mb-3" role="alert">
+            <p className="text-xs text-risk font-mono mb-3" role="alert">
               {error}
             </p>
           )}
@@ -385,7 +385,7 @@ export function ApprovalModal({
             href="/policy"
             target="_blank"
             rel="noopener"
-            className="text-xs text-gray-400 hover:text-white underline-offset-4 hover:underline"
+            className="text-xs text-text-lo hover:text-text-hi underline-offset-4 hover:underline"
           >
             Outcome &amp; refund policy
           </a>
@@ -393,7 +393,7 @@ export function ApprovalModal({
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-sm text-gray-300 hover:text-white border border-white/10"
+              className="px-4 py-2 text-sm text-text-default hover:text-text-hi border border-white/10"
             >
               Cancel
             </button>

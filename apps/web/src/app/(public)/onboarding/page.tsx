@@ -8,7 +8,7 @@ export default function OnboardingPage() {
     <div className="min-h-screen bg-bg text-text-default flex items-start justify-center p-6 py-12">
       <div className="w-full max-w-2xl">
         <div className="flex items-center gap-2 justify-center mb-6">
-          <div className="w-8 h-8 rounded-sharp bg-accent-pnl flex items-center justify-center border-brutal border-black">
+          <div className="w-8 h-8 rounded-sharp bg-accent-agent flex items-center justify-center border-brutal border-black">
             <Shield className="w-4 h-4 text-black" />
           </div>
           <span className="font-semibold text-lg text-text-hi">Aegis</span>

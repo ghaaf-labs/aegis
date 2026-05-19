@@ -49,10 +49,10 @@ export function MarketOverview() {
   const isStale = ageMs > 60_000; // > 1 minute
   const isVeryStale = ageMs > 300_000; // > 5 minutes
   const priceColor = isVeryStale
-    ? "text-red-400"
+    ? "text-risk"
     : isStale
-      ? "text-yellow-400"
-      : "text-white";
+      ? "text-warn"
+      : "text-text-hi";
 
   const fearLabel =
     snapshot.fearGreedIndex < 25
@@ -67,10 +67,10 @@ export function MarketOverview() {
 
   const fearColor =
     snapshot.fearGreedIndex < 45
-      ? "text-red-400"
+      ? "text-risk"
       : snapshot.fearGreedIndex < 55
-        ? "text-yellow-400"
-        : "text-emerald-400";
+        ? "text-warn"
+        : "text-accent-pnl";
 
   return (
     <Card>
@@ -80,23 +80,23 @@ export function MarketOverview() {
       <CardContent className="space-y-3">
         {snapshot.totalMarketCapUsd > 0 && (
           <div className="flex items-center justify-between">
-            <span className="text-xs text-gray-500">Total Market Cap</span>
-            <span className="text-xs font-medium text-white">
+            <span className="text-xs text-text-mut">Total Market Cap</span>
+            <span className="text-xs font-medium text-text-hi">
               {formatCurrency(snapshot.totalMarketCapUsd, { compact: true })}
             </span>
           </div>
         )}
         {snapshot.btcDominance > 0 && (
           <div className="flex items-center justify-between">
-            <span className="text-xs text-gray-500">BTC Dominance</span>
-            <span className="text-xs font-medium text-white">
+            <span className="text-xs text-text-mut">BTC Dominance</span>
+            <span className="text-xs font-medium text-text-hi">
               {snapshot.btcDominance.toFixed(1)}%
             </span>
           </div>
         )}
         <div className="flex items-center justify-between">
           <span
-            className="text-xs text-gray-500"
+            className="text-xs text-text-mut"
             title="Crypto Fear & Greed Index — alternative.me, daily"
           >
             Fear & Greed
@@ -122,7 +122,7 @@ export function MarketOverview() {
                 key={asset.symbol}
                 className="flex items-center justify-between"
               >
-                <span className="text-xs font-mono text-gray-400">
+                <span className="text-xs font-mono text-text-lo">
                   {asset.symbol}
                 </span>
                 <div className="flex items-center gap-2">

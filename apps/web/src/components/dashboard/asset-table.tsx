@@ -28,10 +28,10 @@ export function AssetTable() {
   const isStale = ageMs > 60_000;
   const isVeryStale = ageMs > 300_000;
   const priceColor = isVeryStale
-    ? "text-red-400"
+    ? "text-risk"
     : isStale
-      ? "text-yellow-400"
-      : "text-white";
+      ? "text-warn"
+      : "text-text-hi";
 
   // USYC is a tokenized USD instrument from Hashnote — not on DefiLlama's
   // free feed, so the snapshot omits it. Fall back to $1.00 (the floor;
@@ -95,7 +95,7 @@ export function AssetTable() {
                 <th
                   key={h}
                   className={
-                    "px-5 py-3 text-left text-[11px] font-medium text-gray-500 uppercase tracking-wider " +
+                    "px-5 py-3 text-left text-[11px] font-medium text-text-mut uppercase tracking-wider " +
                     cls
                   }
                 >
@@ -124,11 +124,11 @@ export function AssetTable() {
                   <td className="px-5 py-3.5">
                     <div className="flex items-center gap-2.5">
                       <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500/30 to-violet-500/30 flex items-center justify-center border border-white/10">
-                        <span className="text-[10px] font-bold text-white">
+                        <span className="text-[10px] font-bold text-text-hi">
                           {alloc.symbol[0]}
                         </span>
                       </div>
-                      <span className="text-sm font-semibold text-white font-mono">
+                      <span className="text-sm font-semibold text-text-hi font-mono">
                         {alloc.symbol}
                       </span>
                     </div>
@@ -152,25 +152,25 @@ export function AssetTable() {
                       </span>
                     )}
                   </td>
-                  <td className="px-5 py-3.5 text-xs text-gray-400 font-mono hidden md:table-cell">
+                  <td className="px-5 py-3.5 text-xs text-text-lo font-mono hidden md:table-cell">
                     {formatNumber(alloc.quantity)}
                   </td>
-                  <td className="px-5 py-3.5 text-sm text-white font-medium">
+                  <td className="px-5 py-3.5 text-sm text-text-hi font-medium">
                     {formatCurrency(valueUsd)}
                   </td>
                   <td className="px-5 py-3.5 hidden lg:table-cell">
                     {isUninvested ? (
-                      <span className="text-xs text-gray-500 font-mono">
+                      <span className="text-xs text-text-mut font-mono">
                         target {alloc.targetWeight.toFixed(0)}%
                       </span>
                     ) : (
                       <div className="flex items-center gap-2">
                         <div className="flex items-center gap-1">
-                          <span className="text-xs text-gray-400 font-mono w-10">
+                          <span className="text-xs text-text-lo font-mono w-10">
                             {currentWeight.toFixed(1)}%
                           </span>
-                          <span className="text-gray-600 text-xs">vs</span>
-                          <span className="text-xs text-gray-500 font-mono w-10">
+                          <span className="text-text-mut text-xs">vs</span>
+                          <span className="text-xs text-text-mut font-mono w-10">
                             {alloc.targetWeight.toFixed(0)}%
                           </span>
                         </div>

@@ -60,9 +60,9 @@ const REGIME_LABEL: Record<MarketRegime, string> = {
 };
 
 const REGIME_CLASS: Record<MarketRegime, string> = {
-  risk_on: "bg-cyan-500/15 text-cyan-300 border border-cyan-500/30",
-  neutral: "bg-white/8 text-white border border-white/15",
-  risk_off: "bg-rose-500/15 text-rose-300 border border-rose-500/30",
+  risk_on: "bg-cyan-500/15 text-accent-agent border border-cyan-500/30",
+  neutral: "bg-white/8 text-text-hi border border-white/15",
+  risk_off: "bg-rose-500/15 text-risk border border-rose-500/30",
 };
 
 export function AgentReasoningFeed() {
@@ -91,18 +91,18 @@ export function AgentReasoningFeed() {
     <Card className="flex flex-col">
       <CardHeader className="flex flex-row items-center justify-between pb-3">
         <CardTitle className="flex items-center gap-2">
-          <Brain className="w-3.5 h-3.5 text-cyan-400" />
+          <Brain className="w-3.5 h-3.5 text-accent-agent" />
           AI Reasoning
         </CardTitle>
         <div className="flex items-center gap-2">
           <span
-            className="flex items-center gap-1 text-[10px] text-gray-500"
+            className="flex items-center gap-1 text-[10px] text-text-mut"
             title={sseConnected ? "Live feed connected" : "Reconnecting…"}
           >
             {sseConnected ? (
-              <Wifi className="w-3 h-3 text-cyan-400/80" />
+              <Wifi className="w-3 h-3 text-accent-agent/80" />
             ) : (
-              <WifiOff className="w-3 h-3 text-gray-500" />
+              <WifiOff className="w-3 h-3 text-text-mut" />
             )}
             <span className="font-mono">
               {sseConnected ? "LIVE" : "OFFLINE"}
@@ -111,7 +111,7 @@ export function AgentReasoningFeed() {
           <Button
             variant="ghost"
             size="sm"
-            className="text-gray-500 hover:text-gray-300 h-7 px-2"
+            className="text-text-mut hover:text-text-default h-7 px-2"
             onClick={() => void handleRefresh()}
             disabled={refreshing || !portfolio}
             title="Refresh decisions"
@@ -147,7 +147,7 @@ function DecisionList({ decisions }: { decisions: AgentDecision[] }) {
   if (decisions.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-center px-6">
-        <Brain className="w-6 h-6 text-cyan-400/30 mb-3" />
+        <Brain className="w-6 h-6 text-accent-agent/30 mb-3" />
         <p className="text-xs font-mono text-text-mut">
           No decisions yet — the agent will reason here when triggered by drift,
           a regime flip, or your manual request.
@@ -217,7 +217,7 @@ function LiveActivityStrip({
 }) {
   return (
     <div className="px-5 py-3 border-b border-white/4 bg-white/2">
-      <p className="text-[10px] font-mono uppercase tracking-wider text-cyan-300/70 mb-2">
+      <p className="text-[10px] font-mono uppercase tracking-wider text-accent-agent/70 mb-2">
         Live agent activity
       </p>
       <div className="space-y-1.5">
@@ -228,7 +228,7 @@ function LiveActivityStrip({
               initial={{ opacity: 0, x: -8 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0 }}
-              className="flex items-center gap-2 text-[11px] font-mono text-amber-300/90"
+              className="flex items-center gap-2 text-[11px] font-mono text-warn/90"
             >
               <HandIcon className="w-3 h-3 shrink-0" />
               <span className="opacity-75">Abstained</span>
@@ -245,7 +245,7 @@ function LiveActivityStrip({
               initial={{ opacity: 0, x: -8 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0 }}
-              className="flex items-center gap-2 text-[11px] font-mono text-cyan-200/90"
+              className="flex items-center gap-2 text-[11px] font-mono text-accent-agent/80"
             >
               <Wrench className="w-3 h-3 shrink-0" />
               <span className="opacity-75">{t.toolName}</span>
@@ -297,25 +297,25 @@ function DecisionRow({
           )}
           {decision.modelSlug && (
             <span
-              className="flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-mono border border-cyan-500/30 text-cyan-300/90 bg-cyan-500/5"
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-mono border border-cyan-500/30 text-accent-agent/90 bg-cyan-500/5"
               title="Model that produced this decision"
             >
               <Cpu className="w-2.5 h-2.5" />
               {decision.modelSlug}
             </span>
           )}
-          <span className="text-[10px] text-gray-600">
+          <span className="text-[10px] text-text-mut">
             {timeAgo(decision.createdAt)}
           </span>
         </div>
         <ConfidencePill confidence={decision.confidence} />
       </div>
 
-      <p className="text-xs font-semibold text-white mb-1.5">
+      <p className="text-xs font-semibold text-text-hi mb-1.5">
         {decision.recommendation.summary}
       </p>
 
-      <p className="text-[11px] text-gray-500 leading-relaxed line-clamp-3">
+      <p className="text-[11px] text-text-mut leading-relaxed line-clamp-3">
         {decision.reasoning}
       </p>
 
@@ -331,14 +331,14 @@ function DecisionRow({
               <span
                 className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
                   trade.action === "buy"
-                    ? "bg-cyan-500/15 text-cyan-400"
-                    : "bg-red-500/15 text-red-400"
+                    ? "bg-cyan-500/15 text-accent-agent"
+                    : "bg-red-500/15 text-risk"
                 }`}
               >
                 {trade.action.toUpperCase()}
               </span>
-              <span className="font-mono text-white">{trade.symbol}</span>
-              <span className="text-gray-500 truncate">{trade.reason}</span>
+              <span className="font-mono text-text-hi">{trade.symbol}</span>
+              <span className="text-text-mut truncate">{trade.reason}</span>
             </div>
           ))}
         </div>
@@ -356,11 +356,7 @@ function DecisionRow({
 function ConfidencePill({ confidence }: { confidence: number }) {
   const pct = Math.round(confidence * 100);
   const tone =
-    pct >= 75
-      ? "text-cyan-300"
-      : pct >= 50
-        ? "text-yellow-400"
-        : "text-gray-400";
+    pct >= 75 ? "text-accent-agent" : pct >= 50 ? "text-warn" : "text-text-lo";
   return (
     <div
       className="flex items-center gap-1 shrink-0"
@@ -379,8 +375,8 @@ function CriticLine({ verdict }: { verdict: CriticVerdict }) {
   // This follows the strict design-system rule: green = money/PnL only,
   // cyan = agent surfaces.
   const tone = verdict.demandsRevision
-    ? "text-rose-300 border-rose-500/30 bg-rose-500/5"
-    : "text-cyan-300 border-cyan-500/30 bg-cyan-500/5";
+    ? "text-risk border-rose-500/30 bg-rose-500/5"
+    : "text-accent-agent border-cyan-500/30 bg-cyan-500/5";
   return (
     <div
       className={`mt-3 flex items-start gap-2 px-2 py-1.5 rounded border ${tone} text-[10px] leading-relaxed`}
@@ -404,7 +400,7 @@ function TelemetryFooter({ decision }: { decision: AgentDecision }) {
     decision.latencyMs != null;
   if (!hasTelemetry) return null;
   return (
-    <div className="mt-2 flex items-center gap-3 text-[10px] font-mono text-gray-600">
+    <div className="mt-2 flex items-center gap-3 text-[10px] font-mono text-text-mut">
       {decision.promptTokens != null && (
         <span title="Prompt tokens">in {decision.promptTokens}</span>
       )}

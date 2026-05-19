@@ -22,10 +22,10 @@ export default function LoginPage() {
           href="/"
           className="flex items-center gap-2 justify-center mb-8 group"
         >
-          <div className="w-8 h-8 rounded-sharp bg-accent-pnl flex items-center justify-center border-brutal border-black">
+          <div className="w-8 h-8 rounded-sharp bg-accent-agent flex items-center justify-center border-brutal border-black">
             <Shield className="w-4 h-4 text-black" />
           </div>
-          <span className="font-semibold text-lg text-text-hi group-hover:text-accent-pnl">
+          <span className="font-semibold text-lg text-text-hi group-hover:text-accent-agent">
             Aegis
           </span>
         </Link>

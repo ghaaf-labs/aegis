@@ -32,7 +32,7 @@ export function RiskScoreCard() {
               awaiting deploy
             </span>
           </div>
-          <p className="text-[11px] text-gray-500 leading-relaxed">
+          <p className="text-[11px] text-text-mut leading-relaxed">
             Concentration, volatility and drift are computed once positions are
             live. Deploy your wallet balance to populate the score.
           </p>
@@ -68,7 +68,7 @@ export function RiskScoreCard() {
       </CardHeader>
       <CardContent>
         <div className="flex items-center justify-between mb-3">
-          <span className="text-2xl font-bold text-white">{score}</span>
+          <span className="text-2xl font-bold text-text-hi">{score}</span>
           <span className="text-sm font-medium" style={{ color }}>
             {label}
           </span>
@@ -79,12 +79,12 @@ export function RiskScoreCard() {
             style={{ width: `${pct}%`, background: color }}
           />
         </div>
-        <div className="flex justify-between mt-1.5 text-[10px] text-gray-600">
+        <div className="flex justify-between mt-1.5 text-[10px] text-text-mut">
           <span>Low</span>
           <span>Medium</span>
           <span>High</span>
         </div>
-        <p className="text-[11px] text-gray-500 mt-3 leading-relaxed">
+        <p className="text-[11px] text-text-mut mt-3 leading-relaxed">
           Your portfolio risk is within your target range. The AI agent will
           alert you if market conditions push this above 65.
         </p>
@@ -103,7 +103,7 @@ export function RiskScoreCard() {
           />
           {(isVeryStale || isStale) && (
             <span
-              className={`text-[10px] ml-2 ${isVeryStale ? "text-red-400" : "text-yellow-400"}`}
+              className={`text-[10px] ml-2 ${isVeryStale ? "text-risk" : "text-warn"}`}
             >
               stale
             </span>

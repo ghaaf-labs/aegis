@@ -32,7 +32,7 @@ const LABEL_TONE: Record<LeaderboardEntry["label"], string> = {
   excellent: "text-accent-pnl border-accent-pnl/30 bg-accent-pnl/5",
   strong: "text-accent-pnl/80 border-accent-pnl/20 bg-accent-pnl/5",
   stable: "text-text-default border-border-default bg-raised",
-  shaky: "text-amber-300 border-amber-500/30 bg-amber-500/5",
+  shaky: "text-warn border-amber-500/30 bg-amber-500/5",
   underperforming: "text-risk border-risk/30 bg-risk/5",
 };
 

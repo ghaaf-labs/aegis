@@ -120,8 +120,8 @@ export function AllocationChart({ compact = false }: Props) {
                     const d = payload[0].payload as (typeof data)[0];
                     return (
                       <div className="bg-surface border-brutal border-border-default rounded-sharp px-3 py-2 text-xs">
-                        <p className="font-semibold text-white">{d.name}</p>
-                        <p className="text-gray-400">
+                        <p className="font-semibold text-text-hi">{d.name}</p>
+                        <p className="text-text-lo">
                           {formatPercent(d.value, false)}
                         </p>
                       </div>
@@ -145,11 +145,11 @@ export function AllocationChart({ compact = false }: Props) {
                       background: CHART_COLORS[i % CHART_COLORS.length],
                     }}
                   />
-                  <span className="text-xs text-gray-400 font-mono truncate">
+                  <span className="text-xs text-text-lo font-mono truncate">
                     {item.name}
                   </span>
                 </div>
-                <span className="text-xs text-white font-medium shrink-0">
+                <span className="text-xs text-text-hi font-medium shrink-0">
                   {formatPercent(item.value, false)}
                 </span>
               </div>

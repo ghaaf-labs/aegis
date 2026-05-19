@@ -108,7 +108,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
               href={href}
               aria-current={active ? "page" : undefined}
               className={cn(
-                "flex items-center gap-3 px-3 py-2 rounded-sharp text-sm font-mono transition-all min-h-[44px]",
+                "flex items-center gap-3 px-3 py-2 rounded-sharp text-xs font-mono transition-all min-h-[44px]",
                 active
                   ? "bg-accent-agent/10 text-accent-agent font-medium"
                   : "text-text-lo hover:text-text-hi hover:bg-raised",

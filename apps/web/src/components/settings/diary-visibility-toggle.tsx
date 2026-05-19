@@ -42,11 +42,13 @@ export function DiaryVisibilityToggle({
     <div className="border-2 border-white/10 bg-[#141414] p-4 space-y-3">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="text-sm font-semibold text-white">Public agent diary</p>
-          <p className="text-xs text-gray-400 mt-1">
+          <p className="text-sm font-semibold text-text-hi">
+            Public agent diary
+          </p>
+          <p className="text-xs text-text-lo mt-1">
             When on, anyone can see every recommendation the agent emits for
             this portfolio at{" "}
-            <code className="text-cyan-400 font-mono">
+            <code className="text-accent-agent font-mono">
               /diary/
               {walletAddress ? walletAddress.slice(0, 10) + "…" : "your wallet"}
             </code>
@@ -75,7 +77,7 @@ export function DiaryVisibilityToggle({
         </button>
       </div>
       {error && (
-        <p className="text-xs text-rose-300 font-mono" role="alert">
+        <p className="text-xs text-risk font-mono" role="alert">
           {error}
         </p>
       )}

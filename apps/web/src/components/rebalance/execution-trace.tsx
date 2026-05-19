@@ -110,27 +110,29 @@ export function ExecutionTrace({ rebalanceId, sseUrl }: ExecutionTraceProps) {
     <section className="space-y-3">
       <header className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h2 className="text-lg font-semibold text-white">Execution trace</h2>
+          <h2 className="text-lg font-semibold text-text-hi">
+            Execution trace
+          </h2>
           {legs.some(
             (l) =>
               l.kind === "cross_chain_burn" || l.kind === "cross_chain_mint",
           ) && (
-            <span className="inline-flex items-center gap-1 rounded border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-mono text-cyan-300">
+            <span className="inline-flex items-center gap-1 rounded border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-mono text-accent-agent">
               Real on-chain • CCTP V2 + Hooks
             </span>
           )}
         </div>
         <div className="flex items-center gap-3 font-mono text-xs">
-          <span className="text-gray-400">
+          <span className="text-text-lo">
             {completed} / {total} legs
           </span>
           <span
             className={
               status === "completed"
-                ? "text-cyan-300"
+                ? "text-accent-agent"
                 : status === "failed"
-                  ? "text-rose-300"
-                  : "text-cyan-300"
+                  ? "text-risk"
+                  : "text-accent-agent"
             }
           >
             {status.toUpperCase()}
@@ -145,7 +147,7 @@ export function ExecutionTrace({ rebalanceId, sseUrl }: ExecutionTraceProps) {
       </div>
       <div className="space-y-2">
         {legs.length === 0 ? (
-          <p className="text-sm text-gray-500">No legs yet.</p>
+          <p className="text-sm text-text-mut">No legs yet.</p>
         ) : (
           legs
             .slice()
@@ -169,7 +171,7 @@ export function ExecutionTrace({ rebalanceId, sseUrl }: ExecutionTraceProps) {
       </div>
       {status === "completed" && decisionId && (
         <>
-          <div className="mt-3 border border-amber-500/30 bg-amber-500/5 p-3 text-[11px] font-mono text-amber-300 flex items-center gap-2 flex-wrap">
+          <div className="mt-3 border border-amber-500/30 bg-amber-500/5 p-3 text-[11px] font-mono text-warn flex items-center gap-2 flex-wrap">
             <span>
               Protocol fee (25 bps) settled via Circle Nanopayments (x402)
             </span>
@@ -183,11 +185,11 @@ export function ExecutionTrace({ rebalanceId, sseUrl }: ExecutionTraceProps) {
                   }
                   target="_blank"
                   rel="noreferrer"
-                  className="underline text-amber-400 hover:text-amber-200"
+                  className="underline text-warn hover:text-warn/60"
                 >
                   {settlementTx.slice(0, 10)}… ↗
                 </a>
-                <span className="text-amber-400/60 text-[10px]">
+                <span className="text-warn/60 text-[10px]">
                   on{" "}
                   {legs.some(
                     (l) => l.destChain === "base" || l.srcChain === "base",
@@ -196,7 +198,7 @@ export function ExecutionTrace({ rebalanceId, sseUrl }: ExecutionTraceProps) {
                     : "Arc"}
                 </span>
                 {settlementTx.startsWith("0x") && (
-                  <span className="text-cyan-400 text-[10px] border border-cyan-500/30 px-1 rounded">
+                  <span className="text-accent-agent text-[10px] border border-cyan-500/30 px-1 rounded">
                     on-chain
                   </span>
                 )}
@@ -210,7 +212,7 @@ export function ExecutionTrace({ rebalanceId, sseUrl }: ExecutionTraceProps) {
                 </button>
               </>
             ) : (
-              <span className="text-amber-400/70">· tx recorded</span>
+              <span className="text-warn/70">· tx recorded</span>
             )}
           </div>
           <ShareBlock decisionId={decisionId} />
@@ -243,10 +245,10 @@ function ShareBlock({ decisionId }: { decisionId: string }) {
   return (
     <div className="mt-4 border-2 border-cyan-500/30 bg-cyan-500/5 p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
       <div>
-        <p className="text-xs font-semibold text-cyan-200">
+        <p className="text-xs font-semibold text-accent-agent/70">
           Rebalance complete
         </p>
-        <p className="text-[11px] text-cyan-200/70 mt-0.5">
+        <p className="text-[11px] text-accent-agent/60 mt-0.5">
           Share what the agent did — the OG card pulls the regime + outcome
           automatically.
         </p>

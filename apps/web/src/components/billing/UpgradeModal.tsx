@@ -87,20 +87,20 @@ export function UpgradeModal({
           <div>
             <h2
               id="upgrade-modal-title"
-              className="text-base font-semibold text-white"
+              className="text-base font-semibold text-text-hi"
             >
               Confirm upgrade
             </h2>
-            <p className="text-[11px] font-mono text-gray-400 mt-1 flex items-center gap-2">
+            <p className="text-[11px] font-mono text-text-lo mt-1 flex items-center gap-2">
               <BrutalPill tone="agent">{currentTier.toUpperCase()}</BrutalPill>
-              <span className="text-gray-500">→</span>
+              <span className="text-text-mut">→</span>
               <BrutalPill tone="pnl">{targetTier.toUpperCase()}</BrutalPill>
             </p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="text-gray-400 hover:text-white"
+            className="text-text-lo hover:text-text-hi"
             aria-label="Close"
           >
             ×
@@ -111,7 +111,7 @@ export function UpgradeModal({
           <Row
             label="Monthly subscription"
             value={`+$${monthlyDeltaUsd.toFixed(2)} / mo`}
-            valueClass="text-emerald-300"
+            valueClass="text-accent-pnl"
           />
           <Row
             label={`AUM fee (on $${portfolioAumUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })})`}
@@ -121,7 +121,7 @@ export function UpgradeModal({
                 : `${aumDeltaBps > 0 ? "+" : ""}$${aumFeeDeltaUsdc.toFixed(2)} / mo @ ${aumDeltaBps} bps`
             }
             valueClass={
-              aumDeltaBps > 0 ? "text-emerald-300" : "text-text-default"
+              aumDeltaBps > 0 ? "text-accent-pnl" : "text-text-default"
             }
           />
           <Row
@@ -136,7 +136,7 @@ export function UpgradeModal({
           />
 
           {lastMonthSavingsUsd !== undefined && lastMonthSavingsUsd > 0 && (
-            <div className="mt-3 border border-emerald-500/30 bg-emerald-500/5 p-3 text-[11px] text-emerald-300 leading-relaxed">
+            <div className="mt-3 border border-emerald-500/30 bg-emerald-500/5 p-3 text-[11px] text-accent-pnl leading-relaxed">
               At {next.name} you would have saved{" "}
               <span className="font-bold">
                 ${lastMonthSavingsUsd.toFixed(2)}
@@ -152,7 +152,7 @@ export function UpgradeModal({
           {error && (
             <div
               role="alert"
-              className="border border-red-500/40 bg-red-500/10 p-2 text-[11px] text-red-300"
+              className="border border-red-500/40 bg-red-500/10 p-2 text-[11px] text-risk"
             >
               {error}
             </div>
@@ -160,7 +160,7 @@ export function UpgradeModal({
           {success && (
             <div
               role="status"
-              className="border border-emerald-500/40 bg-emerald-500/10 p-2 text-[11px] text-emerald-300"
+              className="border border-emerald-500/40 bg-emerald-500/10 p-2 text-[11px] text-accent-pnl"
             >
               {success}
             </div>

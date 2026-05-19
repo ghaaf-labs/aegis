@@ -127,8 +127,8 @@ export default async function DecisionPage({ params }: RouteParams) {
               <span
                 className={`px-2 py-0.5 font-mono border ${
                   decision.criticVerdict.verdict === "revised"
-                    ? "border-rose-500/40 text-rose-300 bg-rose-500/10"
-                    : "border-cyan-500/40 text-cyan-300 bg-cyan-500/10"
+                    ? "border-rose-500/40 text-risk bg-rose-500/10"
+                    : "border-cyan-500/40 text-accent-agent bg-cyan-500/10"
                 }`}
               >
                 {decision.criticVerdict.verdict.toUpperCase()}

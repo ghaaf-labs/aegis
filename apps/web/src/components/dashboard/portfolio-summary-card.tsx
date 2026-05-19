@@ -35,10 +35,10 @@ export function PortfolioSummaryCard() {
   const isStale = ageMs > 60_000;
   const isVeryStale = ageMs > 300_000;
   const priceColor = isVeryStale
-    ? "text-red-400"
+    ? "text-risk"
     : isStale
-      ? "text-yellow-400"
-      : "text-white";
+      ? "text-warn"
+      : "text-text-hi";
 
   const isPositive = portfolio.totalPnlUsd >= 0;
   const TrendIcon = isPositive ? TrendingUp : TrendingDown;
@@ -82,9 +82,9 @@ export function PortfolioSummaryCard() {
             <span className="font-medium">
               {formatCurrency(portfolio.totalPnlUsd, { compact: true })}
             </span>
-            <span className="text-gray-500">·</span>
+            <span className="text-text-mut">·</span>
             <span>{formatPercent(portfolio.totalPnlPct)}</span>
-            <span className="text-gray-500 text-xs ml-1">all time</span>
+            <span className="text-text-mut text-xs ml-1">all time</span>
           </div>
         ) : (
           <p className="text-[11px] font-mono text-text-mut">
@@ -122,30 +122,30 @@ export function PortfolioSummaryCard() {
 
         <div className="mt-4 grid grid-cols-2 gap-3">
           <div className="p-3 rounded-sharp bg-raised border border-border-default">
-            <p className="text-xs text-gray-500 mb-1">Assets</p>
-            <p className="text-sm font-semibold text-white">
+            <p className="text-xs text-text-mut mb-1">Assets</p>
+            <p className="text-sm font-semibold text-text-hi">
               {portfolio.allocations?.length ?? 0}
             </p>
           </div>
           <div className="p-3 rounded-sharp bg-raised border border-border-default">
-            <p className="text-xs text-gray-500 mb-1">Risk Score</p>
+            <p className="text-xs text-text-mut mb-1">Risk Score</p>
             {portfolio.totalValueUsd > 0.5 ? (
               <>
                 <div className="flex items-center gap-2">
                   <p
-                    className={`text-sm font-semibold ${portfolio.riskScore < 40 ? "text-emerald-400" : portfolio.riskScore < 65 ? "text-yellow-400" : "text-red-400"}`}
+                    className={`text-sm font-semibold ${portfolio.riskScore < 40 ? "text-accent-pnl" : portfolio.riskScore < 65 ? "text-warn" : "text-risk"}`}
                   >
                     {portfolio.riskScore}/100
                   </p>
                   {isVeryStale && (
-                    <span className="text-red-400 text-[10px]">stale</span>
+                    <span className="text-risk text-[10px]">stale</span>
                   )}
                   {isStale && !isVeryStale && (
-                    <span className="text-yellow-400 text-[10px]">stale</span>
+                    <span className="text-warn text-[10px]">stale</span>
                   )}
                 </div>
                 {snapshot && (
-                  <p className="text-[10px] text-gray-500 mt-0.5">
+                  <p className="text-[10px] text-text-mut mt-0.5">
                     as of{" "}
                     {new Date(snapshot.capturedAt).toLocaleTimeString([], {
                       hour: "2-digit",
@@ -157,7 +157,7 @@ export function PortfolioSummaryCard() {
             ) : (
               <>
                 <p className="text-sm font-semibold text-text-mut">—</p>
-                <p className="text-[10px] text-gray-500 mt-0.5">
+                <p className="text-[10px] text-text-mut mt-0.5">
                   computed after first deploy
                 </p>
               </>

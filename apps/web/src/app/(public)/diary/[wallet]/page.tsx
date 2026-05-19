@@ -45,16 +45,16 @@ export default async function DiaryPage({ params }: PageProps) {
   const entries = await fetchDiary(wallet);
 
   return (
-    <main className="min-h-screen bg-[#0A0A0A] text-white px-6 py-12">
+    <main className="min-h-screen bg-[#0A0A0A] text-text-hi px-6 py-12">
       <div className="max-w-3xl mx-auto">
         <header className="mb-10">
-          <p className="font-mono text-[11px] tracking-wider text-cyan-400 uppercase">
+          <p className="font-mono text-[11px] tracking-wider text-accent-agent uppercase">
             Agent diary
           </p>
           <h1 className="text-3xl font-bold mt-1">
-            <span className="font-mono text-base text-gray-400">{wallet}</span>
+            <span className="font-mono text-base text-text-lo">{wallet}</span>
           </h1>
-          <p className="text-sm text-gray-400 mt-3 max-w-prose">
+          <p className="text-sm text-text-lo mt-3 max-w-prose">
             Every recommendation Aegis emitted for this wallet, the model that
             produced it, the regime read at the time, and what actually happened
             to the portfolio over the next 24 hours.
@@ -64,7 +64,7 @@ export default async function DiaryPage({ params }: PageProps) {
         {entries.length === 0 ? (
           <BrutalCard>
             <BrutalCardBody>
-              <p className="text-gray-400 text-sm">
+              <p className="text-text-lo text-sm">
                 No public decisions yet. The portfolio owner can enable diary
                 visibility from their settings.
               </p>
@@ -78,8 +78,8 @@ export default async function DiaryPage({ params }: PageProps) {
           </ol>
         )}
 
-        <footer className="mt-12 pt-6 border-t border-white/10 text-xs text-gray-500">
-          <Link href="/" className="hover:text-cyan-400">
+        <footer className="mt-12 pt-6 border-t border-white/10 text-xs text-text-mut">
+          <Link href="/" className="hover:text-accent-agent">
             ← back to aegis
           </Link>
         </footer>
@@ -110,7 +110,7 @@ function DiaryCard({ entry }: { entry: DiaryEntry }) {
               )}
               {entry.modelSlug && <ModelBadge model={entry.modelSlug} />}
               {entry.criticVerdict && (
-                <span className="text-xs px-2 py-0.5 rounded bg-white/10 text-white/80 border border-white/20">
+                <span className="text-xs px-2 py-0.5 rounded bg-white/10 text-text-hi/80 border border-white/20">
                   Critic:{" "}
                   {entry.criticVerdict.verdict === "revised"
                     ? "revised"
@@ -119,31 +119,31 @@ function DiaryCard({ entry }: { entry: DiaryEntry }) {
               )}
             </div>
             <time
-              className="font-mono text-[11px] text-gray-500"
+              className="font-mono text-[11px] text-text-mut"
               dateTime={entry.createdAt}
             >
               {new Date(entry.createdAt).toLocaleString()}
             </time>
           </div>
-          <p className="text-sm text-white">{entry.recommendationSummary}</p>
+          <p className="text-sm text-text-hi">{entry.recommendationSummary}</p>
           <div className="mt-2 h-1.5 bg-white/5">
             <div
               className="h-full bg-cyan-400"
               style={{ width: `${Math.round(entry.confidence * 100)}%` }}
             />
           </div>
-          <p className="mt-1 font-mono text-[11px] text-gray-500">
+          <p className="mt-1 font-mono text-[11px] text-text-mut">
             confidence {Math.round(entry.confidence * 100)}%
           </p>
           {entry.outcome ? (
             <div className="mt-4 border-t border-white/5 pt-3 grid grid-cols-2 gap-4 text-xs font-mono">
               <div>
-                <div className="text-gray-500">Realized 24h</div>
+                <div className="text-text-mut">Realized 24h</div>
                 <div
                   className={
                     entry.outcome.realizedPctChange >= 0
-                      ? "text-emerald-300"
-                      : "text-rose-300"
+                      ? "text-accent-pnl"
+                      : "text-risk"
                   }
                 >
                   {entry.outcome.realizedPctChange >= 0 ? "+" : ""}
@@ -151,12 +151,12 @@ function DiaryCard({ entry }: { entry: DiaryEntry }) {
                 </div>
               </div>
               <div>
-                <div className="text-gray-500">Counterfactual</div>
+                <div className="text-text-mut">Counterfactual</div>
                 <div
                   className={
                     entry.outcome.counterfactualPctChange >= 0
-                      ? "text-emerald-300"
-                      : "text-rose-300"
+                      ? "text-accent-pnl"
+                      : "text-risk"
                   }
                 >
                   {entry.outcome.counterfactualPctChange >= 0 ? "+" : ""}
@@ -165,7 +165,7 @@ function DiaryCard({ entry }: { entry: DiaryEntry }) {
               </div>
             </div>
           ) : (
-            <p className="mt-4 text-[11px] text-gray-500">
+            <p className="mt-4 text-[11px] text-text-mut">
               Outcome will be recorded ~24h after the decision.
             </p>
           )}
