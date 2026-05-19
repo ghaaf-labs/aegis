@@ -76,7 +76,7 @@ export default function WalletPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Total idle cash</CardTitle>
+          <CardTitle>Total wallet balance</CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-3xl font-bold text-text-hi">
@@ -92,9 +92,9 @@ export default function WalletPage() {
             )}
           </p>
           <p className="text-[11px] font-mono text-text-mut mt-3">
-            Idle cash sits in Circle Gateway across the chains below. Use the
-            Deploy idle cash button on the Dashboard to allocate it across your
-            target weights.
+            Undeployed cash sits in Circle Gateway across the chains below. Use
+            the &quot;Deploy wallet balance&quot; button on the Dashboard to
+            allocate it across your target weights.
           </p>
         </CardContent>
       </Card>
@@ -149,9 +149,9 @@ function ChainCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center justify-between">
+        <CardTitle className="flex items-center justify-between gap-3">
           <span>{label}</span>
-          <span className="text-[10px] font-mono text-text-mut uppercase tracking-wider">
+          <span className="text-sm font-mono text-accent-pnl tabular-nums">
             {formatCurrency(total)}
           </span>
         </CardTitle>

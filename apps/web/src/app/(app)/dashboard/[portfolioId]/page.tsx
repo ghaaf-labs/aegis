@@ -71,7 +71,7 @@ export default function PortfolioDashboardPage() {
       // the UI looks like a crash. Map known signatures to a friendlier
       // "agent hiccup, try again" message.
       const friendly = /parse strategist proposal|json|JSON/i.test(raw)
-        ? "Agent had a formatting hiccup. Click Deploy idle cash again — the second pass usually succeeds."
+        ? "Agent had a formatting hiccup. Click Deploy wallet balance again — the second pass usually succeeds."
         : raw;
       setDeployError(friendly);
       setDeploying(false);
@@ -147,7 +147,7 @@ export default function PortfolioDashboardPage() {
             ) : (
               <>
                 <Rocket className="w-4 h-4 mr-2" />
-                Deploy idle cash
+                Deploy wallet balance
               </>
             )}
           </Button>

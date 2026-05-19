@@ -34,7 +34,7 @@ export function RiskScoreCard() {
           </div>
           <p className="text-[11px] text-gray-500 leading-relaxed">
             Concentration, volatility and drift are computed once positions are
-            live. Deploy idle cash to populate the score.
+            live. Deploy your wallet balance to populate the score.
           </p>
           <div className="pt-3 border-t border-white/10">
             <ProvenanceLine
