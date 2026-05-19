@@ -316,7 +316,9 @@ export function ApprovalModal({
 
           <div className="bg-black/40 border border-white/5 p-3 text-xs font-mono mb-4">
             <div className="flex justify-between text-gray-400">
-              <span>Paymaster (USDC gas)</span>
+              <span title="Indicative gas estimate — not a binding quote. Actual settlement fee is published in the trace once the leg confirms.">
+                Paymaster (USDC gas)*
+              </span>
               <span className="text-emerald-300">
                 ≈ ${estimatedFeeUsdc.toFixed(4)} USDC
               </span>

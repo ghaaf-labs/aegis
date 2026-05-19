@@ -28,6 +28,10 @@ pub struct FeeEstimate {
     pub action: String,
     pub fee_usdc: f64,
     pub via: &'static str,
+    /// True when the value is a deterministic stub rather than a live RPC quote.
+    /// The UI surfaces "indicative" alongside the figure so users don't treat
+    /// the number as a binding quote.
+    pub is_indicative: bool,
 }
 
 /// Best-effort USDC fee estimate. In mock mode (default for hackathon) the
@@ -63,6 +67,10 @@ pub async fn estimate(
         action: action.to_string(),
         fee_usdc,
         via: "Circle Paymaster",
+        // Both branches return the same stub today — live RPC fee fetch is
+        // tracked under F-PAYMASTER-1. Always flag indicative so the UI
+        // can render an asterisk and tooltip explaining "not a binding quote".
+        is_indicative: true,
     })
 }
 

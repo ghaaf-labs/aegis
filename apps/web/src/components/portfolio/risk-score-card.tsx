@@ -11,9 +11,44 @@ export function RiskScoreCard() {
 
   if (!portfolio) return null;
 
+  // risk_score = 50 is the DB default — never updated by risk_engine yet.
+  // When nothing's invested, show "—" with a clarifying note instead of a
+  // bright "Moderate" badge that suggests the agent assessed real risk.
+  const isUninvested = portfolio.totalValueUsd < 0.5;
+
+  if (isUninvested) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Shield className="w-3.5 h-3.5" />
+            Risk Score
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-baseline justify-between mb-2">
+            <span className="text-2xl font-bold text-text-mut">—</span>
+            <span className="text-xs font-mono text-text-mut">
+              awaiting deploy
+            </span>
+          </div>
+          <p className="text-[11px] text-gray-500 leading-relaxed">
+            Concentration, volatility and drift are computed once positions are
+            live. Deploy idle cash to populate the score.
+          </p>
+          <div className="pt-3 border-t border-white/10">
+            <ProvenanceLine
+              source="risk engine · concentration + vol + drift"
+              freshness="awaiting first deploy"
+            />
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   const score = portfolio.riskScore;
   const pct = (score / 100) * 100;
-
   const label = score < 30 ? "Low Risk" : score < 60 ? "Moderate" : "High Risk";
   const color = score < 30 ? "#10b981" : score < 60 ? "#f59e0b" : "#ef4444";
 
@@ -70,7 +105,7 @@ export function RiskScoreCard() {
             <span
               className={`text-[10px] ml-2 ${isVeryStale ? "text-red-400" : "text-yellow-400"}`}
             >
-              {isVeryStale ? "stale" : "stale"}
+              stale
             </span>
           )}
         </div>

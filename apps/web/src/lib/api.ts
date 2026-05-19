@@ -577,6 +577,7 @@ export const ratesApi = {
       action: string;
       feeUsdc: number;
       via: string;
+      isIndicative?: boolean;
     }>(
       `/paymaster/estimate?chain=${chain}&action=${encodeURIComponent(action)}`,
     ),
