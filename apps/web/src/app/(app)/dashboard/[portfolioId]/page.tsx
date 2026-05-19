@@ -2,20 +2,22 @@
 
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import { Loader2, Rocket } from "lucide-react";
 import { PortfolioSummaryCard } from "@/components/dashboard/portfolio-summary-card";
 import { AllocationChart } from "@/components/dashboard/allocation-chart";
 import { AssetTable } from "@/components/dashboard/asset-table";
 import { AgentReasoningFeed } from "@/components/agent/reasoning-feed";
 import { PerformanceChart } from "@/components/dashboard/performance-chart";
 import { MarketOverview } from "@/components/dashboard/market-overview";
-import { DiaryVisibilityToggle } from "@/components/settings/diary-visibility-toggle";
-import { DigestOptIn } from "@/components/settings/digest-opt-in";
 import { TrustabilityCard } from "@/components/dashboard/trustability-card";
+import { IdleCashCard } from "@/components/dashboard/idle-cash-card";
 import { LivePill } from "@/components/realtime/live-pill";
-import { portfolioApi } from "@/lib/api";
-import { useApiQuery } from "@/lib/use-api-query";
-import { usePortfolioStore } from "@/stores/portfolio";
+import { FaucetButton } from "@/components/wallet/faucet-button";
+import { BrutalButton } from "@aegis/ui";
+import { rebalanceApi } from "@/lib/api";
+import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
+import { formatCurrency } from "@/lib/utils";
 
 const stagger = { visible: { transition: { staggerChildren: 0.08 } } };
 const fadeUp = {
@@ -35,22 +37,47 @@ export default function PortfolioDashboardPage() {
 
   useEffect(() => {
     if (params?.portfolioId) setActive(params.portfolioId);
+    // Allocation hydration is handled by PortfolioLoader (mounted in the
+    // (app) layout) — it watches activePortfolioId and re-fetches detail.
   }, [params?.portfolioId, setActive]);
 
-  const diaryQuery = useApiQuery(
-    `portfolio.diaryPublic.${params?.portfolioId ?? ""}`,
-    () => portfolioApi.getDiaryPublic(params!.portfolioId),
-    { enabled: !!params?.portfolioId },
-  );
-  const [localDiaryPublic, setLocalDiaryPublic] = useState<boolean | null>(
-    null,
-  );
-  const diaryPublic = localDiaryPublic ?? diaryQuery.data?.diaryPublic ?? false;
+  const unifiedUsdc = usePortfolioStore((s) => s.unifiedUsdc);
+  const unifiedEurc = usePortfolioStore((s) => s.unifiedEurc);
+  const wallet = usePortfolioStore((s) => s.wallet);
+  const snapshot = usePortfolioStore((s) => s.marketSnapshot);
+  const activePortfolio = useActivePortfolio();
+  const router = useRouter();
+  const [deploying, setDeploying] = useState(false);
+  const [deployError, setDeployError] = useState<string | null>(null);
 
-  const [storedEmail, setStoredEmail] = useState("");
-  useEffect(() => {
-    setStoredEmail(localStorage.getItem("aegis_email") ?? "");
-  }, []);
+  const eurcUsd =
+    snapshot?.assets.find((a) => a.symbol === "EURC")?.priceUsd ?? 1.085;
+  const idleCashUsd = unifiedUsdc + unifiedEurc * eurcUsd;
+  const investedUsd = activePortfolio?.totalValueUsd ?? 0;
+  const showFaucet = !!wallet && unifiedUsdc === 0 && unifiedEurc === 0;
+  const showDeploy = idleCashUsd > 5 && investedUsd <= 5 && !!activePortfolio;
+
+  const handleDeploy = async () => {
+    if (!activePortfolio) return;
+    setDeploying(true);
+    setDeployError(null);
+    try {
+      const planned = await rebalanceApi.plan(activePortfolio.id);
+      router.push(`/rebalance/${planned.rebalanceId}`);
+    } catch (e) {
+      const raw =
+        e instanceof Error ? e.message : "Could not build deploy plan";
+      // The strategist occasionally returns malformed JSON; the backend then
+      // raises a 500 with the raw model output in the body. Dumping that into
+      // the UI looks like a crash. Map known signatures to a friendlier
+      // "agent hiccup, try again" message.
+      const friendly = /parse strategist proposal|json|JSON/i.test(raw)
+        ? "Agent had a formatting hiccup. Click Deploy wallet balance again — the second pass usually succeeds."
+        : raw;
+      setDeployError(friendly);
+      setDeploying(false);
+    }
+  };
 
   return (
     <motion.div
@@ -69,11 +96,70 @@ export default function PortfolioDashboardPage() {
         <LivePill />
       </motion.div>
 
+      {showFaucet && (
+        <motion.div
+          variants={fadeUp}
+          className="border-brutal border-accent-agent/40 bg-accent-agent/5 p-4 rounded-sharp flex flex-wrap items-center justify-between gap-3"
+        >
+          <div>
+            <p className="text-sm font-semibold text-text-hi font-mono">
+              Empty wallet — fund with testnet USDC to drive the agent
+            </p>
+            <p className="text-xs text-text-lo font-mono mt-1">
+              Claims 100 USDC from Circle&apos;s Arc Sepolia faucet. Required
+              before rebalances + agent decisions move real positions.
+            </p>
+          </div>
+          <FaucetButton />
+        </motion.div>
+      )}
+
+      {showDeploy && (
+        <motion.div
+          variants={fadeUp}
+          className="border-brutal border-accent-pnl/40 bg-accent-pnl/5 p-4 rounded-sharp flex flex-wrap items-center justify-between gap-3"
+        >
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-text-hi font-mono">
+              Deploy your {formatCurrency(idleCashUsd)} wallet balance into the
+              target mix
+            </p>
+            <p className="text-xs text-text-lo font-mono mt-1">
+              The agent will build a CCTP + Hooks plan that allocates Gateway
+              USDC and EURC across your{" "}
+              {activePortfolio.allocations?.length ?? 0} target assets. Nothing
+              executes until you approve on the next screen.
+            </p>
+            {deployError && (
+              <p className="text-xs text-risk font-mono mt-2">{deployError}</p>
+            )}
+          </div>
+          <BrutalButton
+            variant="pnl"
+            onClick={() => void handleDeploy()}
+            disabled={deploying}
+          >
+            {deploying ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Building plan…
+              </>
+            ) : (
+              <>
+                <Rocket className="w-4 h-4 mr-2" />
+                Deploy wallet balance
+              </>
+            )}
+          </BrutalButton>
+        </motion.div>
+      )}
+
       <motion.div
         variants={fadeUp}
-        className="grid grid-cols-1 md:grid-cols-3 gap-4"
+        className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"
       >
         <PortfolioSummaryCard />
+        <IdleCashCard />
         <AllocationChart />
         <MarketOverview />
       </motion.div>
@@ -92,29 +178,6 @@ export default function PortfolioDashboardPage() {
       >
         <AssetTable />
         <AgentReasoningFeed />
-      </motion.div>
-
-      <motion.div
-        variants={fadeUp}
-        className="grid grid-cols-1 md:grid-cols-2 gap-4"
-      >
-        <DigestOptIn defaultEmail={storedEmail} />
-        <div /> {/* spacer to keep grid alignment until more settings land */}
-      </motion.div>
-
-      <motion.div variants={fadeUp}>
-        <DiaryVisibilityToggle
-          key={`diary-${params?.portfolioId}-${diaryPublic}`}
-          initialPublic={diaryPublic}
-          onChange={async (next) => {
-            if (!params?.portfolioId) return;
-            const res = await portfolioApi.setDiaryPublic(
-              params.portfolioId,
-              next,
-            );
-            setLocalDiaryPublic(res.diaryPublic);
-          }}
-        />
       </motion.div>
     </motion.div>
   );

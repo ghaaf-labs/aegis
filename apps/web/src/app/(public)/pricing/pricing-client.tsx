@@ -48,19 +48,19 @@ export function PricingPageClient() {
   const currentTier: Tier = subscription?.tier ?? "free";
 
   return (
-    <div className="min-h-screen bg-[#030712] text-white">
+    <div className="min-h-screen bg-[#030712] text-text-hi">
       <nav className="flex items-center justify-between px-6 py-5 max-w-7xl mx-auto border-b border-white/5">
         <Link href="/" className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center">
-            <Shield className="w-4 h-4 text-white" />
+            <Shield className="w-4 h-4 text-text-hi" />
           </div>
           <span className="font-bold text-lg tracking-tight">Aegis</span>
         </Link>
         <div className="flex items-center gap-3 text-sm">
-          <Link href="/pricing" className="text-white font-medium">
+          <Link href="/pricing" className="text-text-hi font-medium">
             Pricing
           </Link>
-          <Link href="/explore" className="text-gray-400 hover:text-white">
+          <Link href="/explore" className="text-text-lo hover:text-text-hi">
             Demo
           </Link>
           <Link href="/signup">
@@ -73,7 +73,7 @@ export function PricingPageClient() {
         <h1 className="text-5xl font-bold tracking-tight mb-4">
           Stablecoin-native pricing
         </h1>
-        <p className="text-lg text-gray-400 max-w-2xl mx-auto">
+        <p className="text-lg text-text-lo max-w-2xl mx-auto">
           Pay in USDC. Billed monthly via Circle Nanopayments. No hidden swap
           spread. No charging on failed execution.
         </p>
@@ -98,7 +98,7 @@ export function PricingPageClient() {
           <h2 className="text-2xl font-bold mb-3">
             Free forever — upgrade only when it pays off.
           </h2>
-          <p className="text-sm text-gray-400 mb-6 max-w-xl mx-auto">
+          <p className="text-sm text-text-lo mb-6 max-w-xl mx-auto">
             Every approval modal shows the USDC fee upfront. Failed legs are
             refunded automatically. You always see which model decided what.
           </p>

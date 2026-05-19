@@ -69,16 +69,18 @@ async fn fetch_live(state: &AppState, symbol: &str) -> anyhow::Result<String> {
 }
 
 fn synthetic_feed(symbol: &str) -> String {
-    // Deterministic per-symbol stub so the agent has *something* to reason
-    // over in dev. Phrased neutrally so it doesn't bias the strategist.
+    // When no live news source is configured we return an empty result with
+    // an explicit `unavailable` source. Previous code shipped three neutral
+    // headlines (e.g. "no notable narrative shifts") which the strategist
+    // would parse as a real "no news, market quiet" signal — biasing it
+    // toward inaction. An empty headlines array + explicit source flag lets
+    // the strategist see "news tool not configured" and reason accordingly
+    // rather than treat absence as a market read.
     serde_json::json!({
         "symbol": symbol,
-        "headlines": [
-            format!("No notable {symbol} narrative shifts in the last 24h."),
-            format!("{symbol} on-chain activity tracking within prior-week band."),
-            "Regulatory environment unchanged.",
-        ],
-        "source": "synthetic",
+        "headlines": [],
+        "source": "unavailable",
+        "note": "fetch_news has no live data source configured; treat as no signal, not as 'market is quiet'.",
     })
     .to_string()
 }
@@ -114,7 +116,10 @@ mod tests {
         let raw = synthetic_feed("BTC");
         let v: Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(v["symbol"], "BTC");
-        assert!(!v["headlines"].as_array().unwrap().is_empty());
+        // Explicit unavailable signal rather than fake headlines so the
+        // strategist doesn't read absence as "no news, market quiet".
+        assert_eq!(v["source"], "unavailable");
+        assert!(v["headlines"].as_array().unwrap().is_empty());
     }
 
     #[test]

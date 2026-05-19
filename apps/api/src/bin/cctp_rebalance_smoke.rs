@@ -108,12 +108,14 @@ async fn main() -> anyhow::Result<()> {
         .build()?;
     let sse_tx = sse::new_channel();
     let prompts = Arc::new(PromptRegistry::load().await);
+    let prices = aegis_api::modules::prices::build_from_config(http.clone(), &cfg);
     let state: aegis_api::router::AppState = Arc::new(AppStateInner {
         db: pool.clone(),
         config: cfg.clone(),
         http,
         sse: sse_tx,
         prompts,
+        prices,
     });
 
     let portfolio_id: Uuid = PORTFOLIO_ID.parse()?;

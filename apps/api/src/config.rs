@@ -42,6 +42,14 @@ pub struct Config {
 
     pub coingecko_api_key: Option<String>,
 
+    /// Price provider used by market_data, peg_monitor and fx. Selectable so
+    /// a runtime flip in `.env.local` rolls back to CoinGecko if a new provider
+    /// misbehaves. Accepted values: "defillama" | "pyth" | "coingecko".
+    pub price_provider_primary: String,
+    /// Fallback provider used by the in-process circuit breaker once the
+    /// primary trips its failure threshold. "none" disables fallback.
+    pub price_provider_fallback: String,
+
     /// Cadence (seconds) for the SSE price ticker. Lower = more "realtime"
     /// feel; higher = friendlier to upstream rate limits.
     pub sse_price_tick_secs: u64,
@@ -51,6 +59,10 @@ pub struct Config {
     pub circle_base_url: String,
     #[allow(dead_code)]
     pub circle_env: String,
+    /// Circle Wallets App ID from Console → Wallets → User-Controlled
+    /// Configurator. Required when `!circle_mock` so the browser SDK can be
+    /// initialised with the right tenant. Empty in mock mode.
+    pub circle_app_id: String,
     /// When true, the wallet module uses an in-process mock provider instead
     /// of hitting Circle WaaS. Keeps local dev moving when the sandbox is
     /// unreachable or when running CI without a key.
@@ -264,6 +276,11 @@ impl Config {
 
             coingecko_api_key: std::env::var("COINGECKO_API_KEY").ok(),
 
+            price_provider_primary: std::env::var("PRICE_PROVIDER_PRIMARY")
+                .unwrap_or_else(|_| "defillama".into()),
+            price_provider_fallback: std::env::var("PRICE_PROVIDER_FALLBACK")
+                .unwrap_or_else(|_| "pyth".into()),
+
             sse_price_tick_secs: parse_or("SSE_PRICE_TICK_SECS", 5)?,
 
             // Circle is optional in dev (covered by MOCK_CIRCLE) so we don't
@@ -272,6 +289,7 @@ impl Config {
             circle_base_url: std::env::var("CIRCLE_BASE_URL")
                 .unwrap_or_else(|_| "https://api.circle.com".into()),
             circle_env: std::env::var("CIRCLE_ENV").unwrap_or_else(|_| "sandbox".into()),
+            circle_app_id: std::env::var("CIRCLE_APP_ID").unwrap_or_default(),
             circle_mock: parse_or("MOCK_CIRCLE", true)?,
 
             arc_rpc_url: std::env::var("ARC_RPC_URL")
@@ -370,10 +388,17 @@ impl Config {
                 );
             }
         }
-        if !self.circle_mock && self.circle_api_key.trim().is_empty() {
-            anyhow::bail!(
-                "MOCK_CIRCLE=false but CIRCLE_API_KEY is empty; set it or flip MOCK_CIRCLE=true"
-            );
+        if !self.circle_mock {
+            if self.circle_api_key.trim().is_empty() {
+                anyhow::bail!(
+                    "MOCK_CIRCLE=false but CIRCLE_API_KEY is empty; set it or flip MOCK_CIRCLE=true"
+                );
+            }
+            if self.circle_app_id.trim().is_empty() {
+                anyhow::bail!(
+                    "MOCK_CIRCLE=false but CIRCLE_APP_ID is empty; create a Wallet App in Circle Console → Wallets → User-Controlled and set CIRCLE_APP_ID"
+                );
+            }
         }
         if self.billing_v2_enabled {
             if self.nanopayments_seller_address.trim().is_empty() {
@@ -465,10 +490,13 @@ mod tests {
             openrouter_app_name: "Aegis".into(),
             openrouter_app_url: None,
             coingecko_api_key: None,
+            price_provider_primary: "defillama".into(),
+            price_provider_fallback: "pyth".into(),
             sse_price_tick_secs: 5,
             circle_api_key: "circle-key".into(),
             circle_base_url: "https://api.circle.com".into(),
             circle_env: "sandbox".into(),
+            circle_app_id: "test-app-id".into(),
             circle_mock: true,
             arc_rpc_url: "https://testnet.arc.network".into(),
             base_rpc_url: "https://sepolia.base.org".into(),

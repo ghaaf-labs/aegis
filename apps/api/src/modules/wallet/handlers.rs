@@ -3,8 +3,7 @@ use axum::response::IntoResponse;
 use axum::{extract::State, Extension, Json};
 
 use super::models::{
-    LoginPasskeyRequest, OtpStartRequest, OtpStartResponse, OtpVerifyRequest,
-    RegisterPasskeyRequest, WalletAuthResponse, WalletUserPublic,
+    InitWalletRequest, WalletAuthResponse, WalletStatusResponse, WalletUserPublic,
 };
 use super::provider::{CircleProvider, MockProvider};
 use super::service::WalletService;
@@ -40,79 +39,64 @@ fn auth_response(
     (status, headers, Json(resp))
 }
 
-pub async fn create_passkey(
+/// Signup — body: `{ email, referrerHandle? }`. Returns the W3S
+/// `UserTokenBundle` the browser SDK needs to complete the PIN ceremony, plus
+/// a JWT session cookie bound to the new user. Wallet addresses arrive
+/// asynchronously via polling `GET /auth/wallet/status`.
+pub async fn create(
     State(state): State<AppState>,
-    Json(body): Json<RegisterPasskeyRequest>,
+    Json(body): Json<InitWalletRequest>,
 ) -> crate::error::Result<axum::response::Response> {
     let resp = if state.config.circle_mock {
         let p = MockProvider;
         let svc = WalletService::new(&state.db, &p, &state.config, &state.sse);
-        svc.create_with_passkey(&body.email, &body.passkey_attestation)
-            .await?
+        svc.init_signup(&body.email).await?
     } else {
         let p = CircleProvider::new(&state.http, &state.config);
         let svc = WalletService::new(&state.db, &p, &state.config, &state.sse);
-        svc.create_with_passkey(&body.email, &body.passkey_attestation)
-            .await?
+        svc.init_signup(&body.email).await?
     };
     maybe_credit_referral(&state, body.referrer_handle.as_deref(), &resp).await;
     Ok(auth_response(&state.config, StatusCode::CREATED, resp).into_response())
 }
 
-pub async fn login_passkey(
+/// Login — body: `{ email }`. Returning users get a fresh `UserTokenBundle`
+/// (no challenge_id; PIN was set on signup) and a refreshed JWT cookie.
+pub async fn login(
     State(state): State<AppState>,
-    Json(body): Json<LoginPasskeyRequest>,
+    Json(body): Json<InitWalletRequest>,
 ) -> crate::error::Result<axum::response::Response> {
     let resp = if state.config.circle_mock {
         let p = MockProvider;
         let svc = WalletService::new(&state.db, &p, &state.config, &state.sse);
-        svc.login_with_passkey(&body.email, &body.passkey_assertion)
-            .await?
+        svc.init_login(&body.email).await?
     } else {
         let p = CircleProvider::new(&state.http, &state.config);
         let svc = WalletService::new(&state.db, &p, &state.config, &state.sse);
-        svc.login_with_passkey(&body.email, &body.passkey_assertion)
-            .await?
+        svc.init_login(&body.email).await?
     };
     Ok(auth_response(&state.config, StatusCode::OK, resp).into_response())
 }
 
-pub async fn start_otp(
+/// Polled by the browser after the SDK completes the challenge. Returns the
+/// wallet info once Circle has provisioned both chains, otherwise
+/// `{ wallet: null }` so the browser keeps polling.
+pub async fn status(
     State(state): State<AppState>,
-    Json(body): Json<OtpStartRequest>,
-) -> crate::error::Result<Json<OtpStartResponse>> {
+    Extension(claims): Extension<Claims>,
+) -> crate::error::Result<Json<WalletStatusResponse>> {
     let resp = if state.config.circle_mock {
         let p = MockProvider;
         let svc = WalletService::new(&state.db, &p, &state.config, &state.sse);
-        svc.start_otp(&body.email).await?
+        svc.fetch_wallet_status(claims.sub).await?
     } else {
         let p = CircleProvider::new(&state.http, &state.config);
         let svc = WalletService::new(&state.db, &p, &state.config, &state.sse);
-        svc.start_otp(&body.email).await?
+        svc.fetch_wallet_status(claims.sub).await?
     };
     Ok(Json(resp))
 }
 
-pub async fn verify_otp(
-    State(state): State<AppState>,
-    Json(body): Json<OtpVerifyRequest>,
-) -> crate::error::Result<axum::response::Response> {
-    let resp = if state.config.circle_mock {
-        let p = MockProvider;
-        let svc = WalletService::new(&state.db, &p, &state.config, &state.sse);
-        svc.verify_otp(&body.email, &body.code).await?
-    } else {
-        let p = CircleProvider::new(&state.http, &state.config);
-        let svc = WalletService::new(&state.db, &p, &state.config, &state.sse);
-        svc.verify_otp(&body.email, &body.code).await?
-    };
-    maybe_credit_referral(&state, body.referrer_handle.as_deref(), &resp).await;
-    Ok(auth_response(&state.config, StatusCode::OK, resp).into_response())
-}
-
-/// Best-effort referral attribution. Never fails the wallet-create response;
-/// logs and moves on. New-user-only — `record_referral` is idempotent so a
-/// re-login by the same email doesn't re-credit.
 async fn maybe_credit_referral(
     state: &AppState,
     referrer_handle: Option<&str>,
@@ -122,7 +106,7 @@ async fn maybe_credit_referral(
         return;
     };
     let handle = handle.trim().to_ascii_lowercase();
-    if handle.is_empty() {
+    if handle.is_empty() || !resp.is_new_user {
         return;
     }
     if let Err(e) = crate::modules::billing::service::record_referral(
@@ -158,8 +142,7 @@ pub async fn me(
     }))
 }
 
-/// Clears the session cookie. Frontend can also just forget the localStorage
-/// fallback after calling this.
+/// Clears the session cookie.
 pub async fn logout(State(state): State<AppState>) -> impl IntoResponse {
     let mut headers = HeaderMap::new();
     let cleared = format!(

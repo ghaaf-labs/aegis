@@ -10,7 +10,7 @@ use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLay
 use crate::middleware::auth::require_auth;
 use crate::modules::{
     agent, ai, analytics, backtest, billing, diary, digest, faucet, fx, gateway, market_data,
-    observability, paymaster, portfolio, rebalance, risk_engine, scheduler,
+    observability, paymaster, portfolio, prices, rebalance, risk_engine, scheduler,
     sse::{self, SseSender},
     strategies, tax, treasury, trustability, wallet,
 };
@@ -24,6 +24,7 @@ pub struct AppStateInner {
     pub http: reqwest::Client,
     pub sse: SseSender,
     pub prompts: Arc<ai::PromptRegistry>,
+    pub prices: Arc<dyn prices::PriceProvider>,
 }
 
 pub async fn build(db: Db, config: Config) -> Router {
@@ -47,6 +48,7 @@ pub async fn build(db: Db, config: Config) -> Router {
 
     let sse_tx = sse::new_channel();
     let prompts = Arc::new(ai::PromptRegistry::load().await);
+    let price_provider = prices::build_from_config(http.clone(), &config);
 
     let state = Arc::new(AppStateInner {
         db: db.clone(),
@@ -54,11 +56,12 @@ pub async fn build(db: Db, config: Config) -> Router {
         http: http.clone(),
         sse: sse_tx.clone(),
         prompts,
+        prices: price_provider,
     });
 
     // Realtime background tasks
     sse::spawn_price_ticker(
-        http.clone(),
+        state.prices.clone(),
         Arc::new(config.clone()),
         sse_tx.clone(),
         db.clone(),
@@ -80,6 +83,7 @@ pub async fn build(db: Db, config: Config) -> Router {
     let authed = Router::new()
         .route("/auth/me", get(wallet::handlers::me))
         .route("/auth/logout", post(wallet::handlers::logout))
+        .route("/auth/wallet/status", get(wallet::handlers::status))
         .route("/faucet/usdc", post(faucet::handlers::claim_usdc))
         .route("/gateway/balance", get(gateway::handlers::balance))
         .route("/analytics/event", post(analytics::handlers::track))
@@ -212,16 +216,11 @@ pub async fn build(db: Db, config: Config) -> Router {
         .route("/health", get(health))
         .route("/metrics", get(observability::handlers::metrics))
         // Wallet auth — public (cookies + token set on success).
-        .route(
-            "/auth/wallet/create",
-            post(wallet::handlers::create_passkey),
-        )
-        .route("/auth/wallet/login", post(wallet::handlers::login_passkey))
-        .route("/auth/wallet/otp/start", post(wallet::handlers::start_otp))
-        .route(
-            "/auth/wallet/otp/verify",
-            post(wallet::handlers::verify_otp),
-        )
+        // W3S User-Controlled flow: `create` issues a UserTokenBundle the
+        // browser SDK uses to complete PIN setup; `status` is then polled
+        // (authed) until the wallet addresses arrive.
+        .route("/auth/wallet/create", post(wallet::handlers::create))
+        .route("/auth/wallet/login", post(wallet::handlers::login))
         // Market data — public.
         .route("/market/snapshot", get(market_data::handlers::snapshot))
         .route("/market/prices", get(market_data::handlers::prices))

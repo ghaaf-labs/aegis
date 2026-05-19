@@ -1,5 +1,4 @@
 use chrono::Utc;
-use reqwest::Client;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::warn;
@@ -9,29 +8,32 @@ use super::SseSender;
 use crate::config::Config;
 use crate::db::Db;
 use crate::modules::market_data::service::persist_price_history;
+use crate::modules::prices::PriceProvider;
 
-/// Spawns a background task that polls market data on a configurable cadence
-/// and broadcasts a `price.tick` for every asset in the snapshot.
+/// Spawns a background task that polls the price provider on a configurable
+/// cadence and broadcasts a `price.tick` for every asset in the snapshot.
 ///
 /// The cadence is `Config::sse_price_tick_secs`. Failures are logged and the
 /// loop continues; a single upstream hiccup never crashes the broadcaster.
-pub fn spawn_price_ticker(http: Client, config: Arc<Config>, sse: SseSender, db: Db) {
+pub fn spawn_price_ticker(
+    prices: Arc<dyn PriceProvider>,
+    config: Arc<Config>,
+    sse: SseSender,
+    db: Db,
+) {
     let cadence = Duration::from_secs(config.sse_price_tick_secs.max(1));
 
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(cadence);
-        // Skip the immediate first tick — we don't want to fire on startup
-        // before the API has finished binding.
         interval.tick().await;
 
         loop {
             interval.tick().await;
 
-            // Always fetch + persist for Phase 1 (price_history must be dense even with no UI open).
-            // Only the *broadcast* part is skipped when no one is listening.
-            match crate::modules::market_data::service::fetch_snapshot(&http, &config).await {
+            match crate::modules::market_data::service::fetch_snapshot(prices.as_ref()).await {
                 Ok(snapshot) => {
-                    if let Err(e) = persist_price_history(&db, &snapshot.assets).await {
+                    let source = prices.name();
+                    if let Err(e) = persist_price_history(&db, &snapshot.assets, source).await {
                         warn!("price_history persist failed (non-fatal): {e:#}");
                     }
 
@@ -42,7 +44,7 @@ pub fn spawn_price_ticker(http: Client, config: Arc<Config>, sse: SseSender, db:
                                 symbol: asset.symbol,
                                 price_usd: asset.price_usd,
                                 change_24h: asset.change_24h,
-                                source: "coingecko".into(),
+                                source: source.into(),
                                 fetched_at: captured.max(Utc::now()),
                             };
                             let _ = sse.send(SseEvent::PriceTick(tick));

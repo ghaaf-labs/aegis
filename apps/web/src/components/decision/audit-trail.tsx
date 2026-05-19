@@ -112,7 +112,7 @@ export function AuditTrail({ data }: { data: DecisionFull }) {
                     <Link
                       key={id}
                       href={`/about/constitution#${id}`}
-                      className="px-2 py-0.5 text-[10px] font-mono border border-cyan-500/40 text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/20"
+                      className="px-2 py-0.5 text-[10px] font-mono border border-cyan-500/40 text-accent-agent bg-cyan-500/10 hover:bg-cyan-500/20"
                     >
                       {id}
                     </Link>
@@ -209,9 +209,9 @@ export function AuditTrail({ data }: { data: DecisionFull }) {
                   <span
                     className={
                       leg.status === "confirmed"
-                        ? "text-cyan-300"
+                        ? "text-accent-agent"
                         : leg.status === "failed"
-                          ? "text-rose-300"
+                          ? "text-risk"
                           : "text-text-lo"
                     }
                   >
@@ -222,7 +222,7 @@ export function AuditTrail({ data }: { data: DecisionFull }) {
                       href={`${EXPLORERS[leg.destChain ?? leg.srcChain ?? "base"] ?? EXPLORERS.base}${leg.txHash}`}
                       target="_blank"
                       rel="noreferrer"
-                      className="text-cyan-300 underline-offset-4 hover:underline"
+                      className="text-accent-agent underline-offset-4 hover:underline"
                     >
                       {leg.txHash.slice(0, 8)}…
                     </a>

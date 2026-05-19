@@ -78,7 +78,7 @@ const FEATURES = [
 
 export default function LandingPage() {
   return (
-    <div className="min-h-screen bg-[#030712] text-white overflow-hidden">
+    <div className="min-h-screen bg-[#030712] text-text-hi overflow-hidden">
       {/* Gradient orbs */}
       <div className="fixed inset-0 pointer-events-none">
         <div className="absolute top-[-20%] left-[10%] w-[600px] h-[600px] bg-blue-600/20 rounded-full blur-[120px]" />
@@ -161,7 +161,7 @@ export default function LandingPage() {
           animate="visible"
           variants={fadeUp}
           custom={2}
-          className="text-xl text-gray-400 max-w-2xl mx-auto mb-6 leading-relaxed"
+          className="text-xl text-text-lo max-w-2xl mx-auto mb-6 leading-relaxed"
         >
           Stablecoin-native portfolio agent. Set a goal, approve the moves — a
           multi-model AI executes on Arc + Base via Circle&apos;s stack, with
@@ -173,7 +173,7 @@ export default function LandingPage() {
           animate="visible"
           variants={fadeUp}
           custom={3}
-          className="flex flex-wrap items-center justify-center gap-2 mb-10 text-[11px] font-mono tracking-wide text-gray-500"
+          className="flex flex-wrap items-center justify-center gap-2 mb-10 text-[11px] font-mono tracking-wide text-text-mut"
         >
           {[
             "Circle Wallets",
@@ -263,7 +263,7 @@ export default function LandingPage() {
           <h2 className="text-4xl font-bold mb-4">
             Intelligence at every layer
           </h2>
-          <p className="text-gray-400 text-lg max-w-xl mx-auto">
+          <p className="text-text-lo text-lg max-w-xl mx-auto">
             Built with a modular AI agent architecture — from signal ingestion
             to portfolio execution.
           </p>
@@ -282,8 +282,10 @@ export default function LandingPage() {
               <div className="w-10 h-10 rounded-sharp bg-accent-agent/10 flex items-center justify-center mb-4 group-hover:bg-accent-agent/20 transition-colors border-brutal border-accent-agent/20">
                 <feature.icon className="w-5 h-5 text-accent-agent" />
               </div>
-              <h3 className="font-semibold text-white mb-2">{feature.title}</h3>
-              <p className="text-sm text-gray-400 leading-relaxed">
+              <h3 className="font-semibold text-text-hi mb-2">
+                {feature.title}
+              </h3>
+              <p className="text-sm text-text-lo leading-relaxed">
                 {feature.description}
               </p>
             </motion.div>
@@ -302,7 +304,7 @@ export default function LandingPage() {
           <h2 className="text-4xl font-bold mb-4">
             Ready to let AI manage your portfolio?
           </h2>
-          <p className="text-gray-400 mb-8">
+          <p className="text-text-lo mb-8">
             Set your risk tolerance. Connect your portfolio. Let Aegis do the
             rest.
           </p>
@@ -316,10 +318,10 @@ export default function LandingPage() {
       </section>
 
       {/* Footer */}
-      <footer className="relative z-10 border-t border-white/5 px-6 py-8 text-center text-sm text-gray-600">
+      <footer className="relative z-10 border-t border-white/5 px-6 py-8 text-center text-sm text-text-mut">
         <div className="flex items-center justify-center gap-2 mb-2">
           <Shield className="w-4 h-4" />
-          <span className="font-semibold text-gray-500">Aegis</span>
+          <span className="font-semibold text-text-mut">Aegis</span>
         </div>
         <p>AI-powered crypto portfolio management. Built for the future.</p>
       </footer>

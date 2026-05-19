@@ -27,10 +27,10 @@ const KIND_LABEL: Record<string, string> = {
 };
 
 const STATUS_CLASSES: Record<LegStatus, string> = {
-  pending: "bg-gray-800 text-gray-400",
-  submitted: "bg-cyan-500/20 text-cyan-300 animate-pulse",
-  confirmed: "bg-cyan-500/20 text-cyan-300",
-  failed: "bg-rose-500/20 text-rose-300",
+  pending: "bg-gray-800 text-text-lo",
+  submitted: "bg-cyan-500/20 text-accent-agent animate-pulse",
+  confirmed: "bg-cyan-500/20 text-accent-agent",
+  failed: "bg-rose-500/20 text-risk",
 };
 
 function explorerUrl(
@@ -58,12 +58,12 @@ export function LegCard({
   const explorer = explorerUrl(destChain ?? srcChain, txHash);
   return (
     <div className="border-2 border-white/10 bg-[#141414] p-4 flex items-start gap-4">
-      <div className="font-mono text-xs text-gray-500 w-6 mt-1">
+      <div className="font-mono text-xs text-text-mut w-6 mt-1">
         {String(legIndex + 1).padStart(2, "0")}
       </div>
       <div className="flex-1">
         <div className="flex items-center gap-2 mb-1">
-          <span className="text-sm font-semibold text-white">
+          <span className="text-sm font-semibold text-text-hi">
             {KIND_LABEL[kind] ?? kind}
           </span>
           <span
@@ -75,35 +75,37 @@ export function LegCard({
             {status}
           </span>
           {kind === "cross_chain_mint" && status === "confirmed" && (
-            <span className="text-[10px] px-1.5 py-0.5 bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 font-mono tracking-wider">
+            <span className="text-[10px] px-1.5 py-0.5 bg-cyan-500/10 border border-cyan-500/30 text-accent-agent font-mono tracking-wider">
               Hook executed
             </span>
           )}
           {kind === "cross_chain_burn" && status === "confirmed" && (
-            <span className="text-[10px] px-1.5 py-0.5 bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 font-mono tracking-wider">
+            <span className="text-[10px] px-1.5 py-0.5 bg-cyan-500/10 border border-cyan-500/30 text-accent-agent font-mono tracking-wider">
               Hook payload sent
             </span>
           )}
         </div>
-        <div className="text-xs text-gray-400 font-mono flex items-center gap-2 flex-wrap">
+        <div className="text-xs text-text-lo font-mono flex items-center gap-2 flex-wrap">
           {srcSymbol ?? "?"}
           {srcChain && (
             <ChainBadge
               chain={srcChain.toUpperCase() as "ARC" | "BASE" | "AVAX"}
             />
           )}
-          <span className="text-gray-600">→</span>
+          <span className="text-text-mut">→</span>
           {destSymbol ?? "?"}
           {destChain && (
             <ChainBadge
               chain={destChain.toUpperCase() as "ARC" | "BASE" | "AVAX"}
             />
           )}
-          <span className="ml-2 text-cyan-400">${amountUsdc.toFixed(2)}</span>
+          <span className="ml-2 text-accent-agent">
+            ${amountUsdc.toFixed(2)}
+          </span>
         </div>
         {explorer && (
           <a
-            className="mt-2 inline-block text-[11px] font-mono text-cyan-400 hover:text-cyan-300 underline"
+            className="mt-2 inline-block text-[11px] font-mono text-accent-agent hover:text-accent-agent underline"
             href={explorer}
             target="_blank"
             rel="noreferrer"
@@ -112,7 +114,7 @@ export function LegCard({
           </a>
         )}
         {failureReason && (
-          <p className="mt-2 text-[11px] text-rose-300 font-mono">
+          <p className="mt-2 text-[11px] text-risk font-mono">
             {failureReason}
           </p>
         )}

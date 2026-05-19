@@ -1,89 +1,33 @@
 use chrono::Utc;
-use reqwest::Client;
-use serde::Deserialize;
 use std::collections::HashMap;
 
 use super::{AssetPrice, MarketSnapshot};
-use crate::config::Config;
 use crate::db::Db;
+use crate::modules::prices::{PriceProvider, SpotQuote, SYMBOLS};
 
-const COINGECKO_IDS: &[(&str, &str)] = &[
-    ("BTC", "bitcoin"),
-    ("ETH", "ethereum"),
-    ("SOL", "solana"),
-    ("BNB", "binancecoin"),
-    ("AVAX", "avalanche-2"),
-    ("LINK", "chainlink"),
-    ("UNI", "uniswap"),
-    ("MATIC", "matic-network"),
-];
-
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct CoinGeckoPrice {
-    usd: Option<f64>,
-    usd_24h_change: Option<f64>,
-    usd_7d_change: Option<f64>,
-    usd_market_cap: Option<f64>,
-    usd_24h_vol: Option<f64>,
+/// Fetch the current spot for every symbol in `SYMBOLS` via the configured
+/// price provider. Drops symbols the provider has no data for, matching the
+/// prior CoinGecko-era behaviour (retired coingecko IDs returned empty maps).
+pub async fn fetch_prices(provider: &dyn PriceProvider) -> anyhow::Result<Vec<AssetPrice>> {
+    let symbols: Vec<&_> = SYMBOLS.iter().collect();
+    let quotes = provider.fetch_spot(&symbols).await?;
+    Ok(quotes.into_iter().map(to_asset_price).collect())
 }
 
-pub async fn fetch_prices(client: &Client, cfg: &Config) -> anyhow::Result<Vec<AssetPrice>> {
-    let ids: Vec<&str> = COINGECKO_IDS.iter().map(|(_, id)| *id).collect();
-    let ids_str = ids.join(",");
-
-    let url = format!(
-        "https://api.coingecko.com/api/v3/simple/price?ids={}&vs_currencies=usd&include_24hr_change=true&include_7d_change=true&include_market_cap=true&include_24hr_vol=true",
-        ids_str
-    );
-
-    let mut req = client.get(&url);
-    if let Some(key) = &cfg.coingecko_api_key {
-        req = req.header("x-cg-demo-api-key", key);
+fn to_asset_price(q: SpotQuote) -> AssetPrice {
+    AssetPrice {
+        symbol: q.ticker.to_string(),
+        price_usd: q.price_usd,
+        change_24h: q.change_24h,
+        change_7d: q.change_7d,
+        market_cap: q.market_cap,
+        volume_24h: q.volume_24h,
+        updated_at: q.observed_at,
     }
-
-    let resp = req.send().await?;
-    let status = resp.status();
-    let body = resp.text().await?;
-    if !status.is_success() {
-        anyhow::bail!(
-            "coingecko {}: {}",
-            status,
-            body.chars().take(300).collect::<String>()
-        );
-    }
-    let raw: HashMap<String, CoinGeckoPrice> = serde_json::from_str(&body).map_err(|e| {
-        anyhow::anyhow!(
-            "coingecko {status} body parse failed: {e}; body: {}",
-            body.chars().take(300).collect::<String>()
-        )
-    })?;
-
-    let prices = COINGECKO_IDS
-        .iter()
-        .filter_map(|(symbol, id)| {
-            let p = raw.get(*id)?;
-            // CoinGecko returns `{}` for retired IDs (e.g. matic-network after
-            // the Polygon→POL migration). Skip those instead of failing the
-            // whole snapshot — every other asset still has prices.
-            let usd = p.usd?;
-            Some(AssetPrice {
-                symbol: symbol.to_string(),
-                price_usd: usd,
-                change_24h: p.usd_24h_change.unwrap_or(0.0),
-                change_7d: p.usd_7d_change.unwrap_or(0.0),
-                market_cap: p.usd_market_cap.unwrap_or(0.0),
-                volume_24h: p.usd_24h_vol.unwrap_or(0.0),
-                updated_at: Utc::now(),
-            })
-        })
-        .collect();
-
-    Ok(prices)
 }
 
-pub async fn fetch_snapshot(client: &Client, cfg: &Config) -> anyhow::Result<MarketSnapshot> {
-    let assets = fetch_prices(client, cfg).await?;
+pub async fn fetch_snapshot(provider: &dyn PriceProvider) -> anyhow::Result<MarketSnapshot> {
+    let assets = fetch_prices(provider).await?;
 
     let btc_cap = assets
         .iter()
@@ -99,37 +43,71 @@ pub async fn fetch_snapshot(client: &Client, cfg: &Config) -> anyhow::Result<Mar
 
     Ok(MarketSnapshot {
         assets,
-        fear_greed_index: 65,
+        fear_greed_index: fetch_fear_greed_index().await,
         total_market_cap_usd: total_cap,
         btc_dominance,
         captured_at: Utc::now(),
     })
 }
 
-/// Persists the current price snapshot into `price_history`.
-/// Called on every successful ticker tick so we have dense data for
-/// correlation, realized vol, outcome analysis and backtests.
-pub async fn persist_price_history(db: &Db, assets: &[AssetPrice]) -> anyhow::Result<()> {
+/// Fetch the crypto Fear & Greed Index from alternative.me — free, no auth,
+/// updated daily. Returns 50 (neutral) if the request fails so we never
+/// surface a misleading bullish/bearish read when we have no real signal.
+/// Previously this was hard-coded to 65 ("Greed") — a lie to every user.
+async fn fetch_fear_greed_index() -> u8 {
+    #[derive(serde::Deserialize)]
+    struct Envelope {
+        data: Vec<Item>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Item {
+        value: String,
+    }
+    match reqwest::Client::new()
+        .get("https://api.alternative.me/fng/?limit=1")
+        .timeout(std::time::Duration::from_secs(3))
+        .send()
+        .await
+        .and_then(|r| r.error_for_status())
+    {
+        Ok(resp) => match resp.json::<Envelope>().await {
+            Ok(e) => e
+                .data
+                .first()
+                .and_then(|i| i.value.parse::<u8>().ok())
+                .unwrap_or(50),
+            Err(_) => 50,
+        },
+        Err(_) => 50,
+    }
+}
+
+/// Persists the current price snapshot into `price_history`. `source` is the
+/// provider name (`provider.name()`) so the column tells the truth about where
+/// each row came from. Called on every successful ticker tick so we have dense
+/// data for correlation, realized vol, outcome analysis and backtests.
+pub async fn persist_price_history(
+    db: &Db,
+    assets: &[AssetPrice],
+    source: &str,
+) -> anyhow::Result<()> {
     if assets.is_empty() {
         return Ok(());
     }
-
-    // Simple bulk insert. For very high frequency we could batch, but 5s cadence
-    // with 8 assets is completely fine for Postgres.
     for asset in assets {
         sqlx::query(
             r#"
             INSERT INTO price_history (symbol, price_usd, fetched_at, source)
-            VALUES ($1, $2, $3, 'coingecko')
+            VALUES ($1, $2, $3, $4)
             "#,
         )
         .bind(&asset.symbol)
         .bind(asset.price_usd)
         .bind(asset.updated_at)
+        .bind(source)
         .execute(db)
         .await?;
     }
-
     Ok(())
 }
 

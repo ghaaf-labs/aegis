@@ -12,7 +12,7 @@ export function LivePill() {
 
   return (
     <span
-      className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-mono uppercase tracking-widest border border-cyan-500/30 text-cyan-300 bg-cyan-500/5"
+      className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-mono uppercase tracking-widest border border-cyan-500/30 text-accent-agent bg-cyan-500/5"
       aria-label={
         connected
           ? "Live data stream is connected"

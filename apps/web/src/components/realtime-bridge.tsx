@@ -33,6 +33,8 @@ export function RealtimeBridge() {
   const setRegime = usePortfolioStore((s) => s.setRegime);
   const applyPriceTick = usePortfolioStore((s) => s.applyPriceTick);
   const setUnifiedUsdc = usePortfolioStore((s) => s.setUnifiedUsdc);
+  const setUnifiedEurc = usePortfolioStore((s) => s.setUnifiedEurc);
+  const setPerChain = usePortfolioStore((s) => s.setPerChain);
   const setWallet = usePortfolioStore((s) => s.setWallet);
   const setSseConnected = usePortfolioStore((s) => s.setSseConnected);
   const pushToolInvocation = usePortfolioStore((s) => s.pushToolInvocation);
@@ -70,8 +72,12 @@ export function RealtimeBridge() {
   );
 
   const onGatewayBalance = useCallback(
-    (data: GatewayBalance) => setUnifiedUsdc(data.unifiedUsdc),
-    [setUnifiedUsdc],
+    (data: GatewayBalance) => {
+      setUnifiedUsdc(data.unifiedUsdc);
+      setUnifiedEurc(data.unifiedEurc);
+      setPerChain(data.perChain ?? {}, data.perChainEurc ?? {});
+    },
+    [setUnifiedUsdc, setUnifiedEurc, setPerChain],
   );
 
   const onWalletCreated = useCallback(

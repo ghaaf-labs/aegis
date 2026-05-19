@@ -104,11 +104,11 @@ export function BillingSettingsClient() {
   };
 
   return (
-    <div className="space-y-6 max-w-5xl">
+    <div className="max-w-[1400px] mx-auto space-y-6">
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Billing</h1>
-          <p className="text-sm text-gray-400 mt-1">
+          <h1 className="text-2xl font-bold text-text-hi">Billing</h1>
+          <p className="text-sm text-text-lo mt-1">
             Tiered SaaS + AUM streaming, settled in USDC on Arc.
           </p>
         </div>
@@ -119,8 +119,8 @@ export function BillingSettingsClient() {
           role={alert.kind === "err" ? "alert" : "status"}
           className={
             alert.kind === "ok"
-              ? "border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs text-emerald-300"
-              : "border border-red-500/40 bg-red-500/10 p-3 text-xs text-red-300"
+              ? "border border-emerald-500/40 bg-emerald-500/10 p-3 text-xs text-accent-pnl"
+              : "border border-red-500/40 bg-red-500/10 p-3 text-xs text-risk"
           }
         >
           {alert.msg}
@@ -128,7 +128,7 @@ export function BillingSettingsClient() {
       )}
 
       {error && !alert && (
-        <div className="border border-red-500/40 bg-red-500/10 p-3 text-xs text-red-300">
+        <div className="border border-red-500/40 bg-red-500/10 p-3 text-xs text-risk">
           {error}
         </div>
       )}
@@ -189,7 +189,7 @@ export function BillingSettingsClient() {
               </BrutalButton>
             )}
             {isCanceled && subscription && (
-              <div className="flex items-center gap-3 w-full md:w-auto border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] font-mono text-amber-300">
+              <div className="flex items-center gap-3 w-full md:w-auto border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] font-mono text-warn">
                 <span>
                   Plan ends on{" "}
                   {new Date(
@@ -260,9 +260,7 @@ export function BillingSettingsClient() {
                     className="flex items-center justify-between text-[11px] font-mono text-text-lo border-b border-border-subtle pb-1"
                   >
                     <span>{new Date(r.createdAt).toLocaleDateString()}</span>
-                    <span
-                      className={r.paidAt ? "text-pnl-green" : "text-amber-400"}
-                    >
+                    <span className={r.paidAt ? "text-pnl-green" : "text-warn"}>
                       {r.paidAt ? "paid" : "pending"} · $
                       {r.rewardUsdc.toFixed(2)}
                     </span>

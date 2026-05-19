@@ -23,11 +23,19 @@ export function PerformanceChart() {
   const data: PerformancePoint[] = [];
   const hasData = data.length > 0;
 
+  // Until a portfolio has at least one rebalance + 24h of outcome
+  // history, this chart has nothing to render. Showing an empty "No
+  // history yet" panel was permanently occupying a whole dashboard row
+  // with zero information value — hide it instead.
+  if (!hasData) {
+    return null;
+  }
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between pb-3">
         <CardTitle>Performance (30d)</CardTitle>
-        <div className="flex items-center gap-4 text-xs text-gray-500">
+        <div className="flex items-center gap-4 text-xs text-text-mut">
           <span className="flex items-center gap-1.5">
             <span className="w-3 h-0.5 bg-blue-500 inline-block rounded" />
             Portfolio
@@ -99,7 +107,7 @@ export function PerformanceChart() {
                   if (!active || !payload?.length) return null;
                   return (
                     <div className="bg-surface border-brutal border-border-default rounded-sharp p-3 text-xs space-y-1">
-                      <p className="text-gray-400 font-medium">{label}</p>
+                      <p className="text-text-lo font-medium">{label}</p>
                       {payload.map((p) => (
                         <p key={p.name} style={{ color: p.color }}>
                           {p.name}: {formatCurrency(Number(p.value))}

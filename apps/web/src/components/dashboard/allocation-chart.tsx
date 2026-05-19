@@ -2,7 +2,7 @@
 
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { useActivePortfolio } from "@/stores/portfolio";
+import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
 import { formatPercent } from "@/lib/utils";
 import { ProvenanceLine } from "@aegis/ui";
 
@@ -22,18 +22,44 @@ interface Props {
 
 export function AllocationChart({ compact = false }: Props) {
   const portfolio = useActivePortfolio();
+  const snapshot = usePortfolioStore((s) => s.marketSnapshot);
+  const livePrices = usePortfolioStore((s) => s.livePrices);
+  const liveSource = Object.values(livePrices)[0]?.source;
 
   if (!portfolio) return null;
 
-  const data = (portfolio.allocations ?? []).map((a) => ({
-    name: a.symbol,
-    value: a.currentWeight,
-    valueUsd: a.valueUsd,
+  const priceMap = snapshot
+    ? Object.fromEntries(snapshot.assets.map((a) => [a.symbol, a.priceUsd]))
+    : {};
+
+  // Re-derive current weight from holdings × price each render — the stored
+  // `current_weight` column is initialised to the target and isn't kept fresh
+  // by the executor, so reading it would paint a fictional pie.
+  const allocations = portfolio.allocations ?? [];
+  const investedUsdBySymbol = allocations.map((a) => ({
+    symbol: a.symbol,
+    target: a.targetWeight,
+    valueUsd: (priceMap[a.symbol] ?? 0) * a.quantity,
   }));
+  const totalInvestedUsd = investedUsdBySymbol.reduce(
+    (sum, a) => sum + a.valueUsd,
+    0,
+  );
 
-  const isEmpty = data.length === 0 || data.every((d) => d.value === 0);
+  const isUninvested = totalInvestedUsd < 0.5; // ~half a dollar of dust
+  const data = isUninvested
+    ? allocations.map((a) => ({
+        name: a.symbol,
+        value: a.targetWeight,
+        valueUsd: 0,
+      }))
+    : investedUsdBySymbol.map((a) => ({
+        name: a.symbol,
+        value: (a.valueUsd / totalInvestedUsd) * 100,
+        valueUsd: a.valueUsd,
+      }));
 
-  if (isEmpty) {
+  if (data.length === 0 || data.every((d) => d.value === 0)) {
     return (
       <Card>
         <CardHeader>
@@ -53,22 +79,29 @@ export function AllocationChart({ compact = false }: Props) {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>Allocation</CardTitle>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle className="flex items-center gap-2">
+          <span>Allocation</span>
+          {isUninvested && (
+            <span className="text-[10px] font-mono text-text-mut uppercase tracking-wider border border-text-mut/30 px-1.5 py-0.5 rounded-sharp">
+              target
+            </span>
+          )}
+        </CardTitle>
       </CardHeader>
       <CardContent>
         <div
           className={`flex ${compact ? "flex-col gap-4" : "items-center gap-6"}`}
         >
-          <div className={compact ? "h-40" : "h-32 w-32 shrink-0"}>
+          <div className={compact ? "h-40" : "h-44 w-44 shrink-0"}>
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
                   data={data}
                   cx="50%"
                   cy="50%"
-                  innerRadius={compact ? 45 : 30}
-                  outerRadius={compact ? 70 : 50}
+                  innerRadius={compact ? 45 : 48}
+                  outerRadius={compact ? 70 : 75}
                   paddingAngle={2}
                   dataKey="value"
                   strokeWidth={0}
@@ -87,8 +120,8 @@ export function AllocationChart({ compact = false }: Props) {
                     const d = payload[0].payload as (typeof data)[0];
                     return (
                       <div className="bg-surface border-brutal border-border-default rounded-sharp px-3 py-2 text-xs">
-                        <p className="font-semibold text-white">{d.name}</p>
-                        <p className="text-gray-400">
+                        <p className="font-semibold text-text-hi">{d.name}</p>
+                        <p className="text-text-lo">
                           {formatPercent(d.value, false)}
                         </p>
                       </div>
@@ -112,23 +145,27 @@ export function AllocationChart({ compact = false }: Props) {
                       background: CHART_COLORS[i % CHART_COLORS.length],
                     }}
                   />
-                  <span className="text-xs text-gray-400 font-mono truncate">
+                  <span className="text-xs text-text-lo font-mono truncate">
                     {item.name}
                   </span>
                 </div>
-                <span className="text-xs text-white font-medium shrink-0">
+                <span className="text-xs text-text-hi font-medium shrink-0">
                   {formatPercent(item.value, false)}
                 </span>
               </div>
             ))}
           </div>
+        </div>
 
-          <div className="pt-2 border-t border-white/10">
-            <ProvenanceLine
-              source="current portfolio allocations"
-              freshness="live"
-            />
-          </div>
+        <div className="mt-4 pt-3 border-t border-white/10">
+          <ProvenanceLine
+            source={
+              isUninvested
+                ? "target allocation · no positions yet"
+                : `current holdings × ${liveSource ?? "live"} prices`
+            }
+            freshness="live"
+          />
         </div>
       </CardContent>
     </Card>

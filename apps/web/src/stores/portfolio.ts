@@ -39,6 +39,12 @@ interface PortfolioState {
   /** Wallet info from Circle Wallets create / login. */
   wallet: WalletInfo | null;
   unifiedUsdc: number;
+  /** Sum of EURC across every chain the user holds a wallet on. */
+  unifiedEurc: number;
+  /** USDC per chain (keys are lowercased short names: "arc", "base"). */
+  perChainUsdc: Record<string, number>;
+  /** EURC per chain — same key set as perChainUsdc. */
+  perChainEurc: Record<string, number>;
   /** Most-recent strategist tool invocations (capped at 20). */
   toolInvocations: AgentToolInvoked[];
   /** Most-recent abstain events (capped at 10). */
@@ -50,6 +56,10 @@ interface PortfolioState {
 
   setPortfolios: (p: Portfolio[]) => void;
   setPortfoliosLoaded: (v: boolean) => void;
+  /** Merge a partial update into the portfolio with the given id. Used by
+   * the dashboard to layer allocations from `/portfolios/:id` onto the
+   * list-shape entry from `/portfolios`. */
+  patchPortfolio: (id: PortfolioId, patch: Partial<Portfolio>) => void;
   addPortfolio: (p: Portfolio) => void;
   setActivePortfolio: (id: PortfolioId | null) => void;
   setDecisions: (d: AgentDecision[]) => void;
@@ -58,6 +68,11 @@ interface PortfolioState {
   setRegime: (next: Partial<RegimeState>) => void;
   applyPriceTick: (tick: PriceTick) => void;
   setUnifiedUsdc: (v: number) => void;
+  setUnifiedEurc: (v: number) => void;
+  setPerChain: (
+    usdc: Record<string, number>,
+    eurc: Record<string, number>,
+  ) => void;
   setWallet: (w: WalletInfo | null) => void;
   setIsRebalancing: (v: boolean) => void;
   selectDecision: (id: string | null) => void;
@@ -91,6 +106,9 @@ export const usePortfolioStore = create<PortfolioState>()(
       sseConnected: false,
       wallet: null,
       unifiedUsdc: 0,
+      unifiedEurc: 0,
+      perChainUsdc: {},
+      perChainEurc: {},
       toolInvocations: [],
       abstains: [],
       rebalanceStatuses: {},
@@ -104,6 +122,12 @@ export const usePortfolioStore = create<PortfolioState>()(
             state.activePortfolioId ?? portfolios[0]?.id ?? null,
         })),
       setPortfoliosLoaded: (portfoliosLoaded) => set({ portfoliosLoaded }),
+      patchPortfolio: (id, patch) =>
+        set((state) => ({
+          portfolios: state.portfolios.map((p) =>
+            p.id === id ? { ...p, ...patch } : p,
+          ),
+        })),
       addPortfolio: (portfolio) =>
         set((state) => ({
           portfolios: [
@@ -129,6 +153,9 @@ export const usePortfolioStore = create<PortfolioState>()(
           livePrices: { ...state.livePrices, [tick.symbol]: tick },
         })),
       setUnifiedUsdc: (unifiedUsdc) => set({ unifiedUsdc }),
+      setUnifiedEurc: (unifiedEurc) => set({ unifiedEurc }),
+      setPerChain: (perChainUsdc, perChainEurc) =>
+        set({ perChainUsdc, perChainEurc }),
       setWallet: (wallet) => set({ wallet }),
       setIsRebalancing: (isRebalancing) => set({ isRebalancing }),
       selectDecision: (selectedDecisionId) => set({ selectedDecisionId }),

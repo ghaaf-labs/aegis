@@ -1,32 +1,34 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { ChevronDown, Bell, Plus, Wifi, WifiOff } from "lucide-react";
-import { BrutalButton, BrutalPill, ChainBadge } from "@aegis/ui";
+import Link from "next/link";
+import { Bell, Wifi, WifiOff, Wallet as WalletIcon } from "lucide-react";
+import { BrutalButton, BrutalPill } from "@aegis/ui";
 import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
-import { formatCurrency, formatPercent, changeColor } from "@/lib/utils";
 import { gatewayApi } from "@/lib/api";
 
 export function Header() {
-  const router = useRouter();
   const portfolio = useActivePortfolio();
-  const portfolios = usePortfolioStore((s) => s.portfolios);
-  const setActive = usePortfolioStore((s) => s.setActivePortfolio);
   const sseConnected = usePortfolioStore((s) => s.sseConnected);
   const unifiedUsdc = usePortfolioStore((s) => s.unifiedUsdc);
+  const unifiedEurc = usePortfolioStore((s) => s.unifiedEurc);
   const setUnifiedUsdc = usePortfolioStore((s) => s.setUnifiedUsdc);
+  const setUnifiedEurc = usePortfolioStore((s) => s.setUnifiedEurc);
+  const setPerChain = usePortfolioStore((s) => s.setPerChain);
   const wallet = usePortfolioStore((s) => s.wallet);
 
-  const [open, setOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [userOpen, setUserOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
+  const userRef = useRef<HTMLDivElement>(null);
   const pegAlerts = usePortfolioStore((s) => s.pegAlerts);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (notifRef.current && !notifRef.current.contains(e.target as Node))
         setNotifOpen(false);
+      if (userRef.current && !userRef.current.contains(e.target as Node))
+        setUserOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -38,7 +40,12 @@ export function Header() {
     let alive = true;
     void gatewayApi
       .balance()
-      .then((b) => alive && setUnifiedUsdc(b.unifiedUsdc))
+      .then((b) => {
+        if (!alive) return;
+        setUnifiedUsdc(b.unifiedUsdc);
+        setUnifiedEurc(b.unifiedEurc);
+        setPerChain(b.perChain ?? {}, b.perChainEurc ?? {});
+      })
       .catch((err) => {
         // Best-effort hydration; SSE will overwrite this once the channel
         // opens. Surface in dev so we can spot persistent gateway outages.
@@ -47,97 +54,25 @@ export function Header() {
     return () => {
       alive = false;
     };
-  }, [wallet, setUnifiedUsdc]);
+  }, [wallet, setUnifiedUsdc, setUnifiedEurc, setPerChain]);
 
   return (
-    <header className="flex items-center justify-between px-6 py-3 border-b-brutal border-border-default bg-surface shrink-0">
+    <header className="flex items-center justify-between px-6 h-16 border-b-brutal border-border-default bg-surface shrink-0">
       <div className="flex items-center gap-4">
         {portfolio && (
-          <div className="relative">
-            <button
-              onClick={() => setOpen((v) => !v)}
-              className="flex items-center gap-2 px-3 py-1.5 border-brutal border-border-default rounded-sharp bg-bg hover:border-border-hi"
-            >
-              <span className="text-xs text-text-lo font-mono">Portfolio</span>
-              <span className="text-sm font-semibold text-text-hi">
-                {portfolio.name}
-              </span>
-              <ChevronDown className="w-3 h-3 text-text-lo" />
-            </button>
-            {open && (
-              <div className="absolute top-full left-0 mt-2 w-64 border-brutal border-border-default bg-surface shadow-brutal rounded-card z-50">
-                {portfolios.map((p) => (
-                  <button
-                    key={p.id}
-                    onClick={() => {
-                      setActive(p.id);
-                      setOpen(false);
-                      router.push(`/dashboard/${p.id}`);
-                    }}
-                    className={`block w-full text-left px-3 py-2 text-sm font-mono border-b border-border-default last:border-b-0 hover:bg-raised ${
-                      p.id === portfolio.id
-                        ? "text-accent-pnl"
-                        : "text-text-default"
-                    }`}
-                  >
-                    {p.name}
-                    <span className="ml-2 text-text-mut text-xs">
-                      {formatCurrency(p.totalValueUsd)}
-                    </span>
-                  </button>
-                ))}
-                <button
-                  onClick={() => {
-                    setOpen(false);
-                    router.push("/onboarding");
-                  }}
-                  className="flex items-center gap-2 w-full text-left px-3 py-2 text-sm font-mono text-accent-agent hover:bg-raised"
-                >
-                  <Plus className="w-3 h-3" />
-                  New portfolio
-                </button>
-              </div>
-            )}
+          <div className="flex items-center gap-2 px-3 py-1.5 border-brutal border-border-default rounded-sharp bg-bg">
+            <span className="text-xs text-text-lo font-mono">Portfolio</span>
+            <span className="text-sm font-semibold text-text-hi">
+              {portfolio.name}
+            </span>
           </div>
         )}
 
-        {portfolio && (
-          <div className="hidden md:flex items-center gap-6 ml-2">
-            <div>
-              <p className="text-[10px] text-text-mut font-mono">
-                PORTFOLIO VALUE
-              </p>
-              <p className="text-sm font-mono font-semibold text-text-hi tabular-nums">
-                {formatCurrency(portfolio.totalValueUsd)}
-              </p>
-            </div>
-            <div>
-              <p className="text-[10px] text-text-mut font-mono">
-                ALL-TIME PNL
-              </p>
-              <p
-                className={`text-sm font-mono font-semibold tabular-nums ${changeColor(portfolio.totalPnlUsd)}`}
-              >
-                {formatCurrency(portfolio.totalPnlUsd)} (
-                {formatPercent(portfolio.totalPnlPct)})
-              </p>
-            </div>
-            {wallet && (
-              <div title="Undeployed USDC across Arc + Base. Portfolio Value reflects invested positions — Gateway USDC is uninvested cash.">
-                <p className="text-[10px] text-text-mut font-mono">
-                  GATEWAY USDC
-                  <span className="ml-1 inline-flex gap-1">
-                    <ChainBadge chain="ARC" />
-                    <ChainBadge chain="BASE" />
-                  </span>
-                </p>
-                <p className="text-sm font-mono font-semibold text-accent-pnl tabular-nums">
-                  ${unifiedUsdc.toFixed(2)}
-                </p>
-              </div>
-            )}
-          </div>
-        )}
+        {/* PORTFOLIO VALUE / ALL-TIME PNL / GATEWAY all duplicated the
+            Net Worth card on the dashboard, with one critical bug — the
+            header showed `portfolio.totalValueUsd` ("invested only") while
+            the card showed invested + wallet. Same label, different number.
+            Single source of truth lives on the Net Worth card now. */}
       </div>
 
       <div className="flex items-center gap-3 ml-auto">
@@ -198,13 +133,43 @@ export function Header() {
           )}
         </div>
         {wallet && (
-          <div
-            className="w-7 h-7 rounded-sharp bg-accent-agent flex items-center justify-center border-brutal border-black"
-            title={wallet.arcAddress}
-          >
-            <span className="text-xs font-mono font-semibold text-black">
-              {wallet.walletId.slice(-2).toUpperCase()}
-            </span>
+          <div ref={userRef} className="relative">
+            <button
+              onClick={() => setUserOpen((v) => !v)}
+              className="w-7 h-7 rounded-sharp bg-accent-agent flex items-center justify-center border-brutal border-black hover:opacity-90"
+              title="Account menu"
+              aria-label="Account menu"
+            >
+              <WalletIcon className="w-3.5 h-3.5 text-black" />
+            </button>
+            {userOpen && (
+              <div className="absolute right-0 top-full mt-2 w-80 border-brutal border-border-default bg-surface shadow-brutal z-50 rounded-sharp">
+                <div className="px-3 py-2 border-b border-border-default">
+                  <p className="text-[10px] font-mono uppercase tracking-widest text-text-mut mb-1">
+                    Balances
+                  </p>
+                  <p className="text-sm font-mono font-semibold text-accent-pnl tabular-nums">
+                    ${unifiedUsdc.toFixed(2)} USDC
+                    {unifiedEurc > 0 && (
+                      <span className="text-text-lo">
+                        {" · "}€{unifiedEurc.toFixed(2)} EURC
+                      </span>
+                    )}
+                  </p>
+                  <p className="text-[10px] font-mono text-text-mut mt-0.5">
+                    Arc + Base · Circle Gateway
+                  </p>
+                </div>
+                <Link
+                  href="/wallet"
+                  onClick={() => setUserOpen(false)}
+                  className="flex items-center gap-2 w-full text-left px-3 py-2 text-sm font-mono text-accent-agent hover:bg-raised"
+                >
+                  <WalletIcon className="w-3 h-3" />
+                  Open wallet
+                </Link>
+              </div>
+            )}
           </div>
         )}
       </div>

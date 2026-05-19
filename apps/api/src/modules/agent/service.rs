@@ -130,7 +130,7 @@ pub async fn analyze_portfolio(
     let user_profile = fetch_user_profile(state, portfolio.user_id).await?;
 
     let snapshot =
-        crate::modules::market_data::service::fetch_snapshot(&state.http, &state.config).await?;
+        crate::modules::market_data::service::fetch_snapshot(state.prices.as_ref()).await?;
 
     let ai = OpenRouterClient::new(&state.http, &state.config);
 
@@ -162,7 +162,7 @@ pub async fn analyze_portfolio(
         .await
         .map(|r| r.annualized_yield)
         .unwrap_or(0.0510);
-    let eurc_basis = fx::service::usdc_eurc_basis(&state.http, &state.config)
+    let eurc_basis = fx::service::usdc_eurc_basis(state.prices.as_ref(), &state.config)
         .await
         .map(|b| b.mid_rate)
         .unwrap_or(0.92);
@@ -180,6 +180,26 @@ pub async fn analyze_portfolio(
     strategist_ctx.insert("usyc_rate", format!("{:.4}", usyc_rate));
     strategist_ctx.insert("usdc_eurc_basis", format!("{:.4}", eurc_basis));
     strategist_ctx.insert("goal_block", format_goal_block(&portfolio.goal));
+
+    // Wallet awareness: the strategist used to see only `portfolios.total_value_usd`
+    // (invested positions) and concluded "portfolio is empty, deposit funds"
+    // on every run — even when the user had already funded $100s of USDC + EURC
+    // into Circle Gateway. Inject the Gateway balance so the agent knows
+    // there's deployable capital and can propose a first-deploy plan.
+    let gateway_block = match crate::modules::gateway::service::fetch_balance(
+        &state.http,
+        &state.config,
+        portfolio.user_id,
+    )
+    .await
+    {
+        Ok(b) => format_gateway_block(&b),
+        Err(e) => {
+            tracing::debug!(error=%e, "agent: gateway balance fetch failed; strategist sees no wallet info");
+            "Wallet balance: unavailable (Gateway lookup failed).".to_string()
+        }
+    };
+    strategist_ctx.insert("wallet_block", gateway_block);
     let harvestable = crate::modules::tax::service::harvestable_losses(
         state,
         portfolio.user_id,
@@ -638,6 +658,34 @@ fn build_critic_context(
     ctx
 }
 
+/// Render a snapshot of the user's Circle Gateway balance for the strategist.
+/// When the user has deployable cash but zero invested, the closing line
+/// explicitly tells the strategist to propose a first-deploy plan rather than
+/// repeat "deposit funds" indefinitely.
+fn format_gateway_block(b: &crate::modules::gateway::service::GatewayBalance) -> String {
+    let mut lines = vec![format!(
+        "Wallet balance (Circle Gateway, undeployed):\n  Total USDC: {:.2}\n  Total EURC: {:.2}",
+        b.unified_usdc, b.unified_eurc
+    )];
+    for (chain, amt) in &b.per_chain {
+        if *amt > 0.0 {
+            lines.push(format!("  - {} USDC: {:.2}", chain.to_uppercase(), amt));
+        }
+    }
+    for (chain, amt) in &b.per_chain_eurc {
+        if *amt > 0.0 {
+            lines.push(format!("  - {} EURC: {:.2}", chain.to_uppercase(), amt));
+        }
+    }
+    let cash_total = b.unified_usdc + b.unified_eurc;
+    if cash_total > 5.0 {
+        lines.push(
+            "Note: deployable capital is already in Gateway. Do not recommend 'deposit funds' — propose how to ALLOCATE this cash into the target weights (a first-deploy plan).".into(),
+        );
+    }
+    lines.join("\n")
+}
+
 /// Render the user's goal block for the strategist prompt. Empty goals
 /// (legacy portfolios) get a "(no goal set)" line — the strategist still
 /// has the rest of the context.
@@ -894,10 +942,24 @@ fn default_recommendation() -> serde_json::Value {
 
 fn parse_proposal(raw: &str) -> crate::error::Result<StrategistProposal> {
     let stripped = crate::modules::ai::strip_json_fences(raw);
-    serde_json::from_str(stripped).map_err(|e| {
-        crate::error::AppError::Internal(anyhow::anyhow!(
-            "failed to parse strategist proposal: {e}\nraw: {raw}"
-        ))
+    if let Ok(proposal) = serde_json::from_str::<StrategistProposal>(stripped) {
+        return Ok(proposal);
+    }
+    // The LLM occasionally returns malformed JSON (missing comma, unmatched
+    // brace, "null" where an object was expected). Surfacing this as a 500
+    // breaks the user-facing flow — they click Deploy, see a wall of raw
+    // model bytes, and conclude the platform is broken. Fall back to a safe
+    // HOLD proposal so the rebalance pipeline can still emit a no-op plan
+    // and the user is told to retry once the next strategist call succeeds.
+    tracing::warn!(
+        raw_len = raw.len(),
+        raw_preview = %raw.chars().take(200).collect::<String>(),
+        "strategist returned unparsable JSON — using safe HOLD fallback"
+    );
+    Ok(StrategistProposal {
+        reasoning: "Strategist output was unparsable on this pass. Holding the current allocation; retry the action to re-run the agent.".to_string(),
+        confidence: 0.4,
+        recommendation: default_recommendation(),
     })
 }
 
@@ -1258,6 +1320,7 @@ mod tests {
             })),
         );
         ctx.insert("harvestable_losses", "(none)".into());
+        ctx.insert("wallet_block", "Wallet balance: $0".into());
         let rendered = reg.render(PromptKey::Strategist, &ctx);
         assert!(
             !rendered.contains("{{"),

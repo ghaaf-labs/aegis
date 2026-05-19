@@ -111,7 +111,7 @@ export function InvoiceList({
                       href={arcExplorerUrl(inv.paidTxHash)}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="text-emerald-300 hover:text-emerald-200 underline-offset-2 hover:underline"
+                      className="text-accent-pnl hover:text-accent-pnl/60 underline-offset-2 hover:underline"
                       title={inv.paidTxHash}
                     >
                       {inv.paidTxHash.slice(0, 6)}…{inv.paidTxHash.slice(-4)}

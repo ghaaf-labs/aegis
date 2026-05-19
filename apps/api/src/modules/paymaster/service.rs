@@ -28,6 +28,10 @@ pub struct FeeEstimate {
     pub action: String,
     pub fee_usdc: f64,
     pub via: &'static str,
+    /// True when the value is a deterministic stub rather than a live RPC quote.
+    /// The UI surfaces "indicative" alongside the figure so users don't treat
+    /// the number as a binding quote.
+    pub is_indicative: bool,
 }
 
 /// Best-effort USDC fee estimate. In mock mode (default for hackathon) the
@@ -63,6 +67,10 @@ pub async fn estimate(
         action: action.to_string(),
         fee_usdc,
         via: "Circle Paymaster",
+        // Both branches return the same stub today — live RPC fee fetch is
+        // tracked under F-PAYMASTER-1. Always flag indicative so the UI
+        // can render an asterisk and tooltip explaining "not a binding quote".
+        is_indicative: true,
     })
 }
 
@@ -87,10 +95,13 @@ mod tests {
             openrouter_app_name: "x".into(),
             openrouter_app_url: None,
             coingecko_api_key: None,
+            price_provider_primary: "defillama".into(),
+            price_provider_fallback: "pyth".into(),
             sse_price_tick_secs: 5,
             circle_api_key: "x".into(),
             circle_base_url: "x".into(),
             circle_env: "sandbox".into(),
+            circle_app_id: String::new(),
             circle_mock: true,
             arc_rpc_url: "x".into(),
             base_rpc_url: "x".into(),

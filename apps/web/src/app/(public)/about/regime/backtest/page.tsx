@@ -65,7 +65,9 @@ export default async function RegimeBacktestPage() {
         ) : (
           <section className="border-2 border-white/10 bg-[#141414] p-6 text-sm text-text-lo">
             No backtest has been persisted yet. Run{" "}
-            <code className="text-cyan-300">POST /admin/regime/backtest</code>{" "}
+            <code className="text-accent-agent">
+              POST /admin/regime/backtest
+            </code>{" "}
             (auth required) to populate; this page re-fetches once samples land.
           </section>
         )}

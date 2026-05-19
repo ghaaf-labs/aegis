@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Check } from "lucide-react";
 import {
   BrutalButton,
   BrutalCard,
@@ -33,6 +34,17 @@ export default function TaxSettingsPage() {
   const [year, setYear] = useState<number>(currentYear);
   const [mockExcluded, setMockExcluded] = useState<number | null>(null);
   const [shares, setShares] = useState<TaxShareToken[]>([]);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const copyShare = useCallback(async (id: string, token: string) => {
+    try {
+      await navigator.clipboard.writeText(token);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 1800);
+    } catch {
+      /* clipboard blocked */
+    }
+  }, []);
   const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -131,16 +143,16 @@ export default function TaxSettingsPage() {
   };
 
   return (
-    <div className="max-w-[1100px] mx-auto space-y-6">
-      <header className="space-y-1">
-        <h1 className="text-2xl font-mono font-semibold text-text-hi">
+    <div className="max-w-[1400px] mx-auto space-y-6">
+      <div>
+        <h1 className="text-2xl font-mono font-semibold text-text-hi tracking-tight">
           Tax export
         </h1>
-        <p className="text-sm text-text-lo max-w-2xl">
+        <p className="text-sm text-text-lo mt-1">
           IRS 1099-DA-ready CSV per portfolio, including stablecoin↔stablecoin
           dispositions (USDC↔EURC FX gain/loss). Pro feature.
         </p>
-      </header>
+      </div>
 
       <BrutalCard>
         <BrutalCardHeader>
@@ -318,13 +330,14 @@ export default function TaxSettingsPage() {
                     </span>
                     <button
                       type="button"
-                      className="text-accent-agent hover:underline truncate text-left"
-                      onClick={() => {
-                        void navigator.clipboard.writeText(s.token);
-                      }}
+                      className="text-accent-agent hover:underline truncate text-left flex items-center gap-1"
+                      onClick={() => void copyShare(s.id, s.token)}
                       title="Copy token"
                     >
                       {s.token.slice(0, 10)}…
+                      {copiedId === s.id && (
+                        <Check className="w-3 h-3 text-accent-pnl" />
+                      )}
                     </button>
                   </div>
                   <BrutalButton

@@ -24,15 +24,46 @@ pub struct WalletInfo {
     pub created_at: DateTime<Utc>,
 }
 
-/// Response sent after a successful wallet create or login. JWT is also set
-/// in an `httpOnly` cookie so SSR can read it; we return the raw token for
-/// SPA clients that want to put it in an `Authorization` header.
+/// Bundle returned to the browser after `init_signup` or `init_login`.
+/// The browser uses these fields to instantiate `@circle-fin/w3s-pw-web-sdk`
+/// and complete the PIN ceremony.
+///
+/// `challenge_id` is `Some` only for new users (signup); returning users get
+/// `None` and the SDK just authenticates the fresh token.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserTokenBundle {
+    pub user_token: String,
+    pub encryption_key: String,
+    pub app_id: String,
+    pub challenge_id: Option<String>,
+}
+
+/// Response sent after a successful wallet init or login. JWT is also set in
+/// an `httpOnly` cookie so SSR can read it; we return the raw token for SPA
+/// clients that prefer `Authorization` headers.
+///
+/// `wallet` is populated immediately for returning users whose wallet is
+/// already provisioned; for fresh signups it's `None` until the browser
+/// completes the SDK challenge and `/auth/wallet/status` reports the wallet
+/// is ready.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WalletAuthResponse {
     pub token: String,
-    pub wallet: WalletInfo,
     pub user: WalletUserPublic,
+    pub wallet: Option<WalletInfo>,
+    pub bundle: UserTokenBundle,
+    pub is_new_user: bool,
+}
+
+/// Polled by the browser after the SDK completes the challenge. Returns
+/// `Some(wallet)` once Circle has provisioned the addresses, `None` while
+/// still pending.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WalletStatusResponse {
+    pub wallet: Option<WalletInfo>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -47,49 +78,11 @@ pub struct WalletUserPublic {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RegisterPasskeyRequest {
+pub struct InitWalletRequest {
     pub email: String,
-    /// Opaque payload from `navigator.credentials.create()` — passed through
-    /// to Circle WaaS which validates the WebAuthn ceremony.
-    #[serde(default)]
-    pub passkey_attestation: serde_json::Value,
     /// Optional 8-char user handle of the referrer (matches the `handle`
     /// column on `v_trustability_per_user`). Drives the referral payout
-    /// loop in `billing::record_referral`.
+    /// loop in `billing::record_referral`. Honoured only on signup.
     #[serde(default)]
     pub referrer_handle: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LoginPasskeyRequest {
-    pub email: String,
-    /// Opaque payload from `navigator.credentials.get()`.
-    #[serde(default)]
-    pub passkey_assertion: serde_json::Value,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OtpStartRequest {
-    pub email: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OtpVerifyRequest {
-    pub email: String,
-    pub code: String,
-    /// Referrer handle — same semantics as `RegisterPasskeyRequest`.
-    #[serde(default)]
-    pub referrer_handle: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OtpStartResponse {
-    pub email: String,
-    pub challenge_id: String,
-    /// Seconds before the code expires (Circle defaults to 600).
-    pub expires_in: u32,
 }

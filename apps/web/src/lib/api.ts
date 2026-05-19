@@ -63,46 +63,67 @@ async function request<T>(path: string, opts: FetchOptions = {}): Promise<T> {
     }
     throw new Error(`${res.status}: ${detail}`);
   }
-  return res.json() as Promise<T>;
+  // 202/204 + zero-length bodies (e.g. /rebalance/:id/execute) have nothing
+  // to parse — return undefined cast to T rather than throwing on JSON parse.
+  if (res.status === 204 || res.status === 202) {
+    return undefined as T;
+  }
+  const text = await res.text();
+  if (!text) return undefined as T;
+  return JSON.parse(text) as T;
 }
 
-// ── Wallet auth (replaces legacy email/password authApi) ──────────────────
+// ── Wallet auth (Circle W3S User-Controlled) ──────────────────────────────
+
+/**
+ * Returned by `POST /auth/wallet/create` and `/auth/wallet/login`. The
+ * `bundle` is consumed by `@circle-fin/w3s-pw-web-sdk` to complete the PIN
+ * ceremony; `wallet` is `null` until that completes (poll `/auth/wallet/status`).
+ */
+export interface UserTokenBundle {
+  userToken: string;
+  encryptionKey: string;
+  appId: string;
+  /** Present on new-user signup, absent on returning-user login. */
+  challengeId: string | null;
+}
 
 export interface WalletAuthResponse {
   token: string;
-  wallet: WalletInfo;
   user: { id: string; email: string; riskTolerance: string };
+  wallet: WalletInfo | null;
+  bundle: UserTokenBundle;
+  isNewUser: boolean;
+}
+
+export interface WalletStatusResponse {
+  wallet: WalletInfo | null;
 }
 
 export const walletApi = {
-  createPasskey: (
-    email: string,
-    passkeyAttestation: unknown,
-    referrerHandle?: string,
-  ) =>
+  create: (email: string, referrerHandle?: string) =>
     request<WalletAuthResponse>("/auth/wallet/create", {
       method: "POST",
-      body: { email, passkeyAttestation, referrerHandle },
+      body: { email, referrerHandle },
     }),
-  loginPasskey: (email: string, passkeyAssertion: unknown) =>
+  login: (email: string) =>
     request<WalletAuthResponse>("/auth/wallet/login", {
       method: "POST",
-      body: { email, passkeyAssertion },
+      body: { email },
     }),
-  startOtp: (email: string) =>
-    request<{ email: string; challengeId: string; expiresIn: number }>(
-      "/auth/wallet/otp/start",
-      { method: "POST", body: { email } },
-    ),
-  verifyOtp: (email: string, code: string, referrerHandle?: string) =>
-    request<WalletAuthResponse>("/auth/wallet/otp/verify", {
-      method: "POST",
-      body: { email, code, referrerHandle },
-    }),
+  status: () =>
+    request<WalletStatusResponse>("/auth/wallet/status", { authed: true }),
   me: () =>
     request<{ id: string; email: string; riskTolerance: string }>("/auth/me", {
       authed: true,
     }),
+  logout: async () => {
+    await fetch(`${BASE_URL}/auth/logout`, {
+      method: "POST",
+      credentials: "include",
+    });
+    setToken(null);
+  },
 };
 
 // ── Faucet ─────────────────────────────────────────────────────────────────
@@ -113,6 +134,11 @@ export interface FaucetClaim {
   txHash?: string | null;
   remainingTodayUsdc: number;
   claimedAt: string;
+  /** Set in real mode — open this URL to complete the on-chain claim on
+   *  Circle's public faucet. Null in mock mode (synthetic balance applied). */
+  claimUrl?: string | null;
+  /** ARC address the user should paste into the faucet. */
+  arcAddress?: string | null;
 }
 export const faucetApi = {
   claim: () =>
@@ -123,7 +149,12 @@ export const faucetApi = {
 
 export interface UnifiedBalance {
   unifiedUsdc: number;
+  /** Sum of EURC across all chains. */
+  unifiedEurc: number;
+  /** USDC per chain — keys are lowercased chain shorthands ("arc", "base"). */
   perChain: Record<string, number>;
+  /** EURC per chain — same key set as `perChain`. */
+  perChainEurc: Record<string, number>;
   arcAddress?: string | null;
   baseAddress?: string | null;
 }
@@ -147,20 +178,41 @@ export interface UpdatePortfolioInput {
   name?: string;
 }
 
+/** Wire shape of an allocation from the backend. The Rust serializer emits
+ *  `assetSymbol` and `id` / `portfolioId`; the shared TS `Allocation` type
+ *  uses `symbol` / `assetId`. We normalise to the shared shape inside
+ *  `portfolioApi.get` so every consumer reads `symbol`. */
+interface WireAllocation {
+  id: string;
+  portfolioId: string;
+  assetSymbol: string;
+  quantity: number;
+  targetWeight: number;
+  currentWeight: number;
+  valueUsd: number;
+}
+
 export const portfolioApi = {
   list: () => request<Portfolio[]>("/portfolios", { authed: true }),
-  get: (id: string) =>
-    request<{
-      portfolio: Portfolio;
-      allocations: Array<{
-        assetId: string;
-        symbol: string;
-        quantity: number;
-        targetWeight: number;
-        currentWeight: number;
-        valueUsd: number;
-      }>;
-    }>(`/portfolios/${id}`, { authed: true }),
+  get: async (id: string): Promise<Portfolio> => {
+    // The backend returns the full Portfolio inline with an `allocations`
+    // array. Allocations come in with `assetSymbol`; normalise to `symbol`
+    // so AllocationChart / AssetTable / RiskScoreCard can read them.
+    const raw = await request<
+      Omit<Portfolio, "allocations"> & { allocations: WireAllocation[] }
+    >(`/portfolios/${id}`, { authed: true });
+    return {
+      ...raw,
+      allocations: raw.allocations.map((a) => ({
+        assetId: a.id,
+        symbol: a.assetSymbol as Portfolio["allocations"][number]["symbol"],
+        quantity: a.quantity,
+        targetWeight: a.targetWeight,
+        currentWeight: a.currentWeight,
+        valueUsd: a.valueUsd,
+      })),
+    };
+  },
   create: (payload: CreatePortfolioInput) =>
     request<Portfolio>("/portfolios", {
       method: "POST",
@@ -525,6 +577,7 @@ export const ratesApi = {
       action: string;
       feeUsdc: number;
       via: string;
+      isIndicative?: boolean;
     }>(
       `/paymaster/estimate?chain=${chain}&action=${encodeURIComponent(action)}`,
     ),

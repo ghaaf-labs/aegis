@@ -45,6 +45,7 @@ export default function RebalancePage({ params }: PageProps) {
     }>;
   } | null>(null);
   const [approved, setApproved] = useState(false);
+  const [planStatus, setPlanStatus] = useState<string>("planned");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [decision, setDecision] = useState<AgentDecision | null>(null);
 
@@ -73,6 +74,7 @@ export default function RebalancePage({ params }: PageProps) {
         setEstimatedFee(detail.totalGasUsdc ?? 0);
         setFeeFetchedAt(new Date());
         setFeeSource("plan");
+        setPlanStatus(detail.status);
         // If the plan is already past 'planned' state, skip approval modal.
         if (detail.status !== "planned") {
           setShowApproval(false);
@@ -119,21 +121,26 @@ export default function RebalancePage({ params }: PageProps) {
 
   if (loadError) {
     return (
-      <main className="p-8 text-rose-300 font-mono text-sm">
+      <main className="p-8 text-risk font-mono text-sm">
         Failed to load rebalance plan: {loadError}
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-[#0A0A0A] text-white px-6 py-8">
-      <div className="max-w-3xl mx-auto space-y-6">
+    <main className="min-h-screen bg-[#0A0A0A] text-text-hi px-6 py-8">
+      <div className="max-w-5xl mx-auto space-y-6">
         <header>
-          <p className="font-mono text-[11px] tracking-wider text-cyan-400 uppercase">
+          <p className="font-mono text-[11px] tracking-wider text-accent-agent uppercase">
             Rebalance · {planId.slice(0, 8)}…
           </p>
           <h1 className="text-2xl font-bold mt-1">
-            {approved ? "Execution in progress" : "Review the plan"}
+            {(() => {
+              if (!approved) return "Review the plan";
+              if (planStatus === "completed") return "Execution complete";
+              if (planStatus === "failed") return "Execution halted";
+              return "Execution in progress";
+            })()}
           </h1>
 
           {plan &&
@@ -141,7 +148,7 @@ export default function RebalancePage({ params }: PageProps) {
               (l) =>
                 l.kind === "cross_chain_burn" || l.kind === "cross_chain_mint",
             ) && (
-              <div className="mt-2 inline-flex items-center gap-2 rounded border border-cyan-500/40 bg-cyan-500/10 px-3 py-1 text-[11px] font-mono text-cyan-300">
+              <div className="mt-2 inline-flex items-center gap-2 rounded border border-cyan-500/40 bg-cyan-500/10 px-3 py-1 text-[11px] font-mono text-accent-agent">
                 Real on-chain execution • CCTP V2 Fast Transfer + Hooks
               </div>
             )}
@@ -159,8 +166,8 @@ export default function RebalancePage({ params }: PageProps) {
                   className={`text-xs px-2 py-0.5 font-mono border ${
                     decision.criticVerdict.verdict === "revised" ||
                     decision.criticVerdict.demandsRevision
-                      ? "border-rose-500/40 text-rose-300 bg-rose-500/10"
-                      : "border-cyan-500/40 text-cyan-300 bg-cyan-500/10"
+                      ? "border-rose-500/40 text-risk bg-rose-500/10"
+                      : "border-cyan-500/40 text-accent-agent bg-cyan-500/10"
                   }`}
                 >
                   Critic:{" "}
@@ -170,7 +177,7 @@ export default function RebalancePage({ params }: PageProps) {
                       : "approved")}
                 </span>
               )}
-              <span className="text-xs text-gray-500">
+              <span className="text-xs text-text-mut">
                 confidence {(decision.confidence * 100).toFixed(0)}%
               </span>
             </div>
@@ -180,7 +187,7 @@ export default function RebalancePage({ params }: PageProps) {
         {approved ? (
           <ExecutionTrace rebalanceId={planId} sseUrl={SSE_URL} />
         ) : (
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-text-lo">
             The agent has built a cross-chain plan. Review the legs, then
             approve to settle on Arc + Base.
           </p>

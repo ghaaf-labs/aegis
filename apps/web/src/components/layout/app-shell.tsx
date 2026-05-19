@@ -18,7 +18,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [pathname]);
 
   return (
-    <div className="flex h-screen bg-[#030712] text-white overflow-hidden">
+    <div className="flex h-screen bg-bg text-text-default overflow-hidden">
       {/* Desktop sidebar — hidden on small screens. */}
       <div className="hidden md:flex">
         <Sidebar />
@@ -35,12 +35,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       )}
       <div
         className={
-          "md:hidden fixed inset-y-0 left-0 z-50 transition-transform duration-200 " +
+          "md:hidden fixed inset-y-0 left-0 z-50 w-full transition-transform duration-200 " +
           (open ? "translate-x-0" : "-translate-x-full")
         }
         aria-hidden={!open}
       >
-        <Sidebar />
+        <Sidebar onClose={() => setOpen(false)} />
       </div>
 
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">

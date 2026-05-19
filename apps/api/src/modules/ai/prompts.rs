@@ -216,6 +216,10 @@ mod tests {
                 ("usdc_eurc_basis", "0.9217"),
                 // Sprint 3 placeholder:
                 ("harvestable_losses", "(none)"),
+                // Sprint 4 placeholder — wallet block tells the agent
+                // about Gateway balance so it doesn't say "deposit funds"
+                // when the user is already funded.
+                ("wallet_block", "Wallet balance: \\$0"),
             ]),
         );
         // No unresolved placeholders should remain.

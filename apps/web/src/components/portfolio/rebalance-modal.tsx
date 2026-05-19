@@ -86,12 +86,12 @@ export function RebalanceModal({ open, onClose }: Props) {
           <div className="space-y-4">
             <div className="p-4 rounded-card bg-accent-agent/10 border-brutal border-accent-agent/30">
               <div className="flex items-start gap-2.5">
-                <RefreshCw className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+                <RefreshCw className="w-4 h-4 text-accent-agent shrink-0 mt-0.5" />
                 <div>
-                  <p className="text-sm font-medium text-cyan-300 mb-1">
+                  <p className="text-sm font-medium text-accent-agent mb-1">
                     Ready to analyze
                   </p>
-                  <p className="text-xs text-gray-400">
+                  <p className="text-xs text-text-lo">
                     {active?.name
                       ? `Run the strategist + critic loop on "${active.name}" — it will check your target allocation, current regime, and recent decisions before proposing any moves.`
                       : "Select a portfolio to analyze."}
@@ -127,7 +127,7 @@ export function RebalanceModal({ open, onClose }: Props) {
         ) : (
           <div className="space-y-4">
             <div className="p-4 rounded-card bg-accent-agent/10 border-brutal border-accent-agent/30">
-              <p className="text-xs text-gray-400 mb-3 leading-relaxed">
+              <p className="text-xs text-text-lo mb-3 leading-relaxed">
                 {decision?.reasoning}
               </p>
               <div className="flex items-center gap-3 text-xs flex-wrap">
@@ -146,7 +146,7 @@ export function RebalanceModal({ open, onClose }: Props) {
             </div>
 
             <div className="space-y-2">
-              <p className="text-xs text-gray-500 font-medium uppercase tracking-wider">
+              <p className="text-xs text-text-mut font-medium uppercase tracking-wider">
                 Proposed trades
               </p>
               {recommendation?.trades.map((trade) => (
@@ -158,8 +158,8 @@ export function RebalanceModal({ open, onClose }: Props) {
                     <span
                       className={`px-2 py-0.5 rounded text-xs font-semibold ${
                         trade.action === "buy"
-                          ? "bg-emerald-500/15 text-emerald-400"
-                          : "bg-red-500/15 text-red-400"
+                          ? "bg-emerald-500/15 text-accent-pnl"
+                          : "bg-red-500/15 text-risk"
                       }`}
                     >
                       {trade.action === "buy" ? (
@@ -170,15 +170,15 @@ export function RebalanceModal({ open, onClose }: Props) {
                       {trade.action.toUpperCase()}
                     </span>
                     <div>
-                      <p className="text-sm font-semibold text-white font-mono">
+                      <p className="text-sm font-semibold text-text-hi font-mono">
                         {trade.symbol}
                       </p>
-                      <p className="text-[11px] text-gray-500">
+                      <p className="text-[11px] text-text-mut">
                         {trade.quantity} units
                       </p>
                     </div>
                   </div>
-                  <span className="text-sm font-medium text-white">
+                  <span className="text-sm font-medium text-text-hi">
                     {formatCurrency(trade.valueUsd)}
                   </span>
                 </div>
@@ -194,7 +194,7 @@ export function RebalanceModal({ open, onClose }: Props) {
             <div className="flex gap-3">
               <Button
                 variant="outline"
-                className="flex-1 border-white/10 text-gray-300"
+                className="flex-1 border-white/10 text-text-default"
                 onClick={onClose}
                 disabled={isPlanning}
               >

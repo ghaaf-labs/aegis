@@ -49,10 +49,10 @@ export function BacktestPreview({ portfolioId, proposed }: Props) {
 
   if (loading) {
     return (
-      <div className="bg-black/40 border border-white/5 p-3 mb-4 text-xs font-mono text-gray-500">
+      <div className="bg-black/40 border border-white/5 p-3 mb-4 text-xs font-mono text-text-mut">
         <div className="flex items-center justify-between">
           <span>30d backtest</span>
-          <span className="animate-pulse text-cyan-400">computing…</span>
+          <span className="animate-pulse text-accent-agent">computing…</span>
         </div>
       </div>
     );
@@ -60,7 +60,7 @@ export function BacktestPreview({ portfolioId, proposed }: Props) {
 
   if (error || !data) {
     return (
-      <div className="bg-black/40 border border-amber-500/20 p-3 mb-4 text-xs font-mono text-amber-300">
+      <div className="bg-black/40 border border-amber-500/20 p-3 mb-4 text-xs font-mono text-warn">
         Backtest unavailable
         {error && <span className="opacity-60"> · {error}</span>}
       </div>
@@ -69,19 +69,23 @@ export function BacktestPreview({ portfolioId, proposed }: Props) {
 
   const delta = data.deltaTotalReturnPct;
   const deltaTone =
-    delta > 0 ? "text-cyan-300" : delta < 0 ? "text-rose-300" : "text-gray-300";
+    delta > 0
+      ? "text-accent-agent"
+      : delta < 0
+        ? "text-risk"
+        : "text-text-default";
   const deltaSign = delta > 0 ? "+" : "";
 
   return (
     <div className="bg-black/40 border border-white/5 p-3 mb-4 text-xs font-mono space-y-2">
       <div className="flex items-center justify-between">
-        <span className="text-cyan-300/80">
+        <span className="text-accent-agent/80">
           30d backtest{" "}
-          <span className="text-gray-500">({data.windowDays}d window)</span>
+          <span className="text-text-mut">({data.windowDays}d window)</span>
         </span>
         {!data.reliable && (
           <span
-            className="text-[10px] text-amber-300/80"
+            className="text-[10px] text-warn/80"
             title="Fewer than 5 daily snapshots — treat the numbers as directional only."
           >
             low data
@@ -111,7 +115,7 @@ export function BacktestPreview({ portfolioId, proposed }: Props) {
 function Cell({
   label,
   value,
-  tone = "text-white",
+  tone = "text-text-hi",
 }: {
   label: string;
   value: string;
@@ -119,7 +123,7 @@ function Cell({
 }) {
   return (
     <div className="bg-white/2 border border-white/5 p-2">
-      <div className="text-[10px] text-gray-500">{label}</div>
+      <div className="text-[10px] text-text-mut">{label}</div>
       <div className={`mt-1 ${tone}`}>{value}</div>
     </div>
   );

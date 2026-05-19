@@ -323,7 +323,12 @@ export interface AgentAbstained {
 
 export interface GatewayBalance extends UserScopedSseEvent {
   unifiedUsdc: number;
+  /** Sum of EURC across every chain the user holds a wallet on. */
+  unifiedEurc: number;
+  /** USDC per chain — keys are lowercased chain shorthands ("arc", "base"). */
   perChain: Record<string, number>;
+  /** EURC per chain — same key set as `perChain`. */
+  perChainEurc: Record<string, number>;
   observedAt: string;
 }
 
