@@ -56,3 +56,4 @@ infra/contracts/lib/
 infra/contracts/broadcast/
 .env.bak
 *.bak
+apps/web/e2e/.auth/
