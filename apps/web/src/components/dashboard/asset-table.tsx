@@ -14,6 +14,11 @@ import {
 export function AssetTable() {
   const portfolio = useActivePortfolio();
   const snapshot = usePortfolioStore((s) => s.marketSnapshot);
+  const livePrices = usePortfolioStore((s) => s.livePrices);
+  // Live-tick source is the truthful provenance — FallbackProvider switches
+  // between defillama and pyth dynamically, hardcoding either name lies
+  // whenever the breaker is open or a single primary call failed.
+  const liveSource = Object.values(livePrices)[0]?.source;
 
   if (!portfolio) return null;
 
@@ -188,8 +193,8 @@ export function AssetTable() {
         </table>
         <div className="px-5 py-2 text-[10px] text-text-mut font-mono border-t border-white/5">
           {snapshot
-            ? "Prices via DefiLlama · live snapshot"
-            : "Awaiting first price tick · via DefiLlama"}
+            ? `Prices via ${liveSource ?? "live feed"} · live snapshot`
+            : "Awaiting first price tick"}
         </div>
       </CardContent>
     </Card>

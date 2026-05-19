@@ -49,7 +49,10 @@ impl DefiLlamaProvider {
         if !status.is_success() {
             // Percentage endpoint sometimes 404s for newly listed coins; treat
             // as "no percentage data" rather than failing the whole call.
-            tracing::debug!(period, status = %status, "defillama percentage non-200");
+            // Logged at warn so log-tailing in prod surfaces a sustained
+            // upstream issue (a stuck non-200 starves the agent of 24h/7d
+            // signals it relies on).
+            tracing::warn!(period, status = %status, "defillama percentage non-200");
             return Ok(HashMap::new());
         }
         let parsed: PctResp = serde_json::from_str(&body).map_err(|e| {

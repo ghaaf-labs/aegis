@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Mail, Loader2 } from "lucide-react";
 import {
@@ -51,6 +51,16 @@ export function CreateWalletCard({ loginMode = false }: Props) {
   const [mode, setMode] = useState<Mode>("email");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Tracks whether the component is still mounted. The 30s `pollStatus`
+  // loop would otherwise keep firing after the user navigated away, then
+  // call setWallet + router.push on a stale closure (zombie poll).
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // Pre-fill the email field from localStorage when we have it — the SPA
   // remembers the address from the last successful signup/login, but the
@@ -81,7 +91,8 @@ export function CreateWalletCard({ loginMode = false }: Props) {
   };
 
   const runChallengeAndPoll = async (bundle: UserTokenBundle) => {
-    if (!bundle.challengeId) {
+    const challengeId = bundle.challengeId;
+    if (!challengeId) {
       // Returning user; wallet is either on the auth response or arrives via
       // a quick status poll. Caller already handled the inline-wallet case.
       setMode("polling");
@@ -96,7 +107,7 @@ export function CreateWalletCard({ loginMode = false }: Props) {
       encryptionKey: bundle.encryptionKey,
     });
     await new Promise<void>((resolve, reject) => {
-      sdk.execute(bundle.challengeId!, (sdkError, result) => {
+      sdk.execute(challengeId, (sdkError, result) => {
         if (sdkError) {
           reject(new Error(sdkError.message || "Circle SDK challenge failed"));
           return;
@@ -120,13 +131,16 @@ export function CreateWalletCard({ loginMode = false }: Props) {
    */
   const pollStatus = async (method: "passkey" | "returning") => {
     for (let i = 0; i < 15; i++) {
+      if (!mountedRef.current) return;
       const resp = await walletApi.status();
+      if (!mountedRef.current) return;
       if (resp.wallet) {
         await finish(method, resp.wallet);
         return;
       }
       await new Promise((r) => setTimeout(r, 2000));
     }
+    if (!mountedRef.current) return;
     throw new Error("Wallet provisioning timed out — refresh and try again");
   };
 

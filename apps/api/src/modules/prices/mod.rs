@@ -21,17 +21,20 @@ use std::sync::Arc;
 
 use crate::config::Config;
 
-/// Build the `Arc<dyn PriceProvider>` for `AppState` from config. Wraps the
-/// primary + optional fallback in a `FallbackProvider`. Selectable so a
-/// runtime flip in `.env.local` is enough to roll back to CoinGecko if a new
-/// provider misbehaves.
+/// Build the `Arc<dyn PriceProvider>` for `AppState` from config. Always
+/// wraps the primary in a `FallbackProvider` so per-ticker caching is
+/// applied even when no fallback is configured — otherwise every consumer
+/// (peg monitor, SSE ticker, FX, agent tools) would hit the upstream
+/// directly on every poll. When there's no real fallback the primary is
+/// used as both providers, so the circuit-breaker path is a no-op.
 pub fn build_from_config(http: reqwest::Client, config: &Config) -> Arc<dyn PriceProvider> {
     let primary = construct(&config.price_provider_primary, http.clone(), config);
     let fallback_name = config.price_provider_fallback.as_str();
-    if fallback_name == "none" || fallback_name == config.price_provider_primary {
-        return primary;
-    }
-    let fallback = construct(fallback_name, http, config);
+    let fallback = if fallback_name == "none" || fallback_name == config.price_provider_primary {
+        primary.clone()
+    } else {
+        construct(fallback_name, http, config)
+    };
     Arc::new(FallbackProvider::new(primary, fallback))
 }
 

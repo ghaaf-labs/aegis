@@ -1,18 +1,15 @@
 //! USDC ↔ EURC basis fetched via the platform price provider.
 //!
 //! Returns `Quote { usdc_usd, eurc_usd }`; the caller divides to get the
-//! USDC→EURC mid-market rate. In-memory 30s cache so a busy /analyze loop
-//! doesn't hammer the upstream when many decisions land in quick succession.
+//! USDC→EURC mid-market rate. The PriceProvider already runs its own
+//! per-ticker cache (3s TTL) so we don't re-cache here — a separate 30s
+//! cache used to make EURC/USDC up to 30s stale while every other symbol
+//! refreshed at 3s, breaking the consistency consumers expect.
 //!
 //! On any error the caller should fall back to the prior hardcoded `0.9217`
 //! so the agent always has a number.
 
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
-
 use crate::modules::prices::{lookup_symbol, PriceProvider};
-
-const CACHE_TTL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy)]
 pub struct Quote {
@@ -20,13 +17,7 @@ pub struct Quote {
     pub eurc_usd: f64,
 }
 
-static CACHE: Mutex<Option<(Instant, Quote)>> = Mutex::new(None);
-
 pub async fn fetch_quote(provider: &dyn PriceProvider) -> anyhow::Result<Quote> {
-    if let Some(q) = cached() {
-        return Ok(q);
-    }
-
     let symbols: Vec<&_> = ["USDC", "EURC"]
         .iter()
         .filter_map(|t| lookup_symbol(t))
@@ -43,24 +34,10 @@ pub async fn fetch_quote(provider: &dyn PriceProvider) -> anyhow::Result<Quote> 
         .map(|q| q.price_usd)
         .ok_or_else(|| anyhow::anyhow!("fx: eurc missing from provider response"))?;
 
-    let quote = Quote {
+    Ok(Quote {
         usdc_usd: usdc,
         eurc_usd: eurc,
-    };
-    if let Ok(mut g) = CACHE.lock() {
-        *g = Some((Instant::now(), quote));
-    }
-    Ok(quote)
-}
-
-fn cached() -> Option<Quote> {
-    let g = CACHE.lock().ok()?;
-    let (at, q) = g.as_ref()?;
-    if at.elapsed() < CACHE_TTL {
-        Some(*q)
-    } else {
-        None
-    }
+    })
 }
 
 #[cfg(test)]

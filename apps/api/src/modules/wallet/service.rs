@@ -6,7 +6,7 @@ use jsonwebtoken::{encode, EncodingKey, Header};
 use uuid::Uuid;
 
 use super::models::{
-    UserTokenBundle, WalletAuthResponse, WalletInfo, WalletStatusResponse, WalletUser,
+    WalletAuthResponse, WalletInfo, WalletStatusResponse, WalletUser,
     WalletUserPublic,
 };
 use super::provider::WalletProvider;
@@ -74,7 +74,12 @@ impl<'a> WalletService<'a> {
             .find_user_by_email(email)
             .await?
             .ok_or_else(|| AppError::Unauthorized("no account for this email".into()))?;
-        self.provider.ensure_user(user.id).await?;
+        // Skip ensure_user when the wallet is already provisioned — the
+        // Circle user record exists at that point and the extra POST is
+        // a guaranteed 409 round-trip on the hot login path.
+        if user.wallet_id.is_none() {
+            self.provider.ensure_user(user.id).await?;
+        }
         let bundle = self.provider.issue_user_token(user.id, false).await?;
         let token = mint_token(&user, self.config)?;
         let wallet = wallet_from_user(&user);
@@ -103,16 +108,21 @@ impl<'a> WalletService<'a> {
         let Some(info) = self.provider.fetch_user_wallets(user_id).await? else {
             return Ok(WalletStatusResponse { wallet: None });
         };
-        self.persist_wallet(user_id, &info).await?;
-        let _ = self
-            .sse
-            .send(SseEvent::WalletCreated(super::sse::WalletCreatedPayload {
-                user_id,
-                wallet_id: info.wallet_id.clone(),
-                arc_address: info.arc_address.clone(),
-                base_address: info.base_address.clone(),
-                created_at: info.created_at,
-            }));
+        // Only the writer that actually persisted the wallet emits SSE —
+        // concurrent status polls used to fire `wallet.created` twice,
+        // causing a double redirect in the frontend.
+        let just_persisted = self.persist_wallet(user_id, &info).await?;
+        if just_persisted {
+            let _ = self
+                .sse
+                .send(SseEvent::WalletCreated(super::sse::WalletCreatedPayload {
+                    user_id,
+                    wallet_id: info.wallet_id.clone(),
+                    arc_address: info.arc_address.clone(),
+                    base_address: info.base_address.clone(),
+                    created_at: info.created_at,
+                }));
+        }
         Ok(WalletStatusResponse { wallet: Some(info) })
     }
 
@@ -144,30 +154,60 @@ impl<'a> WalletService<'a> {
 
     /// Create-or-find a user row by email. Returns `(user, is_new)` where
     /// `is_new` is true when this call inserted the row.
+    ///
+    /// Atomic upsert via `INSERT … ON CONFLICT (email) DO UPDATE`. The
+    /// earlier "find then insert" version had a TOCTOU race: two concurrent
+    /// signups with the same email both passed the find check and the
+    /// second INSERT raised a UNIQUE violation. The `xmax = 0` trick
+    /// distinguishes the INSERT row (xmax = 0) from the UPDATE-on-conflict
+    /// row (xmax != 0) so we still know whether this caller's INSERT or
+    /// another's won.
     async fn upsert_user_record(&self, email: &str) -> crate::error::Result<(WalletUser, bool)> {
-        if let Some(existing) = self.find_user_by_email(email).await? {
-            return Ok((existing, false));
-        }
-        let user = sqlx::query_as::<_, WalletUser>(
+        use sqlx::Row;
+        let row = sqlx::query(
             r#"INSERT INTO users (id, email)
                VALUES ($1, $2)
+               ON CONFLICT (email) DO UPDATE
+                 SET email = EXCLUDED.email
                RETURNING id, email, risk_tolerance, investment_horizon_months,
-                         wallet_id, arc_address, base_address, created_at"#,
+                         wallet_id, arc_address, base_address, created_at,
+                         (xmax = 0) AS was_inserted"#,
         )
         .bind(Uuid::new_v4())
         .bind(email)
         .fetch_one(self.db)
         .await?;
-        Ok((user, true))
+        let was_inserted: bool = row.try_get("was_inserted")?;
+        let user = WalletUser {
+            id: row.try_get("id")?,
+            email: row.try_get("email")?,
+            risk_tolerance: row.try_get("risk_tolerance")?,
+            investment_horizon_months: row.try_get("investment_horizon_months")?,
+            wallet_id: row.try_get("wallet_id")?,
+            arc_address: row.try_get("arc_address")?,
+            base_address: row.try_get("base_address")?,
+            created_at: row.try_get("created_at")?,
+        };
+        Ok((user, was_inserted))
     }
 
-    async fn persist_wallet(&self, user_id: Uuid, info: &WalletInfo) -> crate::error::Result<()> {
-        sqlx::query(
+    /// Persist Circle's wallet info. Returns `true` when this call actually
+    /// wrote (so the caller can fire the `wallet.created` SSE once). Two
+    /// concurrent status polls used to both fire SSE because the UPDATE
+    /// is idempotent and reports rows_affected even on no-op writes. The
+    /// `wallet_id IS NULL` predicate makes the second writer a no-op so
+    /// only the actual provisioning caller emits the event.
+    async fn persist_wallet(
+        &self,
+        user_id: Uuid,
+        info: &WalletInfo,
+    ) -> crate::error::Result<bool> {
+        let result = sqlx::query(
             "UPDATE users
-                SET wallet_id    = COALESCE(wallet_id, $2),
-                    arc_address  = COALESCE(arc_address, $3),
-                    base_address = COALESCE(base_address, $4)
-              WHERE id = $1",
+                SET wallet_id    = $2,
+                    arc_address  = $3,
+                    base_address = $4
+              WHERE id = $1 AND wallet_id IS NULL",
         )
         .bind(user_id)
         .bind(&info.wallet_id)
@@ -175,7 +215,7 @@ impl<'a> WalletService<'a> {
         .bind(&info.base_address)
         .execute(self.db)
         .await?;
-        Ok(())
+        Ok(result.rows_affected() > 0)
     }
 }
 
@@ -219,11 +259,6 @@ fn validate_email(email: &str) -> crate::error::Result<()> {
     }
     Ok(())
 }
-
-/// Borrow-only marker so the compiler stops complaining when the bundle
-/// isn't read by every code path in tests/build configurations.
-#[allow(dead_code)]
-fn _ensure_user_token_bundle_is_used(_: &UserTokenBundle) {}
 
 #[cfg(test)]
 mod tests {

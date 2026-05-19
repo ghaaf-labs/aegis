@@ -1,6 +1,6 @@
 use chrono::Utc;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -25,6 +25,12 @@ pub struct FallbackProvider {
     cache: Mutex<HashMap<&'static str, (Instant, SpotQuote)>>,
     failures: AtomicU32,
     open_until_unix: AtomicI64,
+    /// `true` when the last successful fetch came from the fallback (not
+    /// the primary). `name()` reads this so the SSE `source` field is
+    /// honest: a single primary failure flips the next call to fallback
+    /// even though the circuit isn't open yet, and the user-facing
+    /// "via X · live tick" should reflect that.
+    last_was_fallback: AtomicBool,
 }
 
 impl FallbackProvider {
@@ -35,24 +41,28 @@ impl FallbackProvider {
             cache: Mutex::new(HashMap::new()),
             failures: AtomicU32::new(0),
             open_until_unix: AtomicI64::new(0),
+            last_was_fallback: AtomicBool::new(false),
         }
     }
 
     fn circuit_open(&self) -> bool {
-        let until = self.open_until_unix.load(Ordering::Relaxed);
+        // Acquire so a freshly written breaker timestamp from another thread
+        // is observed promptly. Relaxed was OK on x86 but risked stale reads
+        // on weakly-ordered architectures (ARM Graviton, Apple Silicon).
+        let until = self.open_until_unix.load(Ordering::Acquire);
         until > 0 && Utc::now().timestamp() < until
     }
 
     fn record_success(&self) {
         self.failures.store(0, Ordering::Relaxed);
-        self.open_until_unix.store(0, Ordering::Relaxed);
+        self.open_until_unix.store(0, Ordering::Release);
     }
 
     fn record_failure(&self) {
         let n = self.failures.fetch_add(1, Ordering::Relaxed) + 1;
         if n >= FAILURE_THRESHOLD {
             self.open_until_unix
-                .store(Utc::now().timestamp() + OPEN_SECS, Ordering::Relaxed);
+                .store(Utc::now().timestamp() + OPEN_SECS, Ordering::Release);
         }
     }
 
@@ -101,27 +111,28 @@ impl PriceProvider for FallbackProvider {
             &self.primary
         };
 
+        let active_is_fallback = std::ptr::eq(
+            Arc::as_ptr(active) as *const (),
+            Arc::as_ptr(&self.fallback) as *const (),
+        );
         match active.fetch_spot(&miss_refs).await {
             Ok(quotes) => {
-                if !std::ptr::eq(
-                    Arc::as_ptr(active) as *const (),
-                    Arc::as_ptr(&self.fallback) as *const (),
-                ) {
+                if !active_is_fallback {
                     self.record_success();
                 }
+                self.last_was_fallback
+                    .store(active_is_fallback, Ordering::Relaxed);
                 self.write_cache(&quotes);
                 out.extend(quotes);
                 Ok(out)
             }
             Err(primary_err) => {
                 // Primary fail → record, try fallback once before giving up.
-                if !std::ptr::eq(
-                    Arc::as_ptr(active) as *const (),
-                    Arc::as_ptr(&self.fallback) as *const (),
-                ) {
+                if !active_is_fallback {
                     self.record_failure();
                     tracing::warn!(error = %primary_err, "primary price provider failed; trying fallback");
                     let quotes = self.fallback.fetch_spot(&miss_refs).await?;
+                    self.last_was_fallback.store(true, Ordering::Relaxed);
                     self.write_cache(&quotes);
                     out.extend(quotes);
                     Ok(out)
@@ -133,10 +144,12 @@ impl PriceProvider for FallbackProvider {
     }
 
     fn name(&self) -> &'static str {
-        // Source surfaced on SSE events should reflect whichever provider
-        // *most recently* served data. Cheapest correct answer: the primary
-        // when the breaker is closed, the fallback when open.
-        if self.circuit_open() {
+        // Source reported to consumers (SSE `source` field, ProvenanceLine,
+        // `price_history.source` column) must reflect whichever provider
+        // *actually served the last successful fetch*. A single primary
+        // failure that flipped to fallback still flips name(), even before
+        // the circuit breaker opens.
+        if self.last_was_fallback.load(Ordering::Relaxed) || self.circuit_open() {
             self.fallback.name()
         } else {
             self.primary.name()

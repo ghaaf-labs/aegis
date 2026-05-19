@@ -462,8 +462,11 @@ async fn propose_defensive_plan(
 
 /// Sample the current stablecoin prices via the platform price provider.
 /// USDC/EURC come straight from the provider; USYC defaults to 1.00 because
-/// Hashnote hasn't surfaced a public oracle yet. EURC's USD price is converted
-/// through a 1.085 EUR/USD mid so the threshold semantics stay "EURC vs 1 EURC".
+/// Hashnote hasn't surfaced a public oracle yet. EURC's USD price is
+/// converted through the live FX module's mid rate so the threshold
+/// semantics stay "EURC vs 1 EURC" — the old hardcoded 1.085 baked in
+/// 2024-era ECB pricing and would have raised false depegs once EUR/USD
+/// moved more than a percent or two.
 ///
 /// Failures fall back to "1.00" for every symbol so an upstream outage never
 /// triggers a false depeg.
@@ -475,6 +478,10 @@ async fn sample_stable_prices(state: &AppState) -> HashMap<String, f64> {
         .iter()
         .filter_map(|t| crate::modules::prices::lookup_symbol(t))
         .collect();
+    let eur_usd_mid = match crate::modules::fx::prices::fetch_quote(state.prices.as_ref()).await {
+        Ok(q) if q.eurc_usd > 0.0 => q.eurc_usd,
+        _ => 1.085,
+    };
     match state.prices.fetch_spot(&symbols).await {
         Ok(quotes) => {
             for q in quotes {
@@ -483,8 +490,7 @@ async fn sample_stable_prices(state: &AppState) -> HashMap<String, f64> {
                         out.insert("USDC".into(), q.price_usd);
                     }
                     "EURC" => {
-                        let eur_usd = 1.085;
-                        out.insert("EURC".into(), q.price_usd / eur_usd);
+                        out.insert("EURC".into(), q.price_usd / eur_usd_mid);
                     }
                     _ => {}
                 }

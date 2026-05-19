@@ -23,6 +23,8 @@ interface Props {
 export function AllocationChart({ compact = false }: Props) {
   const portfolio = useActivePortfolio();
   const snapshot = usePortfolioStore((s) => s.marketSnapshot);
+  const livePrices = usePortfolioStore((s) => s.livePrices);
+  const liveSource = Object.values(livePrices)[0]?.source;
 
   if (!portfolio) return null;
 
@@ -160,7 +162,7 @@ export function AllocationChart({ compact = false }: Props) {
             source={
               isUninvested
                 ? "target allocation · no positions yet"
-                : "current holdings × DefiLlama prices"
+                : `current holdings × ${liveSource ?? "live"} prices`
             }
             freshness="live"
           />

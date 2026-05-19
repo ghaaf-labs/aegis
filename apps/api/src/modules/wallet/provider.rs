@@ -90,15 +90,24 @@ impl WalletProvider for CircleProvider<'_> {
         if status.is_success() {
             return Ok(());
         }
-        // Circle returns 409 (or a 4xx with structured `code: 155101` or similar)
-        // when the user already exists. Treat any "exists" signal as success so
-        // re-running signup with the same email is idempotent.
+        // Circle returns 409 when the user already exists. Decode the
+        // structured `code` field for any 4xx so a wording change in
+        // Circle's `message` field doesn't silently break idempotency.
+        // 155101 = "Entity (User) already exists" — treat as success.
         if status == StatusCode::CONFLICT {
             return Ok(());
         }
         let body = resp.text().await.unwrap_or_default();
-        if status.is_client_error() && body.contains("already exists") {
-            return Ok(());
+        if status.is_client_error() {
+            #[derive(serde::Deserialize)]
+            struct CircleError {
+                code: Option<i64>,
+            }
+            if let Ok(parsed) = serde_json::from_str::<CircleError>(&body) {
+                if parsed.code == Some(155101) {
+                    return Ok(());
+                }
+            }
         }
         Err(AppError::Internal(anyhow::anyhow!(
             "circle ensure_user {status}: {}",
@@ -171,7 +180,11 @@ impl WalletProvider for CircleProvider<'_> {
                 .json(&InitReq {
                     idempotency_key: Uuid::new_v4().to_string(),
                     blockchains: &[ARC_BLOCKCHAIN, BASE_BLOCKCHAIN],
-                    account_type: "EOA",
+                    // SCA is required — Circle Paymaster gas abstraction
+                    // and CCTP V2 Hook execution need a smart contract
+                    // account. EOA wallets can't sponsor gas, can't run
+                    // hooks, and Circle doesn't migrate them later.
+                    account_type: "SCA",
                 })
                 .send()
                 .await

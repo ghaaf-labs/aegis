@@ -1320,6 +1320,7 @@ mod tests {
             })),
         );
         ctx.insert("harvestable_losses", "(none)".into());
+        ctx.insert("wallet_block", "Wallet balance: $0".into());
         let rendered = reg.render(PromptKey::Strategist, &ctx);
         assert!(
             !rendered.contains("{{"),

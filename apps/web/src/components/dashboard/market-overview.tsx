@@ -146,14 +146,15 @@ export function MarketOverview() {
         </div>
 
         {/* Provenance — trust surface (design system component). Source name
-            comes off the live SSE tick when one has arrived; otherwise the
-            initial snapshot was fetched via the same DefiLlama provider. */}
+            comes off the live SSE tick (which FallbackProvider sets per call,
+            so it flips defillama → pyth on fallback). Falling back to a
+            hardcoded provider name here would lie during a fallback window. */}
         <div className="pt-2 border-t border-white/10">
           <ProvenanceLine
             source={
               newestTickAt > 0
-                ? `${Object.values(livePrices)[0]?.source ?? "DefiLlama"} · live tick`
-                : "DefiLlama"
+                ? `${Object.values(livePrices)[0]?.source ?? "live"} · live tick`
+                : "live feed"
             }
             freshness={new Date(effectiveCapturedAt).toLocaleTimeString([], {
               hour: "2-digit",
