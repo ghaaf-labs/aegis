@@ -1,6 +1,7 @@
 "use client";
 
-import { TrendingUp, TrendingDown, Wallet } from "lucide-react";
+import Link from "next/link";
+import { TrendingUp, TrendingDown, Wallet, ArrowRight } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
 import { formatCurrency, formatPercent, changeColor } from "@/lib/utils";
@@ -15,6 +16,8 @@ export function PortfolioSummaryCard() {
   const snapshot = usePortfolioStore((s) => s.marketSnapshot);
   const unifiedUsdc = usePortfolioStore((s) => s.unifiedUsdc);
   const unifiedEurc = usePortfolioStore((s) => s.unifiedEurc);
+  const perChainUsdc = usePortfolioStore((s) => s.perChainUsdc);
+  const perChainEurc = usePortfolioStore((s) => s.perChainEurc);
 
   if (!portfolio) {
     return (
@@ -50,26 +53,27 @@ export function PortfolioSummaryCard() {
   const idleCashUsd = unifiedUsdc + unifiedEurc * eurcUsd;
   const totalWealthUsd = portfolio.totalValueUsd + idleCashUsd;
 
+  const arcTotal = (perChainUsdc.arc ?? 0) + (perChainEurc.arc ?? 0) * eurcUsd;
+  const baseTotal =
+    (perChainUsdc.base ?? 0) + (perChainEurc.base ?? 0) * eurcUsd;
+
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Wallet className="w-3.5 h-3.5" />
-          Total Value
+          Net Worth
         </CardTitle>
       </CardHeader>
       <CardContent>
         <p className={`text-3xl font-bold mb-1 ${priceColor}`}>
           {formatCurrency(totalWealthUsd)}
         </p>
-        {idleCashUsd > 0 && (
-          <p className="text-[11px] font-mono text-text-mut mb-1">
-            {formatCurrency(portfolio.totalValueUsd, { compact: true })}{" "}
-            invested
-            {" · "}
-            {formatCurrency(idleCashUsd, { compact: true })} idle cash
-          </p>
-        )}
+        <p className="text-[11px] font-mono text-text-mut mb-3">
+          {formatCurrency(portfolio.totalValueUsd, { compact: true })} invested
+          {" · "}
+          {formatCurrency(idleCashUsd, { compact: true })} in wallet
+        </p>
         {portfolio.totalValueUsd > 0.5 ? (
           <div
             className={`flex items-center gap-1.5 text-sm ${changeColor(portfolio.totalPnlUsd)}`}
@@ -86,6 +90,34 @@ export function PortfolioSummaryCard() {
           <p className="text-[11px] font-mono text-text-mut">
             Awaiting first deploy — PnL starts ticking after legs confirm.
           </p>
+        )}
+
+        {idleCashUsd > 0.5 && (
+          <div className="mt-4 grid grid-cols-2 gap-2 text-[11px] font-mono">
+            <div className="p-2 rounded-sharp bg-raised border border-border-default">
+              <p className="text-text-mut uppercase tracking-wider text-[9px] mb-0.5">
+                Arc wallet
+              </p>
+              <p className="text-text-hi tabular-nums">
+                {formatCurrency(arcTotal, { compact: true })}
+              </p>
+            </div>
+            <div className="p-2 rounded-sharp bg-raised border border-border-default">
+              <p className="text-text-mut uppercase tracking-wider text-[9px] mb-0.5">
+                Base wallet
+              </p>
+              <p className="text-text-hi tabular-nums">
+                {formatCurrency(baseTotal, { compact: true })}
+              </p>
+            </div>
+            <Link
+              href="/wallet"
+              className="col-span-2 flex items-center justify-between px-2 py-1.5 rounded-sharp text-[10px] text-accent-pnl/80 hover:text-accent-pnl hover:bg-accent-pnl/5 transition-colors"
+            >
+              <span>Wallet addresses + per-token breakdown</span>
+              <ArrowRight className="w-3 h-3" />
+            </Link>
+          </div>
         )}
 
         <div className="mt-4 grid grid-cols-2 gap-3">

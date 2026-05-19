@@ -180,6 +180,26 @@ pub async fn analyze_portfolio(
     strategist_ctx.insert("usyc_rate", format!("{:.4}", usyc_rate));
     strategist_ctx.insert("usdc_eurc_basis", format!("{:.4}", eurc_basis));
     strategist_ctx.insert("goal_block", format_goal_block(&portfolio.goal));
+
+    // Wallet awareness: the strategist used to see only `portfolios.total_value_usd`
+    // (invested positions) and concluded "portfolio is empty, deposit funds"
+    // on every run — even when the user had already funded $100s of USDC + EURC
+    // into Circle Gateway. Inject the Gateway balance so the agent knows
+    // there's deployable capital and can propose a first-deploy plan.
+    let gateway_block = match crate::modules::gateway::service::fetch_balance(
+        &state.http,
+        &state.config,
+        portfolio.user_id,
+    )
+    .await
+    {
+        Ok(b) => format_gateway_block(&b),
+        Err(e) => {
+            tracing::debug!(error=%e, "agent: gateway balance fetch failed; strategist sees no wallet info");
+            "Wallet balance: unavailable (Gateway lookup failed).".to_string()
+        }
+    };
+    strategist_ctx.insert("wallet_block", gateway_block);
     let harvestable = crate::modules::tax::service::harvestable_losses(
         state,
         portfolio.user_id,
@@ -636,6 +656,34 @@ fn build_critic_context(
     ctx.insert("risk_tolerance", user.risk_tolerance.clone());
     ctx.insert("horizon_months", user.investment_horizon_months.to_string());
     ctx
+}
+
+/// Render a snapshot of the user's Circle Gateway balance for the strategist.
+/// When the user has deployable cash but zero invested, the closing line
+/// explicitly tells the strategist to propose a first-deploy plan rather than
+/// repeat "deposit funds" indefinitely.
+fn format_gateway_block(b: &crate::modules::gateway::service::GatewayBalance) -> String {
+    let mut lines = vec![format!(
+        "Wallet balance (Circle Gateway, undeployed):\n  Total USDC: {:.2}\n  Total EURC: {:.2}",
+        b.unified_usdc, b.unified_eurc
+    )];
+    for (chain, amt) in &b.per_chain {
+        if *amt > 0.0 {
+            lines.push(format!("  - {} USDC: {:.2}", chain.to_uppercase(), amt));
+        }
+    }
+    for (chain, amt) in &b.per_chain_eurc {
+        if *amt > 0.0 {
+            lines.push(format!("  - {} EURC: {:.2}", chain.to_uppercase(), amt));
+        }
+    }
+    let cash_total = b.unified_usdc + b.unified_eurc;
+    if cash_total > 5.0 {
+        lines.push(
+            "Note: deployable capital is already in Gateway. Do not recommend 'deposit funds' — propose how to ALLOCATE this cash into the target weights (a first-deploy plan).".into(),
+        );
+    }
+    lines.join("\n")
 }
 
 /// Render the user's goal block for the strategist prompt. Empty goals

@@ -71,7 +71,7 @@ export function AssetTable() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Holdings</CardTitle>
+        <CardTitle>Invested Positions</CardTitle>
       </CardHeader>
       <CardContent className="p-0 overflow-x-auto">
         <table className="w-full min-w-[640px]">

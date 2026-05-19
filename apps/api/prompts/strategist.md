@@ -26,6 +26,10 @@ money. A human approves every action.
 
 {{ allocations_table }}
 
+### Wallet balance (Circle Gateway, undeployed)
+
+{{ wallet_block }}
+
 ### Recent decisions (memory)
 
 {{ memory }}

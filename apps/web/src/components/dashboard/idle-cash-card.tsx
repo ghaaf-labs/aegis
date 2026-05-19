@@ -34,7 +34,7 @@ export function IdleCashCard() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Wallet className="w-3.5 h-3.5 text-accent-pnl" />
-          Idle Cash
+          Wallet Balance
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -47,7 +47,8 @@ export function IdleCashCard() {
             <>
               {" · "}€{unifiedEurc.toFixed(2)} EURC
             </>
-          )}
+          )}{" "}
+          undeployed
         </p>
 
         <div className="grid grid-cols-2 gap-3">

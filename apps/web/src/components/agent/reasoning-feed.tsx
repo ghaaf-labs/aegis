@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Brain,
@@ -131,25 +131,78 @@ export function AgentReasoningFeed() {
             abstains={abstains.slice(0, 2)}
           />
         )}
-        <div className="overflow-y-auto max-h-[480px] scrollbar-thin">
-          <AnimatePresence initial={false}>
-            {decisions.map((decision, i) => (
-              <DecisionRow key={decision.id} decision={decision} index={i} />
-            ))}
-          </AnimatePresence>
-          {decisions.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-12 text-center px-6">
-              <Brain className="w-6 h-6 text-cyan-400/30 mb-3" />
-              <p className="text-xs font-mono text-text-mut">
-                No decisions yet — the agent will reason here when triggered by
-                drift, a regime flip, or your manual request.
-              </p>
-            </div>
-          )}
-        </div>
+        <DecisionList decisions={decisions} />
       </CardContent>
     </Card>
   );
+}
+
+/**
+ * Collapses runs of identical decisions ("Hold — portfolio is empty" repeated
+ * 6×) into the most-recent one + a quiet "N similar prior decisions" footer.
+ * Before this the feed would scroll forever with the same recommendation,
+ * making the agent look stuck in a loop.
+ */
+function DecisionList({ decisions }: { decisions: AgentDecision[] }) {
+  const groups = useMemo(() => groupRepeatedDecisions(decisions), [decisions]);
+
+  if (decisions.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-center px-6">
+        <Brain className="w-6 h-6 text-cyan-400/30 mb-3" />
+        <p className="text-xs font-mono text-text-mut">
+          No decisions yet — the agent will reason here when triggered by drift,
+          a regime flip, or your manual request.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-y-auto max-h-[480px] scrollbar-thin">
+      <AnimatePresence initial={false}>
+        {groups.map((g, i) => (
+          <div key={g.head.id}>
+            <DecisionRow decision={g.head} index={i} />
+            {g.repeats > 0 && (
+              <div className="px-5 py-2 border-b border-white/4 text-[10px] font-mono text-text-mut italic">
+                + {g.repeats} earlier{" "}
+                {g.repeats === 1 ? "decision" : "decisions"} with the same
+                recommendation
+              </div>
+            )}
+          </div>
+        ))}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/**
+ * Buckets consecutive decisions sharing the same recommendation "shape".
+ * Two decisions are considered the same if they're both no-trade holds (empty
+ * trades array) — that's the loop the agent gets stuck in pre-deploy. Head =
+ * most recent in the bucket; `repeats` = older copies collapsed.
+ */
+function groupRepeatedDecisions(decisions: AgentDecision[]) {
+  const out: Array<{ head: AgentDecision; repeats: number }> = [];
+  const noTradeShape = (d: AgentDecision) =>
+    (d.recommendation.trades?.length ?? 0) === 0;
+  for (const d of decisions) {
+    const shape = noTradeShape(d) ? "no-trade-hold" : `trades:${d.id}`;
+    const last = out[out.length - 1];
+    const lastShape = last
+      ? noTradeShape(last.head)
+        ? "no-trade-hold"
+        : `trades:${last.head.id}`
+      : null;
+    if (last && lastShape === shape && shape === "no-trade-hold") {
+      last.repeats += 1;
+      continue;
+    }
+    out.push({ head: d, repeats: 0 });
+  }
+  return out;
 }
 
 /**
