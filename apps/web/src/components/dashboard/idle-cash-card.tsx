@@ -30,7 +30,7 @@ export function IdleCashCard() {
     (perChainUsdc.base ?? 0) + (perChainEurc.base ?? 0) * eurcUsd;
 
   return (
-    <Card>
+    <Card data-testid="idle-cash-card">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Wallet className="w-3.5 h-3.5 text-accent-pnl" />

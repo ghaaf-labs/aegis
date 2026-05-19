@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import { type Page, expect } from "@playwright/test";
 
 const TEST_JWT =
   process.env.PLAYWRIGHT_TEST_JWT ??
@@ -13,5 +13,12 @@ export async function injectTestJwt(page: Page, jwt = TEST_JWT) {
 export async function clearJwt(page: Page) {
   await page.addInitScript(() => {
     localStorage.removeItem("aegis.jwt");
+  });
+}
+
+export async function waitForDashboard(page: Page) {
+  await page.waitForURL(/\/dashboard\//);
+  await expect(page.locator('[data-testid="portfolio-summary"]')).toBeVisible({
+    timeout: 10_000,
   });
 }
