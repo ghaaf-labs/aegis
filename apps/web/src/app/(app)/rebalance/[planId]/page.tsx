@@ -45,6 +45,7 @@ export default function RebalancePage({ params }: PageProps) {
     }>;
   } | null>(null);
   const [approved, setApproved] = useState(false);
+  const [planStatus, setPlanStatus] = useState<string>("planned");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [decision, setDecision] = useState<AgentDecision | null>(null);
 
@@ -73,6 +74,7 @@ export default function RebalancePage({ params }: PageProps) {
         setEstimatedFee(detail.totalGasUsdc ?? 0);
         setFeeFetchedAt(new Date());
         setFeeSource("plan");
+        setPlanStatus(detail.status);
         // If the plan is already past 'planned' state, skip approval modal.
         if (detail.status !== "planned") {
           setShowApproval(false);
@@ -127,13 +129,18 @@ export default function RebalancePage({ params }: PageProps) {
 
   return (
     <main className="min-h-screen bg-[#0A0A0A] text-white px-6 py-8">
-      <div className="max-w-3xl mx-auto space-y-6">
+      <div className="max-w-5xl mx-auto space-y-6">
         <header>
           <p className="font-mono text-[11px] tracking-wider text-cyan-400 uppercase">
             Rebalance · {planId.slice(0, 8)}…
           </p>
           <h1 className="text-2xl font-bold mt-1">
-            {approved ? "Execution in progress" : "Review the plan"}
+            {(() => {
+              if (!approved) return "Review the plan";
+              if (planStatus === "completed") return "Execution complete";
+              if (planStatus === "failed") return "Execution halted";
+              return "Execution in progress";
+            })()}
           </h1>
 
           {plan &&
