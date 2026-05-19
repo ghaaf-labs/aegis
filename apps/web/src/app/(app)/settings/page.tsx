@@ -11,8 +11,6 @@ import {
   Mail,
   Eye,
   ArrowRight,
-  Trophy,
-  Compass,
 } from "lucide-react";
 import { PRICING_UI_ENABLED } from "@/lib/flags";
 import { DigestOptIn } from "@/components/settings/digest-opt-in";
@@ -80,23 +78,10 @@ export default function SettingsIndex() {
       description: "Subscription tier, fee history, payment method",
       enabled: PRICING_UI_ENABLED,
     },
-    {
-      href: "/leaderboard",
-      icon: Trophy,
-      title: "Leaderboard",
-      description:
-        "Public ranking by 7d realized return vs counterfactual — anonymous handles",
-    },
-    {
-      href: "/explore",
-      icon: Compass,
-      title: "Explore demo portfolios",
-      description: "Three curated agent diaries — see how reasoning unfolds",
-    },
   ];
 
   return (
-    <div className="max-w-3xl mx-auto space-y-8">
+    <div className="max-w-[1400px] mx-auto space-y-6">
       <h1 className="text-2xl font-semibold text-text-hi font-mono tracking-tight">
         Settings
       </h1>

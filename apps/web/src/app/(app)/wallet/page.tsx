@@ -2,18 +2,15 @@
 
 import { useState } from "react";
 import { Copy, ExternalLink, Check, Wallet as WalletIcon } from "lucide-react";
-import { motion } from "framer-motion";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { BrutalCard, BrutalCardBody, BrutalCardHeader } from "@aegis/ui";
 import { FaucetButton } from "@/components/wallet/faucet-button";
 import { usePortfolioStore } from "@/stores/portfolio";
 import { formatCurrency } from "@/lib/utils";
 
 /**
- * Dedicated wallet view. The Account dropdown shows addresses; this page
- * shows the live balances broken out per chain + per stable, with copy +
- * explorer affordances. Before this existed, the only place a user could
- * see their wallet values was a tiny "GATEWAY $X USDC · €Y EURC" string
- * in the header — easy to miss, and per-chain breakdown was discarded.
+ * Dedicated wallet view — per-chain USDC + EURC balances with copy +
+ * explorer affordances. Before this page the only balance surface was a
+ * tiny "GATEWAY $X" string in the header.
  */
 export default function WalletPage() {
   const wallet = usePortfolioStore((s) => s.wallet);
@@ -29,8 +26,8 @@ export default function WalletPage() {
 
   if (!wallet) {
     return (
-      <div className="max-w-3xl mx-auto py-12 text-center">
-        <p className="text-sm font-mono text-text-mut">
+      <div className="py-12 text-center">
+        <p className="text-sm font-mono text-text-lo">
           No wallet provisioned yet — finish signup to create one.
         </p>
       </div>
@@ -60,32 +57,34 @@ export default function WalletPage() {
   const isEmpty = unifiedUsdc < 0.01 && unifiedEurc < 0.01;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4 }}
-      className="max-w-4xl mx-auto space-y-6"
-    >
+    <div className="max-w-[1400px] mx-auto space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold text-text-hi font-mono tracking-tight flex items-center gap-2">
-          <WalletIcon className="w-5 h-5 text-accent-pnl" />
-          Wallet
-        </h1>
+        <div>
+          <h1 className="text-2xl font-mono font-semibold text-text-hi tracking-tight flex items-center gap-2">
+            <WalletIcon className="w-5 h-5 text-accent-pnl" />
+            Wallet
+          </h1>
+          <p className="text-sm text-text-lo mt-1">
+            Per-chain USDC + EURC balances and addresses
+          </p>
+        </div>
         {isEmpty && <FaucetButton />}
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Total wallet balance</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-3xl font-bold text-text-hi">
+      <BrutalCard>
+        <BrutalCardHeader>
+          <span className="text-sm font-mono text-text-hi">
+            Total wallet balance
+          </span>
+        </BrutalCardHeader>
+        <BrutalCardBody>
+          <p className="text-2xl font-mono font-semibold text-accent-pnl tabular-nums">
             {formatCurrency(totalUsdEquivalent)}
           </p>
-          <p className="text-xs font-mono text-text-mut mt-1">
+          <p className="text-xs font-mono text-text-lo mt-1">
             {formatCurrency(unifiedUsdc)} USDC · €{unifiedEurc.toFixed(2)} EURC
             {unifiedEurc > 0 && (
-              <span className="text-text-lo">
+              <span className="text-text-mut">
                 {" "}
                 (≈ {formatCurrency(unifiedEurc * eurcUsd)})
               </span>
@@ -96,8 +95,8 @@ export default function WalletPage() {
             the &quot;Deploy wallet balance&quot; button on the Dashboard to
             allocate it across your target weights.
           </p>
-        </CardContent>
-      </Card>
+        </BrutalCardBody>
+      </BrutalCard>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {chains.map((c) => (
@@ -112,7 +111,7 @@ export default function WalletPage() {
           />
         ))}
       </div>
-    </motion.div>
+    </div>
   );
 }
 
@@ -147,16 +146,14 @@ function ChainCard({
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center justify-between gap-3">
-          <span>{label}</span>
-          <span className="text-sm font-mono text-accent-pnl tabular-nums">
-            {formatCurrency(total)}
-          </span>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
+    <BrutalCard>
+      <BrutalCardHeader>
+        <span className="text-sm font-mono text-text-hi">{label}</span>
+        <span className="text-sm font-mono text-accent-pnl tabular-nums">
+          {formatCurrency(total)}
+        </span>
+      </BrutalCardHeader>
+      <BrutalCardBody className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
           <div className="p-3 rounded-sharp bg-raised border border-border-default">
             <p className="text-[10px] text-text-mut font-mono uppercase tracking-wider mb-1">
@@ -188,6 +185,7 @@ function ChainCard({
               {address}
             </code>
             <button
+              type="button"
               onClick={() => void handleCopy()}
               className="p-1 rounded-sharp hover:bg-white/5 text-text-lo hover:text-text-hi"
               title="Copy address"
@@ -211,7 +209,7 @@ function ChainCard({
             </a>
           </div>
         </div>
-      </CardContent>
-    </Card>
+      </BrutalCardBody>
+    </BrutalCard>
   );
 }

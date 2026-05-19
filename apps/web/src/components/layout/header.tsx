@@ -1,24 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
-import {
-  Bell,
-  Wifi,
-  WifiOff,
-  LogOut,
-  Wallet as WalletIcon,
-} from "lucide-react";
+import { Bell, Wifi, WifiOff, Wallet as WalletIcon } from "lucide-react";
 import { BrutalButton, BrutalPill } from "@aegis/ui";
 import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
-// formatCurrency / changeColor previously rendered the header's PORTFOLIO
-// VALUE + ALL-TIME PNL blocks — both removed when the Net Worth card became
-// the dashboard's single source of truth for these numbers.
-import { gatewayApi, walletApi } from "@/lib/api";
+import { gatewayApi } from "@/lib/api";
 
 export function Header() {
-  const router = useRouter();
   const portfolio = useActivePortfolio();
   const sseConnected = usePortfolioStore((s) => s.sseConnected);
   const unifiedUsdc = usePortfolioStore((s) => s.unifiedUsdc);
@@ -27,8 +16,6 @@ export function Header() {
   const setUnifiedEurc = usePortfolioStore((s) => s.setUnifiedEurc);
   const setPerChain = usePortfolioStore((s) => s.setPerChain);
   const wallet = usePortfolioStore((s) => s.wallet);
-  const setWallet = usePortfolioStore((s) => s.setWallet);
-  const setPortfolios = usePortfolioStore((s) => s.setPortfolios);
 
   const [notifOpen, setNotifOpen] = useState(false);
   const [userOpen, setUserOpen] = useState(false);
@@ -46,21 +33,6 @@ export function Header() {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, []);
-
-  const handleLogout = async () => {
-    setUserOpen(false);
-    try {
-      await walletApi.logout();
-    } catch {
-      // Backend already-401 is fine — we just need to clear local state.
-    }
-    setWallet(null);
-    setPortfolios([]);
-    setUnifiedUsdc(0);
-    setUnifiedEurc(0);
-    localStorage.removeItem("aegis_email");
-    router.push("/login");
-  };
 
   // Fetch unified balance on first render — Gateway SSE keeps it fresh after.
   useEffect(() => {
@@ -82,10 +54,10 @@ export function Header() {
     return () => {
       alive = false;
     };
-  }, [wallet, setUnifiedUsdc]);
+  }, [wallet, setUnifiedUsdc, setUnifiedEurc, setPerChain]);
 
   return (
-    <header className="flex items-center justify-between px-6 py-3 border-b-brutal border-border-default bg-surface shrink-0">
+    <header className="flex items-center justify-between px-6 h-16 border-b-brutal border-border-default bg-surface shrink-0">
       <div className="flex items-center gap-4">
         {portfolio && (
           <div className="flex items-center gap-2 px-3 py-1.5 border-brutal border-border-default rounded-sharp bg-bg">
@@ -196,13 +168,6 @@ export function Header() {
                   <WalletIcon className="w-3 h-3" />
                   Open wallet
                 </Link>
-                <button
-                  onClick={() => void handleLogout()}
-                  className="flex items-center gap-2 w-full text-left px-3 py-2 text-sm font-mono text-risk hover:bg-raised border-t border-border-default"
-                >
-                  <LogOut className="w-3 h-3" />
-                  Log out
-                </button>
               </div>
             )}
           </div>

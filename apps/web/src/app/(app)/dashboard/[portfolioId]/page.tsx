@@ -14,7 +14,7 @@ import { TrustabilityCard } from "@/components/dashboard/trustability-card";
 import { IdleCashCard } from "@/components/dashboard/idle-cash-card";
 import { LivePill } from "@/components/realtime/live-pill";
 import { FaucetButton } from "@/components/wallet/faucet-button";
-import { Button } from "@/components/ui/button";
+import { BrutalButton } from "@aegis/ui";
 import { rebalanceApi } from "@/lib/api";
 import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
 import { formatCurrency } from "@/lib/utils";
@@ -134,11 +134,10 @@ export default function PortfolioDashboardPage() {
               <p className="text-xs text-risk font-mono mt-2">{deployError}</p>
             )}
           </div>
-          <Button
-            size="sm"
-            onClick={handleDeploy}
+          <BrutalButton
+            variant="pnl"
+            onClick={() => void handleDeploy()}
             disabled={deploying}
-            className="bg-emerald-600 hover:bg-emerald-500 text-white"
           >
             {deploying ? (
               <>
@@ -151,7 +150,7 @@ export default function PortfolioDashboardPage() {
                 Deploy wallet balance
               </>
             )}
-          </Button>
+          </BrutalButton>
         </motion.div>
       )}
 

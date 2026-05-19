@@ -143,16 +143,16 @@ export default function TaxSettingsPage() {
   };
 
   return (
-    <div className="max-w-[1100px] mx-auto space-y-6">
-      <header className="space-y-1">
-        <h1 className="text-2xl font-mono font-semibold text-text-hi">
+    <div className="max-w-[1400px] mx-auto space-y-6">
+      <div>
+        <h1 className="text-2xl font-mono font-semibold text-text-hi tracking-tight">
           Tax export
         </h1>
-        <p className="text-sm text-text-lo max-w-2xl">
+        <p className="text-sm text-text-lo mt-1">
           IRS 1099-DA-ready CSV per portfolio, including stablecoin↔stablecoin
           dispositions (USDC↔EURC FX gain/loss). Pro feature.
         </p>
-      </header>
+      </div>
 
       <BrutalCard>
         <BrutalCardHeader>
