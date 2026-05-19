@@ -6,7 +6,7 @@ import Link from "next/link";
 import { Shield } from "lucide-react";
 
 // Paths that are publicly viewable without a wallet.
-const PUBLIC_PREFIXES = ["/leaderboard", "/explore"];
+const PUBLIC_PREFIXES = ["/leaderboard", "/explore", "/strategies"];
 
 function isPublic(pathname: string) {
   return PUBLIC_PREFIXES.some(
