@@ -1,0 +1,9 @@
+{
+  "$schema": "https://unpkg.com/knip@latest/schema.json",
+  "entry": ["src/**/*.{ts,tsx}", "eslint.config.mjs"],
+  "ignoreDependencies": ["tailwindcss-animate"],
+  "ignoreExportsUsedInFile": true,
+  "paths": {
+    "@/*": ["./src/*"]
+  }
+}

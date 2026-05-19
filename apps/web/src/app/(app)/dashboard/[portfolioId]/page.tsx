@@ -11,6 +11,7 @@ import { AgentReasoningFeed } from "@/components/agent/reasoning-feed";
 import { PerformanceChart } from "@/components/dashboard/performance-chart";
 import { MarketOverview } from "@/components/dashboard/market-overview";
 import { TrustabilityCard } from "@/components/dashboard/trustability-card";
+import { IdleCashCard } from "@/components/dashboard/idle-cash-card";
 import { LivePill } from "@/components/realtime/live-pill";
 import { FaucetButton } from "@/components/wallet/faucet-button";
 import { Button } from "@/components/ui/button";
@@ -156,9 +157,10 @@ export default function PortfolioDashboardPage() {
 
       <motion.div
         variants={fadeUp}
-        className="grid grid-cols-1 md:grid-cols-3 gap-4"
+        className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"
       >
         <PortfolioSummaryCard />
+        <IdleCashCard />
         <AllocationChart />
         <MarketOverview />
       </motion.div>
