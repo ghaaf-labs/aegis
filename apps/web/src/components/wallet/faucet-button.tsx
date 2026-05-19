@@ -89,7 +89,7 @@ export function FaucetButton() {
   }
 
   return (
-    <div className="flex items-center gap-3">
+    <div data-testid="faucet-button" className="flex items-center gap-3">
       <BrutalButton
         variant="agent"
         onClick={() => void claim()}
