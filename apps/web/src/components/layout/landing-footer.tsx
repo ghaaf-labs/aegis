@@ -84,6 +84,7 @@ export function LandingFooter() {
               "CCTP V2",
               "USYC",
               "Paymaster",
+              "StableFX",
               "Nanopayments",
             ].map((api) => (
               <span key={api} className="block text-xs font-mono text-text-mut">

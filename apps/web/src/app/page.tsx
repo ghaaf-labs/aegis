@@ -155,6 +155,11 @@ const CIRCLE_STACK = [
     desc: "Protocol fees and gas paid in USDC — users never touch ETH.",
   },
   {
+    name: "Arc StableFX",
+    sub: "FX rails",
+    desc: "USDC ↔ EURC conversion at native Arc rates — no CEX, no slippage on stablecoin FX.",
+  },
+  {
     name: "Nanopayments",
     sub: "Fee rails",
     desc: "Per-rebalance fee settlement and referral payouts settled on-chain.",
@@ -177,7 +182,7 @@ const HOW_IT_WORKS = [
     title: "Agent proposes",
     items: [
       "Regime classifier reads market state",
-      "Strategist (deepseek-v4-flash) plans rebalance",
+      "Strategist (deepseek/deepseek-v4-flash) plans rebalance",
       "Critic (gpt-mini) adversarial review",
       "Proposal queued with full prose reasoning",
     ],
@@ -215,11 +220,14 @@ const STATS = [
   { value: "14", label: "portfolios created" },
   { value: "87", label: "agent decisions" },
   { value: "$142k", label: "USDC managed" },
-  { value: "3", label: "chains" },
+  { value: "2", label: "chains" },
 ];
 
 export default function LandingPage() {
-  const [announcementDismissed, setAnnouncementDismissed] = useState(false);
+  const [announcementDismissed, setAnnouncementDismissed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return sessionStorage.getItem("aegis.announcement.dismissed") === "1";
+  });
   const [mockApproved, setMockApproved] = useState(false);
 
   return (
@@ -227,7 +235,7 @@ export default function LandingPage() {
       {/* Ambient glow — on-system tokens only */}
       <div className="fixed inset-0 pointer-events-none">
         <div className="absolute top-[-10%] right-[5%] w-[500px] h-[500px] bg-accent-agent/5 rounded-full blur-[120px]" />
-        <div className="absolute bottom-[15%] left-[10%] w-[400px] h-[400px] bg-accent-pnl/3 rounded-full blur-[120px]" />
+        <div className="absolute bottom-[15%] left-[10%] w-[400px] h-[400px] bg-accent-pnl/5 rounded-full blur-[120px]" />
       </div>
 
       {/* Announcement bar */}
@@ -249,7 +257,10 @@ export default function LandingPage() {
           </a>
           <button
             type="button"
-            onClick={() => setAnnouncementDismissed(true)}
+            onClick={() => {
+              sessionStorage.setItem("aegis.announcement.dismissed", "1");
+              setAnnouncementDismissed(true);
+            }}
             className="absolute right-4 p-1 hover:text-text-hi transition-colors"
             aria-label="Dismiss"
           >
@@ -349,6 +360,7 @@ export default function LandingPage() {
       <div className="relative z-10 border-t border-b border-border-default bg-surface overflow-hidden py-2.5">
         <div
           className="flex gap-0 whitespace-nowrap"
+          data-ticker
           style={{ animation: "ticker 32s linear infinite" }}
         >
           {[...TICKER_ITEMS, ...TICKER_ITEMS].map((item, i) => (
@@ -529,7 +541,7 @@ export default function LandingPage() {
                 {[
                   { label: "USDC", pct: 62, color: "bg-accent-agent" },
                   { label: "USYC", pct: 24, color: "bg-accent-pnl" },
-                  { label: "EURC", pct: 14, color: "bg-warn" },
+                  { label: "EURC", pct: 14, color: "bg-text-mut" },
                 ].map((row) => (
                   <div key={row.label} className="space-y-1">
                     <div className="flex justify-between text-[11px] font-mono">
@@ -559,7 +571,7 @@ export default function LandingPage() {
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span className="text-[10px] font-mono px-1.5 py-0.5 border border-accent-agent/30 text-accent-agent rounded-sharp">
-                    deepseek-v4-flash
+                    deepseek/deepseek-v4-flash
                   </span>
                   <div className="flex gap-0.5">
                     {[1, 2, 3, 4].map((d) => (
@@ -698,12 +710,14 @@ export default function LandingPage() {
                 equivalent, redeemable T+1. Only downside: a same-day rebalance
                 would require an extra redemption leg. Given the current regime,
                 this is acceptable.{" "}
-                <span className="text-accent-pnl font-semibold">Approved.</span>
+                <span className="text-accent-agent font-semibold">
+                  Approved.
+                </span>
               </p>
             </div>
 
             <div className="flex items-center gap-2 text-xs font-mono text-text-mut">
-              <span className="w-2 h-2 rounded-full bg-accent-pnl" />
+              <span className="w-2 h-2 rounded-full bg-accent-agent" />
               Proposal queued for user approval · USDC fee: $0.12 via
               Nanopayments
             </div>

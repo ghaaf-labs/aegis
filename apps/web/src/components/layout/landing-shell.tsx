@@ -3,9 +3,11 @@ import { LandingFooter } from "@/components/layout/landing-footer";
 
 export function LandingShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-bg text-text-hi">
+    <div className="min-h-screen bg-bg text-text-hi flex flex-col">
       <LandingHeader />
-      <main className="max-w-4xl mx-auto px-6 pb-20 pt-10">{children}</main>
+      <main className="flex-1 max-w-4xl mx-auto w-full px-6 pb-20 pt-10">
+        {children}
+      </main>
       <LandingFooter />
     </div>
   );

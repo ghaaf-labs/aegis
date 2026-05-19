@@ -46,16 +46,12 @@ function tierLabel(tier?: string): string | null {
   return tier.charAt(0).toUpperCase() + tier.slice(1);
 }
 
-function PageShell({ children }: { children: React.ReactNode }) {
-  return <LandingShell>{children}</LandingShell>;
-}
-
 export default async function ConstitutionPage() {
   const doc = await fetchConstitution();
 
   if (!doc) {
     return (
-      <PageShell>
+      <LandingShell>
         <header className="mb-10 pt-4">
           <BrutalPill tone="agent" className="mb-3">
             Agent rulebook
@@ -70,12 +66,12 @@ export default async function ConstitutionPage() {
             &apos;t loaded its clauses yet. Try again in a moment.
           </p>
         </div>
-      </PageShell>
+      </LandingShell>
     );
   }
 
   return (
-    <PageShell>
+    <LandingShell>
       <header className="mb-10 pt-4">
         <BrutalPill tone="agent" className="mb-3">
           Agent rulebook
@@ -140,6 +136,6 @@ export default async function ConstitutionPage() {
         force at decision time is recorded on every persisted decision for
         future audits.
       </footer>
-    </PageShell>
+    </LandingShell>
   );
 }

@@ -81,7 +81,7 @@ async function fetchLatest(): Promise<EvaluationRow | null> {
 
 export default async function RegimeModelCardPage() {
   const evaluation = await fetchLatest();
-  const refreshedAt = new Date().toUTCString();
+  const pageRenderedAt = new Date().toUTCString();
 
   return (
     <LandingShell>
@@ -106,7 +106,7 @@ export default async function RegimeModelCardPage() {
           <ConfusionMatrix confusion={evaluation.confusionJsonb} />
           <MethodologyNote />
           <p className="text-[10px] text-text-mut font-mono">
-            Last refreshed at {refreshedAt}. Backtest run id{" "}
+            Page rendered at {pageRenderedAt}. Backtest run id{" "}
             <span className="text-accent-agent">{evaluation.evalRunId}</span>.
           </p>
         </div>
