@@ -3,13 +3,10 @@ import { defineConfig, devices } from "@playwright/test";
 // FE-E2E-1/FE-E2E-2 — one worker, one browser (chromium), no parallel tests
 // within a file so SSE assertions stay deterministic.
 //
-// Two projects:
-//   chromium        — public + P/A/X/ST-series (no auth required)
-//   chromium-authed — S/D/R/SET-series (storageState from global-setup.ts)
-//
-// Global setup runs first. When PLAYWRIGHT_API_ENABLED is unset it writes an
-// empty storage-state file and authed tests are skipped by the test files
-// themselves (they call test.skip when the API is absent).
+// Single chromium project. Authed specs (D/R/SET-series) declare
+// test.use({ storageState }) at file scope; the storageState file is written
+// by global-setup.ts. When PLAYWRIGHT_API_ENABLED is unset, global-setup
+// writes an empty file and the authed specs call test.skip() in beforeEach.
 
 export default defineConfig({
   testDir: "./e2e",
@@ -26,15 +23,6 @@ export default defineConfig({
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
-      testIgnore: ["**/*.authed.spec.ts"],
-    },
-    {
-      name: "chromium-authed",
-      use: {
-        ...devices["Desktop Chrome"],
-        storageState: "./e2e/.auth/user.json",
-      },
-      testMatch: ["**/*.authed.spec.ts"],
     },
   ],
   webServer: process.env.PLAYWRIGHT_BASE_URL

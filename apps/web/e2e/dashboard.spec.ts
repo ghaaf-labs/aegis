@@ -35,11 +35,11 @@ test("D2 — faucet button shown when wallet is empty", async ({ page }) => {
 test("D5 — agent reasoning feed renders or shows empty state", async ({
   page,
 }) => {
-  // Feed is present; a fresh user has no decisions so the empty state shows.
-  const feed = page.getByText(/No decisions yet|No agent decisions/i);
-  const feedCard = page.locator('[data-testid="portfolio-summary"]');
-  // Either the empty copy or the summary card must be visible.
-  await expect(feedCard.or(feed)).toBeVisible({ timeout: 10_000 });
+  // A fresh user has no decisions so the empty state copy appears.
+  const emptyFeed = page.getByText(/No decisions yet|No agent decisions/i);
+  // If populated, a decision card is present. Either is acceptable.
+  const decisionCard = page.locator('[data-testid="decision-card"]');
+  await expect(emptyFeed.or(decisionCard)).toBeVisible({ timeout: 10_000 });
 });
 
 test("D7 — sidebar nav items are all present", async ({ page }) => {

@@ -64,6 +64,10 @@ test("SET7 — sidebar logout clears JWT and redirects to login", async ({
 }) => {
   await page.goto("/dashboard");
   await page.waitForURL(/\/dashboard\//, { timeout: 15_000 });
+  // sidebar-logout is gated on wallet hydration; wait for it to mount.
+  await page.waitForSelector('[data-testid="sidebar-logout"]', {
+    timeout: 10_000,
+  });
   await page.locator('[data-testid="sidebar-logout"]').click();
   await expect(page).toHaveURL(/\/login/, { timeout: 10_000 });
   // JWT must be gone from localStorage.

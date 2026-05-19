@@ -1,3 +1,8 @@
+// NOTE: injectTestJwt uses a client-side decoy JWT (fake signature).
+// It bypasses the AuthGate localStorage check only — server-side JWT_SECRET
+// validation will 401. Do NOT use for tests that call the API (D/R/SET-series).
+// Those tests must rely on the real storageState written by global-setup.ts.
+
 import { type Page, expect } from "@playwright/test";
 
 const TEST_JWT =

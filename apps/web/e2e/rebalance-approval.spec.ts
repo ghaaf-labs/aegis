@@ -62,12 +62,20 @@ async function seedPlan(jwt: string): Promise<string> {
       },
     }),
   });
+  if (!pfRes.ok)
+    throw new Error(
+      `portfolio create failed: ${pfRes.status} ${await pfRes.text()}`,
+    );
   const pf = (await pfRes.json()) as { id: string };
 
   const planRes = await fetch(
     `${API_BASE}/portfolios/${pf.id}/rebalance/plan`,
     { method: "POST", headers: { Authorization: `Bearer ${jwt}` } },
   );
+  if (!planRes.ok)
+    throw new Error(
+      `plan create failed: ${planRes.status} ${await planRes.text()}`,
+    );
   const plan = (await planRes.json()) as { rebalanceId: string };
   return plan.rebalanceId;
 }
@@ -99,7 +107,10 @@ test("R6 — approval page shows USDC fee estimate", async ({ page }) => {
   await expect(page.locator('[data-testid="approval-modal"]')).toBeVisible({
     timeout: 15_000,
   });
-  await expect(page.getByText(/USDC/i).first()).toBeVisible();
+  // The approval modal shows a fee estimate labelled with "USDC" (Paymaster gas or protocol fee).
+  await expect(
+    page.locator('[data-testid="approval-modal"]').getByText(/USDC/i).first(),
+  ).toBeVisible();
 });
 
 test("R7 — Approve button is present and enabled", async ({ page }) => {
@@ -133,6 +144,7 @@ test("R11 — Close button navigates away from rebalance page", async ({
   await expect(page.locator('[data-testid="approval-modal"]')).toBeVisible({
     timeout: 15_000,
   });
-  await page.getByRole("button", { name: /Close|×/i }).click();
+  // ApprovalModal calls onClose; the /rebalance/[planId] page routes away.
+  await page.getByRole("button", { name: "Close" }).click();
   await expect(page).not.toHaveURL(new RegExp(`/rebalance/${planId}`));
 });

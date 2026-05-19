@@ -120,9 +120,12 @@ jobs:
           node-version: 20
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Build API (avoids compile racing the 120s waitForApi budget)
+        working-directory: apps/api
+        run: cargo build --locked
       - name: Start API in background (runs migrations on boot)
         working-directory: apps/api
-        run: cargo run &
+        run: cargo run --locked --offline &
       - run: pnpm --filter @aegis/web exec playwright install --with-deps chromium
       - run: pnpm --filter @aegis/web exec playwright test --reporter=line
       - uses: actions/upload-artifact@v4
