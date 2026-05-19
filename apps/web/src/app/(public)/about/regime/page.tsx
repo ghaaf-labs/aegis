@@ -336,14 +336,11 @@ function EmptyState() {
     <BrutalCard>
       <BrutalCardBody className="text-center py-12">
         <p className="text-sm text-text-default mb-2">
-          No backtest run has been persisted yet.
+          Evaluation data not yet available.
         </p>
         <p className="text-xs text-text-lo">
-          The model card fills in once an operator kicks off a run via{" "}
-          <span className="font-mono text-accent-agent">
-            cargo run --bin regime_backtest
-          </span>{" "}
-          or the admin endpoint.
+          The model card populates after the first live evaluation cycle
+          completes. Check back once the agent has processed enough decisions.
         </p>
       </BrutalCardBody>
     </BrutalCard>
