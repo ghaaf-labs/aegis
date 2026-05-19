@@ -5,7 +5,7 @@ import { PRICING_UI_ENABLED } from "@/lib/flags";
 
 export function LandingShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-bg text-text-hi">
+    <div className="min-h-screen bg-bg text-text-hi flex flex-col">
       <nav className="flex items-center justify-between px-6 py-5 max-w-5xl mx-auto border-b border-border-default">
         <Link href="/" className="flex items-center gap-2 group">
           <div className="w-8 h-8 rounded-sharp bg-accent-agent flex items-center justify-center border-brutal border-black">
@@ -42,7 +42,9 @@ export function LandingShell({ children }: { children: React.ReactNode }) {
         </div>
       </nav>
 
-      <main className="max-w-4xl mx-auto px-6 pb-20 pt-10">{children}</main>
+      <main className="flex-1 max-w-4xl mx-auto w-full px-6 pb-20 pt-10">
+        {children}
+      </main>
 
       <footer className="border-t border-border-default bg-surface px-6 py-8">
         <div className="max-w-5xl mx-auto flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
