@@ -6,8 +6,7 @@ use jsonwebtoken::{encode, EncodingKey, Header};
 use uuid::Uuid;
 
 use super::models::{
-    WalletAuthResponse, WalletInfo, WalletStatusResponse, WalletUser,
-    WalletUserPublic,
+    WalletAuthResponse, WalletInfo, WalletStatusResponse, WalletUser, WalletUserPublic,
 };
 use super::provider::WalletProvider;
 use crate::config::Config;
@@ -197,11 +196,7 @@ impl<'a> WalletService<'a> {
     /// is idempotent and reports rows_affected even on no-op writes. The
     /// `wallet_id IS NULL` predicate makes the second writer a no-op so
     /// only the actual provisioning caller emits the event.
-    async fn persist_wallet(
-        &self,
-        user_id: Uuid,
-        info: &WalletInfo,
-    ) -> crate::error::Result<bool> {
+    async fn persist_wallet(&self, user_id: Uuid, info: &WalletInfo) -> crate::error::Result<bool> {
         let result = sqlx::query(
             "UPDATE users
                 SET wallet_id    = $2,

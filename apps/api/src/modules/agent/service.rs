@@ -954,10 +954,10 @@ fn parse_proposal(raw: &str) -> crate::error::Result<StrategistProposal> {
     tracing::warn!(
         raw_len = raw.len(),
         raw_preview = %raw.chars().take(200).collect::<String>(),
-        "strategist returned unparseable JSON — using safe HOLD fallback"
+        "strategist returned unparsable JSON — using safe HOLD fallback"
     );
     Ok(StrategistProposal {
-        reasoning: "Strategist output was unparseable on this pass. Holding the current allocation; retry the action to re-run the agent.".to_string(),
+        reasoning: "Strategist output was unparsable on this pass. Holding the current allocation; retry the action to re-run the agent.".to_string(),
         confidence: 0.4,
         recommendation: default_recommendation(),
     })
