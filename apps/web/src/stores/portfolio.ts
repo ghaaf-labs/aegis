@@ -41,6 +41,10 @@ interface PortfolioState {
   unifiedUsdc: number;
   /** Sum of EURC across every chain the user holds a wallet on. */
   unifiedEurc: number;
+  /** USDC per chain (keys are lowercased short names: "arc", "base"). */
+  perChainUsdc: Record<string, number>;
+  /** EURC per chain — same key set as perChainUsdc. */
+  perChainEurc: Record<string, number>;
   /** Most-recent strategist tool invocations (capped at 20). */
   toolInvocations: AgentToolInvoked[];
   /** Most-recent abstain events (capped at 10). */
@@ -65,6 +69,10 @@ interface PortfolioState {
   applyPriceTick: (tick: PriceTick) => void;
   setUnifiedUsdc: (v: number) => void;
   setUnifiedEurc: (v: number) => void;
+  setPerChain: (
+    usdc: Record<string, number>,
+    eurc: Record<string, number>,
+  ) => void;
   setWallet: (w: WalletInfo | null) => void;
   setIsRebalancing: (v: boolean) => void;
   selectDecision: (id: string | null) => void;
@@ -99,6 +107,8 @@ export const usePortfolioStore = create<PortfolioState>()(
       wallet: null,
       unifiedUsdc: 0,
       unifiedEurc: 0,
+      perChainUsdc: {},
+      perChainEurc: {},
       toolInvocations: [],
       abstains: [],
       rebalanceStatuses: {},
@@ -144,6 +154,8 @@ export const usePortfolioStore = create<PortfolioState>()(
         })),
       setUnifiedUsdc: (unifiedUsdc) => set({ unifiedUsdc }),
       setUnifiedEurc: (unifiedEurc) => set({ unifiedEurc }),
+      setPerChain: (perChainUsdc, perChainEurc) =>
+        set({ perChainUsdc, perChainEurc }),
       setWallet: (wallet) => set({ wallet }),
       setIsRebalancing: (isRebalancing) => set({ isRebalancing }),
       selectDecision: (selectedDecisionId) => set({ selectedDecisionId }),

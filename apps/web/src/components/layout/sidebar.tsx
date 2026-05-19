@@ -12,6 +12,7 @@ import {
   PieChart,
   Settings,
   Shield,
+  Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PRICING_UI_ENABLED } from "@/lib/flags";
@@ -23,6 +24,7 @@ import { userAgentApi } from "@/lib/api";
 // are unnecessary. Keep the surfaces that actually exist.
 const BASE_NAV_ITEMS = [
   { href: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
+  { href: "/wallet", icon: Wallet, label: "Wallet" },
   { href: "/portfolio", icon: PieChart, label: "Portfolio" },
   { href: "/strategies", icon: LayoutGrid, label: "Strategies" },
   { href: "/settings", icon: Settings, label: "Settings" },

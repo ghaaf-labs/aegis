@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { useParams, useRouter } from "next/navigation";
 import { Loader2, Rocket } from "lucide-react";
 import { PortfolioSummaryCard } from "@/components/dashboard/portfolio-summary-card";
+import { IdleCashCard } from "@/components/dashboard/idle-cash-card";
 import { AllocationChart } from "@/components/dashboard/allocation-chart";
 import { AssetTable } from "@/components/dashboard/asset-table";
 import { AgentReasoningFeed } from "@/components/agent/reasoning-feed";
@@ -155,9 +156,10 @@ export default function PortfolioDashboardPage() {
 
       <motion.div
         variants={fadeUp}
-        className="grid grid-cols-1 md:grid-cols-3 gap-4"
+        className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4"
       >
         <PortfolioSummaryCard />
+        <IdleCashCard />
         <AllocationChart />
         <MarketOverview />
       </motion.div>

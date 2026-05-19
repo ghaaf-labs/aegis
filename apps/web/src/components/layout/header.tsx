@@ -2,7 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Bell, Wifi, WifiOff, LogOut } from "lucide-react";
+import Link from "next/link";
+import {
+  Bell,
+  Wifi,
+  WifiOff,
+  LogOut,
+  Wallet as WalletIcon,
+} from "lucide-react";
 import { BrutalButton, BrutalPill, ChainBadge } from "@aegis/ui";
 import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
 import { formatCurrency, formatPercent, changeColor } from "@/lib/utils";
@@ -16,6 +23,7 @@ export function Header() {
   const unifiedEurc = usePortfolioStore((s) => s.unifiedEurc);
   const setUnifiedUsdc = usePortfolioStore((s) => s.setUnifiedUsdc);
   const setUnifiedEurc = usePortfolioStore((s) => s.setUnifiedEurc);
+  const setPerChain = usePortfolioStore((s) => s.setPerChain);
   const wallet = usePortfolioStore((s) => s.wallet);
   const setWallet = usePortfolioStore((s) => s.setWallet);
   const setPortfolios = usePortfolioStore((s) => s.setPortfolios);
@@ -62,6 +70,7 @@ export function Header() {
         if (!alive) return;
         setUnifiedUsdc(b.unifiedUsdc);
         setUnifiedEurc(b.unifiedEurc);
+        setPerChain(b.perChain ?? {}, b.perChainEurc ?? {});
       })
       .catch((err) => {
         // Best-effort hydration; SSE will overwrite this once the channel
@@ -201,33 +210,34 @@ export function Header() {
               </span>
             </button>
             {userOpen && (
-              <div className="absolute right-0 top-full mt-2 w-72 border-brutal border-border-default bg-surface shadow-brutal z-50 rounded-sharp">
+              <div className="absolute right-0 top-full mt-2 w-80 border-brutal border-border-default bg-surface shadow-brutal z-50 rounded-sharp">
                 <div className="px-3 py-2 border-b border-border-default">
-                  <p className="text-[10px] font-mono uppercase tracking-widest text-text-mut">
-                    Wallet
+                  <p className="text-[10px] font-mono uppercase tracking-widest text-text-mut mb-1">
+                    Balances
                   </p>
-                  <p
-                    className="text-xs font-mono text-text-hi truncate"
-                    title={wallet.walletId}
-                  >
-                    {wallet.walletId}
+                  <p className="text-sm font-mono font-semibold text-accent-pnl tabular-nums">
+                    ${unifiedUsdc.toFixed(2)} USDC
+                    {unifiedEurc > 0 && (
+                      <span className="text-text-lo">
+                        {" · "}€{unifiedEurc.toFixed(2)} EURC
+                      </span>
+                    )}
                   </p>
-                  <p
-                    className="text-[10px] font-mono text-text-lo mt-1 truncate"
-                    title={wallet.arcAddress}
-                  >
-                    ARC {wallet.arcAddress}
-                  </p>
-                  <p
-                    className="text-[10px] font-mono text-text-lo truncate"
-                    title={wallet.baseAddress}
-                  >
-                    BASE {wallet.baseAddress}
+                  <p className="text-[10px] font-mono text-text-mut mt-0.5">
+                    Arc + Base · Circle Gateway
                   </p>
                 </div>
+                <Link
+                  href="/wallet"
+                  onClick={() => setUserOpen(false)}
+                  className="flex items-center gap-2 w-full text-left px-3 py-2 text-sm font-mono text-accent-agent hover:bg-raised"
+                >
+                  <WalletIcon className="w-3 h-3" />
+                  Open wallet
+                </Link>
                 <button
                   onClick={() => void handleLogout()}
-                  className="flex items-center gap-2 w-full text-left px-3 py-2 text-sm font-mono text-risk hover:bg-raised"
+                  className="flex items-center gap-2 w-full text-left px-3 py-2 text-sm font-mono text-risk hover:bg-raised border-t border-border-default"
                 >
                   <LogOut className="w-3 h-3" />
                   Log out
