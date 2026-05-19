@@ -35,7 +35,6 @@
   },
   "devDependencies": {
     "@aegis/config": "workspace:*",
-    "@eslint/eslintrc": "^3.3.5",
     "@playwright/test": "^1.49.1",
     "@types/react": "^19.0.4",
     "@types/react-dom": "^19.0.2",

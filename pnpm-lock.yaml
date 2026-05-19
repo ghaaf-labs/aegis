@@ -83,9 +83,6 @@ importers:
       "@aegis/config":
         specifier: workspace:*
         version: link:../../packages/config
-      "@eslint/eslintrc":
-        specifier: ^3.3.5
-        version: 3.3.5
       "@playwright/test":
         specifier: ^1.49.1
         version: 1.60.0

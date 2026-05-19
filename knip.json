@@ -19,7 +19,6 @@
         "postcss.config.{js,mjs}"
       ],
       "project": ["src/**/*.{ts,tsx}"],
-      "ignore": ["src/components/ui/**/*.tsx"],
       "ignoreDependencies": ["tailwindcss-animate"]
     },
     "packages/shared": {
@@ -35,7 +34,6 @@
       ]
     },
     "packages/config": {
-      "entry": ["index.ts", "tailwind.js", "eslint.js"],
       "ignoreDependencies": [
         "@typescript-eslint/eslint-plugin",
         "@typescript-eslint/parser",
