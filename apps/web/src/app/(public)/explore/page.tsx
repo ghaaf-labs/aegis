@@ -33,8 +33,12 @@ export default function ExploreIndex() {
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {bundles.map(({ portfolio }) => (
-            <Link key={portfolio.id} href={`/explore/${portfolio.id}`}>
-              <BrutalCard className="cursor-pointer">
+            <Link
+              key={portfolio.id}
+              href={`/explore/${portfolio.id}`}
+              className="block group"
+            >
+              <BrutalCard className="cursor-pointer transition-all group-hover:border-accent-agent/60 group-hover:translate-x-[-2px] group-hover:translate-y-[-2px] group-hover:shadow-brutal">
                 <BrutalCardHeader>
                   <div className="flex items-center justify-between w-full">
                     <span className="font-mono font-semibold text-text-hi">
@@ -61,6 +65,9 @@ export default function ExploreIndex() {
                   </p>
                   <p className="text-xs text-text-mut mt-3">
                     Risk: {portfolio.goal?.riskTolerance}
+                  </p>
+                  <p className="text-[11px] text-accent-agent/70 group-hover:text-accent-agent font-mono mt-3">
+                    Open the agent diary →
                   </p>
                 </BrutalCardBody>
               </BrutalCard>
