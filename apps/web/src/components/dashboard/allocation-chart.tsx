@@ -91,15 +91,15 @@ export function AllocationChart({ compact = false }: Props) {
         <div
           className={`flex ${compact ? "flex-col gap-4" : "items-center gap-6"}`}
         >
-          <div className={compact ? "h-40" : "h-32 w-32 shrink-0"}>
+          <div className={compact ? "h-40" : "h-44 w-44 shrink-0"}>
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
                   data={data}
                   cx="50%"
                   cy="50%"
-                  innerRadius={compact ? 45 : 30}
-                  outerRadius={compact ? 70 : 50}
+                  innerRadius={compact ? 45 : 48}
+                  outerRadius={compact ? 70 : 75}
                   paddingAngle={2}
                   dataKey="value"
                   strokeWidth={0}

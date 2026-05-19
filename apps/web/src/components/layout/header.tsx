@@ -12,7 +12,9 @@ import {
 } from "lucide-react";
 import { BrutalButton, BrutalPill } from "@aegis/ui";
 import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
-import { formatCurrency, formatPercent, changeColor } from "@/lib/utils";
+// formatCurrency / changeColor previously rendered the header's PORTFOLIO
+// VALUE + ALL-TIME PNL blocks — both removed when the Net Worth card became
+// the dashboard's single source of truth for these numbers.
 import { gatewayApi, walletApi } from "@/lib/api";
 
 export function Header() {
@@ -94,33 +96,11 @@ export function Header() {
           </div>
         )}
 
-        {portfolio && (
-          <div className="hidden md:flex items-center gap-6 ml-2">
-            <div>
-              <p className="text-[10px] text-text-mut font-mono">
-                PORTFOLIO VALUE
-              </p>
-              <p className="text-sm font-mono font-semibold text-text-hi tabular-nums">
-                {formatCurrency(portfolio.totalValueUsd)}
-              </p>
-            </div>
-            {portfolio.totalValueUsd > 0.5 && (
-              <div>
-                <p className="text-[10px] text-text-mut font-mono">
-                  ALL-TIME PNL
-                </p>
-                <p
-                  className={`text-sm font-mono font-semibold tabular-nums ${changeColor(portfolio.totalPnlUsd)}`}
-                >
-                  {formatCurrency(portfolio.totalPnlUsd)} (
-                  {formatPercent(portfolio.totalPnlPct)})
-                </p>
-              </div>
-            )}
-            {/* Wallet balance + per-chain breakdown lives on the Net Worth
-                card now — keeping a duplicate here clutters the header. */}
-          </div>
-        )}
+        {/* PORTFOLIO VALUE / ALL-TIME PNL / GATEWAY all duplicated the
+            Net Worth card on the dashboard, with one critical bug — the
+            header showed `portfolio.totalValueUsd` ("invested only") while
+            the card showed invested + wallet. Same label, different number.
+            Single source of truth lives on the Net Worth card now. */}
       </div>
 
       <div className="flex items-center gap-3 ml-auto">

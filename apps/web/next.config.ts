@@ -1,6 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // The bottom-left "N" dev indicator overlapped the sidebar's
+  // "AGENT ACTIVE" status pill, leaving "...ENT ACTIVE" visible during
+  // local dev. Hidden so the sidebar reads cleanly.
+  devIndicators: false,
   transpilePackages: ["@aegis/ui", "@aegis/shared"],
   images: {
     remotePatterns: [
