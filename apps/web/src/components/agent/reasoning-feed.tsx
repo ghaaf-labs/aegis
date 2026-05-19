@@ -5,7 +5,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Brain,
   RefreshCw,
-  ChevronRight,
   Zap,
   ShieldAlert,
   Cpu,
@@ -14,7 +13,6 @@ import {
   Wrench,
   HandIcon,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -271,7 +269,6 @@ function DecisionRow({
   decision: AgentDecision;
   index: number;
 }) {
-  const router = useRouter();
   const trigger: AgentTrigger = decision.triggeredBy;
   const triggerVariant = TRIGGER_VARIANTS[trigger] ?? "secondary";
   const triggerLabel = TRIGGER_LABELS[trigger] ?? trigger;
@@ -352,14 +349,6 @@ function DecisionRow({
       )}
 
       <TelemetryFooter decision={decision} />
-
-      <button
-        onClick={() => router.push(`/decision/${decision.id}`)}
-        className="mt-2 flex items-center gap-1 text-[11px] text-cyan-400/60 hover:text-cyan-400 group-hover:opacity-100 opacity-0 transition-all"
-      >
-        View full analysis
-        <ChevronRight className="w-3 h-3" />
-      </button>
     </motion.div>
   );
 }
