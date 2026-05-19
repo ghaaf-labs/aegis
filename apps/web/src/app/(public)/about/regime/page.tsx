@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Activity } from "lucide-react";
+import { LandingShell } from "@/components/layout/landing-shell";
 import {
   BrutalCard,
   BrutalCardBody,
@@ -83,50 +84,47 @@ export default async function RegimeModelCardPage() {
   const refreshedAt = new Date().toUTCString();
 
   return (
-    <main className="min-h-screen bg-bg text-text-default px-6 py-10">
-      <div className="max-w-4xl mx-auto">
-        <header className="flex items-center gap-3 mb-6">
-          <Activity className="w-6 h-6 text-accent-agent" />
-          <div>
-            <h1 className="text-2xl font-semibold text-text-hi font-mono tracking-tight">
-              Regime classifier — model card
-            </h1>
-            <p className="text-sm text-text-lo mt-0.5 max-w-2xl">
-              How well does the Aegis regime classifier actually call the
-              market? Numbers below are from a replay backtest of the live model
-              against historical price data — no marketing gloss, no hand-picked
-              windows.
-            </p>
-          </div>
-        </header>
+    <LandingShell>
+      <header className="flex items-center gap-3 mb-6">
+        <Activity className="w-6 h-6 text-accent-agent" />
+        <div>
+          <h1 className="text-2xl font-semibold text-text-hi font-mono tracking-tight">
+            Regime classifier — model card
+          </h1>
+          <p className="text-sm text-text-lo mt-0.5 max-w-2xl">
+            How well does the Aegis regime classifier actually call the market?
+            Numbers below are from a replay backtest of the live model against
+            historical price data — no marketing gloss, no hand-picked windows.
+          </p>
+        </div>
+      </header>
 
-        {evaluation ? (
-          <div className="space-y-6">
-            <SummaryCard evaluation={evaluation} />
-            <PerRegimeTable perRegime={evaluation.perRegimeJsonb} />
-            <ConfusionMatrix confusion={evaluation.confusionJsonb} />
-            <MethodologyNote />
-            <p className="text-[10px] text-text-mut font-mono">
-              Last refreshed at {refreshedAt}. Backtest run id{" "}
-              <span className="text-accent-agent">{evaluation.evalRunId}</span>.
-            </p>
-          </div>
-        ) : (
-          <EmptyState />
-        )}
+      {evaluation ? (
+        <div className="space-y-6">
+          <SummaryCard evaluation={evaluation} />
+          <PerRegimeTable perRegime={evaluation.perRegimeJsonb} />
+          <ConfusionMatrix confusion={evaluation.confusionJsonb} />
+          <MethodologyNote />
+          <p className="text-[10px] text-text-mut font-mono">
+            Last refreshed at {refreshedAt}. Backtest run id{" "}
+            <span className="text-accent-agent">{evaluation.evalRunId}</span>.
+          </p>
+        </div>
+      ) : (
+        <EmptyState />
+      )}
 
-        <p className="mt-8 text-center text-xs font-mono text-text-mut">
-          Want to see it on a live portfolio?{" "}
-          <Link href="/explore" className="text-accent-agent hover:underline">
-            Explore demo portfolios
-          </Link>{" "}
-          ·{" "}
-          <Link href="/signup" className="text-accent-pnl hover:underline">
-            Create your own
-          </Link>
-        </p>
-      </div>
-    </main>
+      <p className="mt-8 text-center text-xs font-mono text-text-mut">
+        Want to see it on a live portfolio?{" "}
+        <Link href="/explore" className="text-accent-agent hover:underline">
+          Explore demo portfolios
+        </Link>{" "}
+        ·{" "}
+        <Link href="/signup" className="text-accent-pnl hover:underline">
+          Create your own
+        </Link>
+      </p>
+    </LandingShell>
   );
 }
 
