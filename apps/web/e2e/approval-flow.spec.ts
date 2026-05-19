@@ -23,8 +23,8 @@ test.describe("approval-flow surface", () => {
       page.getByRole("heading", { name: /Outcome.*Refund Policy/i }),
     ).toBeVisible();
     const constitutionLink = page
-      .locator('a[href="/about/constitution"]')
-      .first();
+      .getByRole("contentinfo")
+      .locator('a[href="/about/constitution"]');
     await expect(constitutionLink).toBeVisible();
   });
 });

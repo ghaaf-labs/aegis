@@ -14,7 +14,6 @@ import {
   Trophy,
   FileSpreadsheet,
   X,
-  CheckCircle2,
   ChevronRight,
   ExternalLink,
 } from "lucide-react";
@@ -510,10 +509,12 @@ export default function LandingPage() {
               {/* Approve button interaction */}
               <div className="flex items-center gap-3 p-3 border-brutal border-accent-agent/30 bg-accent-agent/5">
                 {mockApproved ? (
-                  <span className="flex items-center gap-2 text-xs font-mono text-accent-pnl">
-                    <CheckCircle2 className="w-4 h-4" />
-                    Connect a wallet to approve real rebalances →{" "}
-                    <Link href="/signup" className="underline">
+                  <span className="flex items-center gap-2 text-xs font-mono text-text-lo">
+                    Demo approved — connect a wallet to run real rebalances →{" "}
+                    <Link
+                      href="/signup"
+                      className="underline text-accent-agent"
+                    >
                       Get started
                     </Link>
                   </span>
@@ -573,7 +574,14 @@ export default function LandingPage() {
                   <span className="text-[10px] font-mono px-1.5 py-0.5 border border-accent-agent/30 text-accent-agent rounded-sharp">
                     deepseek/deepseek-v4-flash
                   </span>
-                  <div className="flex gap-0.5">
+                  <div
+                    className="flex gap-0.5"
+                    role="progressbar"
+                    aria-valuenow={82}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuetext="confidence 82%"
+                  >
                     {[1, 2, 3, 4].map((d) => (
                       <span
                         key={d}
