@@ -5,6 +5,8 @@ on:
     branches: [main, dev]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: "0 2 * * *" # nightly at 02:00 UTC
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -58,10 +60,11 @@ jobs:
         env:
           NEXT_PUBLIC_API_URL: http://localhost:8080
 
-  # ── Frontend e2e (Playwright, advisory while specs stabilize) ───────────
+  # ── Frontend e2e (Playwright, nightly only) ─────────────────────────────
   web-e2e:
     name: Web e2e (Playwright)
     runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -82,10 +85,11 @@ jobs:
           path: apps/web/playwright-report
           retention-days: 14
 
-  # ── Frontend e2e with API (S/D/R/SET-series, advisory) ──────────────────
+  # ── Frontend e2e with API (S/D/R/SET-series, nightly only) ─────────────
   web-e2e-full:
     name: Web e2e with API (Playwright + Rust)
     runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
     continue-on-error: true
     services:
       postgres:
