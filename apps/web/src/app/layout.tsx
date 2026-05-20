@@ -23,6 +23,7 @@ export const metadata: Metadata = {
   description:
     "AI-powered adaptive crypto portfolio management. Autonomously monitors, rebalances, and explains your investments.",
   keywords: ["crypto", "portfolio", "AI", "rebalancing", "DeFi"],
+  robots: { index: false, follow: false },
   openGraph: {
     title: "Aegis — AI Portfolio Manager",
     description: "AI-powered adaptive crypto portfolio management.",
