@@ -188,12 +188,10 @@ pub fn monthly_period_for(t: DateTime<Utc>, anchor_day: i32) -> (DateTime<Utc>, 
     let day = t.day();
     let (start_y, start_m) = if day >= anchor {
         (t.year(), t.month())
+    } else if t.month() == 1 {
+        (t.year() - 1, 12)
     } else {
-        if t.month() == 1 {
-            (t.year() - 1, 12)
-        } else {
-            (t.year(), t.month() - 1)
-        }
+        (t.year(), t.month() - 1)
     };
     let (end_y, end_m) = if start_m == 12 {
         (start_y + 1, 1)

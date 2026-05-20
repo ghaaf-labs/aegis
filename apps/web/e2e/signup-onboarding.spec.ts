@@ -23,15 +23,14 @@ test("S3 — goal wizard step 1 renders name input and Next button", async ({
 }) => {
   // The onboarding page mounts the GoalWizard — visit it with a JWT so the
   // auth gate doesn't block, but without a portfolio so the wizard shows.
-  await page.addInitScript(() => {
-    // Use same test JWT as global-setup but force no portfolios loaded yet
-    // by clearing any cached portfolio state.
-    localStorage.setItem(
-      "aegis.jwt",
-      process.env.PLAYWRIGHT_TEST_JWT ??
-        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0LXVzZXIiLCJpYXQiOjE3MDAwMDAwMDB9.fake-sig-for-testing",
-    );
-  });
+  // Pass the JWT value outside the callback; process.env is not available
+  // inside the serialized browser script.
+  const jwt =
+    process.env.PLAYWRIGHT_TEST_JWT ??
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0LXVzZXIiLCJpYXQiOjE3MDAwMDAwMDB9.fake-sig-for-testing";
+  await page.addInitScript((token) => {
+    localStorage.setItem("aegis.jwt", token);
+  }, jwt);
   await page.goto("/onboarding");
   await expect(page.locator('[data-testid="goal-wizard-step-1"]')).toBeVisible({
     timeout: 10_000,
@@ -39,60 +38,58 @@ test("S3 — goal wizard step 1 renders name input and Next button", async ({
   await expect(page.getByRole("button", { name: /Next/i })).toBeVisible();
 });
 
-test("S4 — goal wizard step 4 disables submit when allocation ≠ 100%", async ({
-  page,
-}) => {
-  // Navigate through steps 1-3 quickly then verify step 4 validation.
+// S4 and S5 need the real storageState from global-setup (a seeded API user).
+test.describe("goal wizard steps 4+ (authed)", () => {
   test.use({ storageState: "./e2e/.auth/user.json" });
-  await page.goto("/onboarding");
-  // Step 1 — enter a name
-  await expect(page.locator('[data-testid="goal-wizard-step-1"]')).toBeVisible({
-    timeout: 10_000,
-  });
-  await page.locator('input[type="text"]').first().fill("Test Portfolio");
-  await page.getByRole("button", { name: /Next/i }).click();
-  // Step 2 — pick any horizon
-  await expect(
-    page.locator('[data-testid="goal-wizard-step-2"]'),
-  ).toBeVisible();
-  await page.getByRole("button", { name: /Next/i }).click();
-  // Step 3 — pick any risk
-  await expect(
-    page.locator('[data-testid="goal-wizard-step-3"]'),
-  ).toBeVisible();
-  await page.getByRole("button", { name: /Next/i }).click();
-  // Step 4 — allocation; submit should be disabled when total ≠ 100
-  await expect(
-    page.locator('[data-testid="goal-wizard-step-4"]'),
-  ).toBeVisible();
-  const submit = page.getByRole("button", { name: /Create portfolio/i });
-  // Default allocation sums to 100 — clear one slider to break it.
-  // The Create portfolio button is disabled only when total ≠ 100 ± 0.5.
-  await expect(submit).toBeVisible();
-});
 
-test("S5 — goal wizard step 4 enables submit when allocation = 100%", async ({
-  page,
-}) => {
-  test.use({ storageState: "./e2e/.auth/user.json" });
-  await page.goto("/onboarding");
-  await expect(page.locator('[data-testid="goal-wizard-step-1"]')).toBeVisible({
-    timeout: 10_000,
+  test("S4 — goal wizard step 4 renders after navigating through steps 1-3", async ({
+    page,
+  }) => {
+    await page.goto("/onboarding");
+    await expect(
+      page.locator('[data-testid="goal-wizard-step-1"]'),
+    ).toBeVisible({ timeout: 10_000 });
+    await page.locator('input[type="text"]').first().fill("Test Portfolio");
+    await page.getByRole("button", { name: /Next/i }).click();
+    await expect(
+      page.locator('[data-testid="goal-wizard-step-2"]'),
+    ).toBeVisible();
+    await page.getByRole("button", { name: /Next/i }).click();
+    await expect(
+      page.locator('[data-testid="goal-wizard-step-3"]'),
+    ).toBeVisible();
+    await page.getByRole("button", { name: /Next/i }).click();
+    await expect(
+      page.locator('[data-testid="goal-wizard-step-4"]'),
+    ).toBeVisible();
+    // Default allocation sums to 100 — Create portfolio should be visible.
+    await expect(
+      page.getByRole("button", { name: /Create portfolio/i }),
+    ).toBeVisible();
   });
-  await page.locator('input[type="text"]').first().fill("My Portfolio");
-  await page.getByRole("button", { name: /Next/i }).click();
-  await expect(
-    page.locator('[data-testid="goal-wizard-step-2"]'),
-  ).toBeVisible();
-  await page.getByRole("button", { name: /Next/i }).click();
-  await expect(
-    page.locator('[data-testid="goal-wizard-step-3"]'),
-  ).toBeVisible();
-  await page.getByRole("button", { name: /Next/i }).click();
-  await expect(
-    page.locator('[data-testid="goal-wizard-step-4"]'),
-  ).toBeVisible();
-  // Default allocation is 100% — Create portfolio should be enabled.
-  const submit = page.getByRole("button", { name: /Create portfolio/i });
-  await expect(submit).toBeEnabled();
+
+  test("S5 — goal wizard step 4 enables submit when allocation = 100%", async ({
+    page,
+  }) => {
+    await page.goto("/onboarding");
+    await expect(
+      page.locator('[data-testid="goal-wizard-step-1"]'),
+    ).toBeVisible({ timeout: 10_000 });
+    await page.locator('input[type="text"]').first().fill("My Portfolio");
+    await page.getByRole("button", { name: /Next/i }).click();
+    await expect(
+      page.locator('[data-testid="goal-wizard-step-2"]'),
+    ).toBeVisible();
+    await page.getByRole("button", { name: /Next/i }).click();
+    await expect(
+      page.locator('[data-testid="goal-wizard-step-3"]'),
+    ).toBeVisible();
+    await page.getByRole("button", { name: /Next/i }).click();
+    await expect(
+      page.locator('[data-testid="goal-wizard-step-4"]'),
+    ).toBeVisible();
+    // Default allocation is 100% — Create portfolio should be enabled.
+    const submit = page.getByRole("button", { name: /Create portfolio/i });
+    await expect(submit).toBeEnabled();
+  });
 });

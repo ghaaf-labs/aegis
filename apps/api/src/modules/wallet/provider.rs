@@ -295,7 +295,7 @@ impl WalletProvider for MockProvider {
     async fn issue_user_token(
         &self,
         user_id: Uuid,
-        with_initialize_challenge: bool,
+        _with_initialize_challenge: bool,
     ) -> crate::error::Result<UserTokenBundle> {
         Ok(UserTokenBundle {
             user_token: format!("mock-token-{user_id}"),

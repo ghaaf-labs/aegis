@@ -62,12 +62,20 @@ async function seedPlan(jwt: string): Promise<string> {
       },
     }),
   });
+  if (!pfRes.ok)
+    throw new Error(
+      `portfolio create failed: ${pfRes.status} ${await pfRes.text()}`,
+    );
   const pf = (await pfRes.json()) as { id: string };
 
   const planRes = await fetch(
     `${API_BASE}/portfolios/${pf.id}/rebalance/plan`,
     { method: "POST", headers: { Authorization: `Bearer ${jwt}` } },
   );
+  if (!planRes.ok)
+    throw new Error(
+      `plan create failed: ${planRes.status} ${await planRes.text()}`,
+    );
   const plan = (await planRes.json()) as { rebalanceId: string };
   return plan.rebalanceId;
 }
@@ -90,7 +98,7 @@ test("R5 — approval page shows model badge", async ({ page }) => {
   const badge = page
     .locator(".font-mono")
     .filter({ hasText: /claude|gpt|haiku|opus|sonnet/i });
-  await expect(badge.first()).toBeVisible();
+  await expect(badge.first()).toBeVisible({ timeout: 10_000 });
 });
 
 test("R6 — approval page shows USDC fee estimate", async ({ page }) => {

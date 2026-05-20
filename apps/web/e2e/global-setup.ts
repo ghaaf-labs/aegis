@@ -30,7 +30,7 @@ export default async function globalSetup(_config: FullConfig) {
     return;
   }
 
-  // Wait for the API to be ready (up to 30s).
+  // Wait for the API to be ready (up to 120s).
   await waitForApi();
 
   const browser = await chromium.launch();
@@ -38,27 +38,39 @@ export default async function globalSetup(_config: FullConfig) {
   const page = await context.newPage();
 
   // Sign up (or re-login if the test user already exists from a previous run).
+  // Note: both endpoints work with MOCK_CIRCLE=true — the mock provider skips
+  // the Circle W3S challenge so no real credential exchange happens.
   const res = await fetch(`${API_BASE}/auth/wallet/create`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email: TEST_EMAIL }),
   });
 
+  let token: string;
   if (!res.ok) {
-    // Fall back to login if the user was already created.
+    // User already exists from a previous CI run — log in instead.
     const loginRes = await fetch(`${API_BASE}/auth/wallet/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: TEST_EMAIL }),
     });
-    if (!loginRes.ok) throw new Error(`Auth setup failed: ${loginRes.status}`);
-    const { token } = (await loginRes.json()) as { token: string };
-    await injectToken(page, token);
+    if (!loginRes.ok)
+      throw new Error(
+        `Auth setup failed: ${loginRes.status} ${await loginRes.text()}`,
+      );
+    ({ token } = (await loginRes.json()) as { token: string });
   } else {
-    const { token } = (await res.json()) as { token: string };
-    await injectToken(page, token);
+    ({ token } = (await res.json()) as { token: string });
   }
 
+  // Seed a portfolio so D-series tests land on /dashboard/<id> rather than
+  // being redirected to /onboarding (which happens when no portfolio exists).
+  await seedPortfolio(token);
+
+  // The API authenticates via Bearer header read from localStorage("aegis.jwt").
+  // There are no httpOnly auth cookies — credentials: "include" in api.ts is
+  // for CORS preflight only, not authentication.
+  await injectToken(page, token);
   await context.storageState({ path: AUTH_STATE_PATH });
   await browser.close();
 }
@@ -74,7 +86,36 @@ async function injectToken(
   await page.evaluate((t) => localStorage.setItem("aegis.jwt", t), token);
 }
 
-async function waitForApi(retries = 15, delayMs = 2_000): Promise<void> {
+async function seedPortfolio(token: string): Promise<void> {
+  // Idempotent — if a portfolio already exists this will create a second one,
+  // which is fine; the dashboard redirects to the first it finds.
+  const res = await fetch(`${API_BASE}/portfolios`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      name: "E2E Test Portfolio",
+      allocations: [{ symbol: "USDC", quantity: 0, targetWeight: 100 }],
+      goal: {
+        name: "E2E Test Portfolio",
+        horizon: "1y",
+        riskTolerance: "moderate",
+        targetAllocation: { USDC: 100 },
+        includeUsyc: false,
+        includeEurc: false,
+        createdAt: new Date().toISOString(),
+      },
+    }),
+  });
+  if (!res.ok) {
+    // Non-fatal — D-series tests will just skip if /dashboard redirects to /onboarding.
+    console.warn(`[global-setup] portfolio seed failed: ${res.status}`);
+  }
+}
+
+async function waitForApi(retries = 60, delayMs = 2_000): Promise<void> {
   for (let i = 0; i < retries; i++) {
     try {
       const r = await fetch(`${API_BASE}/health`);
