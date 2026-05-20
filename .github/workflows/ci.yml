@@ -125,7 +125,7 @@ jobs:
         run: cargo build --locked
       - name: Start API in background (runs migrations on boot)
         working-directory: apps/api
-        run: cargo run --locked --offline &
+        run: cargo run --locked --offline --bin aegis-api &
       - run: pnpm --filter @aegis/web exec playwright install --with-deps chromium
       - run: pnpm --filter @aegis/web exec playwright test --reporter=line
       - uses: actions/upload-artifact@v4
