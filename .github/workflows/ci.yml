@@ -328,6 +328,9 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_CLIENT_SECRET }}
           tags: tag:ci
 
+      - name: Wait for Tailscale peer route
+        run: tailscale ping --c 5 100.74.139.2
+
       - name: Deploy
         uses: appleboy/ssh-action@v1
         with:
