@@ -296,7 +296,7 @@ jobs:
       - name: cargo machete (unused deps)
         run: cargo machete
 
-  # ── Docker ───────────────────────────────────────────────────────────────
+  # ── Docker build check ───────────────────────────────────────────────────
   docker:
     name: Docker build check
     runs-on: ubuntu-latest
@@ -308,7 +308,35 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: apps/api
-          file: infra/docker/Dockerfile.api
+          file: apps/api/Dockerfile
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # ── Deploy to Hetzner (main only) ────────────────────────────────────────
+  deploy:
+    name: Deploy to Hetzner
+    needs: [web, api, format, typos, docker]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-client-secret: ${{ secrets.TS_OAUTH_CLIENT_SECRET }}
+          tags: tag:ci
+
+      - name: Deploy
+        uses: appleboy/ssh-action@v1
+        with:
+          host: 100.74.139.2
+          username: root
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/aegis
+            git pull origin main
+            docker compose -f docker-compose.deploy.yml up --build -d --remove-orphans
+            docker image prune -f
