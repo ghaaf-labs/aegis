@@ -25,9 +25,14 @@ test("D1 — portfolio summary card visible on dashboard", async ({ page }) => {
   });
 });
 
-test("D2 — faucet button shown when wallet is empty", async ({ page }) => {
-  // The faucet renders when USDC balance is 0 — always true for a fresh test user.
-  await expect(page.locator('[data-testid="faucet-button"]')).toBeVisible({
+test("D2 — deploy prompt shown when wallet has idle funds", async ({
+  page,
+}) => {
+  // In mock mode the gateway always returns ~100 USDC, so the "Deploy wallet
+  // balance" prompt (showDeploy) appears instead of the faucet (showFaucet).
+  await expect(
+    page.getByRole("button", { name: /Deploy wallet balance/i }),
+  ).toBeVisible({
     timeout: 10_000,
   });
 });
@@ -44,7 +49,9 @@ test("D5 — agent reasoning feed renders or shows empty state", async ({
 
 test("D7 — sidebar nav items are all present", async ({ page }) => {
   await expect(page.getByRole("link", { name: /Dashboard/i })).toBeVisible();
-  await expect(page.getByRole("link", { name: /Wallet/i })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Wallet", exact: true }),
+  ).toBeVisible();
   await expect(page.getByRole("link", { name: /Portfolio/i })).toBeVisible();
   await expect(page.getByRole("link", { name: /Strategies/i })).toBeVisible();
   await expect(page.getByRole("link", { name: /Settings/i })).toBeVisible();

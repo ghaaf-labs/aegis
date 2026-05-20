@@ -23,6 +23,7 @@ use crate::modules::rebalance::{
     planner::plan_legs,
 };
 use crate::router::AppState;
+use serde_json::json;
 
 /// Original trigger endpoint kept for back-compat with Sprint 2 callers.
 /// New code should hit `POST /portfolios/:id/rebalance/plan` instead.
@@ -74,14 +75,21 @@ pub async fn create(
 ) -> Result<Json<PlanResponse>> {
     own_portfolio_or_404(&state, claims.sub, portfolio_id).await?;
 
-    let decision = analyze_portfolio(
-        &state,
-        AnalyzeRequest {
-            portfolio_id,
-            triggered_by: Some("user_request".into()),
-        },
-    )
-    .await?;
+    // When running in mock mode without an OpenRouter key (e.g. CI / local dev),
+    // skip the real AI pipeline and insert a canned decision so the plan endpoint
+    // is exercisable end-to-end without a live API key.
+    let decision = if state.config.execution_mock && state.config.openrouter_api_key.is_empty() {
+        mock_agent_decision(&state, portfolio_id).await?
+    } else {
+        analyze_portfolio(
+            &state,
+            AnalyzeRequest {
+                portfolio_id,
+                triggered_by: Some("user_request".into()),
+            },
+        )
+        .await?
+    };
 
     let input = build_plan_input(&state, portfolio_id).await?;
     let legs = plan_legs(&input);
@@ -227,6 +235,48 @@ pub async fn history(
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
+
+/// Insert a canned agent decision when `EXECUTION_MOCK=true` and no OpenRouter
+/// key is configured. Lets the rebalance plan endpoint be exercised end-to-end
+/// in CI/local dev without a live AI key.
+async fn mock_agent_decision(
+    state: &AppState,
+    portfolio_id: Uuid,
+) -> Result<crate::modules::agent::models::AgentDecision> {
+    let rec = json!({
+        "summary": "Hold",
+        "trades": [],
+        "expectedImpact": { "riskDelta": 0.0, "diversificationScore": 0.5 }
+    });
+    let decision = sqlx::query_as(
+        r#"INSERT INTO agent_decisions
+           (id, portfolio_id, reasoning, recommendation, confidence,
+            triggered_by, model_slug, regime, prompt_tokens,
+            completion_tokens, latency_ms, critic_verdict, snapshot,
+            raw_confidence, calibrated_confidence, counterfactual)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+           RETURNING *"#,
+    )
+    .bind(Uuid::new_v4())
+    .bind(portfolio_id)
+    .bind("Mock decision — EXECUTION_MOCK=true, no OPENROUTER_API_KEY")
+    .bind(&rec)
+    .bind(1.0_f64)
+    .bind("user_request")
+    .bind("mock/mock-agent")
+    .bind("neutral")
+    .bind(0_i32)
+    .bind(0_i32)
+    .bind(0_i32)
+    .bind(serde_json::Value::Null)
+    .bind(json!({}))
+    .bind(1.0_f64)
+    .bind(None::<f64>)
+    .bind(None::<String>)
+    .fetch_one(&state.db)
+    .await?;
+    Ok(decision)
+}
 
 async fn own_portfolio_or_404(state: &AppState, user_id: Uuid, portfolio_id: Uuid) -> Result<()> {
     let exists: bool = sqlx::query_scalar(

@@ -163,11 +163,9 @@ async fn send_due(state: &AppState, now: chrono::DateTime<Utc>) -> Result<()> {
     for sub in subs {
         if state.config.resend_api_key.is_empty() {
             tracing::info!(user=%sub.user_id, "digest: skipping (RESEND_API_KEY empty)");
-        } else {
-            if let Err(e) = send_one(state, &sub).await {
-                tracing::warn!(user=%sub.user_id, error=%e, "digest send failed");
-                continue;
-            }
+        } else if let Err(e) = send_one(state, &sub).await {
+            tracing::warn!(user=%sub.user_id, error=%e, "digest send failed");
+            continue;
         }
         sqlx::query("UPDATE digest_subscriptions SET last_sent_at = NOW() WHERE user_id = $1")
             .bind(sub.user_id)

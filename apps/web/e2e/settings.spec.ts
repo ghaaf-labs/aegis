@@ -68,7 +68,9 @@ test("SET7 — sidebar logout clears JWT and redirects to login", async ({
   await page.waitForSelector('[data-testid="sidebar-logout"]', {
     timeout: 10_000,
   });
-  await page.locator('[data-testid="sidebar-logout"]').click();
+  // The mobile drawer sidebar is always in the DOM (off-screen); use .first()
+  // to target the visible desktop sidebar.
+  await page.locator('[data-testid="sidebar-logout"]').first().click();
   await expect(page).toHaveURL(/\/login/, { timeout: 10_000 });
   // JWT must be gone from localStorage.
   const jwt = await page.evaluate(() => localStorage.getItem("aegis.jwt"));
