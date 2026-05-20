@@ -321,20 +321,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - name: Connect to Tailscale
-        uses: tailscale/github-action@v3
-        with:
-          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          oauth-secret: ${{ secrets.TS_OAUTH_CLIENT_SECRET }}
-          tags: tag:ci
-
-      - name: Wait for Tailscale peer route
-        run: tailscale ping --c 5 100.74.139.2
-
       - name: Deploy
         uses: appleboy/ssh-action@v1
         with:
-          host: 100.74.139.2
+          host: 188.245.243.100
           username: root
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
