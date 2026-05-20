@@ -57,7 +57,10 @@ export function LegCard({
 }: LegCardProps) {
   const explorer = explorerUrl(destChain ?? srcChain, txHash);
   return (
-    <div className="border-2 border-white/10 bg-[#141414] p-4 flex items-start gap-4">
+    <div
+      data-testid="leg-card"
+      className="border-2 border-white/10 bg-[#141414] p-4 flex items-start gap-4"
+    >
       <div className="font-mono text-xs text-text-mut w-6 mt-1">
         {String(legIndex + 1).padStart(2, "0")}
       </div>

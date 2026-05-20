@@ -82,6 +82,59 @@ jobs:
           path: apps/web/playwright-report
           retention-days: 14
 
+  # ── Frontend e2e with API (S/D/R/SET-series, advisory) ──────────────────
+  web-e2e-full:
+    name: Web e2e with API (Playwright + Rust)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: aegis
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/aegis
+      JWT_SECRET: e2e-test-secret
+      MOCK_CIRCLE: "true"
+      EXECUTION_MOCK: "true"
+      NEXT_PUBLIC_API_URL: http://localhost:8080
+      PLAYWRIGHT_API_ENABLED: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/api
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build API (avoids compile racing the 120s waitForApi budget)
+        working-directory: apps/api
+        run: cargo build --locked
+      - name: Start API in background (runs migrations on boot)
+        working-directory: apps/api
+        run: cargo run --locked --offline --bin aegis-api &
+      - run: pnpm --filter @aegis/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @aegis/web exec playwright test --reporter=line
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report-full
+          path: apps/web/playwright-report
+          retention-days: 14
+
   # ── Frontend coverage (advisory, non-blocking) ───────────────────────────
   web-coverage:
     name: Web coverage (advisory)

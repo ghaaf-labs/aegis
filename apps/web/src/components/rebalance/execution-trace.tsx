@@ -107,7 +107,7 @@ export function ExecutionTrace({ rebalanceId, sseUrl }: ExecutionTraceProps) {
   const progressPct = total > 0 ? Math.round((completed / total) * 100) : 0;
 
   return (
-    <section className="space-y-3">
+    <section data-testid="execution-trace" className="space-y-3">
       <header className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h2 className="text-lg font-semibold text-text-hi">

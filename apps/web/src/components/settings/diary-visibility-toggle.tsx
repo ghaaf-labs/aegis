@@ -39,7 +39,10 @@ export function DiaryVisibilityToggle({
   };
 
   return (
-    <div className="border-2 border-white/10 bg-[#141414] p-4 space-y-3">
+    <div
+      data-testid="diary-toggle"
+      className="border-2 border-white/10 bg-[#141414] p-4 space-y-3"
+    >
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-sm font-semibold text-text-hi">

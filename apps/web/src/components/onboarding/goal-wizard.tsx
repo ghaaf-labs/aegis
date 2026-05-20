@@ -165,7 +165,10 @@ export function GoalWizard() {
   };
 
   return (
-    <BrutalCard className="max-w-xl mx-auto">
+    <BrutalCard
+      data-testid={`goal-wizard-step-${state.step}`}
+      className="max-w-xl mx-auto"
+    >
       <BrutalCardHeader>
         <div className="flex items-center gap-3">
           <BrutalPill tone="agent">STEP {state.step} / 4</BrutalPill>
@@ -236,6 +239,7 @@ function NameStep({ state, setState }: StepProps) {
         Give this portfolio a name (e.g. Retirement, Treasury, Speculative).
       </label>
       <input
+        type="text"
         autoFocus
         value={state.name}
         onChange={(e) => setState((s) => ({ ...s, name: e.target.value }))}

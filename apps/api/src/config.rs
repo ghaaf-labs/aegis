@@ -244,7 +244,7 @@ impl Config {
             host: std::env::var("API_HOST").unwrap_or_else(|_| "0.0.0.0".into()),
             port: parse_or("API_PORT", 8080)?,
 
-            openrouter_api_key: required("OPENROUTER_API_KEY")?,
+            openrouter_api_key: std::env::var("OPENROUTER_API_KEY").unwrap_or_default(),
             openrouter_base_url: std::env::var("OPENROUTER_BASE_URL")
                 .unwrap_or_else(|_| "https://openrouter.ai/api/v1".into()),
 

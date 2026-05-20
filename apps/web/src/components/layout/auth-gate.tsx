@@ -32,7 +32,10 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="max-w-[1400px] mx-auto flex items-center justify-center min-h-[60vh]">
-      <div className="border-brutal border-border-default bg-raised p-8 max-w-sm w-full text-center space-y-4">
+      <div
+        data-testid="auth-gate-message"
+        className="border-brutal border-border-default bg-raised p-8 max-w-sm w-full text-center space-y-4"
+      >
         <div className="flex justify-center">
           <div className="w-10 h-10 rounded-sharp bg-accent-agent flex items-center justify-center border-brutal border-black">
             <Shield className="w-5 h-5 text-black" />

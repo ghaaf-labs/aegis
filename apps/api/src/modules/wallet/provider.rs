@@ -295,13 +295,13 @@ impl WalletProvider for MockProvider {
     async fn issue_user_token(
         &self,
         user_id: Uuid,
-        with_initialize_challenge: bool,
+        _with_initialize_challenge: bool,
     ) -> crate::error::Result<UserTokenBundle> {
         Ok(UserTokenBundle {
             user_token: format!("mock-token-{user_id}"),
             encryption_key: format!("mock-key-{user_id}"),
             app_id: "mock-app-id".into(),
-            challenge_id: with_initialize_challenge.then(|| format!("mock-challenge-{user_id}")),
+            challenge_id: None,
         })
     }
 
@@ -336,7 +336,7 @@ mod tests {
         let b = p.issue_user_token(id, true).await.unwrap();
         assert_eq!(a.user_token, b.user_token);
         assert_eq!(a.encryption_key, b.encryption_key);
-        assert!(a.challenge_id.is_some());
+        assert!(a.challenge_id.is_none()); // mock skips SDK ceremony
     }
 
     #[tokio::test]

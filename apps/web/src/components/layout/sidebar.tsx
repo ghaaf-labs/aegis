@@ -151,6 +151,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
           </span>
           <button
             type="button"
+            data-testid="sidebar-logout"
             onClick={() => void handleLogout()}
             title="Log out"
             aria-label="Log out"
