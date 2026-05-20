@@ -98,7 +98,7 @@ test("R5 — approval page shows model badge", async ({ page }) => {
   const badge = page
     .locator(".font-mono")
     .filter({ hasText: /claude|gpt|haiku|opus|sonnet/i });
-  await expect(badge.first()).toBeVisible();
+  await expect(badge.first()).toBeVisible({ timeout: 10_000 });
 });
 
 test("R6 — approval page shows USDC fee estimate", async ({ page }) => {

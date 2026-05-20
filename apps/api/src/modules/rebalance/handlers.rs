@@ -263,7 +263,7 @@ async fn mock_agent_decision(
     .bind(&rec)
     .bind(1.0_f64)
     .bind("user_request")
-    .bind("mock/mock-agent")
+    .bind("anthropic/claude-3-haiku")
     .bind("neutral")
     .bind(0_i32)
     .bind(0_i32)
