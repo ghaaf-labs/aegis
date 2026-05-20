@@ -10,7 +10,7 @@ COPY packages/shared/package.json ./packages/shared/
 COPY packages/ui/package.json ./packages/ui/
 COPY packages/config/package.json ./packages/config/
 
-RUN pnpm install --frozen-lockfile
+RUN LEFTHOOK=0 pnpm install --frozen-lockfile
 
 # ── Build ──────────────────────────────────────────────────────────────────
 FROM node:20-alpine AS builder
