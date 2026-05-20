@@ -271,6 +271,7 @@ export function ApprovalModal({
             {plan.legs.map((leg) => (
               <li
                 key={leg.legIndex}
+                data-testid="leg-card"
                 className="flex justify-between text-xs font-mono border border-white/5 p-2"
               >
                 <span className="flex items-center gap-1.5">
