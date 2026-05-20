@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
-import Link from "next/link";
-import { Shield } from "lucide-react";
 import { BrutalPill } from "@aegis/ui";
+import { LandingShell } from "@/components/layout/landing-shell";
 
 import type { ConstitutionDocument } from "@/types";
 
@@ -47,42 +46,12 @@ function tierLabel(tier?: string): string | null {
   return tier.charAt(0).toUpperCase() + tier.slice(1);
 }
 
-function PageShell({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="min-h-screen bg-bg text-text-default">
-      <div className="fixed inset-0 pointer-events-none">
-        <div className="absolute top-[-20%] left-[10%] w-[600px] h-[600px] bg-blue-600/10 rounded-full blur-[120px]" />
-        <div className="absolute bottom-[10%] right-[5%] w-[400px] h-[400px] bg-cyan-600/10 rounded-full blur-[100px]" />
-      </div>
-      <nav className="relative z-10 flex items-center justify-between px-6 py-5 max-w-4xl mx-auto">
-        <Link href="/" className="flex items-center gap-2 group">
-          <div className="w-8 h-8 rounded-sharp bg-accent-agent flex items-center justify-center border-brutal border-black">
-            <Shield className="w-4 h-4 text-black" />
-          </div>
-          <span className="font-bold text-lg tracking-tight text-text-hi group-hover:text-accent-agent transition-colors">
-            Aegis
-          </span>
-        </Link>
-        <Link
-          href="/"
-          className="text-xs font-mono text-text-lo hover:text-text-hi transition-colors"
-        >
-          ← Back to home
-        </Link>
-      </nav>
-      <main className="relative z-10 mx-auto max-w-4xl px-6 pb-20">
-        {children}
-      </main>
-    </div>
-  );
-}
-
 export default async function ConstitutionPage() {
   const doc = await fetchConstitution();
 
   if (!doc) {
     return (
-      <PageShell>
+      <LandingShell>
         <header className="mb-10 pt-4">
           <BrutalPill tone="agent" className="mb-3">
             Agent rulebook
@@ -97,12 +66,12 @@ export default async function ConstitutionPage() {
             &apos;t loaded its clauses yet. Try again in a moment.
           </p>
         </div>
-      </PageShell>
+      </LandingShell>
     );
   }
 
   return (
-    <PageShell>
+    <LandingShell>
       <header className="mb-10 pt-4">
         <BrutalPill tone="agent" className="mb-3">
           Agent rulebook
@@ -167,6 +136,6 @@ export default async function ConstitutionPage() {
         force at decision time is recorded on every persisted decision for
         future audits.
       </footer>
-    </PageShell>
+    </LandingShell>
   );
 }
