@@ -328,6 +328,7 @@ jobs:
       - name: Deploy
         run: |
           set -e
+          git config --global --add safe.directory /opt/aegis
           cd /opt/aegis
           git pull origin main
           docker compose -f docker-compose.deploy.yml up --build -d --remove-orphans
