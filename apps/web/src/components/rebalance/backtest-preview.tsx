@@ -76,6 +76,24 @@ export function BacktestPreview({ portfolioId, proposed }: Props) {
         : "text-text-default";
   const deltaSign = delta > 0 ? "+" : "";
 
+  if (!data.reliable || data.windowDays < 5) {
+    return (
+      <div className="bg-black/40 border border-amber-500/20 p-3 mb-4 text-xs font-mono text-warn">
+        <div className="flex items-center justify-between gap-3">
+          <span>Backtest preview not ready</span>
+          <span className="text-[10px] text-warn/70">
+            {data.windowDays}d history
+          </span>
+        </div>
+        <p className="mt-1.5 text-[11px] text-warn/70 leading-relaxed">
+          Fewer than 5 daily snapshots are available, so Aegis is hiding the
+          return, Sharpe, and drawdown numbers instead of showing a misleading
+          0.00% comparison.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="bg-black/40 border border-white/5 p-3 mb-4 text-xs font-mono space-y-2">
       <div className="flex items-center justify-between">

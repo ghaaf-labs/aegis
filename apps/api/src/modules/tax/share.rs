@@ -95,6 +95,8 @@ pub async fn list_share_tokens(pool: &PgPool, user_id: Uuid) -> Result<Vec<Share
         "SELECT id, portfolio_id, year, token, expires_at, revoked_at, created_at
          FROM tax_share_tokens
          WHERE user_id = $1
+           AND expires_at > NOW()
+           AND revoked_at IS NULL
          ORDER BY created_at DESC",
     )
     .bind(user_id)

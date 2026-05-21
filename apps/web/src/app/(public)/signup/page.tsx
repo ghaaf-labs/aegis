@@ -17,7 +17,7 @@ function WalletCardSkeleton() {
 
 export default function SignupPage() {
   return (
-    <div className="min-h-screen bg-bg text-text-default flex items-center justify-center p-6">
+    <main className="min-h-screen bg-bg text-text-default flex items-center justify-center p-6">
       <div className="w-full max-w-md">
         <Link
           href="/"
@@ -30,6 +30,15 @@ export default function SignupPage() {
             Aegis
           </span>
         </Link>
+        <div className="mb-6 text-center space-y-2">
+          <h1 className="text-2xl font-semibold text-text-hi font-mono tracking-tight">
+            Create wallet access
+          </h1>
+          <p className="text-sm text-text-lo font-mono leading-relaxed">
+            One email starts a Circle wallet, then Aegis builds your first
+            portfolio goal before any trade can be approved.
+          </p>
+        </div>
         {/* CreateWalletCard reads `?ref=` via useSearchParams (referral
             attribution, Sprint 4). Next.js 15 requires a Suspense boundary
             around any child that calls useSearchParams during SSG. */}
@@ -37,13 +46,6 @@ export default function SignupPage() {
           <CreateWalletCard />
         </Suspense>
         <p className="mt-6 text-center text-xs font-mono text-text-mut">
-          Already have an account?{" "}
-          <Link href="/login" className="text-accent-pnl hover:underline">
-            Log back in
-          </Link>
-          .
-        </p>
-        <p className="mt-2 text-center text-xs font-mono text-text-mut">
           Just looking?{" "}
           <Link href="/explore" className="text-accent-agent hover:underline">
             Explore demo portfolios
@@ -51,6 +53,6 @@ export default function SignupPage() {
           .
         </p>
       </div>
-    </div>
+    </main>
   );
 }

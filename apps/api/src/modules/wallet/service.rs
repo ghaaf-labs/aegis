@@ -65,8 +65,10 @@ impl<'a> WalletService<'a> {
         })
     }
 
-    /// Returning-user signin. Mirrors `init_signup` but never requests an
-    /// initialize challenge — the PIN was set on first signup.
+    /// Returning-user signin. Provisioned wallets skip the initialize
+    /// challenge. Users who abandoned signup before wallet creation get a
+    /// fresh challenge here so login can recover the account instead of
+    /// polling forever.
     pub async fn init_login(&self, email: &str) -> crate::error::Result<WalletAuthResponse> {
         validate_email(email)?;
         let user = self
@@ -79,7 +81,11 @@ impl<'a> WalletService<'a> {
         if user.wallet_id.is_none() {
             self.provider.ensure_user(user.id).await?;
         }
-        let bundle = self.provider.issue_user_token(user.id, false).await?;
+        let needs_challenge = user.wallet_id.is_none();
+        let bundle = self
+            .provider
+            .issue_user_token(user.id, needs_challenge)
+            .await?;
         let token = mint_token(&user, self.config)?;
         let wallet = wallet_from_user(&user);
 

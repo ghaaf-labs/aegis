@@ -4,6 +4,7 @@ import {
   BrutalCardHeader,
   BrutalPill,
 } from "@aegis/ui";
+import Link from "next/link";
 import type { StrategyPublic } from "@/lib/api";
 
 interface Props {
@@ -11,6 +12,8 @@ interface Props {
   actionLabel: string;
   onAction?: () => void;
   disabled?: boolean;
+  disabledReason?: string;
+  actionHref?: string;
 }
 
 const RISK_TONE = {
@@ -24,6 +27,8 @@ export function StrategyCard({
   actionLabel,
   onAction,
   disabled,
+  disabledReason,
+  actionHref,
 }: Props) {
   const entries = Object.entries(strategy.targetAllocation).sort(
     (a, b) => b[1] - a[1],
@@ -65,14 +70,31 @@ export function StrategyCard({
             </div>
           ))}
         </dl>
-        <button
-          type="button"
-          onClick={onAction}
-          disabled={disabled || !onAction}
-          className="mt-auto inline-flex items-center justify-center gap-2 px-3 py-2 text-sm font-semibold border-brutal border-black rounded-sharp bg-accent-pnl text-black hover:shadow-brutal-sm transition-[box-shadow] active:translate-y-px disabled:opacity-60 disabled:hover:shadow-none"
-        >
-          {actionLabel}
-        </button>
+        <div className="mt-auto space-y-2">
+          {actionHref ? (
+            <Link
+              href={actionHref}
+              className="inline-flex w-full items-center justify-center gap-2 px-3 py-2 text-sm font-semibold border-brutal border-black rounded-sharp bg-accent-pnl text-black hover:shadow-brutal-sm transition-[box-shadow] active:translate-y-px"
+            >
+              {actionLabel}
+            </Link>
+          ) : (
+            <button
+              type="button"
+              onClick={onAction}
+              disabled={disabled || !onAction}
+              title={disabledReason}
+              className="inline-flex w-full items-center justify-center gap-2 px-3 py-2 text-sm font-semibold border-brutal border-black rounded-sharp bg-accent-pnl text-black hover:shadow-brutal-sm transition-[box-shadow] active:translate-y-px disabled:opacity-60 disabled:hover:shadow-none"
+            >
+              {actionLabel}
+            </button>
+          )}
+          {disabledReason && (
+            <p className="text-[11px] font-mono leading-relaxed text-text-mut">
+              {disabledReason}
+            </p>
+          )}
+        </div>
       </BrutalCardBody>
     </BrutalCard>
   );

@@ -53,8 +53,11 @@
   * {
     @apply border-border;
   }
+  html {
+    @apply bg-bg;
+  }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-bg text-foreground;
     font-feature-settings:
       "rlig" 1,
       "calt" 1;

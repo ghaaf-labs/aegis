@@ -2,12 +2,20 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Bell, Wifi, WifiOff, Wallet as WalletIcon } from "lucide-react";
+import { useRouter } from "next/navigation";
+import {
+  Bell,
+  LogOut,
+  Wifi,
+  WifiOff,
+  Wallet as WalletIcon,
+} from "lucide-react";
 import { BrutalButton, BrutalPill } from "@aegis/ui";
 import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
-import { gatewayApi } from "@/lib/api";
+import { gatewayApi, walletApi } from "@/lib/api";
 
 export function Header() {
+  const router = useRouter();
   const portfolio = useActivePortfolio();
   const sseConnected = usePortfolioStore((s) => s.sseConnected);
   const unifiedUsdc = usePortfolioStore((s) => s.unifiedUsdc);
@@ -16,12 +24,25 @@ export function Header() {
   const setUnifiedEurc = usePortfolioStore((s) => s.setUnifiedEurc);
   const setPerChain = usePortfolioStore((s) => s.setPerChain);
   const wallet = usePortfolioStore((s) => s.wallet);
+  const resetSession = usePortfolioStore((s) => s.resetSession);
+  const sessionActive = usePortfolioStore((s) => s.sessionActive);
 
   const [notifOpen, setNotifOpen] = useState(false);
   const [userOpen, setUserOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
   const userRef = useRef<HTMLDivElement>(null);
   const pegAlerts = usePortfolioStore((s) => s.pegAlerts);
+
+  const handleLogout = async () => {
+    try {
+      await walletApi.logout();
+    } catch {
+      /* already unauthed */
+    }
+    resetSession();
+    setUserOpen(false);
+    router.push("/login");
+  };
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -82,7 +103,7 @@ export function Header() {
           ) : (
             <WifiOff className="w-3 h-3" />
           )}
-          <span>{sseConnected ? "LIVE" : "OFFLINE"}</span>
+          <span>{sseConnected ? "STREAM" : "OFFLINE"}</span>
         </BrutalPill>
         <div ref={notifRef} className="relative">
           <BrutalButton
@@ -132,6 +153,18 @@ export function Header() {
             </div>
           )}
         </div>
+        {sessionActive && (
+          <button
+            type="button"
+            data-testid="header-logout-direct"
+            onClick={() => void handleLogout()}
+            aria-label="Log out"
+            className="min-h-[36px] inline-flex items-center justify-center gap-2 rounded-sharp border border-border-default bg-bg px-2.5 text-xs font-mono text-text-lo hover:border-risk/50 hover:bg-risk/5 hover:text-risk transition-colors"
+          >
+            <LogOut className="w-3.5 h-3.5" aria-hidden="true" />
+            <span className="hidden sm:inline">Log out</span>
+          </button>
+        )}
         {wallet && (
           <div ref={userRef} className="relative">
             <button
@@ -168,6 +201,15 @@ export function Header() {
                   <WalletIcon className="w-3 h-3" />
                   Open wallet
                 </Link>
+                <button
+                  type="button"
+                  data-testid="header-logout"
+                  onClick={() => void handleLogout()}
+                  className="flex items-center gap-2 w-full border-t border-border-default px-3 py-2 text-left text-sm font-mono text-text-lo hover:bg-risk/5 hover:text-risk"
+                >
+                  <LogOut className="w-3 h-3" aria-hidden="true" />
+                  Log out
+                </button>
               </div>
             )}
           </div>

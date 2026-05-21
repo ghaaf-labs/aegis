@@ -14,7 +14,7 @@ use reqwest::Client;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
-use super::service::{broadcast, fetch_balance};
+use super::service::{broadcast, fetch_balance_for_user};
 use crate::config::Config;
 use crate::db::Db;
 use crate::modules::sse::SseSender;
@@ -51,7 +51,7 @@ pub fn spawn_balance_ticker(db: Db, http: Client, config: Arc<Config>, sse: SseS
             };
 
             for u in users {
-                match fetch_balance(&http, &config, u.id).await {
+                match fetch_balance_for_user(&db, &http, &config, u.id).await {
                     Ok(balance) => broadcast(&sse, u.id, &balance),
                     Err(e) => {
                         debug!("gateway ticker: fetch for user {} failed: {e}", u.id)

@@ -99,7 +99,9 @@ async fn load_weights(
     portfolio_id: Uuid,
 ) -> Result<(Vec<WeightedExposure>, Vec<WeightedExposure>)> {
     let rows: Vec<(String, f64, f64)> = sqlx::query_as(
-        "SELECT asset_symbol, current_weight, target_weight
+        "SELECT asset_symbol,
+                current_weight::DOUBLE PRECISION,
+                target_weight::DOUBLE PRECISION
          FROM allocations WHERE portfolio_id = $1",
     )
     .bind(portfolio_id)
@@ -126,7 +128,7 @@ async fn load_daily_prices(state: &AppState, window_days: i32) -> Result<Vec<Day
     let rows: Vec<(String, f64, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
         r#"
         SELECT DISTINCT ON (DATE(fetched_at), symbol)
-               symbol, price_usd, fetched_at
+               symbol, price_usd::DOUBLE PRECISION, fetched_at
         FROM price_history
         WHERE fetched_at > NOW() - ($1::int || ' days')::interval
         ORDER BY DATE(fetched_at), symbol, fetched_at DESC

@@ -15,10 +15,14 @@ import { usePortfolioStore } from "@/stores/portfolio";
 import type { PegActionKind, PegAssetSymbol, PegRule } from "@/types";
 
 const ASSETS: PegAssetSymbol[] = ["USDC", "EURC", "USYC"];
-const ACTIONS: Array<{ kind: PegActionKind; label: string }> = [
+const ACTIONS: Array<{
+  kind: PegActionKind;
+  label: string;
+  disabled?: boolean;
+}> = [
   { kind: "alert", label: "Alert only" },
   { kind: "propose_rebalance", label: "Propose rebalance" },
-  { kind: "auto_execute", label: "Auto-execute (Pro)" },
+  { kind: "auto_execute", label: "Auto-execute (locked)", disabled: true },
 ];
 
 interface DraftRule {
@@ -71,6 +75,11 @@ export function PegRuleEditor() {
   const [dismissed, setDismissed] = useState(false);
   const alerts = dismissed ? [] : storePegAlerts;
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const canCreate =
+    !submitting &&
+    draft.thresholdPrice > 0 &&
+    draft.windowSeconds >= 0 &&
+    draft.actionKind !== "auto_execute";
 
   // Mirror the wrapper's error into local state so the existing error
   // banner stays the only place the user sees failures.
@@ -259,13 +268,18 @@ export function PegRuleEditor() {
                 {ACTIONS.map((a) => (
                   <label
                     key={a.kind}
-                    className="flex items-center gap-2 cursor-pointer"
+                    className={`flex items-center gap-2 ${
+                      a.disabled
+                        ? "cursor-not-allowed text-text-mut"
+                        : "cursor-pointer"
+                    }`}
                   >
                     <input
                       type="radio"
                       name="actionKind"
                       value={a.kind}
                       checked={draft.actionKind === a.kind}
+                      disabled={a.disabled}
                       onChange={() =>
                         setDraft({ ...draft, actionKind: a.kind })
                       }
@@ -274,6 +288,10 @@ export function PegRuleEditor() {
                   </label>
                 ))}
               </div>
+              <p className="text-[11px] text-text-mut font-mono">
+                Auto-execute is not enabled yet. Use Propose rebalance to draft
+                the defensive plan for approval.
+              </p>
             </fieldset>
           </div>
 
@@ -281,7 +299,7 @@ export function PegRuleEditor() {
             <BrutalButton
               variant="agent"
               onClick={onCreate}
-              disabled={submitting}
+              disabled={!canCreate}
               aria-label="Create peg-defense rule"
             >
               {submitting ? "Creating…" : "Create rule"}

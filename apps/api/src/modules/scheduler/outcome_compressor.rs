@@ -72,12 +72,13 @@ async fn compress_pending(state: &AppState) -> crate::error::Result<()> {
 }
 
 async fn compress_one(state: &AppState, row: &DecisionRow) -> crate::error::Result<()> {
-    let current_total: f64 =
-        sqlx::query_scalar("SELECT total_value_usd FROM portfolios WHERE id = $1")
-            .bind(row.portfolio_id)
-            .fetch_optional(&state.db)
-            .await?
-            .unwrap_or(0.0);
+    let current_total: f64 = sqlx::query_scalar(
+        "SELECT total_value_usd::DOUBLE PRECISION FROM portfolios WHERE id = $1",
+    )
+    .bind(row.portfolio_id)
+    .fetch_optional(&state.db)
+    .await?
+    .unwrap_or(0.0);
 
     let snap_total = snapshot_total(&row.snapshot);
 
@@ -87,11 +88,12 @@ async fn compress_one(state: &AppState, row: &DecisionRow) -> crate::error::Resu
     let realized = if snap_total > 0.0 {
         (current_total - snap_total) / snap_total * 100.0
     } else {
-        let legacy: Option<f64> =
-            sqlx::query_scalar("SELECT total_pnl_pct FROM portfolios WHERE id = $1")
-                .bind(row.portfolio_id)
-                .fetch_optional(&state.db)
-                .await?;
+        let legacy: Option<f64> = sqlx::query_scalar(
+            "SELECT total_pnl_pct::DOUBLE PRECISION FROM portfolios WHERE id = $1",
+        )
+        .bind(row.portfolio_id)
+        .fetch_optional(&state.db)
+        .await?;
         legacy.unwrap_or(0.0)
     };
 

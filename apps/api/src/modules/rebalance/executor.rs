@@ -280,11 +280,11 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
     crate::modules::observability::counters::record_rebalance_succeeded(plan_total);
 
     if plan_total > 0.0 {
-        // Resolve the real payer: portfolio → user → users.arc_address.
-        // Falling back to the zero address (the pre-audit behaviour) would let
-        // the facilitator silently accept invalid payments — fail loudly here
-        // instead so the operator notices a misprovisioned wallet.
-        let payer_address: String = sqlx::query_scalar(
+        // Resolve the real payer: portfolio → user → users.arc_address. In
+        // local mock mode, Circle Wallets may not have provisioned addresses,
+        // so use a deterministic placeholder instead of failing a demo plan
+        // after every leg already confirmed.
+        let payer_address = sqlx::query_scalar::<_, Option<String>>(
             "SELECT u.arc_address
                FROM portfolios p
                JOIN users u ON u.id = p.user_id
@@ -294,15 +294,23 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
         .fetch_optional(&state.db)
         .await?
         .flatten()
-        .ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!(
+        .unwrap_or_default();
+
+        if payer_address.is_empty() && !(state.config.execution_mock || state.config.circle_mock) {
+            return Err(AppError::Internal(anyhow::anyhow!(
                 "cannot settle protocol fee: users.arc_address missing for portfolio {portfolio_id}"
-            ))
-        })?;
+            )));
+        }
+
+        let payer_address = if payer_address.is_empty() {
+            "0x0000000000000000000000000000000000000000"
+        } else {
+            payer_address.as_str()
+        };
 
         let settlement_tx = crate::modules::billing::service::settle_protocol_fee_via_nanopayments(
             &state.config,
-            &payer_address,
+            payer_address,
             plan_total,
         )
         .await
@@ -346,17 +354,22 @@ async fn dispatch(
                 ChainKey::Arc => "arc_address",
                 ChainKey::Base => "base_address",
             };
-            let recipient: String = sqlx::query_scalar(&format!(
-                "SELECT u.{recipient_col}
-                 FROM users u
-                 JOIN portfolios p ON p.user_id = u.id
-                 JOIN rebalances r ON r.portfolio_id = p.id
-                 WHERE r.id = $1"
-            ))
-            .bind(rebalance_id)
-            .fetch_one(&state.db)
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("recipient lookup: {e}")))?;
+            let recipient = if state.config.execution_mock || state.config.circle_mock {
+                "0x0000000000000000000000000000000000000000".to_string()
+            } else {
+                sqlx::query_scalar::<_, Option<String>>(&format!(
+                    "SELECT u.{recipient_col}
+                     FROM users u
+                     JOIN portfolios p ON p.user_id = u.id
+                     JOIN rebalances r ON r.portfolio_id = p.id
+                     WHERE r.id = $1"
+                ))
+                .bind(rebalance_id)
+                .fetch_one(&state.db)
+                .await
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("recipient lookup: {e}")))?
+                .unwrap_or_default()
+            };
             if recipient.is_empty() {
                 return Err(AppError::Internal(anyhow::anyhow!(
                     "user.{recipient_col} is empty; cannot route mint without a destination address"

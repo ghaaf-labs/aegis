@@ -24,6 +24,7 @@ export function IdleCashCard() {
   const eurcUsd =
     snapshot?.assets.find((a) => a.symbol === "EURC")?.priceUsd ?? 1.085;
   const totalUsd = unifiedUsdc + unifiedEurc * eurcUsd;
+  const hasIdleCash = totalUsd > 0.5;
 
   const arcTotal = (perChainUsdc.arc ?? 0) + (perChainEurc.arc ?? 0) * eurcUsd;
   const baseTotal =
@@ -42,13 +43,19 @@ export function IdleCashCard() {
           {formatCurrency(totalUsd)}
         </p>
         <p className="text-[11px] font-mono text-text-mut mb-4">
-          {formatCurrency(unifiedUsdc, { compact: true })} USDC
-          {unifiedEurc > 0 && (
+          {hasIdleCash ? (
             <>
-              {" · "}€{unifiedEurc.toFixed(2)} EURC
+              {formatCurrency(unifiedUsdc, { compact: true })} USDC
+              {unifiedEurc > 0 && (
+                <>
+                  {" · "}€{unifiedEurc.toFixed(2)} EURC
+                </>
+              )}{" "}
+              undeployed
             </>
-          )}{" "}
-          undeployed
+          ) : (
+            "No deployable cash in Gateway right now"
+          )}
         </p>
 
         <div className="grid grid-cols-2 gap-3">
@@ -84,9 +91,13 @@ export function IdleCashCard() {
 
         <Link
           href="/wallet"
-          className="mt-4 flex items-center justify-between px-3 py-2 rounded-sharp bg-accent-pnl/5 border border-accent-pnl/20 text-xs font-mono text-accent-pnl hover:bg-accent-pnl/10 transition-colors"
+          className="mt-4 flex min-h-10 items-center justify-between gap-3 px-3 py-2 rounded-sharp bg-accent-pnl/5 border border-accent-pnl/20 text-xs font-mono text-accent-pnl hover:bg-accent-pnl/10 transition-colors"
         >
-          <span>Wallet details + addresses</span>
+          <span>
+            {hasIdleCash
+              ? "Wallet details + addresses"
+              : "Add funds or inspect addresses"}
+          </span>
           <ArrowRight className="w-3.5 h-3.5" />
         </Link>
 

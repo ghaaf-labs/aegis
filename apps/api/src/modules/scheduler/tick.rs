@@ -119,7 +119,7 @@ pub async fn evaluate(
     // (DB CHECK constraint); normalize to fractions before comparing to
     // the 0.05 (5%) threshold the planner uses.
     let max_drift: Option<f64> = sqlx::query_scalar(
-        "SELECT COALESCE(MAX(ABS(target_weight - current_weight)) / 100.0, 0)
+        "SELECT COALESCE(MAX(ABS(target_weight - current_weight)) / 100.0, 0)::DOUBLE PRECISION
          FROM allocations WHERE portfolio_id = $1",
     )
     .bind(portfolio_id)

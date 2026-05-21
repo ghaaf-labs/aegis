@@ -44,7 +44,8 @@ export default function PortfolioPage() {
             My Portfolio
           </h1>
           <p className="text-sm text-text-lo mt-1">
-            Manage allocations and trigger rebalancing
+            Review invested positions, target drift, and the next rebalance plan
+            before anything runs.
           </p>
         </div>
         <div className="flex gap-3">
@@ -53,11 +54,11 @@ export default function PortfolioPage() {
             onClick={() => router.push("/onboarding")}
           >
             <Plus className="w-4 h-4 mr-2" />
-            Add asset
+            Change target
           </BrutalButton>
           <BrutalButton variant="agent" onClick={() => setRebalanceOpen(true)}>
             <RefreshCw className="w-4 h-4 mr-2" />
-            Rebalance
+            Review rebalance
           </BrutalButton>
         </div>
       </div>

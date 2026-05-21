@@ -12,13 +12,14 @@ import {
   WifiOff,
   Wrench,
   HandIcon,
+  AlertTriangle,
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
 import { agentApi } from "@/lib/api";
-import { timeAgo } from "@/lib/utils";
+import { formatCurrency, timeAgo } from "@/lib/utils";
 import type {
   AgentAbstained,
   AgentDecision,
@@ -69,6 +70,7 @@ export function AgentReasoningFeed() {
   const decisions = usePortfolioStore((s) => s.decisions);
   const setDecisions = usePortfolioStore((s) => s.setDecisions);
   const sseConnected = usePortfolioStore((s) => s.sseConnected);
+  const unifiedUsdc = usePortfolioStore((s) => s.unifiedUsdc);
   const toolInvocations = usePortfolioStore((s) => s.toolInvocations);
   const abstains = usePortfolioStore((s) => s.abstains);
   const portfolio = useActivePortfolio();
@@ -92,12 +94,16 @@ export function AgentReasoningFeed() {
       <CardHeader className="flex flex-row items-center justify-between pb-3">
         <CardTitle className="flex items-center gap-2">
           <Brain className="w-3.5 h-3.5 text-accent-agent" />
-          AI Reasoning
+          Decision Log
         </CardTitle>
         <div className="flex items-center gap-2">
           <span
             className="flex items-center gap-1 text-[10px] text-text-mut"
-            title={sseConnected ? "Live feed connected" : "Reconnecting…"}
+            title={
+              sseConnected
+                ? "Realtime event stream connected"
+                : "Realtime event stream reconnecting"
+            }
           >
             {sseConnected ? (
               <Wifi className="w-3 h-3 text-accent-agent/80" />
@@ -105,7 +111,7 @@ export function AgentReasoningFeed() {
               <WifiOff className="w-3 h-3 text-text-mut" />
             )}
             <span className="font-mono">
-              {sseConnected ? "LIVE" : "OFFLINE"}
+              {sseConnected ? "STREAM" : "OFFLINE"}
             </span>
           </span>
           <Button
@@ -129,11 +135,22 @@ export function AgentReasoningFeed() {
             abstains={abstains.slice(0, 2)}
           />
         )}
-        <DecisionList decisions={decisions} />
+        <DecisionList
+          decisions={decisions}
+          currentState={{
+            idleUsdc: unifiedUsdc,
+          }}
+        />
       </CardContent>
     </Card>
   );
 }
+
+interface CurrentDecisionState {
+  idleUsdc: number;
+}
+
+type DecisionView = "current" | "audit";
 
 /**
  * Collapses runs of identical decisions ("Hold — portfolio is empty" repeated
@@ -141,8 +158,29 @@ export function AgentReasoningFeed() {
  * Before this the feed would scroll forever with the same recommendation,
  * making the agent look stuck in a loop.
  */
-function DecisionList({ decisions }: { decisions: AgentDecision[] }) {
-  const groups = useMemo(() => groupRepeatedDecisions(decisions), [decisions]);
+function DecisionList({
+  decisions,
+  currentState,
+}: {
+  decisions: AgentDecision[];
+  currentState: CurrentDecisionState;
+}) {
+  const [view, setView] = useState<DecisionView>("current");
+  const currentDecisions = useMemo(
+    () => decisions.filter((d) => !isAuditDecision(d, currentState)),
+    [decisions, currentState],
+  );
+  const visibleDecisions = view === "current" ? currentDecisions : decisions;
+  const groups = useMemo(
+    () => groupRepeatedDecisions(visibleDecisions),
+    [visibleDecisions],
+  );
+  const blockedCount = decisions.filter(isCriticBlocked).length;
+  const legacyCount = decisions.filter(isLegacyLocalDecision).length;
+  const staleCount = decisions.filter((d) =>
+    isOutdatedForCurrentState(d, currentState),
+  ).length;
+  const auditCount = decisions.length - currentDecisions.length;
 
   if (decisions.length === 0) {
     return (
@@ -158,10 +196,82 @@ function DecisionList({ decisions }: { decisions: AgentDecision[] }) {
 
   return (
     <div className="overflow-y-auto max-h-[480px] scrollbar-thin">
+      <div className="border-b border-white/4 px-5 py-3">
+        <div
+          className="grid grid-cols-2 border border-border-default bg-bg p-0.5 text-[10px] font-mono"
+          role="tablist"
+          aria-label="Decision log view"
+        >
+          <DecisionViewButton
+            active={view === "current"}
+            onClick={() => setView("current")}
+          >
+            Current · {currentDecisions.length}
+          </DecisionViewButton>
+          <DecisionViewButton
+            active={view === "audit"}
+            onClick={() => setView("audit")}
+          >
+            Full audit · {decisions.length}
+          </DecisionViewButton>
+        </div>
+        {view === "current" && auditCount > 0 && (
+          <p className="mt-2 text-[10px] font-mono leading-relaxed text-text-mut">
+            {auditCount} historical, rejected, or cash-mismatched{" "}
+            {auditCount === 1 ? "row is" : "rows are"} hidden from current
+            guidance.
+          </p>
+        )}
+      </div>
+
+      {view === "current" && currentDecisions.length === 0 && (
+        <div className="px-5 py-8 text-center">
+          <p className="text-xs font-mono text-text-lo">
+            No current executable guidance. Historical and rejected proposals
+            are available in Full audit.
+          </p>
+        </div>
+      )}
+
+      {view === "audit" &&
+        (blockedCount > 0 || legacyCount > 0 || staleCount > 0) && (
+          <div className="border-b border-white/4 bg-rose-500/5 px-5 py-3 text-[10px] font-mono leading-relaxed text-text-lo">
+            {staleCount > 0 && (
+              <span className="text-warn">
+                {staleCount} cash-mismatch{" "}
+                {staleCount === 1 ? "proposal needs" : "proposals need"} a fresh
+                plan
+              </span>
+            )}
+            {staleCount > 0 && (blockedCount > 0 || legacyCount > 0) && (
+              <span className="text-text-mut"> · </span>
+            )}
+            {blockedCount > 0 && (
+              <span className="text-risk">
+                {blockedCount} critic-blocked{" "}
+                {blockedCount === 1 ? "proposal" : "proposals"}
+              </span>
+            )}
+            {blockedCount > 0 && legacyCount > 0 && (
+              <span className="text-text-mut"> · </span>
+            )}
+            {legacyCount > 0 && (
+              <span>
+                {legacyCount} old local{" "}
+                {legacyCount === 1 ? "decision" : "decisions"} kept for audit
+              </span>
+            )}
+          </div>
+        )}
+
       <AnimatePresence initial={false}>
         {groups.map((g, i) => (
           <div key={g.head.id}>
-            <DecisionRow decision={g.head} index={i} />
+            <DecisionRow
+              decision={g.head}
+              index={i}
+              currentState={currentState}
+            />
             {g.repeats > 0 && (
               <div className="px-5 py-2 border-b border-white/4 text-[10px] font-mono text-text-mut italic">
                 + {g.repeats} earlier{" "}
@@ -173,6 +283,33 @@ function DecisionList({ decisions }: { decisions: AgentDecision[] }) {
         ))}
       </AnimatePresence>
     </div>
+  );
+}
+
+function DecisionViewButton({
+  active,
+  children,
+  onClick,
+}: {
+  active: boolean;
+  children: React.ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={
+        "min-h-7 px-2 text-center transition-colors " +
+        (active
+          ? "bg-accent-agent text-black"
+          : "text-text-lo hover:bg-raised hover:text-text-hi")
+      }
+    >
+      {children}
+    </button>
   );
 }
 
@@ -265,22 +402,31 @@ function LiveActivityStrip({
 function DecisionRow({
   decision,
   index,
+  currentState,
 }: {
   decision: AgentDecision;
   index: number;
+  currentState: CurrentDecisionState;
 }) {
   const trigger: AgentTrigger = decision.triggeredBy;
   const triggerVariant = TRIGGER_VARIANTS[trigger] ?? "secondary";
   const triggerLabel = TRIGGER_LABELS[trigger] ?? trigger;
   const regime = decision.regime;
   const verdict = decision.criticVerdict;
+  const blocked = isCriticBlocked(decision);
+  const legacyLocal = isLegacyLocalDecision(decision);
+  const outdated = isOutdatedForCurrentState(decision, currentState);
+  const trades = decision.recommendation.trades ?? [];
+  const expectedCashNeeded = decisionExpectedCashNeeded(decision);
 
   return (
     <motion.div
       initial={{ opacity: 0, x: 8 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ delay: Math.min(index * 0.04, 0.5) }}
-      className="px-5 py-4 border-b border-white/4 last:border-0 hover:bg-white/2 transition-colors cursor-pointer group"
+      className={`px-5 py-4 border-b border-white/4 last:border-0 hover:bg-white/2 transition-colors group ${
+        blocked || legacyLocal || outdated ? "bg-white/[0.015]" : ""
+      }`}
     >
       <div className="flex items-start justify-between gap-3 mb-2">
         <div className="flex items-center gap-2 flex-wrap">
@@ -304,6 +450,22 @@ function DecisionRow({
               {decision.modelSlug}
             </span>
           )}
+          {blocked && (
+            <span className="px-1.5 py-0.5 rounded-sm text-[10px] font-mono border border-rose-500/30 text-risk bg-rose-500/5">
+              Blocked by critic
+            </span>
+          )}
+          {legacyLocal && (
+            <span className="px-1.5 py-0.5 rounded-sm text-[10px] font-mono border border-white/15 text-text-mut bg-white/5">
+              Legacy local
+            </span>
+          )}
+          {outdated && (
+            <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-mono border border-amber-500/30 text-warn bg-amber-500/5">
+              <AlertTriangle className="w-2.5 h-2.5" />
+              Needs fresh plan
+            </span>
+          )}
           <span className="text-[10px] text-text-mut">
             {timeAgo(decision.createdAt)}
           </span>
@@ -311,36 +473,74 @@ function DecisionRow({
         <ConfidencePill confidence={decision.confidence} />
       </div>
 
-      <p className="text-xs font-semibold text-text-hi mb-1.5">
+      <p
+        className={`text-xs font-semibold mb-1.5 ${
+          blocked || legacyLocal || outdated ? "text-text-lo" : "text-text-hi"
+        }`}
+      >
         {decision.recommendation.summary}
       </p>
+      {blocked && (
+        <p className="mb-2 text-[10px] font-mono text-risk">
+          Not executable. The critic rejected this proposal; build a fresh plan
+          before approving any movement.
+        </p>
+      )}
+      {legacyLocal && (
+        <p className="mb-2 text-[10px] font-mono text-text-mut">
+          Historical local/demo row only. It does not describe the current
+          real-execution backend.
+        </p>
+      )}
+      {outdated && (
+        <p className="mb-2 text-[10px] font-mono text-warn">
+          Historical proposal. It expects roughly{" "}
+          {formatCurrency(expectedCashNeeded)} deployable USDC, but current idle
+          USDC is {formatCurrency(currentState.idleUsdc)}. Build a fresh review
+          plan before acting.
+        </p>
+      )}
 
       <p className="text-[11px] text-text-mut leading-relaxed line-clamp-3">
         {decision.reasoning}
       </p>
 
-      {decision.recommendation.trades.length > 0 && (
+      {trades.length > 0 && (
         <div className="mt-3 space-y-1.5">
-          {decision.recommendation.trades.map((trade, ti) => (
-            <div
-              // Real agent output doesn't carry assetId — fall back to
-              // symbol+index for a stable, unique key.
-              key={`${decision.id}-${trade.symbol ?? "x"}-${ti}`}
-              className="flex items-center gap-2 text-[11px]"
-            >
-              <span
-                className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
-                  trade.action === "buy"
-                    ? "bg-cyan-500/15 text-accent-agent"
-                    : "bg-red-500/15 text-risk"
-                }`}
+          {trades.map((trade, ti) => {
+            const rawAction = (trade as { action?: unknown }).action;
+            const action =
+              rawAction === "buy" || rawAction === "sell"
+                ? rawAction
+                : "review";
+            return (
+              <div
+                // Real agent output doesn't always carry assetId/action —
+                // fall back to symbol+index for a stable, unique key and keep
+                // malformed historical rows from crashing the dashboard.
+                key={`${decision.id}-${trade.symbol ?? "x"}-${ti}`}
+                className="flex items-center gap-2 text-[11px]"
               >
-                {trade.action.toUpperCase()}
-              </span>
-              <span className="font-mono text-text-hi">{trade.symbol}</span>
-              <span className="text-text-mut truncate">{trade.reason}</span>
-            </div>
-          ))}
+                <span
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                    blocked || legacyLocal || action === "review"
+                      ? "bg-white/5 text-text-mut"
+                      : action === "buy"
+                        ? "bg-cyan-500/15 text-accent-agent"
+                        : "bg-red-500/15 text-risk"
+                  }`}
+                >
+                  {action.toUpperCase()}
+                </span>
+                <span className="font-mono text-text-hi">
+                  {trade.symbol ?? "UNKNOWN"}
+                </span>
+                <span className="text-text-mut truncate">
+                  {trade.reason ?? "Malformed historical trade row"}
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -351,6 +551,87 @@ function DecisionRow({
       <TelemetryFooter decision={decision} />
     </motion.div>
   );
+}
+
+function isCriticBlocked(decision: AgentDecision) {
+  return (
+    decision.criticVerdict?.demandsRevision === true ||
+    decision.criticVerdict?.verdict === "revised" ||
+    decision.criticVerdict?.verdict === "veto"
+  );
+}
+
+function isLegacyLocalDecision(decision: AgentDecision) {
+  const haystack = `${decision.recommendation.summary} ${decision.reasoning}`;
+  return /mock decision|local\/demo|demo mock mode/i.test(haystack);
+}
+
+function isAuditDecision(
+  decision: AgentDecision,
+  currentState: CurrentDecisionState,
+) {
+  return (
+    isCriticBlocked(decision) ||
+    isLegacyLocalDecision(decision) ||
+    isOutdatedForCurrentState(decision, currentState)
+  );
+}
+
+function isOutdatedForCurrentState(
+  decision: AgentDecision,
+  currentState: CurrentDecisionState,
+) {
+  if (isLegacyLocalDecision(decision)) {
+    return false;
+  }
+
+  const text = `${decision.recommendation.summary} ${decision.reasoning}`;
+  const mentionsCashDeployment = /\b(idle|deploy|cash|usdc|wallet)\b/i.test(
+    text,
+  );
+  if (!mentionsCashDeployment) return false;
+
+  const netExternalCashNeeded = decisionExpectedCashNeeded(decision);
+  const hasMeaningfulTrade = netExternalCashNeeded > 1;
+
+  return (
+    hasMeaningfulTrade && netExternalCashNeeded > currentState.idleUsdc + 0.5
+  );
+}
+
+function decisionTradeTotals(decision: AgentDecision) {
+  let buyUsd = 0;
+  let sellUsd = 0;
+
+  for (const trade of decision.recommendation.trades ?? []) {
+    const valueUsd = Number((trade as { valueUsd?: unknown }).valueUsd);
+    if (!Number.isFinite(valueUsd) || valueUsd <= 0) continue;
+
+    const action = (trade as { action?: unknown }).action;
+    if (action === "buy") buyUsd += valueUsd;
+    if (action === "sell") sellUsd += valueUsd;
+  }
+
+  return { buyUsd, sellUsd };
+}
+
+function decisionExpectedCashNeeded(decision: AgentDecision) {
+  const { buyUsd, sellUsd } = decisionTradeTotals(decision);
+  const structuredNeed = Math.max(0, buyUsd - sellUsd);
+  if (structuredNeed > 0) return structuredNeed;
+
+  const text = `${decision.recommendation.summary} ${decision.reasoning}`;
+  const targeted =
+    text.match(
+      /\b(?:deploy|invest|park|purchase|buy)\b[^.]{0,80}\$([0-9][0-9,]*(?:\.[0-9]+)?)/i,
+    ) ?? text.match(/\$([0-9][0-9,]*(?:\.[0-9]+)?)\s+(?:idle\s+)?USDC/i);
+  const targetedAmount = targeted?.[1];
+  if (targetedAmount) {
+    const amount = Number(targetedAmount.replace(/,/g, ""));
+    if (Number.isFinite(amount) && amount > 0) return amount;
+  }
+
+  return 0;
 }
 
 function ConfidencePill({ confidence }: { confidence: number }) {

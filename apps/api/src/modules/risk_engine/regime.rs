@@ -205,7 +205,7 @@ pub async fn compute_real_signals_from_history(
 async fn compute_realized_vol(db: &crate::db::Db, symbol: &str, days: i32) -> Option<f64> {
     let prices: Vec<f64> = sqlx::query_scalar(
         r#"
-        SELECT price_usd
+        SELECT price_usd::DOUBLE PRECISION
         FROM price_history
         WHERE symbol = $1
           AND fetched_at > NOW() - ($2::int || ' days')::interval
@@ -276,7 +276,7 @@ async fn fetch_pair_correlation(db: &crate::db::Db, a: &str, b: &str, days: i32)
               AND fetched_at > NOW() - ($3::int || ' days')::interval
             ORDER BY fetched_at ASC
         )
-        SELECT a.price_usd, b.price_usd
+        SELECT a.price_usd::DOUBLE PRECISION, b.price_usd::DOUBLE PRECISION
         FROM a_prices a
         JOIN b_prices b
           ON ABS(EXTRACT(EPOCH FROM (a.fetched_at - b.fetched_at))) < 180

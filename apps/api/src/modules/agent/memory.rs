@@ -76,7 +76,13 @@ fn compress(row: &MemoryRow) -> String {
         row.triggered_by
     );
     if line.len() > LINE_CHAR_BUDGET {
-        line.truncate(LINE_CHAR_BUDGET);
+        let end = line
+            .char_indices()
+            .map(|(idx, _)| idx)
+            .take_while(|idx| *idx <= LINE_CHAR_BUDGET)
+            .last()
+            .unwrap_or(0);
+        line.truncate(end);
         line.push('…');
     }
     line

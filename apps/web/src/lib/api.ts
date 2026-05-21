@@ -37,22 +37,31 @@ interface FetchOptions {
 }
 
 async function request<T>(path: string, opts: FetchOptions = {}): Promise<T> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
+  const body = opts.body !== undefined ? JSON.stringify(opts.body) : undefined;
   const token = opts.authed ? getToken() : null;
-  if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  const res = await fetch(`${BASE_URL}${path}`, {
-    method: opts.method ?? "GET",
-    headers,
-    // `credentials: 'include'` ensures the httpOnly auth cookie set by the
-    // wallet endpoints rides on every cross-origin request. Backend CORS
-    // enables `Access-Control-Allow-Credentials` with a specific origin
-    // allow-list (no wildcard).
-    credentials: "include",
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-  });
+  const doFetch = (includeBearer: boolean) => {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (includeBearer && token) headers["Authorization"] = `Bearer ${token}`;
+    return fetch(`${BASE_URL}${path}`, {
+      method: opts.method ?? "GET",
+      headers,
+      // `credentials: 'include'` ensures the httpOnly auth cookie set by the
+      // wallet endpoints rides on every cross-origin request. Backend CORS
+      // enables `Access-Control-Allow-Credentials` with a specific origin
+      // allow-list (no wildcard).
+      credentials: "include",
+      body,
+    });
+  };
+
+  let res = await doFetch(true);
+  if (res.status === 401 && token) {
+    setToken(null);
+    res = await doFetch(false);
+  }
   if (!res.ok) {
     let detail = res.statusText;
     try {
@@ -117,6 +126,8 @@ export const walletApi = {
     request<{ id: string; email: string; riskTolerance: string }>("/auth/me", {
       authed: true,
     }),
+  meFromCookie: () =>
+    request<{ id: string; email: string; riskTolerance: string }>("/auth/me"),
   logout: async () => {
     await fetch(`${BASE_URL}/auth/logout`, {
       method: "POST",
@@ -323,6 +334,7 @@ export const strategiesApi = {
 export interface RebalancePlanResponse {
   rebalanceId: string;
   decisionId: string;
+  executionMode?: "mock" | "real";
   totalLegs: number;
   legs: Array<{
     legIndex: number;
@@ -333,6 +345,12 @@ export interface RebalancePlanResponse {
     destSymbol: string | null;
     amountUsdc: number;
   }>;
+}
+
+export interface RebalanceApprovalSafety {
+  approvable: boolean;
+  code: string;
+  message: string;
 }
 
 export const rebalanceApi = {
@@ -356,6 +374,7 @@ export const rebalanceApi = {
       portfolioId: string;
       decisionId: string;
       status: string;
+      executionMode?: "mock" | "real";
       totalLegs: number;
       completedLegs: number;
       totalGasUsdc: number | null;
@@ -364,6 +383,7 @@ export const rebalanceApi = {
       completedAt: string | null;
       createdAt: string;
       updatedAt: string;
+      approvalSafety: RebalanceApprovalSafety;
       protocolFeeSettlementTx?: string;
       legs: Array<{
         id: string;
@@ -449,6 +469,7 @@ export interface TaxShareToken {
   portfolioId: string;
   year: number;
   token: string;
+  shareUrl: string;
   expiresAt: string;
   revokedAt: string | null;
   createdAt: string;

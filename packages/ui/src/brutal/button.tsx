@@ -38,6 +38,7 @@ export const BrutalButton = React.forwardRef<
         "inline-flex items-center justify-center gap-2 px-3 py-2 text-sm font-semibold",
         "border-brutal border-black rounded-sharp",
         "transition-[box-shadow,transform] duration-100 active:translate-y-px",
+        "disabled:cursor-not-allowed disabled:opacity-45 disabled:shadow-none disabled:active:translate-y-0",
         variantClass[variant],
         className,
       )}

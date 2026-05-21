@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { StrategyCard } from "@/components/strategies/strategy-card";
 import { getToken, strategiesApi, type StrategyPublic } from "@/lib/api";
 import { useApiQuery } from "@/lib/use-api-query";
+import { usePortfolioStore } from "@/stores/portfolio";
 
 // SM-3 / SM-4 — single /strategies route handles both authed and public
 // visitors. Authed users get an "Adopt" button; public visitors get a
@@ -21,6 +22,7 @@ export default function StrategiesPage() {
   const [adopting, setAdopting] = useState<string | null>(null);
   const [adoptError, setAdoptError] = useState<string | null>(null);
   const [authed, setAuthed] = useState(false);
+  const hasPortfolio = usePortfolioStore((s) => s.portfolios.length > 0);
   useEffect(() => {
     setAuthed(getToken() !== null);
   }, []);
@@ -59,6 +61,16 @@ export default function StrategiesPage() {
           Adopt failed: {adoptError}
         </p>
       )}
+      {authed && hasPortfolio && (
+        <p className="text-xs font-mono text-text-lo border-brutal border-border-default bg-raised px-3 py-2">
+          Strategy adoption is available before you create a portfolio. Your
+          current portfolio stays active;{" "}
+          <Link href="/onboarding" className="text-accent-pnl hover:underline">
+            open the rebuild wizard
+          </Link>{" "}
+          if you want new targets from scratch.
+        </p>
+      )}
 
       {isLoading && !data ? (
         <p className="text-xs font-mono text-text-mut">Loading…</p>
@@ -85,14 +97,31 @@ export default function StrategiesPage() {
               <StrategyCard
                 key={s.id}
                 strategy={s}
-                actionLabel={adopting === s.id ? "Adopting…" : "Adopt"}
-                onAction={() => void onAdopt(s.id)}
-                disabled={adopting !== null}
+                actionLabel={
+                  hasPortfolio
+                    ? "Rebuild targets"
+                    : adopting === s.id
+                      ? "Adopting…"
+                      : "Adopt"
+                }
+                actionHref={hasPortfolio ? "/onboarding" : undefined}
+                onAction={hasPortfolio ? undefined : () => void onAdopt(s.id)}
+                disabled={!hasPortfolio && adopting !== null}
+                disabledReason={
+                  hasPortfolio
+                    ? "Creates a new portfolio in the wizard. Your current portfolio stays active until you switch."
+                    : adopting !== null
+                      ? "Finishing the current adoption request."
+                      : undefined
+                }
               />
             ) : (
-              <Link key={s.id} href="/signup" className="contents">
-                <StrategyCard strategy={s} actionLabel="Sign up to adopt" />
-              </Link>
+              <StrategyCard
+                key={s.id}
+                strategy={s}
+                actionLabel="Sign up to adopt"
+                actionHref="/signup"
+              />
             ),
           )}
         </section>

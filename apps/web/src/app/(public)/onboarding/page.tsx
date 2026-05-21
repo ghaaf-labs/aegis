@@ -22,6 +22,10 @@ export default function OnboardingPage() {
             Let&apos;s set your portfolio goal. The agent uses this every time
             it rebalances — you can update it later from Settings.
           </p>
+          <p className="text-xs text-text-mut font-mono leading-relaxed">
+            This creates a target plan only. It does not move funds; deployment
+            and rebalance execution still require your approval.
+          </p>
           <p className="text-xs font-mono">
             <span className="text-accent-agent">Set goal</span>
             <span className="text-text-mut mx-2">·</span>

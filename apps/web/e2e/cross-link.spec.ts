@@ -35,7 +35,9 @@ test("X2 — demo detail signup CTA leads to signup page", async ({ page }) => {
 
 test("X3 — policy page links to constitution page", async ({ page }) => {
   await page.goto("/policy");
-  const constitutionLink = page.getByRole("link", { name: /constitution/i });
+  const constitutionLink = page.getByRole("link", {
+    name: "Agent constitution",
+  });
   await expect(constitutionLink).toBeVisible();
   await constitutionLink.click();
   await expect(page).toHaveURL(/\/about\/constitution/);

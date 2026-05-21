@@ -346,6 +346,12 @@ pub async fn patch(
                 "actionKind must be one of {ALLOWED_ACTION_KINDS:?}"
             )));
         }
+        if a == "auto_execute" {
+            return Err(AppError::PaymentRequired(
+                "auto_execute peg-defense rules are not available yet; choose alert or propose_rebalance"
+                    .into(),
+            ));
+        }
     }
 
     let row: PegRuleView = sqlx::query_as(
@@ -464,6 +470,12 @@ fn validate_create(body: &CreateRuleBody) -> Result<()> {
             "actionKind must be one of {ALLOWED_ACTION_KINDS:?}"
         )));
     }
+    if body.action_kind == "auto_execute" {
+        return Err(AppError::PaymentRequired(
+            "auto_execute peg-defense rules are not available yet; choose alert or propose_rebalance"
+                .into(),
+        ));
+    }
     if let Some(ref ta) = body.target_asset {
         let ta = ta.to_uppercase();
         if !ALLOWED_ASSETS.contains(&ta.as_str()) {
@@ -521,9 +533,6 @@ mod tests {
     fn validate_accepts_canonical_inputs() {
         assert!(validate_create(&body("USDC", 0.995, "alert")).is_ok());
         assert!(validate_create(&body("usdc", 0.99, "propose_rebalance")).is_ok());
-        let mut b = body("EURC", 0.97, "auto_execute");
-        b.target_asset = Some("USYC".into());
-        assert!(validate_create(&b).is_ok());
     }
 
     #[test]
@@ -542,6 +551,12 @@ mod tests {
     #[test]
     fn validate_rejects_unknown_action_kind() {
         assert!(validate_create(&body("USDC", 0.995, "yolo")).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_auto_execute_until_gate_lands() {
+        let err = validate_create(&body("EURC", 0.97, "auto_execute")).unwrap_err();
+        assert!(matches!(err, AppError::PaymentRequired(_)));
     }
 
     #[test]

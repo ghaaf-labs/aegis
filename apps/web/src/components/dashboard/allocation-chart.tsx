@@ -39,12 +39,17 @@ export function AllocationChart({ compact = false }: Props) {
   const investedUsdBySymbol = allocations.map((a) => ({
     symbol: a.symbol,
     target: a.targetWeight,
-    valueUsd: (priceMap[a.symbol] ?? 0) * a.quantity,
+    valueUsd:
+      (priceMap[a.symbol] ?? 0) * a.quantity > 0
+        ? (priceMap[a.symbol] ?? 0) * a.quantity
+        : a.valueUsd,
   }));
-  const totalInvestedUsd = investedUsdBySymbol.reduce(
+  const derivedInvestedUsd = investedUsdBySymbol.reduce(
     (sum, a) => sum + a.valueUsd,
     0,
   );
+  const totalInvestedUsd =
+    derivedInvestedUsd > 0.5 ? derivedInvestedUsd : portfolio.totalValueUsd;
 
   const isUninvested = totalInvestedUsd < 0.5; // ~half a dollar of dust
   const data = isUninvested

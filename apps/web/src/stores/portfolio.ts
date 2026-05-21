@@ -53,6 +53,10 @@ interface PortfolioState {
   rebalanceStatuses: Record<string, RebalanceStatus>;
   /** Most-recent peg-alert events (capped at 20). */
   pegAlerts: PegAlert[];
+  /** Global scheduled-agent pause timestamp. Null means scheduled triggers run. */
+  agentPausedAt: string | null;
+  /** True after `/auth/me` or wallet login confirms an active session. */
+  sessionActive: boolean;
 
   setPortfolios: (p: Portfolio[]) => void;
   setPortfoliosLoaded: (v: boolean) => void;
@@ -81,6 +85,9 @@ interface PortfolioState {
   pushAbstain: (a: AgentAbstained) => void;
   applyRebalanceStatus: (s: RebalanceStatus) => void;
   pushPegAlert: (a: PegAlert) => void;
+  setAgentPausedAt: (pausedAt: string | null) => void;
+  setSessionActive: (active: boolean) => void;
+  resetSession: () => void;
 }
 
 const DEFAULT_REGIME: RegimeState = {
@@ -113,6 +120,8 @@ export const usePortfolioStore = create<PortfolioState>()(
       abstains: [],
       rebalanceStatuses: {},
       pegAlerts: [],
+      agentPausedAt: null,
+      sessionActive: false,
 
       setPortfolios: (portfolios) =>
         set((state) => ({
@@ -179,6 +188,29 @@ export const usePortfolioStore = create<PortfolioState>()(
         set((state) => ({
           pegAlerts: [alert, ...state.pegAlerts].slice(0, 20),
         })),
+      setAgentPausedAt: (agentPausedAt) => set({ agentPausedAt }),
+      setSessionActive: (sessionActive) => set({ sessionActive }),
+      resetSession: () =>
+        set({
+          portfolios: [],
+          portfoliosLoaded: false,
+          activePortfolioId: null,
+          decisions: [],
+          wallet: null,
+          unifiedUsdc: 0,
+          unifiedEurc: 0,
+          perChainUsdc: {},
+          perChainEurc: {},
+          isRebalancing: false,
+          selectedDecisionId: null,
+          sseConnected: false,
+          toolInvocations: [],
+          abstains: [],
+          rebalanceStatuses: {},
+          pegAlerts: [],
+          agentPausedAt: null,
+          sessionActive: false,
+        }),
     }),
     { name: "aegis-portfolio" },
   ),

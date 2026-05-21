@@ -82,6 +82,19 @@ pub struct CreateShareResponse {
     pub expires_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareTokenResponse {
+    pub id: Uuid,
+    pub portfolio_id: Uuid,
+    pub year: i32,
+    pub token: String,
+    pub share_url: String,
+    pub expires_at: DateTime<Utc>,
+    pub revoked_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
 /// `POST /tax/share` — authed; mints a token and returns the public URL.
 pub async fn create_share(
     State(state): State<AppState>,
@@ -98,11 +111,7 @@ pub async fn create_share(
         input.ttl_days,
     )
     .await?;
-    let share_url = format!(
-        "{}/tax/share/{}/export.csv",
-        state.config.api_base_url.trim_end_matches('/'),
-        token
-    );
+    let share_url = tax_share_url(&state, &token);
     Ok(Json(CreateShareResponse {
         token_id,
         token,
@@ -142,10 +151,14 @@ pub async fn revoke_share(
 pub async fn list_shares(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
-) -> Result<Json<Vec<ShareTokenRow>>> {
+) -> Result<Json<Vec<ShareTokenResponse>>> {
     require_flag(&state)?;
     let rows = list_share_tokens(&state.db, claims.sub).await?;
-    Ok(Json(rows))
+    Ok(Json(
+        rows.into_iter()
+            .map(|row| ShareTokenResponse::from_row(&state, row))
+            .collect(),
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -170,9 +183,8 @@ pub struct TaxSummary {
     pub year: i32,
     pub wallets: Vec<WalletSummaryRow>,
     pub total_lot_count: i64,
-    /// Caveat the UI surfaces verbatim — lot-level chain attribution lands
-    /// in a follow-up; for now the user sees both wallets + portfolio-level
-    /// totals.
+    /// Caveat the UI surfaces verbatim so users do not mistake portfolio-level
+    /// FIFO for per-wallet/per-chain lot attribution.
     pub caveat: String,
 }
 
@@ -229,10 +241,10 @@ pub async fn summary(
         year,
         wallets,
         total_lot_count: total,
-        caveat: "Lot counts are reported at portfolio level. Per-wallet chain \
-                 attribution lands in a future tax-export iteration; both wallet \
-                 addresses are listed here so an accountant can match the CSV \
-                 rows against on-chain records."
+        caveat: "Cost-basis lots are summarized at portfolio level. This export \
+                 uses portfolio-level FIFO basis; wallet addresses are listed for \
+                 reconciliation, but this version does not split basis by wallet \
+                 or chain."
             .into(),
     }))
 }
@@ -244,6 +256,30 @@ fn require_flag(state: &AppState) -> Result<()> {
         return Err(AppError::NotFound("tax export disabled".into()));
     }
     Ok(())
+}
+
+fn tax_share_url(state: &AppState, token: &str) -> String {
+    format!(
+        "{}/tax/share/{}/export.csv",
+        state.config.api_base_url.trim_end_matches('/'),
+        token
+    )
+}
+
+impl ShareTokenResponse {
+    fn from_row(state: &AppState, row: ShareTokenRow) -> Self {
+        let share_url = tax_share_url(state, &row.token);
+        Self {
+            id: row.id,
+            portfolio_id: row.portfolio_id,
+            year: row.year,
+            token: row.token,
+            share_url,
+            expires_at: row.expires_at,
+            revoked_at: row.revoked_at,
+            created_at: row.created_at,
+        }
+    }
 }
 
 async fn require_ownership(state: &AppState, user_id: Uuid, portfolio_id: Uuid) -> Result<()> {

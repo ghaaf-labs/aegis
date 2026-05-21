@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::config::Config;
+use crate::db::Db;
 use crate::error::AppError;
 use crate::modules::sse::{GatewayBalance as SseGatewayBalance, SseEvent, SseSender};
 
@@ -74,6 +75,28 @@ pub async fn fetch_balance(
         }
     }
 
+    Ok(balance)
+}
+
+pub async fn fetch_balance_for_user(
+    db: &Db,
+    http: &reqwest::Client,
+    config: &Config,
+    user_id: Uuid,
+) -> crate::error::Result<GatewayBalance> {
+    if !config.circle_mock {
+        return fetch_balance(http, config, user_id).await;
+    }
+    let mut balance = mock_balance(user_id);
+    let invested_usd: f64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(total_value_usd), 0)::DOUBLE PRECISION
+         FROM portfolios WHERE user_id = $1",
+    )
+    .bind(user_id)
+    .fetch_one(db)
+    .await
+    .unwrap_or(0.0);
+    apply_mock_usdc_spend(&mut balance, invested_usd);
     Ok(balance)
 }
 
@@ -200,6 +223,20 @@ fn mock_balance(user_id: Uuid) -> GatewayBalance {
     }
 }
 
+fn apply_mock_usdc_spend(balance: &mut GatewayBalance, spent_usd: f64) {
+    let initial_usdc = balance.unified_usdc;
+    let remaining_usdc = (initial_usdc - spent_usd.max(0.0)).max(0.0);
+    if initial_usdc <= 0.0 {
+        return;
+    }
+
+    let ratio = remaining_usdc / initial_usdc;
+    for amount in balance.per_chain.values_mut() {
+        *amount *= ratio;
+    }
+    balance.unified_usdc = balance.per_chain.values().sum();
+}
+
 /// Broadcast a fetched balance over SSE, scoped to a specific user.
 pub fn broadcast(sse: &SseSender, user_id: uuid::Uuid, balance: &GatewayBalance) {
     let _ = sse.send(SseEvent::GatewayBalance(SseGatewayBalance {
@@ -233,5 +270,14 @@ mod tests {
         assert!((b.unified_usdc - usdc_sum).abs() < 1e-6);
         let eurc_sum: f64 = b.per_chain_eurc.values().sum();
         assert!((b.unified_eurc - eurc_sum).abs() < 1e-6);
+    }
+
+    #[test]
+    fn mock_spend_reduces_usdc_without_touching_eurc() {
+        let mut b = mock_balance(Uuid::new_v4());
+        let initial_usdc = b.unified_usdc;
+        apply_mock_usdc_spend(&mut b, initial_usdc / 2.0);
+        assert!((b.unified_usdc - initial_usdc / 2.0).abs() < 1e-6);
+        assert!((b.unified_eurc - 100.0).abs() < 0.01);
     }
 }

@@ -186,7 +186,8 @@ pub async fn analyze_portfolio(
     // on every run — even when the user had already funded $100s of USDC + EURC
     // into Circle Gateway. Inject the Gateway balance so the agent knows
     // there's deployable capital and can propose a first-deploy plan.
-    let gateway_block = match crate::modules::gateway::service::fetch_balance(
+    let gateway_block = match crate::modules::gateway::service::fetch_balance_for_user(
+        &state.db,
         &state.http,
         &state.config,
         portfolio.user_id,

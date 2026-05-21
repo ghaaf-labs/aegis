@@ -348,14 +348,15 @@ async fn propose_defensive_plan(
 
     // Portfolio value + current allocation (weights are 0–100 in DB; planner
     // wants 0–1 fractions).
-    let total_value_usd: f64 =
-        sqlx::query_scalar("SELECT total_value_usd FROM portfolios WHERE id = $1")
-            .bind(portfolio_id)
-            .fetch_one(&state.db)
-            .await?;
+    let total_value_usd: f64 = sqlx::query_scalar(
+        "SELECT total_value_usd::DOUBLE PRECISION FROM portfolios WHERE id = $1",
+    )
+    .bind(portfolio_id)
+    .fetch_one(&state.db)
+    .await?;
 
     let allocations: Vec<(String, f64)> = sqlx::query_as(
-        "SELECT asset_symbol, current_weight FROM allocations WHERE portfolio_id = $1",
+        "SELECT asset_symbol, current_weight::DOUBLE PRECISION FROM allocations WHERE portfolio_id = $1",
     )
     .bind(portfolio_id)
     .fetch_all(&state.db)

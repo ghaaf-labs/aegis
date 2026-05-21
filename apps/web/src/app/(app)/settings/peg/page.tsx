@@ -13,8 +13,8 @@ export default function PegSettingsPage() {
         </h1>
         <p className="text-sm text-text-lo mt-1">
           Watch USDC, EURC, and USYC. When a peg slips, the monitor either
-          alerts you, drafts a defensive rebalance, or — on Pro / Business —
-          executes it automatically. One-tap pause keeps you in control.
+          alerts you or drafts a defensive rebalance for approval. Auto-execute
+          remains locked until the Pro execution gate is live.
         </p>
       </div>
       <PegRuleEditor />

@@ -45,9 +45,21 @@ export function DiaryVisibilityToggle({
     >
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="text-sm font-semibold text-text-hi">
-            Public agent diary
-          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-text-hi">
+              Public agent diary
+            </p>
+            <span
+              className={cn(
+                "border px-1.5 py-0.5 text-[10px] font-mono uppercase",
+                isPublic
+                  ? "border-accent-agent/40 bg-accent-agent/10 text-accent-agent"
+                  : "border-white/10 bg-white/5 text-text-mut",
+              )}
+            >
+              {isPublic ? "Public" : "Private"}
+            </span>
+          </div>
           <p className="text-xs text-text-lo mt-1">
             When on, anyone can see every recommendation the agent emits for
             this portfolio at{" "}
@@ -60,6 +72,9 @@ export function DiaryVisibilityToggle({
         </div>
         <button
           type="button"
+          aria-label={
+            isPublic ? "Make agent diary private" : "Make agent diary public"
+          }
           aria-pressed={isPublic}
           onClick={toggle}
           disabled={busy}

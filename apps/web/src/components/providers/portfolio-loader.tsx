@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect } from "react";
-import { agentApi, marketApi, portfolioApi, walletApi } from "@/lib/api";
+import { usePathname } from "next/navigation";
+import {
+  agentApi,
+  gatewayApi,
+  marketApi,
+  portfolioApi,
+  walletApi,
+} from "@/lib/api";
 import { usePortfolioStore } from "@/stores/portfolio";
 
 /**
@@ -25,10 +32,19 @@ export function PortfolioLoader() {
   const setWallet = usePortfolioStore((s) => s.setWallet);
   const setMarketSnapshot = usePortfolioStore((s) => s.setMarketSnapshot);
   const setDecisions = usePortfolioStore((s) => s.setDecisions);
+  const setUnifiedUsdc = usePortfolioStore((s) => s.setUnifiedUsdc);
+  const setUnifiedEurc = usePortfolioStore((s) => s.setUnifiedEurc);
+  const setPerChain = usePortfolioStore((s) => s.setPerChain);
   const patchPortfolio = usePortfolioStore((s) => s.patchPortfolio);
   const activePortfolioId = usePortfolioStore((s) => s.activePortfolioId);
+  const pathname = usePathname();
+  const isExplore = pathname?.startsWith("/explore") ?? false;
 
   useEffect(() => {
+    if (isExplore) {
+      setPortfoliosLoaded(true);
+      return;
+    }
     portfolioApi
       .list()
       .then(setPortfolios)
@@ -55,11 +71,17 @@ export function PortfolioLoader() {
       .catch(() => {
         /* upstream provider may rate-limit — panels degrade to skeleton */
       });
-  }, [setPortfolios, setPortfoliosLoaded, setWallet, setMarketSnapshot]);
+  }, [
+    isExplore,
+    setPortfolios,
+    setPortfoliosLoaded,
+    setWallet,
+    setMarketSnapshot,
+  ]);
 
   // Whenever the active portfolio changes, fetch detail + merge allocations.
   useEffect(() => {
-    if (!activePortfolioId) return;
+    if (!activePortfolioId || isExplore) return;
     portfolioApi
       .get(activePortfolioId)
       .then((p) => patchPortfolio(activePortfolioId, p))
@@ -75,7 +97,24 @@ export function PortfolioLoader() {
       .decisions(activePortfolioId)
       .then(setDecisions)
       .catch((e) => console.warn("agent decisions fetch failed", e));
-  }, [activePortfolioId, patchPortfolio, setDecisions]);
+    gatewayApi
+      .balance()
+      .then((b) => {
+        setUnifiedUsdc(b.unifiedUsdc);
+        setUnifiedEurc(b.unifiedEurc);
+        setPerChain(b.perChain ?? {}, b.perChainEurc ?? {});
+      })
+      .catch((e) => console.warn("gateway balance fetch failed", e));
+  }, [
+    activePortfolioId,
+    isExplore,
+    patchPortfolio,
+    pathname,
+    setDecisions,
+    setPerChain,
+    setUnifiedEurc,
+    setUnifiedUsdc,
+  ]);
 
   return null;
 }

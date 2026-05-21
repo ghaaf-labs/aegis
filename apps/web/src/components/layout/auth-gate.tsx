@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { Shield } from "lucide-react";
+import { walletApi } from "@/lib/api";
+import { usePortfolioStore } from "@/stores/portfolio";
 
 // Paths that are publicly viewable without a wallet.
 const PUBLIC_PREFIXES = ["/leaderboard", "/explore", "/strategies"];
@@ -17,15 +19,34 @@ function isPublic(pathname: string) {
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [authed, setAuthed] = useState<boolean | null>(null);
+  const setSessionActive = usePortfolioStore((s) => s.setSessionActive);
 
   useEffect(() => {
-    setAuthed(!!localStorage.getItem("aegis.jwt"));
-  }, [pathname]);
+    let cancelled = false;
+    setAuthed(null);
+    walletApi
+      .me()
+      .then((user) => {
+        if (cancelled) return;
+        localStorage.setItem("aegis_email", user.email);
+        setSessionActive(true);
+        setAuthed(true);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSessionActive(false);
+          setAuthed(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname, setSessionActive]);
 
   // Public pages always show content.
   if (isPublic(pathname)) return <>{children}</>;
 
-  // Avoid a flash by rendering nothing until localStorage is read.
+  // Avoid flashing the signed-out prompt until the server session check resolves.
   if (authed === null) return null;
 
   if (authed) return <>{children}</>;
@@ -43,25 +64,25 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         </div>
         <div>
           <h2 className="text-base font-semibold text-text-hi font-mono">
-            Create a wallet to continue
+            Sign in to continue
           </h2>
           <p className="text-xs text-text-lo font-mono mt-1 leading-relaxed">
-            This page requires a Circle Wallet. Sign up in under a minute — no
-            KYC, no credit card.
+            This page needs your Aegis wallet session. Use the same email you
+            registered with, or create a wallet if this is your first visit.
           </p>
         </div>
         <div className="flex flex-col gap-2">
           <Link
-            href="/signup"
-            className="inline-flex items-center justify-center px-4 py-2 bg-accent-pnl text-black font-mono font-semibold rounded-sharp border-brutal border-black shadow-brutal-sm hover:shadow-brutal transition-shadow"
-          >
-            Create wallet
-          </Link>
-          <Link
             href="/login"
-            className="inline-flex items-center justify-center px-4 py-2 border-brutal border-border-default rounded-sharp text-sm font-mono text-text-lo hover:text-text-hi hover:border-border-hi transition-colors"
+            className="inline-flex items-center justify-center px-4 py-2 bg-accent-agent text-black font-mono font-semibold rounded-sharp border-brutal border-black shadow-brutal-sm hover:shadow-brutal transition-shadow"
           >
             Sign in
+          </Link>
+          <Link
+            href="/signup"
+            className="inline-flex items-center justify-center px-4 py-2 border-brutal border-border-default rounded-sharp text-sm font-mono text-text-lo hover:text-text-hi hover:border-border-hi transition-colors"
+          >
+            Create wallet
           </Link>
         </div>
       </div>

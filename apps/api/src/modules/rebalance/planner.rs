@@ -533,6 +533,41 @@ mod tests {
     }
 
     #[test]
+    fn partial_deploy_includes_idle_usdc_in_target_basis() {
+        let i = input(
+            106.14,
+            &[
+                ("SOL", 0.099),
+                ("ETH", 0.298),
+                ("BTC", 0.199),
+                ("USYC", 0.0),
+            ],
+            &[("BTC", 0.50), ("ETH", 0.30), ("SOL", 0.10), ("USYC", 0.10)],
+            16.98,
+            25.48,
+        );
+        let legs = plan_legs(&i);
+        assert!(
+            legs.iter().any(|l| l.dest_symbol.as_deref() == Some("BTC")),
+            "idle USDC should produce a BTC buy leg, got {legs:?}"
+        );
+        assert!(
+            legs.iter()
+                .any(|l| l.dest_symbol.as_deref() == Some("USYC")),
+            "idle USDC should produce a USYC park leg, got {legs:?}"
+        );
+        let routed: f64 = legs
+            .iter()
+            .filter(|l| l.kind != LegKind::CrossChainMint)
+            .map(|l| l.amount_usdc)
+            .sum();
+        assert!(
+            (routed - 42.46).abs() < 0.25,
+            "partial deploy should route the idle USDC, got {routed}"
+        );
+    }
+
+    #[test]
     fn mixed_plan_orders_sells_before_buys() {
         let i = input(
             10_000.0,

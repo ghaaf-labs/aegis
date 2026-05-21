@@ -18,12 +18,14 @@ export function DigestOptIn({ defaultEmail = "" }: Props) {
   const [busy, setBusy] = useState(false);
   const [subscribed, setSubscribed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const trimmedEmail = email.trim();
+  const canSubscribe = trimmedEmail.includes("@");
 
   const handle = async () => {
     setBusy(true);
     setError(null);
     try {
-      await digestApi.subscribe(email.trim());
+      await digestApi.subscribe(trimmedEmail);
       setSubscribed(true);
       void analyticsApi.track("digest.subscribed", { method: "settings" });
     } catch (e) {
@@ -65,11 +67,16 @@ export function DigestOptIn({ defaultEmail = "" }: Props) {
             <button
               type="button"
               onClick={() => void handle()}
-              disabled={!email.includes("@") || busy}
+              disabled={!canSubscribe || busy}
               className="px-3 py-1.5 text-xs font-semibold border-2 border-accent-agent bg-accent-agent text-black hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {busy ? "Subscribing…" : "Subscribe"}
             </button>
+            {!canSubscribe && !error && (
+              <p className="text-[11px] text-text-mut font-mono">
+                Enter an email address to enable.
+              </p>
+            )}
             {error && (
               <p className="text-[11px] text-risk font-mono" role="alert">
                 {error}

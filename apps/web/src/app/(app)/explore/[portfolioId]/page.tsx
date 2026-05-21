@@ -166,8 +166,8 @@ export default async function ExploreDemoPage({ params }: PageProps) {
                 {d.reasoning}
               </p>
               {d.criticVerdict && (
-                <div className="mt-2 px-3 py-2 rounded-sharp border border-accent-pnl/30 bg-accent-pnl/5 text-[11px] font-mono text-text-default">
-                  <span className="text-accent-pnl">Critic ✓</span>{" "}
+                <div className="mt-2 px-3 py-2 rounded-sharp border border-accent-agent/30 bg-accent-agent/5 text-[11px] font-mono text-text-default">
+                  <span className="text-accent-agent">Critic ✓</span>{" "}
                   <span className="text-text-mut">
                     ({Math.round((d.criticVerdict.confidence ?? 0) * 100)}%):
                   </span>{" "}

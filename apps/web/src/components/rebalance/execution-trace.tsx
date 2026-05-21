@@ -3,9 +3,15 @@
 import { useEffect, useState } from "react";
 
 import { useEventSource } from "@/lib/sse";
-import { rebalanceApi, analyticsApi } from "@/lib/api";
+import {
+  rebalanceApi,
+  analyticsApi,
+  gatewayApi,
+  portfolioApi,
+} from "@/lib/api";
 import { buildShareIntent } from "@/lib/share";
 import type { LegStatus } from "@/types";
+import { usePortfolioStore } from "@/stores/portfolio";
 
 import { LegCard } from "./leg-card";
 
@@ -13,6 +19,7 @@ export interface ExecutionTraceProps {
   rebalanceId: string;
   /** Auth-aware SSE URL (with token query, etc.). */
   sseUrl: string;
+  executionMode?: "mock" | "real";
 }
 
 interface InternalLeg {
@@ -34,13 +41,26 @@ interface InternalLeg {
  * via REST and applies incremental SSE updates so each transition lands
  * in the UI within ~50ms of the executor emitting it.
  */
-export function ExecutionTrace({ rebalanceId, sseUrl }: ExecutionTraceProps) {
+export function ExecutionTrace({
+  rebalanceId,
+  sseUrl,
+  executionMode,
+}: ExecutionTraceProps) {
   const [legs, setLegs] = useState<InternalLeg[]>([]);
   const [status, setStatus] = useState<string>("loading…");
   const [completed, setCompleted] = useState<number>(0);
   const [total, setTotal] = useState<number>(0);
   const [decisionId, setDecisionId] = useState<string | null>(null);
+  const [portfolioId, setPortfolioId] = useState<string | null>(null);
   const [settlementTx, setSettlementTx] = useState<string | null>(null);
+  const [synced, setSynced] = useState(false);
+  const [resolvedExecutionMode, setResolvedExecutionMode] = useState<
+    "mock" | "real" | undefined
+  >(executionMode);
+  const patchPortfolio = usePortfolioStore((s) => s.patchPortfolio);
+  const setUnifiedUsdc = usePortfolioStore((s) => s.setUnifiedUsdc);
+  const setUnifiedEurc = usePortfolioStore((s) => s.setUnifiedEurc);
+  const setPerChain = usePortfolioStore((s) => s.setPerChain);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,6 +70,8 @@ export function ExecutionTrace({ rebalanceId, sseUrl }: ExecutionTraceProps) {
       setTotal(plan.totalLegs);
       setCompleted(plan.completedLegs);
       setDecisionId(plan.decisionId);
+      setPortfolioId(plan.portfolioId);
+      setResolvedExecutionMode(executionMode ?? plan.executionMode);
       setSettlementTx(plan.protocolFeeSettlementTx ?? null);
       setLegs(
         plan.legs.map((l) => ({
@@ -70,7 +92,7 @@ export function ExecutionTrace({ rebalanceId, sseUrl }: ExecutionTraceProps) {
     return () => {
       cancelled = true;
     };
-  }, [rebalanceId]);
+  }, [executionMode, rebalanceId]);
 
   useEventSource(sseUrl, {
     "rebalance.leg.update": (data) => {
@@ -91,7 +113,13 @@ export function ExecutionTrace({ rebalanceId, sseUrl }: ExecutionTraceProps) {
         ),
       );
       if (data.status === "confirmed") {
-        setCompleted((c) => c + 1);
+        setCompleted((c) => {
+          const next = Math.min(total || c + 1, c + 1);
+          if (total > 0 && next >= total) {
+            setStatus("completed");
+          }
+          return next;
+        });
       }
       if (data.status === "failed") {
         setStatus("failed");
@@ -105,6 +133,41 @@ export function ExecutionTrace({ rebalanceId, sseUrl }: ExecutionTraceProps) {
   } as Parameters<typeof useEventSource>[1]);
 
   const progressPct = total > 0 ? Math.round((completed / total) * 100) : 0;
+  const isMockExecution = resolvedExecutionMode === "mock";
+
+  useEffect(() => {
+    if (status !== "completed" || !portfolioId || synced) return;
+    let cancelled = false;
+    setSynced(true);
+    void Promise.all([
+      portfolioApi
+        .get(portfolioId)
+        .then((portfolio) => {
+          if (!cancelled) patchPortfolio(portfolioId, portfolio);
+        })
+        .catch(() => undefined),
+      gatewayApi
+        .balance()
+        .then((balance) => {
+          if (cancelled) return;
+          setUnifiedUsdc(balance.unifiedUsdc);
+          setUnifiedEurc(balance.unifiedEurc);
+          setPerChain(balance.perChain, balance.perChainEurc);
+        })
+        .catch(() => undefined),
+    ]);
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    patchPortfolio,
+    portfolioId,
+    setPerChain,
+    setUnifiedEurc,
+    setUnifiedUsdc,
+    status,
+    synced,
+  ]);
 
   return (
     <section data-testid="execution-trace" className="space-y-3">
@@ -118,7 +181,9 @@ export function ExecutionTrace({ rebalanceId, sseUrl }: ExecutionTraceProps) {
               l.kind === "cross_chain_burn" || l.kind === "cross_chain_mint",
           ) && (
             <span className="inline-flex items-center gap-1 rounded border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-mono text-accent-agent">
-              Real on-chain • CCTP V2 + Hooks
+              {isMockExecution
+                ? "Local demo • simulated CCTP V2 + Hooks"
+                : "Real on-chain • CCTP V2 + Hooks"}
             </span>
           )}
         </div>
@@ -171,9 +236,15 @@ export function ExecutionTrace({ rebalanceId, sseUrl }: ExecutionTraceProps) {
       </div>
       {status === "completed" && decisionId && (
         <>
+          <div className="mt-3 border border-cyan-500/30 bg-cyan-500/5 p-3 text-[12px] font-mono text-accent-agent">
+            Dashboard updated: invested positions and remaining Gateway balance
+            were refreshed after execution.
+          </div>
           <div className="mt-3 border border-amber-500/30 bg-amber-500/5 p-3 text-[11px] font-mono text-warn flex items-center gap-2 flex-wrap">
             <span>
-              Protocol fee (25 bps) settled via Circle Nanopayments (x402)
+              {isMockExecution
+                ? "Protocol fee (25 bps) simulated via Circle Nanopayments (x402)"
+                : "Protocol fee (25 bps) settled via Circle Nanopayments (x402)"}
             </span>
             {settlementTx ? (
               <>

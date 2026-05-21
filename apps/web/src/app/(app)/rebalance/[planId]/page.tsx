@@ -3,7 +3,12 @@
 import { useEffect, useState, use } from "react";
 import { useRouter } from "next/navigation";
 
-import { rebalanceApi, ratesApi, agentApi } from "@/lib/api";
+import {
+  rebalanceApi,
+  ratesApi,
+  agentApi,
+  type RebalanceApprovalSafety,
+} from "@/lib/api";
 import type { AgentDecision } from "@/types";
 import { ModelBadge } from "@aegis/ui";
 import { ApprovalModal } from "@/components/rebalance/approval-modal";
@@ -33,6 +38,7 @@ export default function RebalancePage({ params }: PageProps) {
   const [plan, setPlan] = useState<{
     rebalanceId: string;
     decisionId: string;
+    executionMode?: "mock" | "real";
     totalLegs: number;
     legs: Array<{
       legIndex: number;
@@ -48,6 +54,8 @@ export default function RebalancePage({ params }: PageProps) {
   const [planStatus, setPlanStatus] = useState<string>("planned");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [decision, setDecision] = useState<AgentDecision | null>(null);
+  const [approvalSafety, setApprovalSafety] =
+    useState<RebalanceApprovalSafety | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -60,6 +68,7 @@ export default function RebalancePage({ params }: PageProps) {
         setPlan({
           rebalanceId: detail.id,
           decisionId: detail.decisionId,
+          executionMode: detail.executionMode,
           totalLegs: detail.totalLegs,
           legs: detail.legs.map((l) => ({
             legIndex: l.legIndex,
@@ -75,6 +84,7 @@ export default function RebalancePage({ params }: PageProps) {
         setFeeFetchedAt(new Date());
         setFeeSource("plan");
         setPlanStatus(detail.status);
+        setApprovalSafety(detail.approvalSafety);
         // If the plan is already past 'planned' state, skip approval modal.
         if (detail.status !== "planned") {
           setShowApproval(false);
@@ -149,7 +159,9 @@ export default function RebalancePage({ params }: PageProps) {
                 l.kind === "cross_chain_burn" || l.kind === "cross_chain_mint",
             ) && (
               <div className="mt-2 inline-flex items-center gap-2 rounded border border-cyan-500/40 bg-cyan-500/10 px-3 py-1 text-[11px] font-mono text-accent-agent">
-                Real on-chain execution • CCTP V2 Fast Transfer + Hooks
+                {plan.executionMode === "mock"
+                  ? "Local demo execution • simulates CCTP V2 + Hooks"
+                  : "Real on-chain execution • CCTP V2 Fast Transfer + Hooks"}
               </div>
             )}
 
@@ -185,11 +197,18 @@ export default function RebalancePage({ params }: PageProps) {
         </header>
 
         {approved ? (
-          <ExecutionTrace rebalanceId={planId} sseUrl={SSE_URL} />
+          <ExecutionTrace
+            rebalanceId={planId}
+            sseUrl={SSE_URL}
+            executionMode={plan?.executionMode}
+          />
         ) : (
           <p className="text-sm text-text-lo">
-            The agent has built a cross-chain plan. Review the legs, then
-            approve to settle on Arc + Base.
+            {approvalSafety?.approvable === false
+              ? "This historical plan is blocked from approval because it no longer matches the current real-execution state. Open Dashboard and build a fresh review."
+              : plan?.executionMode === "mock"
+                ? "The agent has built a local demo plan. Review the legs, then run the executor to update the mock portfolio and Gateway balances."
+                : "The agent has built a cross-chain plan. Review the legs, then approve to settle on Arc + Base."}
           </p>
         )}
 
@@ -201,6 +220,7 @@ export default function RebalancePage({ params }: PageProps) {
           feeFetchedAt={feeFetchedAt}
           feeSource={feeSource}
           decision={decision}
+          approvalSafety={approvalSafety}
           onApproved={() => {
             setShowApproval(false);
             setApproved(true);

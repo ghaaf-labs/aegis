@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Copy, ExternalLink, Check, Wallet as WalletIcon } from "lucide-react";
+import Link from "next/link";
 import { BrutalCard, BrutalCardBody, BrutalCardHeader } from "@aegis/ui";
 import { FaucetButton } from "@/components/wallet/faucet-button";
 import { usePortfolioStore } from "@/stores/portfolio";
@@ -26,10 +27,29 @@ export default function WalletPage() {
 
   if (!wallet) {
     return (
-      <div className="py-12 text-center">
-        <p className="text-sm font-mono text-text-lo">
-          No wallet provisioned yet — finish signup to create one.
+      <div className="py-12 text-center space-y-3">
+        <p className="text-sm font-mono text-text-hi">
+          No wallet is attached to this session.
         </p>
+        <p className="text-xs font-mono text-text-mut max-w-md mx-auto leading-relaxed">
+          If you just refreshed, wait a moment for auth to hydrate. Otherwise
+          sign in with the same email, or create a wallet-backed account before
+          using Gateway balances, deployment, or rebalance execution.
+        </p>
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <Link
+            href="/login"
+            className="inline-flex px-3 py-1.5 border-2 border-accent-agent bg-accent-agent text-black text-xs font-semibold"
+          >
+            Sign in
+          </Link>
+          <Link
+            href="/signup"
+            className="inline-flex px-3 py-1.5 border-2 border-border-default text-text-lo text-xs font-semibold hover:border-border-hi hover:text-text-hi"
+          >
+            Create wallet
+          </Link>
+        </div>
       </div>
     );
   }
@@ -58,14 +78,15 @@ export default function WalletPage() {
 
   return (
     <div className="max-w-[1400px] mx-auto space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-mono font-semibold text-text-hi tracking-tight flex items-center gap-2">
             <WalletIcon className="w-5 h-5 text-accent-pnl" />
-            Wallet
+            Wallets
           </h1>
           <p className="text-sm text-text-lo mt-1">
-            Per-chain USDC + EURC balances and addresses
+            Idle Circle Gateway cash only. Invested positions stay on Dashboard
+            and Portfolio.
           </p>
         </div>
         {isEmpty && <FaucetButton />}
@@ -74,7 +95,7 @@ export default function WalletPage() {
       <BrutalCard>
         <BrutalCardHeader>
           <span className="text-sm font-mono text-text-hi">
-            Total wallet balance
+            Idle wallet cash
           </span>
         </BrutalCardHeader>
         <BrutalCardBody>
@@ -91,9 +112,9 @@ export default function WalletPage() {
             )}
           </p>
           <p className="text-[11px] font-mono text-text-mut mt-3">
-            Undeployed cash sits in Circle Gateway across the chains below. Use
-            the &quot;Deploy wallet balance&quot; button on the Dashboard to
-            allocate it across your target weights.
+            {isEmpty
+              ? "This can be $0 even when you own investments. Deployed positions are counted on Dashboard and Portfolio; newly funded USDC appears here first."
+              : "This is spendable cash that has not been invested yet. Review any deployment or rebalance plan before real execution."}
           </p>
         </BrutalCardBody>
       </BrutalCard>
@@ -132,16 +153,19 @@ function ChainCard({
   eurc,
   eurcUsd,
 }: ChainCardProps) {
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
+    "idle",
+  );
   const total = usdc + eurc * eurcUsd;
 
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(address);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
+      setCopyState("copied");
+      setTimeout(() => setCopyState("idle"), 1800);
     } catch {
-      /* clipboard API blocked — no-op */
+      setCopyState("failed");
+      setTimeout(() => setCopyState("idle"), 2200);
     }
   };
 
@@ -175,38 +199,46 @@ function ChainCard({
 
         <div>
           <p className="text-[10px] text-text-mut font-mono uppercase tracking-wider mb-1">
-            Address
+            Funding address
           </p>
-          <div className="flex items-center gap-2">
+          <div className="grid gap-2">
             <code
-              className="text-[11px] font-mono text-text-default truncate flex-1"
+              className="block min-w-0 rounded-sharp border border-border-default bg-bg px-2 py-2 text-[11px] font-mono text-text-default break-all"
               title={address}
             >
               {address}
             </code>
-            <button
-              type="button"
-              onClick={() => void handleCopy()}
-              className="p-1 rounded-sharp hover:bg-white/5 text-text-lo hover:text-text-hi"
-              title="Copy address"
-              aria-label="Copy address"
-            >
-              {copied ? (
-                <Check className="w-3.5 h-3.5 text-accent-pnl" />
-              ) : (
-                <Copy className="w-3.5 h-3.5" />
-              )}
-            </button>
-            <a
-              href={`${explorerBase}${address}`}
-              target="_blank"
-              rel="noreferrer"
-              className="p-1 rounded-sharp hover:bg-white/5 text-text-lo hover:text-text-hi"
-              title="View on explorer"
-              aria-label="View on explorer"
-            >
-              <ExternalLink className="w-3.5 h-3.5" />
-            </a>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => void handleCopy()}
+                className="inline-flex min-h-9 items-center justify-center gap-2 rounded-sharp border border-white/10 bg-white/5 px-3 text-xs font-mono text-text-default hover:border-accent-pnl/40 hover:text-accent-pnl"
+                title="Copy address"
+                aria-label={`Copy ${label} address`}
+              >
+                {copyState === "copied" ? (
+                  <Check className="w-3.5 h-3.5 text-accent-pnl" />
+                ) : (
+                  <Copy className="w-3.5 h-3.5" />
+                )}
+                {copyState === "copied"
+                  ? "Copied"
+                  : copyState === "failed"
+                    ? "Copy failed"
+                    : "Copy"}
+              </button>
+              <a
+                href={`${explorerBase}${address}`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex min-h-9 items-center justify-center gap-2 rounded-sharp border border-white/10 bg-white/5 px-3 text-xs font-mono text-text-default hover:border-accent-agent/40 hover:text-accent-agent"
+                title="View on explorer"
+                aria-label={`View ${label} on explorer`}
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                Explorer
+              </a>
+            </div>
           </div>
         </div>
       </BrutalCardBody>

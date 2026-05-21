@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { CheckCircle2, RotateCcw, SlidersHorizontal } from "lucide-react";
 import {
   BrutalCard,
   BrutalCardBody,
@@ -42,6 +43,28 @@ const DEFAULT_ALLOC: Partial<Record<AssetSymbol, number>> = {
   USYC: 10,
   EURC: 0,
 };
+
+const ALLOCATION_PRESETS: Array<{
+  label: string;
+  hint: string;
+  allocation: Partial<Record<AssetSymbol, number>>;
+}> = [
+  {
+    label: "Balanced core",
+    hint: "Crypto growth with a small yield sleeve",
+    allocation: DEFAULT_ALLOC,
+  },
+  {
+    label: "Stable yield",
+    hint: "Lower volatility, more USYC",
+    allocation: { BTC: 20, ETH: 20, SOL: 0, USYC: 50, EURC: 10 },
+  },
+  {
+    label: "Growth",
+    hint: "Higher beta with no FX sleeve",
+    allocation: { BTC: 55, ETH: 30, SOL: 15, USYC: 0, EURC: 0 },
+  },
+];
 
 export function GoalWizard() {
   const router = useRouter();
@@ -92,6 +115,7 @@ export function GoalWizard() {
     (state.step === 2 && !!state.horizon) ||
     (state.step === 3 && !!state.risk) ||
     (state.step === 4 && allocValid);
+  const disabledReason = nextDisabledReason(state, totalAlloc);
 
   const submit = async () => {
     setState((s) => ({ ...s, submitting: true, error: null }));
@@ -178,6 +202,20 @@ export function GoalWizard() {
         </div>
       </BrutalCardHeader>
       <BrutalCardBody>
+        <div
+          className="mb-4 grid grid-cols-4 gap-2"
+          aria-label="Portfolio setup progress"
+        >
+          {[1, 2, 3, 4].map((step) => (
+            <div
+              key={step}
+              className={`h-1.5 rounded-sharp ${
+                step <= state.step ? "bg-accent-agent" : "bg-border-default"
+              }`}
+            />
+          ))}
+        </div>
+
         {state.step === 1 && <NameStep state={state} setState={setState} />}
         {state.step === 2 && <HorizonStep state={state} setState={setState} />}
         {state.step === 3 && <RiskStep state={state} setState={setState} />}
@@ -191,6 +229,14 @@ export function GoalWizard() {
 
         {state.error && (
           <div className="mt-4 text-xs text-risk font-mono">{state.error}</div>
+        )}
+        {!canNext && disabledReason && (
+          <div
+            data-testid="goal-wizard-next-hint"
+            className="mt-4 border border-warn/40 bg-warn/5 px-3 py-2 text-xs text-warn font-mono"
+          >
+            {disabledReason}
+          </div>
         )}
 
         <div className="mt-6 flex items-center justify-between gap-3">
@@ -227,6 +273,19 @@ function stepTitle(step: 1 | 2 | 3 | 4): string {
   }[step];
 }
 
+function nextDisabledReason(state: WizardState, totalAlloc: number) {
+  if (state.step === 1 && state.name.trim().length < 2) {
+    return "Add a portfolio name with at least 2 characters.";
+  }
+  if (state.step === 4 && Math.abs(totalAlloc - 100) >= 0.5) {
+    const diff = Math.abs(100 - totalAlloc).toFixed(0);
+    return totalAlloc < 100
+      ? `Add ${diff}% more allocation, or use Normalize to finish.`
+      : `Remove ${diff}% allocation, or use Normalize to finish.`;
+  }
+  return null;
+}
+
 interface StepProps {
   state: WizardState;
   setState: React.Dispatch<React.SetStateAction<WizardState>>;
@@ -235,18 +294,26 @@ interface StepProps {
 function NameStep({ state, setState }: StepProps) {
   return (
     <div className="space-y-3">
-      <label className="block text-xs text-text-lo font-mono">
-        Give this portfolio a name (e.g. Retirement, Treasury, Speculative).
+      <label
+        htmlFor="portfolio-name"
+        className="block text-xs text-text-lo font-mono"
+      >
+        Portfolio name
       </label>
       <input
+        id="portfolio-name"
         type="text"
         autoFocus
         value={state.name}
         onChange={(e) => setState((s) => ({ ...s, name: e.target.value }))}
+        aria-describedby="portfolio-name-help"
         className="w-full px-3 py-2 bg-bg border-brutal border-border-default focus:border-border-hi rounded-sharp font-mono text-sm text-text-hi outline-none"
         placeholder="Retirement"
         maxLength={48}
       />
+      <p id="portfolio-name-help" className="text-xs text-text-mut font-mono">
+        Use a label you will recognize in Dashboard, approvals, and tax export.
+      </p>
     </div>
   );
 }
@@ -264,7 +331,9 @@ function HorizonStep({ state, setState }: StepProps) {
     <div className="space-y-2">
       {HORIZONS.map((h) => (
         <button
+          type="button"
           key={h.value}
+          aria-pressed={state.horizon === h.value}
           onClick={() => setState((s) => ({ ...s, horizon: h.value }))}
           className={`w-full text-left px-3 py-2 border-brutal rounded-sharp font-mono text-sm transition-[box-shadow] ${
             state.horizon === h.value
@@ -272,8 +341,10 @@ function HorizonStep({ state, setState }: StepProps) {
               : "border-border-default text-text-default hover:border-border-hi"
           }`}
         >
-          <span className="font-semibold">{h.label}</span>
-          <span className="ml-3 text-text-lo">{h.hint}</span>
+          <span className="flex flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-3">
+            <span className="font-semibold">{h.label}</span>
+            <span className="text-text-lo">{h.hint}</span>
+          </span>
         </button>
       ))}
     </div>
@@ -299,7 +370,9 @@ function RiskStep({ state, setState }: StepProps) {
     <div className="space-y-2">
       {RISKS.map((r) => (
         <button
+          type="button"
           key={r.value}
+          aria-pressed={state.risk === r.value}
           onClick={() => setState((s) => ({ ...s, risk: r.value }))}
           className={`w-full text-left px-3 py-2 border-brutal rounded-sharp font-mono text-sm transition-[box-shadow] ${
             state.risk === r.value
@@ -307,8 +380,10 @@ function RiskStep({ state, setState }: StepProps) {
               : "border-border-default text-text-default hover:border-border-hi"
           }`}
         >
-          <span className="font-semibold">{r.label}</span>
-          <span className="ml-3 text-text-lo">{r.hint}</span>
+          <span className="flex flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-3">
+            <span className="font-semibold">{r.label}</span>
+            <span className="text-text-lo">{r.hint}</span>
+          </span>
         </button>
       ))}
     </div>
@@ -320,56 +395,122 @@ function AllocationStep({
   setState,
   totalAlloc,
 }: StepProps & { totalAlloc: number }) {
+  const allocationValid = Math.abs((totalAlloc ?? 0) - 100) < 0.5;
+
+  const setAllocation = (allocation: Partial<Record<AssetSymbol, number>>) => {
+    setState((s) => ({ ...s, allocation }));
+  };
+
   return (
-    <div className="space-y-3">
-      <div className="text-xs text-text-lo font-mono">
-        Weights must sum to <span className="text-text-hi">100%</span> —
-        currently
-        <span
-          className={`ml-1 ${
-            Math.abs((totalAlloc ?? 0) - 100) < 0.5
-              ? "text-accent-pnl"
-              : "text-warn"
-          }`}
-        >
-          {totalAlloc ?? 0}%
-        </span>
+    <div className="space-y-4">
+      <div className="grid gap-2">
+        <div className="flex items-center gap-2 text-xs text-text-lo font-mono">
+          <SlidersHorizontal className="h-3.5 w-3.5 text-accent-agent" />
+          Pick a preset, then adjust the weights.
+        </div>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {ALLOCATION_PRESETS.map((preset) => (
+            <button
+              type="button"
+              key={preset.label}
+              onClick={() => setAllocation(preset.allocation)}
+              className="min-h-[74px] border border-border-default bg-bg px-3 py-2 text-left font-mono hover:border-accent-agent hover:bg-accent-agent/5"
+            >
+              <span className="block text-xs font-semibold text-text-hi">
+                {preset.label}
+              </span>
+              <span className="mt-1 block text-[11px] leading-snug text-text-mut">
+                {preset.hint}
+              </span>
+            </button>
+          ))}
+        </div>
       </div>
-      {ASSETS.map((a) => (
-        <div key={a.symbol} className="flex items-center gap-3">
-          <span className="w-20 font-mono text-sm text-text-hi">
-            {a.symbol}
+
+      <div
+        className={`flex flex-wrap items-center justify-between gap-3 border px-3 py-2 font-mono ${
+          allocationValid
+            ? "border-accent-pnl/40 bg-accent-pnl/5"
+            : "border-warn/40 bg-warn/5"
+        }`}
+      >
+        <div className="flex items-center gap-2 text-xs">
+          {allocationValid ? (
+            <CheckCircle2 className="h-3.5 w-3.5 text-accent-pnl" />
+          ) : (
+            <SlidersHorizontal className="h-3.5 w-3.5 text-warn" />
+          )}
+          <span className="text-text-lo">
+            Total target{" "}
+            <span className={allocationValid ? "text-accent-pnl" : "text-warn"}>
+              {totalAlloc ?? 0}%
+            </span>{" "}
+            / 100%
           </span>
-          <span className="flex-1 text-xs text-text-lo">{a.label}</span>
-          <input
-            type="number"
-            min={0}
-            max={100}
-            step={5}
-            value={state.allocation[a.symbol] ?? 0}
-            onChange={(e) =>
-              setState((s) => ({
-                ...s,
-                allocation: {
-                  ...s.allocation,
-                  [a.symbol]: Math.max(
-                    0,
-                    Math.min(100, Number(e.target.value) || 0),
-                  ),
-                },
-              }))
-            }
-            className="w-20 px-2 py-1 bg-bg border-brutal border-border-default focus:border-border-hi rounded-sharp font-mono text-sm text-text-hi text-right tabular-nums outline-none"
-          />
-          <span className="text-text-mut text-xs">%</span>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setAllocation(normalizeAllocation(state.allocation))}
+            className="inline-flex min-h-8 items-center gap-1 border border-border-default bg-bg px-2 text-[11px] text-text-lo hover:border-accent-agent hover:text-accent-agent"
+          >
+            <SlidersHorizontal className="h-3 w-3" />
+            Normalize
+          </button>
+          <button
+            type="button"
+            onClick={() => setAllocation(DEFAULT_ALLOC)}
+            className="inline-flex min-h-8 items-center gap-1 border border-border-default bg-bg px-2 text-[11px] text-text-lo hover:border-border-hi hover:text-text-hi"
+          >
+            <RotateCcw className="h-3 w-3" />
+            Reset
+          </button>
+        </div>
+      </div>
+
+      {ASSETS.map((a) => (
+        <div key={a.symbol} className="grid grid-cols-[1fr_auto] gap-3">
+          <label htmlFor={`alloc-${a.symbol}`} className="min-w-0 font-mono">
+            <span className="block text-sm text-text-hi">{a.symbol}</span>
+            <span className="block text-xs text-text-lo">{a.label}</span>
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              id={`alloc-${a.symbol}`}
+              aria-label={`${a.symbol} target allocation`}
+              type="number"
+              min={0}
+              max={100}
+              step={5}
+              value={state.allocation[a.symbol] ?? 0}
+              onChange={(e) =>
+                setState((s) => ({
+                  ...s,
+                  allocation: {
+                    ...s.allocation,
+                    [a.symbol]: Math.max(
+                      0,
+                      Math.min(100, Number(e.target.value) || 0),
+                    ),
+                  },
+                }))
+              }
+              className="w-20 px-2 py-1 bg-bg border-brutal border-border-default focus:border-border-hi rounded-sharp font-mono text-sm text-text-hi text-right tabular-nums outline-none"
+            />
+            <span className="text-text-mut text-xs">%</span>
+          </div>
         </div>
       ))}
 
       <div className="pt-3 border-t border-border-default">
-        <label className="block text-xs text-text-lo font-mono mb-2">
+        <label
+          htmlFor="monthly-contribution"
+          className="block text-xs text-text-lo font-mono mb-2"
+        >
           Optional: monthly contribution (USD)
         </label>
         <input
+          id="monthly-contribution"
           type="number"
           min={0}
           max={1_000_000}
@@ -381,7 +522,32 @@ function AllocationStep({
           className="w-32 px-2 py-1 bg-bg border-brutal border-border-default focus:border-border-hi rounded-sharp font-mono text-sm text-text-hi text-right tabular-nums outline-none"
           placeholder="0"
         />
+        <p className="mt-2 text-[11px] text-text-mut font-mono leading-relaxed">
+          Used for planning and projections only; it does not schedule a
+          payment.
+        </p>
       </div>
     </div>
   );
+}
+
+function normalizeAllocation(allocation: Partial<Record<AssetSymbol, number>>) {
+  const total = ASSETS.reduce((sum, asset) => {
+    return sum + Math.max(0, allocation[asset.symbol] ?? 0);
+  }, 0);
+
+  if (total <= 0) return DEFAULT_ALLOC;
+
+  const next: Partial<Record<AssetSymbol, number>> = {};
+  let running = 0;
+  ASSETS.forEach((asset, index) => {
+    const raw = Math.max(0, allocation[asset.symbol] ?? 0);
+    const value =
+      index === ASSETS.length - 1
+        ? Math.max(0, 100 - running)
+        : Math.round((raw / total) * 100);
+    next[asset.symbol] = value;
+    running += value;
+  });
+  return next;
 }

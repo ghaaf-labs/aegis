@@ -63,7 +63,7 @@ async fn try_db_correlation(state: &AppState, a: &str, b: &str, window_days: i64
               AND fetched_at > NOW() - ($3::int || ' days')::interval
             ORDER BY fetched_at ASC
         )
-        SELECT a.price_usd, b.price_usd
+        SELECT a.price_usd::DOUBLE PRECISION, b.price_usd::DOUBLE PRECISION
         FROM a_prices a
         JOIN b_prices b ON ABS(EXTRACT(EPOCH FROM (a.fetched_at - b.fetched_at))) < 120
         ORDER BY a.fetched_at DESC

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check } from "lucide-react";
+import { Check, Copy, ExternalLink, ShieldCheck } from "lucide-react";
 import {
   BrutalButton,
   BrutalCard,
@@ -36,9 +36,9 @@ export default function TaxSettingsPage() {
   const [shares, setShares] = useState<TaxShareToken[]>([]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  const copyShare = useCallback(async (id: string, token: string) => {
+  const copyShare = useCallback(async (id: string, shareUrl: string) => {
     try {
-      await navigator.clipboard.writeText(token);
+      await navigator.clipboard.writeText(shareUrl);
       setCopiedId(id);
       setTimeout(() => setCopiedId(null), 1800);
     } catch {
@@ -146,18 +146,19 @@ export default function TaxSettingsPage() {
     <div className="max-w-[1400px] mx-auto space-y-6">
       <div>
         <h1 className="text-2xl font-mono font-semibold text-text-hi tracking-tight">
-          Tax export
+          Tax center
         </h1>
         <p className="text-sm text-text-lo mt-1">
-          IRS 1099-DA-ready CSV per portfolio, including stablecoin↔stablecoin
-          dispositions (USDC↔EURC FX gain/loss). Pro feature.
+          Accountant CSV aligned to 1099-DA fields, generated per portfolio from
+          real settled Aegis moves. Stablecoin↔stablecoin swaps are included
+          when the executor recorded a real transaction reference.
         </p>
       </div>
 
       <BrutalCard>
         <BrutalCardHeader>
           <span className="text-sm font-mono text-text-hi">Download CSV</span>
-          <BrutalPill tone="pnl">1099-DA</BrutalPill>
+          <BrutalPill tone="pnl">1099-DA CSV</BrutalPill>
         </BrutalCardHeader>
         <BrutalCardBody className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -224,17 +225,29 @@ export default function TaxSettingsPage() {
                 ))}
               </ul>
               <p className="text-[10px] text-text-mut leading-relaxed">
-                {summary.caveat}
+                Wallets are listed for accountant reconciliation and coverage
+                checks.
               </p>
             </div>
           )}
+
+          <div className="border border-border-default bg-surface p-3 text-xs text-text-lo leading-relaxed">
+            <div className="flex items-start gap-2">
+              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-accent-agent" />
+              <p>
+                Basis is calculated at portfolio level with FIFO where Aegis has
+                cost-basis lots. Wallet addresses are shown for reconciliation;
+                this version does not split basis by wallet or chain.
+              </p>
+            </div>
+          </div>
 
           <BrutalButton
             variant="pnl"
             onClick={onDownloadClick}
             disabled={!portfolioId || downloading}
           >
-            {downloading ? "Preparing…" : "Download CSV"}
+            {downloading ? "Preparing…" : "Review & download CSV"}
           </BrutalButton>
 
           {mockExcluded !== null && mockExcluded > 0 ? (
@@ -272,9 +285,15 @@ export default function TaxSettingsPage() {
                 <span className="text-text-hi font-mono">
                   {summary?.totalLotCount ?? 0} lots
                 </span>{" "}
-                across portfolio {portfolioId.slice(0, 8)}… for year {year}.
-                Includes USDC↔EURC FX dispositions per the 2026 1099-DA final
-                rules (wallet-by-wallet basis).
+                across portfolio {portfolioId.slice(0, 8)}… for year {year}. It
+                uses portfolio-level FIFO basis and includes wallet addresses
+                for accountant reconciliation. It does not split basis by wallet
+                or chain.
+              </p>
+              <p>
+                The export only includes settled rows with transaction
+                references; mock or unfinished execution rows are excluded and
+                reported after download.
               </p>
               <div className="flex gap-2 justify-end pt-2">
                 <BrutalButton
@@ -301,12 +320,12 @@ export default function TaxSettingsPage() {
           <span className="text-sm font-mono text-text-hi">
             Share with accountant
           </span>
-          <BrutalPill tone="agent">read-only · {TTL_DEFAULT_DAYS}d</BrutalPill>
+          <BrutalPill tone="agent">signed CSV · {TTL_DEFAULT_DAYS}d</BrutalPill>
         </BrutalCardHeader>
         <BrutalCardBody className="space-y-4">
           <p className="text-xs text-text-lo">
-            Create a signed URL your accountant can hit without logging in.
-            Revoke any time.
+            Create a revocable read-only URL that downloads this portfolio and
+            year as a CSV without exposing the rest of your Aegis session.
           </p>
           <BrutalButton
             variant="agent"
@@ -328,18 +347,35 @@ export default function TaxSettingsPage() {
                       Year {s.year} · expires{" "}
                       {new Date(s.expiresAt).toISOString().slice(0, 10)}
                     </span>
-                    <button
-                      type="button"
+                    <a
+                      href={s.shareUrl}
+                      target="_blank"
+                      rel="noreferrer"
                       className="text-accent-agent hover:underline truncate text-left flex items-center gap-1"
-                      onClick={() => void copyShare(s.id, s.token)}
-                      title="Copy token"
                     >
-                      {s.token.slice(0, 10)}…
-                      {copiedId === s.id && (
-                        <Check className="w-3 h-3 text-accent-pnl" />
-                      )}
-                    </button>
+                      {s.shareUrl}
+                      <ExternalLink className="w-3 h-3 shrink-0" />
+                    </a>
                   </div>
+                  <button
+                    type="button"
+                    className="inline-flex min-h-[32px] shrink-0 items-center gap-1 rounded-sharp border border-border-default bg-bg px-2 text-text-lo hover:border-border-hi hover:text-text-hi"
+                    onClick={() => void copyShare(s.id, s.shareUrl)}
+                    title="Copy share URL"
+                    aria-label="Copy share URL"
+                  >
+                    {copiedId === s.id ? (
+                      <>
+                        <Check className="w-3 h-3 text-accent-pnl" />
+                        Copied
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3 h-3" />
+                        Copy link
+                      </>
+                    )}
+                  </button>
                   <BrutalButton
                     variant="danger"
                     onClick={() => onRevoke(s.id)}

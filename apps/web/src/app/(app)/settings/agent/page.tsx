@@ -3,11 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { BrutalButton, BrutalCard, BrutalCardBody } from "@aegis/ui";
 import { userAgentApi } from "@/lib/api";
+import { usePortfolioStore } from "@/stores/portfolio";
 
 export const dynamic = "force-dynamic";
 
 export default function AgentSettingsPage() {
-  const [pausedAt, setPausedAt] = useState<string | null>(null);
+  const pausedAt = usePortfolioStore((s) => s.agentPausedAt);
+  const setPausedAt = usePortfolioStore((s) => s.setAgentPausedAt);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,7 +31,7 @@ export default function AgentSettingsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [setPausedAt]);
 
   const toggle = useCallback(async () => {
     setBusy(true);
@@ -44,7 +46,7 @@ export default function AgentSettingsPage() {
     } finally {
       setBusy(false);
     }
-  }, [pausedAt]);
+  }, [pausedAt, setPausedAt]);
 
   const isPaused = pausedAt !== null;
 
@@ -83,7 +85,7 @@ export default function AgentSettingsPage() {
               onClick={() => void toggle()}
               disabled={loading || busy}
             >
-              {busy ? "Working…" : isPaused ? "Resume" : "Pause agent"}
+              {busy ? "Working…" : isPaused ? "Resume agent" : "Pause agent"}
             </BrutalButton>
           </div>
 

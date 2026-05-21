@@ -1,6 +1,4 @@
-import { test, expect } from "@playwright/test";
-import * as fs from "fs";
-import * as path from "path";
+import { test, expect, type Page } from "@playwright/test";
 
 // R-series — rebalance approval modal + execution trace. Requires the Rust
 // API with EXECUTION_MOCK=true and MOCK_CIRCLE=true. The global-setup creates
@@ -14,31 +12,10 @@ test.beforeEach(() => {
   if (!process.env.PLAYWRIGHT_API_ENABLED) test.skip();
 });
 
-/** Read the JWT saved by global-setup from the storageState file. */
-function savedJwt(): string {
-  try {
-    const raw = fs.readFileSync(
-      path.join(__dirname, ".auth", "user.json"),
-      "utf-8",
-    );
-    const state = JSON.parse(raw) as {
-      origins?: Array<{
-        localStorage?: Array<{ name: string; value: string }>;
-      }>;
-    };
-    return (
-      state.origins
-        ?.flatMap((o) => o.localStorage ?? [])
-        .find((e) => e.name === "aegis.jwt")?.value ?? ""
-    );
-  } catch {
-    return "";
-  }
-}
-
 /** Create a portfolio + trigger a rebalance plan via the API.
  *  Returns the planId so tests can navigate to /rebalance/{planId}. */
-async function seedPlan(jwt: string): Promise<string> {
+async function seedPlan(): Promise<{ planId: string; jwt: string }> {
+  const jwt = await createTestJwt();
   const pfRes = await fetch(`${API_BASE}/portfolios`, {
     method: "POST",
     headers: {
@@ -77,21 +54,41 @@ async function seedPlan(jwt: string): Promise<string> {
       `plan create failed: ${planRes.status} ${await planRes.text()}`,
     );
   const plan = (await planRes.json()) as { rebalanceId: string };
-  return plan.rebalanceId;
+  return { planId: plan.rebalanceId, jwt };
+}
+
+async function createTestJwt(): Promise<string> {
+  const email = `rebalance-${Date.now()}-${Math.random().toString(16).slice(2)}@aegis.local`;
+  const res = await fetch(`${API_BASE}/auth/wallet/create`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok)
+    throw new Error(`auth create failed: ${res.status} ${await res.text()}`);
+  const body = (await res.json()) as { token: string };
+  return body.token;
+}
+
+async function openSeededPlan(page: Page): Promise<string> {
+  const { planId, jwt } = await seedPlan();
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await page.evaluate((token) => localStorage.setItem("aegis.jwt", token), jwt);
+  await page.goto(`/rebalance/${planId}`);
+  return planId;
 }
 
 test("R4 — approval page shows leg cards", async ({ page }) => {
-  const planId = await seedPlan(savedJwt());
-  await page.goto(`/rebalance/${planId}`);
+  await openSeededPlan(page);
   await expect(page.locator('[data-testid="approval-modal"]')).toBeVisible({
     timeout: 15_000,
   });
+  await page.getByRole("button", { name: /Technical route/i }).click();
   await expect(page.locator('[data-testid="leg-card"]').first()).toBeVisible();
 });
 
 test("R5 — approval page shows model badge", async ({ page }) => {
-  const planId = await seedPlan(savedJwt());
-  await page.goto(`/rebalance/${planId}`);
+  await openSeededPlan(page);
   await expect(page.locator('[data-testid="approval-modal"]')).toBeVisible({
     timeout: 15_000,
   });
@@ -102,42 +99,74 @@ test("R5 — approval page shows model badge", async ({ page }) => {
 });
 
 test("R6 — approval page shows USDC fee estimate", async ({ page }) => {
-  const planId = await seedPlan(savedJwt());
-  await page.goto(`/rebalance/${planId}`);
+  await openSeededPlan(page);
   await expect(page.locator('[data-testid="approval-modal"]')).toBeVisible({
     timeout: 15_000,
   });
   await expect(page.getByText(/USDC/i).first()).toBeVisible();
 });
 
-test("R7 — Approve button is present and enabled", async ({ page }) => {
-  const planId = await seedPlan(savedJwt());
-  await page.goto(`/rebalance/${planId}`);
+test("R6b — mock execution mode is explicit", async ({ page }) => {
+  await openSeededPlan(page);
   await expect(page.locator('[data-testid="approval-modal"]')).toBeVisible({
     timeout: 15_000,
   });
-  const approveBtn = page.getByRole("button", { name: /Approve/i });
+  const modal = page.locator('[data-testid="approval-modal"]');
+  await expect(modal.getByText(/Local demo execution/i)).toBeVisible();
+  await expect(
+    modal.getByText(/no real chain transaction is sent/i),
+  ).toBeVisible();
+  await expect(page.getByText(/Real on-chain execution/i)).toHaveCount(0);
+});
+
+test("R7 — Approve button is present and enabled", async ({ page }) => {
+  await openSeededPlan(page);
+  await expect(page.locator('[data-testid="approval-modal"]')).toBeVisible({
+    timeout: 15_000,
+  });
+  const approveBtn = page.getByRole("button", {
+    name: /Approve|Run local execution/i,
+  });
   await expect(approveBtn).toBeVisible();
   await expect(approveBtn).toBeEnabled();
 });
 
 test("R8 — clicking Approve shows execution trace", async ({ page }) => {
-  const planId = await seedPlan(savedJwt());
-  await page.goto(`/rebalance/${planId}`);
+  await openSeededPlan(page);
   await expect(page.locator('[data-testid="approval-modal"]')).toBeVisible({
     timeout: 15_000,
   });
-  await page.getByRole("button", { name: /Approve/i }).click();
+  await page
+    .getByRole("button", { name: /Approve|Run local execution/i })
+    .click();
   await expect(page.locator('[data-testid="execution-trace"]')).toBeVisible({
     timeout: 15_000,
+  });
+});
+
+test("R9 — local execution completes and refreshes dashboard state", async ({
+  page,
+}) => {
+  await openSeededPlan(page);
+  await expect(page.locator('[data-testid="approval-modal"]')).toBeVisible({
+    timeout: 15_000,
+  });
+  await page
+    .getByRole("button", { name: /Approve|Run local execution/i })
+    .click();
+  await expect(page.locator('[data-testid="execution-trace"]')).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(page.getByText(/COMPLETED/i)).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(/Dashboard updated/i)).toBeVisible({
+    timeout: 20_000,
   });
 });
 
 test("R11 — Close button navigates away from rebalance page", async ({
   page,
 }) => {
-  const planId = await seedPlan(savedJwt());
-  await page.goto(`/rebalance/${planId}`);
+  const planId = await openSeededPlan(page);
   await expect(page.locator('[data-testid="approval-modal"]')).toBeVisible({
     timeout: 15_000,
   });

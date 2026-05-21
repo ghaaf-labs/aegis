@@ -124,7 +124,7 @@ pub async fn get_historical_prices(
 
     let rows: Vec<(String, f64)> = sqlx::query_as(
         r#"
-        SELECT DISTINCT ON (symbol) symbol, price_usd
+        SELECT DISTINCT ON (symbol) symbol, price_usd::DOUBLE PRECISION
         FROM price_history
         WHERE symbol = ANY($1)
           AND fetched_at <= $2

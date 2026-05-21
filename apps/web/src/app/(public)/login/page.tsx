@@ -16,7 +16,7 @@ function WalletCardSkeleton() {
 
 export default function LoginPage() {
   return (
-    <div className="min-h-screen bg-bg text-text-default flex items-center justify-center p-6">
+    <main className="min-h-screen bg-bg text-text-default flex items-center justify-center p-6">
       <div className="w-full max-w-md">
         <Link
           href="/"
@@ -29,20 +29,19 @@ export default function LoginPage() {
             Aegis
           </span>
         </Link>
-        <p className="text-center text-sm text-text-lo font-mono mb-6">
-          Welcome back — use the same email or passkey you signed up with.
-        </p>
+        <div className="mb-6 text-center space-y-2">
+          <h1 className="text-2xl font-semibold text-text-hi font-mono tracking-tight">
+            Restore wallet access
+          </h1>
+          <p className="text-sm text-text-lo font-mono leading-relaxed">
+            Same email, same Circle wallet, same portfolios. No seed phrase and
+            no duplicate account.
+          </p>
+        </div>
         <Suspense fallback={<WalletCardSkeleton />}>
           <CreateWalletCard loginMode />
         </Suspense>
-        <p className="mt-6 text-center text-xs font-mono text-text-mut">
-          New here?{" "}
-          <Link href="/signup" className="text-accent-pnl hover:underline">
-            Create a wallet
-          </Link>
-          .
-        </p>
       </div>
-    </div>
+    </main>
   );
 }

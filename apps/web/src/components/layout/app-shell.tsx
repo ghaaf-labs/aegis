@@ -33,15 +33,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           onClick={() => setOpen(false)}
         />
       )}
-      <div
-        className={
-          "md:hidden fixed inset-y-0 left-0 z-50 w-full transition-transform duration-200 " +
-          (open ? "translate-x-0" : "-translate-x-full")
-        }
-        aria-hidden={!open}
-      >
-        <Sidebar onClose={() => setOpen(false)} />
-      </div>
+      {open && (
+        <div className="md:hidden fixed inset-y-0 left-0 z-50 w-[min(340px,100vw)]">
+          <Sidebar onClose={() => setOpen(false)} />
+        </div>
+      )}
 
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         <div className="flex items-center md:hidden border-b border-white/5 bg-surface px-3 py-2 gap-2">

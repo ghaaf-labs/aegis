@@ -31,6 +31,9 @@ function MockDataInitializer() {
 }
 
 export function Providers({ children }: { children: React.ReactNode }) {
+  const showQueryDevtools =
+    process.env.NODE_ENV === "development" &&
+    process.env.NEXT_PUBLIC_QUERY_DEVTOOLS === "true";
   const [queryClient] = useState(
     () =>
       new QueryClient({
@@ -48,7 +51,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
       <MockDataInitializer />
       <RealtimeBridge />
       {children}
-      {process.env.NODE_ENV === "development" && (
+      {showQueryDevtools && (
         // The default bottom-left position covered the sidebar's
         // "AGENT ACTIVE" status pill, making it impossible to see the
         // agent's state while developing. Pinned to top-right instead.

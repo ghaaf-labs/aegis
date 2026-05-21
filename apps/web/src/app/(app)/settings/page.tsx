@@ -3,6 +3,9 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
+  BarChart3,
+  Bot,
+  CircleHelp,
   Wallet,
   Shield,
   Receipt,
@@ -11,13 +14,15 @@ import {
   Mail,
   Eye,
   ArrowRight,
+  ListChecks,
+  SquareTerminal,
 } from "lucide-react";
 import { PRICING_UI_ENABLED } from "@/lib/flags";
 import { DigestOptIn } from "@/components/settings/digest-opt-in";
 import { DiaryVisibilityToggle } from "@/components/settings/diary-visibility-toggle";
 import { portfolioApi } from "@/lib/api";
 import { useApiQuery } from "@/lib/use-api-query";
-import { useActivePortfolio } from "@/stores/portfolio";
+import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
 
 interface SectionLink {
   href: string;
@@ -29,6 +34,7 @@ interface SectionLink {
 
 export default function SettingsIndex() {
   const portfolio = useActivePortfolio();
+  const wallet = usePortfolioStore((s) => s.wallet);
   const portfolioId = portfolio?.id ?? "";
 
   const diaryQuery = useApiQuery(
@@ -48,10 +54,22 @@ export default function SettingsIndex() {
 
   const sections: SectionLink[] = [
     {
-      href: "/wallet",
+      href: "/wallets",
       icon: Wallet,
-      title: "Wallet",
+      title: "Wallets",
       description: "Per-chain USDC + EURC balances and addresses",
+    },
+    {
+      href: "/transactions",
+      icon: ListChecks,
+      title: "Transactions",
+      description: "Rebalance plans, approval status, and execution history",
+    },
+    {
+      href: "/analytics",
+      icon: BarChart3,
+      title: "Analytics",
+      description: "Net worth, target allocation, regime, and confidence",
     },
     {
       href: "/settings/agent",
@@ -60,16 +78,34 @@ export default function SettingsIndex() {
       description: "Pause / resume the agent, view trigger thresholds",
     },
     {
+      href: "/agent-logs",
+      icon: SquareTerminal,
+      title: "Agent logs",
+      description: "Model slugs, confidence, critic notes, and decisions",
+    },
+    {
+      href: "/agent-studio",
+      icon: Bot,
+      title: "Agent Studio",
+      description: "Manual analysis, pause controls, and agent inputs",
+    },
+    {
       href: "/settings/peg",
       icon: AlertTriangle,
       title: "Peg defense",
       description: "Stablecoin peg-monitor rules + thresholds",
     },
     {
-      href: "/settings/tax",
+      href: "/tax-center",
       icon: Receipt,
-      title: "Tax exports",
-      description: "1099-DA per-wallet basis CSVs + shareable view-only links",
+      title: "Tax center",
+      description: "Portfolio-level FIFO CSVs + accountant share links",
+    },
+    {
+      href: "/help",
+      icon: CircleHelp,
+      title: "Help",
+      description: "Answers for wallet cash, approvals, logs, and exports",
     },
     {
       href: "/settings/billing",
@@ -129,6 +165,7 @@ export default function SettingsIndex() {
           <DiaryVisibilityToggle
             key={`diary-${portfolioId}-${diaryPublic}`}
             initialPublic={diaryPublic}
+            walletAddress={wallet?.arcAddress}
             onChange={async (next) => {
               const res = await portfolioApi.setDiaryPublic(portfolioId, next);
               setLocalDiaryPublic(res.diaryPublic);
