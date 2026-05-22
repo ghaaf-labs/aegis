@@ -307,7 +307,7 @@ export function Header() {
               className="inline-flex min-h-[36px] items-center justify-center gap-2 rounded-sharp border border-black bg-accent-agent px-3 text-xs font-mono font-semibold text-black shadow-brutal-sm transition-shadow hover:shadow-brutal"
             >
               <LogIn className="h-3.5 w-3.5" />
-              Continue
+              Sign in
             </Link>
           </div>
         )}

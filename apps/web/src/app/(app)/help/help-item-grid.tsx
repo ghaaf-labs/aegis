@@ -68,7 +68,7 @@ export function HelpItemGrid() {
           sessionResolved && !sessionActive
             ? `/login?next=${encodeURIComponent(item.href)}`
             : item.href;
-        const cta = sessionResolved && !sessionActive ? "Continue" : item.cta;
+        const cta = sessionResolved && !sessionActive ? "Sign in" : item.cta;
 
         return (
           <Link key={item.href} href={href} className="group">

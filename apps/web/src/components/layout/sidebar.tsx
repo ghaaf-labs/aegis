@@ -60,8 +60,8 @@ const BASE_NAV_SECTIONS: NavSection[] = [
       {
         href: "/wallets",
         icon: Wallet,
-        label: "Wallet",
-        description: "One account, all networks",
+        label: "Wallets",
+        description: "cash and addresses",
         match: ["/wallet"],
       },
       {
@@ -406,15 +406,15 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
               </span>
             </div>
             <p className="px-1 text-[11px] font-mono leading-relaxed text-text-mut">
-              Browse strategies and help without an account. Continue with email
-              to manage balances, approvals, agent runs, and tax exports.
+              Sign in to manage balances, approvals, agent runs, and tax
+              exports.
             </p>
             <div className="grid gap-2">
               <Link
                 href={authHref("/login", pathname)}
                 className="inline-flex min-h-[36px] items-center justify-center rounded-sharp border border-black bg-accent-agent px-2 text-center text-[11px] font-mono font-semibold text-black shadow-brutal-sm hover:shadow-brutal"
               >
-                Continue
+                Sign in
               </Link>
             </div>
           </div>
