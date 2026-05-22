@@ -103,8 +103,8 @@ export default function AnalyticsPage() {
           }
           detail={
             hasConfirmedCapital
-              ? `${decisions.length} decisions loaded`
-              : `${decisions.length} historical decisions in audit`
+              ? `${decisions.length} ${decisions.length === 1 ? "decision" : "decisions"} loaded`
+              : `${decisions.length} historical ${decisions.length === 1 ? "decision" : "decisions"} in audit`
           }
           tone="agent"
         />
