@@ -188,7 +188,7 @@ export function EmailAuthCard() {
   const requestVerificationCode = async () => {
     const normalizedEmail = email.trim().toLowerCase();
     if (checkingAccount) {
-      setError("Aegis is still checking whether you are already signed in.");
+      setError("One moment, then try again.");
       return;
     }
     if (!isValidEmail(normalizedEmail)) {
@@ -249,7 +249,7 @@ export function EmailAuthCard() {
   const submitVerificationCode = async () => {
     const normalizedCode = code.trim();
     if (checkingAccount) {
-      setError("Aegis is still checking whether you are already signed in.");
+      setError("One moment, then try again.");
       return;
     }
     if (!codeChallenge) {
@@ -350,7 +350,7 @@ export function EmailAuthCard() {
                 ? "Enter the code we emailed you"
                 : mode === "finishing"
                   ? "Setting up your account..."
-                  : "Opening Aegis..."}
+                  : "Ready"}
           </span>
         </div>
       </BrutalCardHeader>
@@ -572,7 +572,7 @@ export function EmailAuthCard() {
         {mode === "done" && (
           <div className="mt-2 flex items-center gap-2 font-mono text-xs text-accent-agent">
             <CheckCircle2 className="h-4 w-4" />
-            Opening Aegis...
+            Taking you in...
           </div>
         )}
       </BrutalCardBody>
