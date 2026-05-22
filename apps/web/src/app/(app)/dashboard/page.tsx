@@ -39,15 +39,14 @@ export default function DashboardIndex() {
             Restoring your workspace
           </h1>
           <p className="mt-2 text-xs font-mono text-text-lo leading-relaxed">
-            Aegis is checking your wallet session and loading portfolios. If
-            this does not move after a few seconds, continue again with the same
-            email.
+            Loading your portfolios. If this takes more than a few seconds, sign
+            in again.
           </p>
           <Link
             href="/login"
             className="mt-4 inline-flex px-3 py-1.5 border-2 border-accent-agent bg-accent-agent text-black text-xs font-semibold"
           >
-            Continue
+            Sign in again
           </Link>
         </div>
       </div>
@@ -61,8 +60,7 @@ export default function DashboardIndex() {
           Portfolio setup needed
         </h1>
         <p className="mt-2 text-xs font-mono text-text-lo leading-relaxed">
-          Your wallet session is active, but no portfolio is attached yet.
-          Create a target allocation to unlock the dashboard.
+          Create your first portfolio to open the dashboard.
         </p>
         <Link
           href="/onboarding"

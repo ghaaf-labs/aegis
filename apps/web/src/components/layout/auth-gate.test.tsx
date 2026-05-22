@@ -50,7 +50,9 @@ describe("<AuthGate />", () => {
 
     expect(container.textContent).not.toContain("wallet data");
     expect(container.textContent).not.toContain("Continue with email");
-    expect(routerReplace).toHaveBeenCalledWith("/login?next=%2Fwallets");
+    expect(routerReplace).toHaveBeenCalledWith(
+      "/login?next=%2Fwallets&reason=session_required",
+    );
 
     act(() => root.unmount());
   });

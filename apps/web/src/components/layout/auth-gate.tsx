@@ -67,7 +67,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     if (isPublic(pathname) || authState.kind === "checking") return;
 
     if (authState.kind === "signed_out") {
-      router.replace(authHref("/login", pathname));
+      router.replace(authHref("/login", pathname, "session_required"));
       return;
     }
 
@@ -91,7 +91,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     }
 
     if (authState.kind === "ready" && !sessionActive) {
-      router.replace(authHref("/login", pathname));
+      router.replace(authHref("/login", pathname, "session_required"));
     }
   }, [
     authState.kind,
@@ -139,10 +139,11 @@ function requiresPortfolio(pathname: string) {
   );
 }
 
-function authHref(path: "/login", next: string) {
+function authHref(path: "/login", next: string, reason: string) {
   const params = new URLSearchParams();
   const safeNext = safeNextPath(next);
   if (safeNext) params.set("next", safeNext);
+  params.set("reason", reason);
   const query = params.toString();
   return query ? `${path}?${query}` : path;
 }
