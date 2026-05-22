@@ -227,7 +227,7 @@ export default function SettingsIndex() {
       href: "/tax-center",
       icon: Receipt,
       title: "Tax center",
-      description: "Portfolio-level FIFO CSVs + accountant share links",
+      description: "Download reports and share them with your accountant",
     },
     {
       href: "/help",

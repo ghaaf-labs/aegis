@@ -124,7 +124,7 @@ const BASE_NAV_SECTIONS: NavSection[] = [
         href: "/tax-center",
         icon: ReceiptText,
         label: "Tax center",
-        description: "CSV and accountant links",
+        description: "reports and sharing",
         match: ["/settings/tax"],
       },
       {

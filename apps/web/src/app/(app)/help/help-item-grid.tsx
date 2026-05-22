@@ -46,7 +46,7 @@ const HELP_ITEMS: HelpItem[] = [
     href: "/tax-center",
     icon: ReceiptText,
     title: "How do tax exports work?",
-    body: "Tax center exports settled transaction rows and signed accountant links with clear caveats.",
+    body: "Tax center downloads settled activity and creates temporary accountant links.",
     cta: "Open tax center",
   },
 ];

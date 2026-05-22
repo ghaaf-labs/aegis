@@ -149,16 +149,17 @@ export default function TaxSettingsPage() {
           Tax center
         </h1>
         <p className="text-sm text-text-lo mt-1">
-          Accountant CSV aligned to 1099-DA fields, generated per portfolio from
-          real settled Aegis moves. Stablecoin↔stablecoin swaps are included
-          when the executor recorded a real transaction reference.
+          Download a tax-ready report for settled Aegis moves, or create a
+          temporary link for your accountant.
         </p>
       </div>
 
       <BrutalCard>
         <BrutalCardHeader>
-          <span className="text-sm font-mono text-text-hi">Download CSV</span>
-          <BrutalPill tone="pnl">1099-DA CSV</BrutalPill>
+          <span className="text-sm font-mono text-text-hi">
+            Download tax report
+          </span>
+          <BrutalPill tone="pnl">Settled moves only</BrutalPill>
         </BrutalCardHeader>
         <BrutalCardBody className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -216,17 +217,17 @@ export default function TaxSettingsPage() {
                       </span>
                     </span>
                     <span className="text-text-lo">
-                      {w.lotCount} lots ·{" "}
+                      {w.lotCount} records ·{" "}
                       {w.lastSyncedAt
                         ? new Date(w.lastSyncedAt).toLocaleDateString()
-                        : "no sync"}
+                        : "not synced yet"}
                     </span>
                   </li>
                 ))}
               </ul>
               <p className="text-[10px] text-text-mut leading-relaxed">
-                Wallets are listed for accountant reconciliation and coverage
-                checks.
+                Wallets are shown so your accountant can match the report to
+                on-chain addresses.
               </p>
             </div>
           )}
@@ -235,9 +236,9 @@ export default function TaxSettingsPage() {
             <div className="flex items-start gap-2">
               <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-accent-agent" />
               <p>
-                Basis is calculated at portfolio level with FIFO where Aegis has
-                cost-basis lots. Wallet addresses are shown for reconciliation;
-                this version does not split basis by wallet or chain.
+                The report includes settled rows Aegis can verify. Keep your
+                wallet addresses visible here so your accountant can reconcile
+                anything outside Aegis.
               </p>
             </div>
           </div>
@@ -247,7 +248,7 @@ export default function TaxSettingsPage() {
             onClick={onDownloadClick}
             disabled={!portfolioId || downloading}
           >
-            {downloading ? "Preparing…" : "Review & download CSV"}
+            {downloading ? "Preparing…" : "Review & download report"}
           </BrutalButton>
 
           {mockExcluded !== null && mockExcluded > 0 ? (
@@ -272,28 +273,26 @@ export default function TaxSettingsPage() {
                 id="tax-confirm-title"
                 className="text-sm font-mono text-text-hi"
               >
-                Confirm tax export
+                Review tax report
               </span>
             </BrutalCardHeader>
             <BrutalCardBody className="space-y-3 text-xs text-text-lo">
               <p>
-                This CSV covers{" "}
+                This report covers{" "}
                 <span className="text-text-hi font-mono">
                   {summary?.wallets.length ?? 0} wallets
                 </span>{" "}
                 and{" "}
                 <span className="text-text-hi font-mono">
-                  {summary?.totalLotCount ?? 0} lots
+                  {summary?.totalLotCount ?? 0} records
                 </span>{" "}
-                across portfolio {portfolioId.slice(0, 8)}… for year {year}. It
-                uses portfolio-level FIFO basis and includes wallet addresses
-                for accountant reconciliation. It does not split basis by wallet
-                or chain.
+                across portfolio {portfolioId.slice(0, 8)}… for {year}. Wallet
+                addresses are included so your accountant can reconcile
+                activity.
               </p>
               <p>
-                The export only includes settled rows with transaction
-                references; non-real or unfinished execution rows are excluded
-                and reported after download.
+                Only settled moves with a transaction reference are included.
+                Unfinished rows are left out and reported after download.
               </p>
               <div className="flex gap-2 justify-end pt-2">
                 <BrutalButton
@@ -320,12 +319,12 @@ export default function TaxSettingsPage() {
           <span className="text-sm font-mono text-text-hi">
             Share with accountant
           </span>
-          <BrutalPill tone="agent">signed CSV · {TTL_DEFAULT_DAYS}d</BrutalPill>
+          <BrutalPill tone="agent">{TTL_DEFAULT_DAYS} day link</BrutalPill>
         </BrutalCardHeader>
         <BrutalCardBody className="space-y-4">
           <p className="text-xs text-text-lo">
-            Create a revocable read-only URL that downloads this portfolio and
-            year as a CSV without exposing the rest of your Aegis session.
+            Create a revocable read-only link for this portfolio and year. It
+            does not expose the rest of your Aegis account.
           </p>
           <BrutalButton
             variant="agent"
