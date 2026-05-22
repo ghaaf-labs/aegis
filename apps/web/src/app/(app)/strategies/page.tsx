@@ -180,7 +180,7 @@ function StrategyAdoptionSvg() {
 
   return (
     <svg
-      viewBox="0 0 280 104"
+      viewBox="0 0 280 88"
       role="img"
       aria-label="Strategy adoption creates a portfolio before any USDC deployment"
       className="h-auto w-full border border-border-default bg-bg"
@@ -195,7 +195,7 @@ function StrategyAdoptionSvg() {
           <path d="M14 0H0V14" fill="none" stroke="#242424" strokeWidth="1" />
         </pattern>
       </defs>
-      <rect width="280" height="104" fill="url(#strategy-adoption-grid)" />
+      <rect width="280" height="88" fill="url(#strategy-adoption-grid)" />
       <path
         d="M70 48H102M160 48H196"
         fill="none"
@@ -235,9 +235,6 @@ function StrategyAdoptionSvg() {
           </text>
         </g>
       ))}
-      <text x="24" y="94" fontFamily="monospace" fontSize="9" fill="#8A8A8A">
-        {"selected card -> draft -> approval gate"}
-      </text>
     </svg>
   );
 }
