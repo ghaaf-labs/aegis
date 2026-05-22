@@ -45,6 +45,9 @@ interface PortfolioState {
   perChainUsdc: Record<string, number>;
   /** EURC per chain — same key set as perChainUsdc. */
   perChainEurc: Record<string, number>;
+  /** Whether the latest Circle Gateway balance fetch is known-good. */
+  gatewayBalanceStatus: "idle" | "loading" | "ready" | "error";
+  gatewayBalanceError: string | null;
   /** Most-recent strategist tool invocations (capped at 20). */
   toolInvocations: AgentToolInvoked[];
   /** Most-recent abstain events (capped at 10). */
@@ -77,6 +80,10 @@ interface PortfolioState {
     usdc: Record<string, number>,
     eurc: Record<string, number>,
   ) => void;
+  setGatewayBalanceStatus: (
+    status: "idle" | "loading" | "ready" | "error",
+    error?: string | null,
+  ) => void;
   setWallet: (w: WalletInfo | null) => void;
   setIsRebalancing: (v: boolean) => void;
   selectDecision: (id: string | null) => void;
@@ -98,6 +105,8 @@ const DEFAULT_REGIME: RegimeState = {
   classifiedAt: null,
 };
 
+const ACTIVE_PORTFOLIO_KEY = "aegis.active_portfolio_id";
+
 export const usePortfolioStore = create<PortfolioState>()(
   devtools(
     (set) => ({
@@ -116,6 +125,8 @@ export const usePortfolioStore = create<PortfolioState>()(
       unifiedEurc: 0,
       perChainUsdc: {},
       perChainEurc: {},
+      gatewayBalanceStatus: "idle",
+      gatewayBalanceError: null,
       toolInvocations: [],
       abstains: [],
       rebalanceStatuses: {},
@@ -124,12 +135,19 @@ export const usePortfolioStore = create<PortfolioState>()(
       sessionActive: false,
 
       setPortfolios: (portfolios) =>
-        set((state) => ({
-          portfolios,
-          portfoliosLoaded: true,
-          activePortfolioId:
-            state.activePortfolioId ?? portfolios[0]?.id ?? null,
-        })),
+        set((state) => {
+          const preferred =
+            state.activePortfolioId ?? loadStoredActivePortfolioId();
+          const activePortfolioId = portfolios.some((p) => p.id === preferred)
+            ? preferred
+            : (portfolios[0]?.id ?? null);
+          saveStoredActivePortfolioId(activePortfolioId);
+          return {
+            portfolios,
+            portfoliosLoaded: true,
+            activePortfolioId,
+          };
+        }),
       setPortfoliosLoaded: (portfoliosLoaded) => set({ portfoliosLoaded }),
       patchPortfolio: (id, patch) =>
         set((state) => ({
@@ -138,14 +156,20 @@ export const usePortfolioStore = create<PortfolioState>()(
           ),
         })),
       addPortfolio: (portfolio) =>
-        set((state) => ({
-          portfolios: [
-            ...state.portfolios.filter((p) => p.id !== portfolio.id),
-            portfolio,
-          ],
-          activePortfolioId: portfolio.id,
-        })),
-      setActivePortfolio: (activePortfolioId) => set({ activePortfolioId }),
+        set((state) => {
+          saveStoredActivePortfolioId(portfolio.id);
+          return {
+            portfolios: [
+              ...state.portfolios.filter((p) => p.id !== portfolio.id),
+              portfolio,
+            ],
+            activePortfolioId: portfolio.id,
+          };
+        }),
+      setActivePortfolio: (activePortfolioId) => {
+        saveStoredActivePortfolioId(activePortfolioId);
+        set({ activePortfolioId });
+      },
       setDecisions: (decisions) => set({ decisions }),
       addDecision: (decision) =>
         set((state) => ({
@@ -165,6 +189,14 @@ export const usePortfolioStore = create<PortfolioState>()(
       setUnifiedEurc: (unifiedEurc) => set({ unifiedEurc }),
       setPerChain: (perChainUsdc, perChainEurc) =>
         set({ perChainUsdc, perChainEurc }),
+      setGatewayBalanceStatus: (gatewayBalanceStatus, gatewayBalanceError) =>
+        set({
+          gatewayBalanceStatus,
+          gatewayBalanceError:
+            gatewayBalanceStatus === "error"
+              ? (gatewayBalanceError ?? "Gateway balance unavailable")
+              : null,
+        }),
       setWallet: (wallet) => set({ wallet }),
       setIsRebalancing: (isRebalancing) => set({ isRebalancing }),
       selectDecision: (selectedDecisionId) => set({ selectedDecisionId }),
@@ -190,7 +222,8 @@ export const usePortfolioStore = create<PortfolioState>()(
         })),
       setAgentPausedAt: (agentPausedAt) => set({ agentPausedAt }),
       setSessionActive: (sessionActive) => set({ sessionActive }),
-      resetSession: () =>
+      resetSession: () => {
+        saveStoredActivePortfolioId(null);
         set({
           portfolios: [],
           portfoliosLoaded: false,
@@ -201,6 +234,8 @@ export const usePortfolioStore = create<PortfolioState>()(
           unifiedEurc: 0,
           perChainUsdc: {},
           perChainEurc: {},
+          gatewayBalanceStatus: "idle",
+          gatewayBalanceError: null,
           isRebalancing: false,
           selectedDecisionId: null,
           sseConnected: false,
@@ -210,7 +245,8 @@ export const usePortfolioStore = create<PortfolioState>()(
           pegAlerts: [],
           agentPausedAt: null,
           sessionActive: false,
-        }),
+        });
+      },
     }),
     { name: "aegis-portfolio" },
   ),
@@ -221,4 +257,18 @@ export function useActivePortfolio(): Portfolio | null {
   const portfolios = usePortfolioStore((s) => s.portfolios);
   const active = usePortfolioStore((s) => s.activePortfolioId);
   return portfolios.find((p) => p.id === active) ?? null;
+}
+
+function loadStoredActivePortfolioId(): PortfolioId | null {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem(ACTIVE_PORTFOLIO_KEY);
+}
+
+function saveStoredActivePortfolioId(id: PortfolioId | null) {
+  if (typeof window === "undefined") return;
+  if (id) {
+    window.localStorage.setItem(ACTIVE_PORTFOLIO_KEY, id);
+  } else {
+    window.localStorage.removeItem(ACTIVE_PORTFOLIO_KEY);
+  }
 }

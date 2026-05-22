@@ -1,9 +1,17 @@
 import { type Page, expect } from "@playwright/test";
 
+export const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+export const WEB_BASE =
+  process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
+const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME ?? "aegis_jwt";
+
 const TEST_JWT =
   process.env.PLAYWRIGHT_TEST_JWT ??
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0LXVzZXIiLCJpYXQiOjE3MDAwMDAwMDB9.fake-sig-for-testing";
 
+/** Legacy-only helper used by the negative auth-gate test. A localStorage JWT
+ * must never authenticate the app. */
 export async function injectTestJwt(page: Page, jwt = TEST_JWT) {
   await page.addInitScript((token) => {
     localStorage.setItem("aegis.jwt", token);
@@ -21,4 +29,106 @@ export async function waitForDashboard(page: Page) {
   await expect(page.locator('[data-testid="portfolio-summary"]')).toBeVisible({
     timeout: 10_000,
   });
+}
+
+export interface VerifiedAccount {
+  email: string;
+  token: string;
+}
+
+export function authCookie(token: string) {
+  const host = new URL(WEB_BASE).hostname;
+  return {
+    name: SESSION_COOKIE_NAME,
+    value: token,
+    domain: host,
+    path: "/",
+    expires: Math.floor(Date.now() / 1000) + 60 * 60,
+    httpOnly: true,
+    secure: WEB_BASE.startsWith("https://"),
+    sameSite: "Lax" as const,
+  };
+}
+
+export function storageStateForToken(token: string) {
+  return {
+    cookies: [authCookie(token)],
+    origins: [],
+  };
+}
+
+export async function createVerifiedAccount(
+  email: string,
+): Promise<VerifiedAccount> {
+  return completeWalletAuth(email, "signup");
+}
+
+export async function loginVerifiedAccount(
+  email: string,
+): Promise<VerifiedAccount> {
+  return completeWalletAuth(email, "login");
+}
+
+export async function requireDevCodes() {
+  const readiness = await fetch(`${API_BASE}/auth/wallet/readiness`);
+  if (!readiness.ok) return false;
+  const body = (await readiness.json()) as { devCodesEnabled: boolean };
+  return body.devCodesEnabled;
+}
+
+async function completeWalletAuth(
+  email: string,
+  intent: "signup" | "login",
+): Promise<VerifiedAccount> {
+  const codeRes = await fetch(`${API_BASE}/auth/wallet/code`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, intent }),
+  });
+  if (!codeRes.ok) {
+    throw new Error(
+      `auth code failed: ${codeRes.status} ${await codeRes.text()}`,
+    );
+  }
+  const challenge = (await codeRes.json()) as {
+    challengeId: string;
+    email: string;
+    devCode?: string;
+  };
+  if (!challenge.devCode) {
+    throw new Error("e2e auth requires MOCK_CIRCLE dev verification codes");
+  }
+
+  const finishRes = await fetch(
+    `${API_BASE}/auth/wallet/${intent === "signup" ? "create" : "login"}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: challenge.email,
+        challengeId: challenge.challengeId,
+        code: challenge.devCode,
+      }),
+    },
+  );
+  if (!finishRes.ok) {
+    throw new Error(
+      `auth ${intent} failed: ${finishRes.status} ${await finishRes.text()}`,
+    );
+  }
+  return {
+    email: challenge.email,
+    token: sessionTokenFrom(finishRes),
+  };
+}
+
+function sessionTokenFrom(response: Response) {
+  const setCookie = response.headers.get("set-cookie") ?? "";
+  const match = setCookie.match(
+    new RegExp(`${SESSION_COOKIE_NAME}=([^;]+)`, "i"),
+  );
+  if (!match?.[1]) {
+    throw new Error("auth response did not set the session cookie");
+  }
+  return match[1];
 }

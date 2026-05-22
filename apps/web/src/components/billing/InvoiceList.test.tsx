@@ -69,7 +69,7 @@ describe("<InvoiceList />", () => {
   it("links paid invoices to the Arc explorer", () => {
     const html = renderToStaticMarkup(<InvoiceList invoices={INVOICES} />);
     expect(html).toContain(
-      "https://explorer-sandbox.arc.network/tx/0xdeadbeef1234567890abcdef",
+      "https://testnet.arcscan.app/tx/0xdeadbeef1234567890abcdef",
     );
   });
 });

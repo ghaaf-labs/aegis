@@ -8,6 +8,7 @@ import {
   type PillTone,
 } from "@aegis/ui";
 import type { Invoice, InvoiceStatus } from "@/types";
+import { explorerTxUrl } from "@/lib/explorers";
 
 const STATUS_TONE: Record<InvoiceStatus, PillTone> = {
   paid: "pnl",
@@ -23,12 +24,6 @@ function formatPeriod(start: string, end: string): string {
   const fmt = (d: Date) =>
     d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   return `${fmt(s)} – ${fmt(e)}, ${e.getUTCFullYear()}`;
-}
-
-function arcExplorerUrl(txHash: string): string {
-  // Arc explorer is keyed off the same tx-hash pattern as Base; the public
-  // sandbox URL is `https://explorer-sandbox.arc.network/tx/<hash>`.
-  return `https://explorer-sandbox.arc.network/tx/${txHash}`;
 }
 
 export interface InvoiceListProps {
@@ -108,7 +103,7 @@ export function InvoiceList({
                 <td className="px-4 py-2">
                   {inv.paidTxHash ? (
                     <a
-                      href={arcExplorerUrl(inv.paidTxHash)}
+                      href={explorerTxUrl("arc", inv.paidTxHash) ?? "#"}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-accent-pnl hover:text-accent-pnl/60 underline-offset-2 hover:underline"

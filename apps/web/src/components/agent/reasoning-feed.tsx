@@ -139,6 +139,7 @@ export function AgentReasoningFeed() {
           decisions={decisions}
           currentState={{
             idleUsdc: unifiedUsdc,
+            investedUsd: portfolio?.totalValueUsd ?? 0,
           }}
         />
       </CardContent>
@@ -148,6 +149,7 @@ export function AgentReasoningFeed() {
 
 interface CurrentDecisionState {
   idleUsdc: number;
+  investedUsd: number;
 }
 
 type DecisionView = "current" | "audit";
@@ -322,7 +324,7 @@ function DecisionViewButton({
 function groupRepeatedDecisions(decisions: AgentDecision[]) {
   const out: Array<{ head: AgentDecision; repeats: number }> = [];
   const noTradeShape = (d: AgentDecision) =>
-    (d.recommendation.trades?.length ?? 0) === 0;
+    (d.recommendation?.trades?.length ?? 0) === 0;
   for (const d of decisions) {
     const shape = noTradeShape(d) ? "no-trade-hold" : `trades:${d.id}`;
     const last = out[out.length - 1];
@@ -408,16 +410,17 @@ function DecisionRow({
   index: number;
   currentState: CurrentDecisionState;
 }) {
-  const trigger: AgentTrigger = decision.triggeredBy;
+  const trigger = knownTrigger(decision.triggeredBy);
   const triggerVariant = TRIGGER_VARIANTS[trigger] ?? "secondary";
   const triggerLabel = TRIGGER_LABELS[trigger] ?? trigger;
-  const regime = decision.regime;
+  const regime = knownRegime(decision.regime);
   const verdict = decision.criticVerdict;
   const blocked = isCriticBlocked(decision);
   const legacyLocal = isLegacyLocalDecision(decision);
   const outdated = isOutdatedForCurrentState(decision, currentState);
-  const trades = decision.recommendation.trades ?? [];
+  const trades = decision.recommendation?.trades ?? [];
   const expectedCashNeeded = decisionExpectedCashNeeded(decision);
+  const snapshotMismatch = decisionSnapshotMismatch(decision, currentState);
 
   return (
     <motion.div
@@ -478,7 +481,7 @@ function DecisionRow({
           blocked || legacyLocal || outdated ? "text-text-lo" : "text-text-hi"
         }`}
       >
-        {decision.recommendation.summary}
+        {decision.recommendation?.summary ?? "Decision needs review"}
       </p>
       {blocked && (
         <p className="mb-2 text-[10px] font-mono text-risk">
@@ -494,31 +497,28 @@ function DecisionRow({
       )}
       {outdated && (
         <p className="mb-2 text-[10px] font-mono text-warn">
-          Historical proposal. It expects roughly{" "}
-          {formatCurrency(expectedCashNeeded)} deployable USDC, but current idle
-          USDC is {formatCurrency(currentState.idleUsdc)}. Build a fresh review
-          plan before acting.
+          {snapshotMismatch
+            ? `Historical proposal. It was built from ${formatCurrency(snapshotMismatch.portfolioValueUsd)} positions and ${formatCurrency(snapshotMismatch.idleUsdc)} idle USDC; current state is ${formatCurrency(currentState.investedUsd)} positions and ${formatCurrency(currentState.idleUsdc)} idle USDC.`
+            : `Historical proposal. It expects roughly ${formatCurrency(expectedCashNeeded)} deployable USDC, but current idle USDC is ${formatCurrency(currentState.idleUsdc)}.`}{" "}
+          Build a fresh review plan before acting.
         </p>
       )}
 
       <p className="text-[11px] text-text-mut leading-relaxed line-clamp-3">
-        {decision.reasoning}
+        {decision.reasoning || "No reasoning was returned with this decision."}
       </p>
 
       {trades.length > 0 && (
         <div className="mt-3 space-y-1.5">
           {trades.map((trade, ti) => {
-            const rawAction = (trade as { action?: unknown }).action;
-            const action =
-              rawAction === "buy" || rawAction === "sell"
-                ? rawAction
-                : "review";
+            const action = normalizedTradeAction(trade);
+            const valueUsd = tradeValueUsd(trade);
             return (
               <div
                 // Real agent output doesn't always carry assetId/action —
                 // fall back to symbol+index for a stable, unique key and keep
                 // malformed historical rows from crashing the dashboard.
-                key={`${decision.id}-${trade.symbol ?? "x"}-${ti}`}
+                key={`${decision.id}-${tradeSymbol(trade)}-${ti}`}
                 className="flex items-center gap-2 text-[11px]"
               >
                 <span
@@ -533,10 +533,15 @@ function DecisionRow({
                   {action.toUpperCase()}
                 </span>
                 <span className="font-mono text-text-hi">
-                  {trade.symbol ?? "UNKNOWN"}
+                  {tradeSymbol(trade)}
                 </span>
+                {valueUsd != null && (
+                  <span className="font-mono text-text-lo tabular-nums">
+                    {formatCurrency(valueUsd)}
+                  </span>
+                )}
                 <span className="text-text-mut truncate">
-                  {trade.reason ?? "Malformed historical trade row"}
+                  {tradeReason(trade)}
                 </span>
               </div>
             );
@@ -562,7 +567,7 @@ function isCriticBlocked(decision: AgentDecision) {
 }
 
 function isLegacyLocalDecision(decision: AgentDecision) {
-  const haystack = `${decision.recommendation.summary} ${decision.reasoning}`;
+  const haystack = `${decision.recommendation?.summary ?? ""} ${decision.reasoning ?? ""}`;
   return /mock decision|local\/demo|demo mock mode/i.test(haystack);
 }
 
@@ -585,7 +590,7 @@ function isOutdatedForCurrentState(
     return false;
   }
 
-  const text = `${decision.recommendation.summary} ${decision.reasoning}`;
+  const text = `${decision.recommendation?.summary ?? ""} ${decision.reasoning ?? ""}`;
   const mentionsCashDeployment = /\b(idle|deploy|cash|usdc|wallet)\b/i.test(
     text,
   );
@@ -593,21 +598,58 @@ function isOutdatedForCurrentState(
 
   const netExternalCashNeeded = decisionExpectedCashNeeded(decision);
   const hasMeaningfulTrade = netExternalCashNeeded > 1;
+  const deterministicSnapshotMismatch = !!decisionSnapshotMismatch(
+    decision,
+    currentState,
+  );
 
   return (
-    hasMeaningfulTrade && netExternalCashNeeded > currentState.idleUsdc + 0.5
+    deterministicSnapshotMismatch ||
+    (hasMeaningfulTrade && netExternalCashNeeded > currentState.idleUsdc + 0.5)
   );
+}
+
+function decisionSnapshotMismatch(
+  decision: AgentDecision,
+  currentState: CurrentDecisionState,
+) {
+  const snapshot = decision.snapshot ?? {};
+  if (snapshot.planner !== "deterministic") return null;
+  const investedValueUsd = deterministicSnapshotInvestedUsd(snapshot);
+  const idleUsdc = Number(snapshot.idleUsdc);
+  const portfolioMismatch =
+    Number.isFinite(investedValueUsd) &&
+    Math.abs(investedValueUsd - currentState.investedUsd) > 0.5;
+  const idleMismatch =
+    Number.isFinite(idleUsdc) &&
+    Math.abs(idleUsdc - currentState.idleUsdc) > 0.5;
+  if (!portfolioMismatch && !idleMismatch) return null;
+  return {
+    portfolioValueUsd: Number.isFinite(investedValueUsd) ? investedValueUsd : 0,
+    idleUsdc: Number.isFinite(idleUsdc) ? idleUsdc : 0,
+  };
+}
+
+function deterministicSnapshotInvestedUsd(snapshot: Record<string, unknown>) {
+  const explicit = Number(snapshot.investedValueUsd);
+  if (Number.isFinite(explicit)) return explicit;
+  const planValue = Number(snapshot.planValueUsd ?? snapshot.portfolioValueUsd);
+  const idleUsdc = Number(snapshot.idleUsdc);
+  if (Number.isFinite(planValue) && Number.isFinite(idleUsdc)) {
+    return Math.max(0, planValue - idleUsdc);
+  }
+  return Number(snapshot.portfolioValueUsd);
 }
 
 function decisionTradeTotals(decision: AgentDecision) {
   let buyUsd = 0;
   let sellUsd = 0;
 
-  for (const trade of decision.recommendation.trades ?? []) {
-    const valueUsd = Number((trade as { valueUsd?: unknown }).valueUsd);
-    if (!Number.isFinite(valueUsd) || valueUsd <= 0) continue;
+  for (const trade of decision.recommendation?.trades ?? []) {
+    const valueUsd = tradeValueUsd(trade);
+    if (valueUsd == null || valueUsd <= 0) continue;
 
-    const action = (trade as { action?: unknown }).action;
+    const action = normalizedTradeAction(trade);
     if (action === "buy") buyUsd += valueUsd;
     if (action === "sell") sellUsd += valueUsd;
   }
@@ -620,7 +662,7 @@ function decisionExpectedCashNeeded(decision: AgentDecision) {
   const structuredNeed = Math.max(0, buyUsd - sellUsd);
   if (structuredNeed > 0) return structuredNeed;
 
-  const text = `${decision.recommendation.summary} ${decision.reasoning}`;
+  const text = `${decision.recommendation?.summary ?? ""} ${decision.reasoning ?? ""}`;
   const targeted =
     text.match(
       /\b(?:deploy|invest|park|purchase|buy)\b[^.]{0,80}\$([0-9][0-9,]*(?:\.[0-9]+)?)/i,
@@ -634,8 +676,39 @@ function decisionExpectedCashNeeded(decision: AgentDecision) {
   return 0;
 }
 
+type TradeLike = {
+  action?: unknown;
+  symbol?: unknown;
+  reason?: unknown;
+  valueUsd?: unknown;
+  usdValue?: unknown;
+};
+
+function normalizedTradeAction(trade: TradeLike) {
+  const action = trade.action;
+  return action === "buy" || action === "sell" ? action : "review";
+}
+
+function tradeSymbol(trade: TradeLike) {
+  return typeof trade.symbol === "string" && trade.symbol.trim()
+    ? trade.symbol.trim().toUpperCase()
+    : "UNKNOWN";
+}
+
+function tradeReason(trade: TradeLike) {
+  return typeof trade.reason === "string" && trade.reason.trim()
+    ? trade.reason
+    : "Malformed historical trade row";
+}
+
+function tradeValueUsd(trade: TradeLike) {
+  const raw = trade.valueUsd ?? trade.usdValue;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
 function ConfidencePill({ confidence }: { confidence: number }) {
-  const pct = Math.round(confidence * 100);
+  const pct = Math.round(safeConfidence(confidence) * 100);
   const tone =
     pct >= 75 ? "text-accent-agent" : pct >= 50 ? "text-warn" : "text-text-lo";
   return (
@@ -649,6 +722,24 @@ function ConfidencePill({ confidence }: { confidence: number }) {
       </span>
     </div>
   );
+}
+
+function knownTrigger(value: unknown): AgentTrigger {
+  return typeof value === "string" && value in TRIGGER_LABELS
+    ? (value as AgentTrigger)
+    : "user_request";
+}
+
+function knownRegime(value: unknown): MarketRegime | null {
+  return typeof value === "string" && value in REGIME_LABEL
+    ? (value as MarketRegime)
+    : null;
+}
+
+function safeConfidence(value: unknown) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.min(1, Math.max(0, n));
 }
 
 function CriticLine({ verdict }: { verdict: CriticVerdict }) {

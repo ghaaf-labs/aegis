@@ -1,4 +1,9 @@
 import { test, expect } from "@playwright/test";
+import {
+  authCookie,
+  createVerifiedAccount,
+  requireDevCodes,
+} from "./helpers/auth";
 
 // S-series — signup form surface + goal wizard. Requires the Rust API
 // with MOCK_CIRCLE=true. These tests use a fresh (unauthenticated) browser
@@ -14,23 +19,23 @@ test("S1 — signup page renders email input and submit button", async ({
   await page.goto("/signup");
   await expect(page.locator('input[type="email"]')).toBeVisible();
   await expect(
-    page.getByRole("button", { name: /Create wallet|Continue|Sign up/i }),
+    page.getByRole("button", {
+      name: /Create wallet|Continue|Sign up|Signup email unavailable/i,
+    }),
   ).toBeVisible();
 });
 
 test("S3 — goal wizard step 1 renders name input and Next button", async ({
   page,
 }) => {
-  // The onboarding page mounts the GoalWizard — visit it with a JWT so the
-  // auth gate doesn't block, but without a portfolio so the wizard shows.
-  // Pass the JWT value outside the callback; process.env is not available
-  // inside the serialized browser script.
-  const jwt =
-    process.env.PLAYWRIGHT_TEST_JWT ??
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0LXVzZXIiLCJpYXQiOjE3MDAwMDAwMDB9.fake-sig-for-testing";
-  await page.addInitScript((token) => {
-    localStorage.setItem("aegis.jwt", token);
-  }, jwt);
+  if (!(await requireDevCodes())) {
+    test.skip(true, "onboarding e2e account setup requires mock dev codes");
+  }
+  // The onboarding page mounts the GoalWizard. Use a real verified cookie
+  // session, but do not seed a portfolio so the wizard remains visible.
+  const email = `onboarding-${Date.now()}-${Math.random().toString(16).slice(2)}@aegis.local`;
+  const { token } = await createVerifiedAccount(email);
+  await page.context().addCookies([authCookie(token)]);
   await page.goto("/onboarding");
   await expect(page.locator('[data-testid="goal-wizard-step-1"]')).toBeVisible({
     timeout: 10_000,
@@ -41,6 +46,11 @@ test("S3 — goal wizard step 1 renders name input and Next button", async ({
 // S4 and S5 need the real storageState from global-setup (a seeded API user).
 test.describe("goal wizard steps 4+ (authed)", () => {
   test.use({ storageState: "./e2e/.auth/user.json" });
+  test.beforeEach(async () => {
+    if (!(await requireDevCodes())) {
+      test.skip(true, "authed onboarding e2e requires mock dev codes");
+    }
+  });
 
   test("S4 — goal wizard step 4 renders after navigating through steps 1-3", async ({
     page,

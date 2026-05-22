@@ -218,14 +218,11 @@ impl<'a> CctpClient<'a> {
             ChainKey::Base => &self.config.base_rpc_url,
         };
 
-        let provider = ProviderBuilder::new()
-            .with_recommended_fillers()
-            .wallet(wallet)
-            .on_http(
-                rpc_url
-                    .parse()
-                    .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
-            );
+        let provider = ProviderBuilder::new().wallet(wallet).connect_http(
+            rpc_url
+                .parse()
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
+        );
 
         // Choose addresses based on source chain
         let (token_messenger, usdc, executor_on_dest) = match src {
@@ -281,7 +278,6 @@ impl<'a> CctpClient<'a> {
             .allowance(signer_addr, token_messenger)
             .call()
             .await
-            .map(|r| r._0)
             .unwrap_or(U256::ZERO);
         if current_allowance < approve_amount {
             let _approve_receipt = usdc_token
@@ -400,14 +396,11 @@ impl<'a> CctpClient<'a> {
             ChainKey::Base => &self.config.base_rpc_url,
         };
 
-        let provider = ProviderBuilder::new()
-            .with_recommended_fillers()
-            .wallet(wallet)
-            .on_http(
-                rpc_url
-                    .parse()
-                    .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
-            );
+        let provider = ProviderBuilder::new().wallet(wallet).connect_http(
+            rpc_url
+                .parse()
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
+        );
 
         let transmitter: Address = match dest {
             ChainKey::Arc => self

@@ -75,8 +75,15 @@ pub async fn create(
     Path(portfolio_id): Path<Uuid>,
 ) -> Result<Json<PlanResponse>> {
     own_portfolio_or_404(&state, claims.sub, portfolio_id).await?;
+    ensure_rebalance_wallet_ready(&state, claims.sub).await?;
     let input = build_plan_input(&state, portfolio_id).await?;
     let legs = plan_legs(&input);
+    if legs.is_empty() {
+        return Err(AppError::Conflict(noop_plan_message(&input)));
+    }
+    if let Some(existing) = reusable_planned_rebalance(&state, portfolio_id, &legs).await? {
+        return Ok(Json(existing));
+    }
     // Plan creation is an execution-control path, not a model-chat path. It
     // must stay fast in real mode so users can reach the approval screen even
     // when OpenRouter is slow. The separate /agent/analyze endpoint still runs
@@ -114,6 +121,7 @@ pub async fn execute(
 ) -> Result<StatusCode> {
     let _ = body; // body fields are reserved; accept missing/empty body gracefully
     own_rebalance_or_404(&state, claims.sub, rebalance_id).await?;
+    ensure_rebalance_wallet_ready(&state, claims.sub).await?;
     let safety = approval_safety(&state, rebalance_id).await?;
     if !safety.approvable {
         return Err(AppError::Conflict(safety.message));
@@ -172,12 +180,32 @@ pub struct RebalanceDetail {
     pub legs: Vec<LegView>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RebalanceHistoryView {
+    #[serde(flatten)]
+    pub plan: RebalanceView,
+    pub execution_mode: String,
+    pub approval_safety: ApprovalSafety,
+    pub total_amount_usdc: f64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApprovalSafety {
     pub approvable: bool,
     pub code: String,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub missing_capabilities: Option<Vec<MissingCapability>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MissingCapability {
+    pub code: String,
+    pub label: String,
+    pub detail: String,
 }
 
 pub async fn get(
@@ -235,7 +263,7 @@ pub async fn history(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
     Path(portfolio_id): Path<Uuid>,
-) -> Result<Json<Vec<RebalanceView>>> {
+) -> Result<Json<Vec<RebalanceHistoryView>>> {
     own_portfolio_or_404(&state, claims.sub, portfolio_id).await?;
     let rows: Vec<RebalanceView> = sqlx::query_as(
         "SELECT id, portfolio_id, decision_id, status, total_legs, completed_legs,
@@ -247,7 +275,21 @@ pub async fn history(
     .bind(portfolio_id)
     .fetch_all(&state.db)
     .await?;
-    Ok(Json(rows))
+    let rebalance_ids: Vec<Uuid> = rows.iter().map(|row| row.id).collect();
+    let totals_by_id = rebalance_totals_by_id(&state, &rebalance_ids).await?;
+    let latest_review_id = rows.first().map(|row| row.id);
+    let mut history = Vec::with_capacity(rows.len());
+    for row in rows {
+        let total_amount_usdc = totals_by_id.get(&row.id).copied().unwrap_or(0.0);
+        let approval_safety = history_approval_safety(&state, &row, latest_review_id).await?;
+        history.push(RebalanceHistoryView {
+            plan: row,
+            execution_mode: execution_mode(&state).to_string(),
+            approval_safety,
+            total_amount_usdc,
+        });
+    }
+    Ok(Json(history))
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -304,6 +346,7 @@ async fn planner_agent_decision(
         .filter_map(|leg| planned_trade(input, leg))
         .collect();
     let idle_usdc: f64 = input.usdc_per_chain.values().copied().sum();
+    let route_surface = plan_route_surface(legs);
     let summary = if legs.is_empty() {
         "No rebalance needed — portfolio drift and idle USDC are below execution thresholds."
             .to_string()
@@ -319,8 +362,8 @@ async fn planner_agent_decision(
             .to_string()
     } else {
         format!(
-            "Aegis built this execution review from live portfolio values (${:.2}) and idle Gateway USDC (${:.2}). The plan is deterministic and remains gated by user approval before any Arc/Base transaction is submitted.",
-            input.portfolio_value_usd, idle_usdc
+            "Aegis built this execution review from ${:.2} invested positions plus ${:.2} idle Gateway USDC (${:.2} total plan value). The plan is deterministic and remains gated by user approval before any {route_surface} is submitted.",
+            (input.portfolio_value_usd - idle_usdc).max(0.0), idle_usdc, input.portfolio_value_usd
         )
     };
     let rec = json!({
@@ -328,6 +371,7 @@ async fn planner_agent_decision(
         "trades": trades,
         "expectedImpact": { "riskDelta": 0.0, "diversificationScore": 0.5 }
     });
+    let invested_value_usd = (input.portfolio_value_usd - idle_usdc).max(0.0);
     let critic_verdict = json!({
         "verdict": "approved",
         "notes": "Deterministic planner matched confirmed holdings, target weights, and Gateway balances; approval remains the final execution gate.",
@@ -357,6 +401,8 @@ async fn planner_agent_decision(
     .bind(json!({
         "planner": "deterministic",
         "legs": legs.len(),
+        "planValueUsd": input.portfolio_value_usd,
+        "investedValueUsd": invested_value_usd,
         "portfolioValueUsd": input.portfolio_value_usd,
         "idleUsdc": idle_usdc
     }))
@@ -388,6 +434,31 @@ fn planned_trade(input: &PlanInput, leg: &PlannedLeg) -> Option<serde_json::Valu
         "valueUsd": leg.amount_usdc,
         "reason": format!("{} on {}", leg.kind.as_str(), leg.dest_chain.or(leg.src_chain).map(|c| c.as_str()).unwrap_or("gateway"))
     }))
+}
+
+fn plan_route_surface(legs: &[PlannedLeg]) -> String {
+    if legs.iter().any(|leg| {
+        matches!(
+            leg.kind,
+            crate::modules::rebalance::models::LegKind::CrossChainBurn
+                | crate::modules::rebalance::models::LegKind::CrossChainMint
+        )
+    }) {
+        return "Arc/Base transaction".to_string();
+    }
+    let mut chains: Vec<&str> = legs
+        .iter()
+        .filter_map(|leg| leg.dest_chain.or(leg.src_chain))
+        .map(|chain| chain.as_str())
+        .collect();
+    chains.sort_unstable();
+    chains.dedup();
+    match chains.as_slice() {
+        [] => "execution".to_string(),
+        ["arc"] => "Arc transaction".to_string(),
+        ["base"] => "Base transaction".to_string(),
+        _ => "Arc/Base transaction".to_string(),
+    }
 }
 
 async fn own_portfolio_or_404(state: &AppState, user_id: Uuid, portfolio_id: Uuid) -> Result<()> {
@@ -441,6 +512,29 @@ async fn approval_safety(state: &AppState, rebalance_id: Uuid) -> Result<Approva
                 "This rebalance is already in '{}' state and cannot be approved again.",
                 plan.status
             ),
+            missing_capabilities: None,
+        });
+    }
+
+    let newer_planned_exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(
+            SELECT 1
+            FROM rebalances newer
+            WHERE newer.portfolio_id = $1
+              AND newer.status = 'planned'
+              AND newer.created_at > $2
+        )",
+    )
+    .bind(plan.portfolio_id)
+    .bind(plan.created_at)
+    .fetch_one(&state.db)
+    .await?;
+    if newer_planned_exists {
+        return Ok(ApprovalSafety {
+            approvable: false,
+            code: "SUPERSEDED".into(),
+            message: "A newer rebalance review exists. Open the latest review or build a fresh one before approving.".into(),
+            missing_capabilities: None,
         });
     }
 
@@ -461,6 +555,7 @@ async fn approval_safety(state: &AppState, rebalance_id: Uuid) -> Result<Approva
             approvable: false,
             code: "MOCK_OR_LEGACY_PLAN".into(),
             message: "This approval plan was created by a mock or legacy planner. Build a fresh real execution review before approving.".into(),
+            missing_capabilities: None,
         });
     }
 
@@ -480,24 +575,80 @@ async fn approval_safety(state: &AppState, rebalance_id: Uuid) -> Result<Approva
             approvable: false,
             code: "NO_OP".into(),
             message: "This plan has no executable legs. No approval is needed.".into(),
+            missing_capabilities: None,
         });
     }
 
-    let current_input = build_plan_input(state, plan.portfolio_id).await?;
+    let current_input = match build_plan_input(state, plan.portfolio_id).await {
+        Ok(input) => input,
+        Err(AppError::Conflict(message)) => {
+            return Ok(ApprovalSafety {
+                approvable: false,
+                code: "BALANCE_UNAVAILABLE".into(),
+                message,
+                missing_capabilities: None,
+            });
+        }
+        Err(e) => return Err(e),
+    };
     let current_legs = plan_legs(&current_input);
     if !legs_match_current(&stored_legs, &current_legs) {
         return Ok(ApprovalSafety {
             approvable: false,
             code: "STALE_PLAN".into(),
             message: "Portfolio holdings or Gateway cash changed after this plan was created. Build a fresh review before approving real execution.".into(),
+            missing_capabilities: None,
         });
+    }
+
+    if real_mode {
+        let missing_capabilities = unsupported_real_execution_capabilities(&stored_legs);
+        if !missing_capabilities.is_empty() {
+            let message = unsupported_real_execution_message(&missing_capabilities);
+            return Ok(ApprovalSafety {
+                approvable: false,
+                code: "EXECUTION_UNAVAILABLE".into(),
+                message,
+                missing_capabilities: Some(missing_capabilities),
+            });
+        }
     }
 
     Ok(ApprovalSafety {
         approvable: true,
         code: "APPROVABLE".into(),
         message: "Plan matches current holdings and Gateway cash.".into(),
+        missing_capabilities: None,
     })
+}
+
+async fn history_approval_safety(
+    state: &AppState,
+    plan: &RebalanceView,
+    latest_review_id: Option<Uuid>,
+) -> Result<ApprovalSafety> {
+    if plan.status != "planned" {
+        return Ok(ApprovalSafety {
+            approvable: false,
+            code: "NOT_PLANNED".into(),
+            message: format!(
+                "This rebalance is already in '{}' state and cannot be approved again.",
+                plan.status
+            ),
+            missing_capabilities: None,
+        });
+    }
+
+    if Some(plan.id) != latest_review_id {
+        return Ok(ApprovalSafety {
+            approvable: false,
+            code: "SUPERSEDED".into(),
+            message: "A newer rebalance review exists. Open the latest review or build a fresh one before approving.".into(),
+            missing_capabilities: None,
+        });
+    }
+
+    approval_safety(state, plan.id).await
 }
 
 fn legs_match_current(stored: &[LegView], current: &[PlannedLeg]) -> bool {
@@ -513,6 +664,84 @@ fn legs_match_current(stored: &[LegView], current: &[PlannedLeg]) -> bool {
             && a.dest_symbol.as_deref() == b.dest_symbol.as_deref()
             && amount_matches(a.amount_usdc, b.amount_usdc)
     })
+}
+
+fn unsupported_real_execution_capabilities(legs: &[LegView]) -> Vec<MissingCapability> {
+    let mut missing = Vec::new();
+
+    if !real_cctp_enabled()
+        && legs
+            .iter()
+            .any(|leg| leg.kind == "cross_chain_burn" || leg.kind == "cross_chain_mint")
+    {
+        missing.push(MissingCapability {
+            code: "REAL_CCTP_FEATURE".into(),
+            label: "CCTP V2 bridge".into(),
+            detail:
+                "API binary is missing --features real-cctp, so Arc/Base bridge legs cannot execute."
+                    .into(),
+        });
+    }
+
+    if !real_usyc_enabled()
+        && legs
+            .iter()
+            .any(|leg| leg.kind == "park_usyc" || leg.kind == "redeem_usyc")
+    {
+        missing.push(MissingCapability {
+            code: "REAL_USYC_FEATURE".into(),
+            label: "USYC mint/redeem".into(),
+            detail:
+                "API binary is missing --features real-usyc, so USYC park/redeem legs cannot execute."
+                    .into(),
+        });
+    }
+
+    if legs.iter().any(|leg| leg.kind == "fx_stablefx") {
+        missing.push(MissingCapability {
+            code: "STABLEFX_ADAPTER".into(),
+            label: "StableFX EURC route".into(),
+            detail:
+                "Real StableFX execution is not wired in this build, so EURC legs would otherwise produce synthetic hashes."
+                    .into(),
+        });
+    }
+
+    if legs.iter().any(|leg| leg.kind == "local_swap") {
+        missing.push(MissingCapability {
+            code: "LOCAL_SWAP_ADAPTER".into(),
+            label: "Per-chain swap route".into(),
+            detail:
+                "Real local swap execution is not wired in this build, so swap legs would otherwise produce synthetic hashes."
+                    .into(),
+        });
+    }
+
+    missing
+}
+
+fn unsupported_real_execution_message(missing: &[MissingCapability]) -> String {
+    let labels = missing
+        .iter()
+        .map(|cap| cap.label.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let noun = if missing.len() == 1 {
+        "capability"
+    } else {
+        "capabilities"
+    };
+    format!(
+        "This plan needs unavailable real-execution {noun}: {labels}. Enable the missing adapter/build feature or build a fresh plan without those sleeves before approving."
+    )
+}
+
+fn real_cctp_enabled() -> bool {
+    cfg!(feature = "real-cctp")
+}
+
+fn real_usyc_enabled() -> bool {
+    cfg!(feature = "real-usyc")
 }
 
 fn amount_matches(stored: f64, current: f64) -> bool {
@@ -535,31 +764,14 @@ async fn build_plan_input(state: &AppState, portfolio_id: Uuid) -> Result<PlanIn
     let portfolio_value_usd = portfolio.1;
     let goal = portfolio.2;
 
-    let allocations: Vec<(String, f64, f64)> = sqlx::query_as(
-        "SELECT asset_symbol, current_weight::DOUBLE PRECISION, value_usd::DOUBLE PRECISION
+    let allocations: Vec<(String, f64, f64, f64)> = sqlx::query_as(
+        "SELECT asset_symbol, current_weight::DOUBLE PRECISION,
+                value_usd::DOUBLE PRECISION, quantity::DOUBLE PRECISION
          FROM allocations WHERE portfolio_id = $1",
     )
     .bind(portfolio_id)
     .fetch_all(&state.db)
     .await?;
-
-    let allocation_value_sum: f64 = allocations.iter().map(|(_, _, v)| v.max(0.0)).sum();
-    let invested_value_usd = if allocation_value_sum > 0.0 {
-        allocation_value_sum
-    } else {
-        portfolio_value_usd
-    };
-    let mut invested_weights = HashMap::new();
-    if invested_value_usd > 0.0 {
-        for (sym, weight, value_usd) in allocations {
-            let confirmed_value = if allocation_value_sum > 0.0 {
-                value_usd.max(0.0)
-            } else {
-                (weight / 100.0) * portfolio_value_usd
-            };
-            invested_weights.insert(sym, confirmed_value / invested_value_usd);
-        }
-    }
 
     let mut target_weights = HashMap::new();
     if let Some(target_obj) = goal.get("targetAllocation").and_then(|v| v.as_object()) {
@@ -569,12 +781,48 @@ async fn build_plan_input(state: &AppState, portfolio_id: Uuid) -> Result<PlanIn
             }
         }
     }
+
+    let relevant_symbols: Vec<String> = allocations
+        .iter()
+        .map(|(sym, _, _, _)| sym.clone())
+        .chain(target_weights.keys().cloned())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let prices = load_planning_prices(state, &relevant_symbols).await;
+
+    let allocation_values: Vec<(String, f64, f64)> = allocations
+        .into_iter()
+        .map(|(sym, weight, value_usd, quantity)| {
+            let marked = marked_allocation_value(&sym, value_usd, quantity, &prices);
+            (sym, weight, marked)
+        })
+        .collect();
+
+    let allocation_value_sum: f64 = allocation_values.iter().map(|(_, _, v)| v.max(0.0)).sum();
+    let invested_value_usd = if allocation_value_sum > 0.0 {
+        allocation_value_sum
+    } else {
+        portfolio_value_usd
+    };
+    let mut invested_weights = HashMap::new();
+    if invested_value_usd > 0.0 {
+        for (sym, weight, value_usd) in allocation_values {
+            let confirmed_value = if allocation_value_sum > 0.0 {
+                value_usd.max(0.0)
+            } else {
+                (weight / 100.0) * portfolio_value_usd
+            };
+            invested_weights.insert(sym, confirmed_value / invested_value_usd);
+        }
+    }
+
     if target_weights.is_empty() {
         // Portfolios without a goal fall back to "stay where you are".
         target_weights = invested_weights.clone();
     }
 
-    let usdc_per_chain = load_gateway_pool(state, user_id).await;
+    let usdc_per_chain = load_gateway_pool(state, user_id).await?;
     let idle_usdc: f64 = usdc_per_chain.values().copied().sum();
     let plan_value_usd = invested_value_usd + idle_usdc;
     let current_weights = if idle_usdc > 0.0 && plan_value_usd > 0.0 {
@@ -589,29 +837,6 @@ async fn build_plan_input(state: &AppState, portfolio_id: Uuid) -> Result<PlanIn
         invested_weights
     };
 
-    // Populate recent prices from price_history (dense table from Phase 1).
-    // This lets the planner compute sensible min_out values for cross-chain
-    // hook legs and local swaps when EXECUTION_MOCK=false.
-    let relevant_symbols: Vec<String> = current_weights
-        .keys()
-        .chain(target_weights.keys())
-        .cloned()
-        .collect::<std::collections::HashSet<_>>()
-        .into_iter()
-        .collect();
-
-    let prices = if relevant_symbols.is_empty() {
-        HashMap::new()
-    } else {
-        crate::modules::market_data::service::get_historical_prices(
-            &state.db,
-            &relevant_symbols,
-            chrono::Utc::now(),
-        )
-        .await
-        .unwrap_or_default()
-    };
-
     Ok(PlanInput {
         portfolio_value_usd: plan_value_usd,
         current_weights,
@@ -623,10 +848,69 @@ async fn build_plan_input(state: &AppState, portfolio_id: Uuid) -> Result<PlanIn
     })
 }
 
-/// Best-effort lookup of unified USDC by chain from Circle Gateway.
-/// Returns a zero pool on any failure so the planner still degrades to
-/// single-chain rebalances rather than 5xx-ing the user.
-async fn load_gateway_pool(state: &AppState, user_id: Uuid) -> HashMap<ChainKey, f64> {
+async fn load_planning_prices(state: &AppState, symbols: &[String]) -> HashMap<String, f64> {
+    if symbols.is_empty() {
+        return HashMap::new();
+    }
+
+    let mut prices = crate::modules::market_data::service::fetch_snapshot(state.prices.as_ref())
+        .await
+        .map(|snapshot| {
+            snapshot
+                .assets
+                .into_iter()
+                .map(|asset| (asset.symbol, asset.price_usd))
+                .filter(|(_, price)| price.is_finite() && *price > 0.0)
+                .collect::<HashMap<_, _>>()
+        })
+        .unwrap_or_default();
+
+    if prices.len() < symbols.len() {
+        if let Ok(history) = crate::modules::market_data::service::get_historical_prices(
+            &state.db,
+            symbols,
+            chrono::Utc::now(),
+        )
+        .await
+        {
+            for (symbol, price) in history {
+                prices.entry(symbol).or_insert(price);
+            }
+        }
+    }
+
+    prices
+}
+
+fn marked_allocation_value(
+    symbol: &str,
+    stored_value_usd: f64,
+    quantity: f64,
+    prices: &HashMap<String, f64>,
+) -> f64 {
+    let price = prices
+        .get(symbol)
+        .copied()
+        .or_else(|| stable_planning_price(symbol));
+    if quantity > 0.0 && stored_value_usd > 0.0 {
+        if let Some(price) = price.filter(|p| p.is_finite() && *p > 0.0) {
+            return quantity * price;
+        }
+    }
+    stored_value_usd
+}
+
+fn stable_planning_price(symbol: &str) -> Option<f64> {
+    match symbol {
+        "USDC" | "USYC" => Some(1.0),
+        _ => None,
+    }
+}
+
+/// Lookup unified USDC by chain from Circle Gateway. Real execution fails
+/// closed when Gateway is unavailable; mock/demo mode degrades to a zero pool
+/// so local review screens can still be exercised.
+async fn load_gateway_pool(state: &AppState, user_id: Uuid) -> Result<HashMap<ChainKey, f64>> {
     let mut pool: HashMap<ChainKey, f64> = HashMap::new();
     pool.insert(ChainKey::Arc, 0.0);
     pool.insert(ChainKey::Base, 0.0);
@@ -647,10 +931,16 @@ async fn load_gateway_pool(state: &AppState, user_id: Uuid) -> HashMap<ChainKey,
             }
         }
         Err(e) => {
-            tracing::warn!(error=%e, ?user_id, "gateway balance fetch failed; planner will use zero pool");
+            if !state.config.execution_mock && !state.config.circle_mock {
+                return Err(AppError::Conflict(
+                    "Gateway balance is unavailable, so Aegis cannot build a real rebalance plan safely. Retry after Circle Gateway responds."
+                        .into(),
+                ));
+            }
+            tracing::warn!(error=%e, ?user_id, "gateway balance fetch failed; mock planner will use zero pool");
         }
     }
-    pool
+    Ok(pool)
 }
 
 fn plan_leg_view(leg: &PlannedLeg) -> PlanLegView {
@@ -665,10 +955,352 @@ fn plan_leg_view(leg: &PlannedLeg) -> PlanLegView {
     }
 }
 
+fn plan_leg_view_from_row(leg: &LegView) -> PlanLegView {
+    PlanLegView {
+        leg_index: leg.leg_index,
+        kind: leg.kind.clone(),
+        src_chain: leg.src_chain.clone(),
+        dest_chain: leg.dest_chain.clone(),
+        src_symbol: leg.src_symbol.clone(),
+        dest_symbol: leg.dest_symbol.clone(),
+        amount_usdc: leg.amount_usdc,
+    }
+}
+
+async fn reusable_planned_rebalance(
+    state: &AppState,
+    portfolio_id: Uuid,
+    current_legs: &[PlannedLeg],
+) -> Result<Option<PlanResponse>> {
+    let Some(plan) = sqlx::query_as::<_, RebalanceView>(
+        "SELECT id, portfolio_id, decision_id, status, total_legs, completed_legs,
+                total_gas_usdc, failure_reason, approved_at, completed_at,
+                created_at, updated_at, NULL::text as protocol_fee_settlement_tx
+         FROM rebalances
+         WHERE portfolio_id = $1 AND status = 'planned'
+         ORDER BY created_at DESC
+         LIMIT 1",
+    )
+    .bind(portfolio_id)
+    .fetch_optional(&state.db)
+    .await?
+    else {
+        return Ok(None);
+    };
+
+    if !decision_can_be_reused(state, plan.decision_id).await? {
+        return Ok(None);
+    }
+
+    let stored_legs: Vec<LegView> = sqlx::query_as(
+        "SELECT id, rebalance_id, leg_index, kind, src_chain, dest_chain,
+                src_symbol, dest_symbol, amount_usdc, status, tx_hash,
+                failure_reason, submitted_at, confirmed_at
+         FROM rebalance_legs WHERE rebalance_id = $1
+         ORDER BY leg_index ASC",
+    )
+    .bind(plan.id)
+    .fetch_all(&state.db)
+    .await?;
+
+    if !legs_match_current(&stored_legs, current_legs) {
+        return Ok(None);
+    }
+
+    Ok(Some(PlanResponse {
+        rebalance_id: plan.id,
+        decision_id: plan.decision_id,
+        execution_mode: execution_mode(state).to_string(),
+        total_legs: plan.total_legs,
+        legs: stored_legs.iter().map(plan_leg_view_from_row).collect(),
+    }))
+}
+
+async fn decision_can_be_reused(state: &AppState, decision_id: Uuid) -> Result<bool> {
+    let model_slug: Option<String> =
+        sqlx::query_scalar("SELECT model_slug FROM agent_decisions WHERE id = $1")
+            .bind(decision_id)
+            .fetch_one(&state.db)
+            .await?;
+    if !state.config.execution_mock && !state.config.circle_mock {
+        return Ok(model_slug.as_deref() == Some("aegis/rebalance-planner-v1"));
+    }
+    Ok(true)
+}
+
 fn execution_mode(state: &AppState) -> &'static str {
     if state.config.execution_mock || state.config.circle_mock {
         "mock"
     } else {
         "real"
+    }
+}
+
+async fn rebalance_totals_by_id(
+    state: &AppState,
+    rebalance_ids: &[Uuid],
+) -> Result<HashMap<Uuid, f64>> {
+    if rebalance_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let rows: Vec<(Uuid, f64)> = sqlx::query_as(
+        "SELECT rebalance_id, COALESCE(SUM(amount_usdc), 0)::DOUBLE PRECISION
+         FROM rebalance_legs
+         WHERE rebalance_id = ANY($1) AND kind != 'cross_chain_mint'
+         GROUP BY rebalance_id",
+    )
+    .bind(rebalance_ids)
+    .fetch_all(&state.db)
+    .await?;
+    Ok(rows.into_iter().collect())
+}
+
+fn noop_plan_message(input: &PlanInput) -> String {
+    let idle_usdc: f64 = input.usdc_per_chain.values().copied().sum();
+    if input.portfolio_value_usd <= input.dust_threshold_usd
+        && idle_usdc <= input.dust_threshold_usd
+    {
+        return "No rebalance plan was created because this portfolio has no confirmed positions and no deployable USDC above the $5 dust threshold. Fund the wallet first, then review deployment.".into();
+    }
+    if idle_usdc > 0.0 && idle_usdc <= input.dust_threshold_usd {
+        return format!(
+            "No rebalance plan was created because only ${idle_usdc:.2} USDC is idle, below the ${:.2} dust threshold.",
+            input.dust_threshold_usd
+        );
+    }
+    "No rebalance plan was created because current weights, target weights, and idle USDC are already within the execution thresholds.".into()
+}
+
+async fn ensure_rebalance_wallet_ready(state: &AppState, user_id: Uuid) -> Result<()> {
+    if state.config.execution_mock || state.config.circle_mock {
+        return Ok(());
+    }
+    let row: Option<(Option<String>, Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT wallet_id, arc_address, base_address FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_optional(&state.db)
+            .await?;
+    let Some((wallet_id, arc_address, base_address)) = row else {
+        return Err(AppError::Unauthorized("unknown user".into()));
+    };
+    if wallet_fields_real_ready(
+        wallet_id.as_deref(),
+        arc_address.as_deref(),
+        base_address.as_deref(),
+    ) {
+        return Ok(());
+    }
+    Err(AppError::Conflict(
+        "Complete real Circle wallet setup before building a rebalance plan. This account still has no real Arc + Base wallet ready for execution."
+            .into(),
+    ))
+}
+
+fn wallet_fields_real_ready(
+    wallet_id: Option<&str>,
+    arc_address: Option<&str>,
+    base_address: Option<&str>,
+) -> bool {
+    let Some(wallet_id) = wallet_id else {
+        return false;
+    };
+    let Some(arc_address) = arc_address else {
+        return false;
+    };
+    let Some(base_address) = base_address else {
+        return false;
+    };
+    !wallet_id.trim().is_empty()
+        && !wallet_id.starts_with("mock_wallet_")
+        && is_real_evm_address(arc_address)
+        && is_real_evm_address(base_address)
+        && !arc_address.starts_with("0xARC")
+        && !base_address.starts_with("0xBASE")
+}
+
+fn is_real_evm_address(value: &str) -> bool {
+    let Some(hex) = value.strip_prefix("0x") else {
+        return false;
+    };
+    hex.len() == 40 && hex.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn noop_message_distinguishes_empty_wallet_from_on_target_portfolio() {
+        let empty = PlanInput {
+            portfolio_value_usd: 0.0,
+            current_weights: HashMap::new(),
+            target_weights: HashMap::new(),
+            usdc_per_chain: HashMap::new(),
+            drift_threshold: 0.05,
+            dust_threshold_usd: 5.0,
+            prices: HashMap::new(),
+        };
+        assert!(noop_plan_message(&empty).contains("no confirmed positions"));
+
+        let mut current_weights = HashMap::new();
+        current_weights.insert("BTC".to_string(), 0.6);
+        current_weights.insert("ETH".to_string(), 0.4);
+        let on_target = PlanInput {
+            portfolio_value_usd: 100.0,
+            target_weights: current_weights.clone(),
+            current_weights,
+            usdc_per_chain: HashMap::new(),
+            drift_threshold: 0.05,
+            dust_threshold_usd: 5.0,
+            prices: HashMap::new(),
+        };
+        assert!(noop_plan_message(&on_target).contains("already within"));
+    }
+
+    #[test]
+    fn real_rebalance_wallet_gate_rejects_missing_or_mock_wallets() {
+        assert!(!wallet_fields_real_ready(
+            None,
+            Some("0xabc"),
+            Some("0xdef")
+        ));
+        assert!(!wallet_fields_real_ready(
+            Some("mock_wallet_deadbeef"),
+            Some("0xabc"),
+            Some("0xdef")
+        ));
+        assert!(!wallet_fields_real_ready(
+            Some("wallet-id"),
+            Some("abc"),
+            Some("0x2222222222222222222222222222222222222222")
+        ));
+        assert!(!wallet_fields_real_ready(
+            Some("wallet-id"),
+            Some("0x111111111111111111111111111111111111111"),
+            Some("0x2222222222222222222222222222222222222222")
+        ));
+        assert!(!wallet_fields_real_ready(
+            Some("wallet-id"),
+            Some("0x111111111111111111111111111111111111111g"),
+            Some("0x2222222222222222222222222222222222222222")
+        ));
+        assert!(!wallet_fields_real_ready(
+            Some(""),
+            Some("0x1111111111111111111111111111111111111111"),
+            Some("0x2222222222222222222222222222222222222222")
+        ));
+        assert!(!wallet_fields_real_ready(
+            Some("wallet-id"),
+            Some("0xARC0000000000000000000000000000000000000000"),
+            Some("0xdef")
+        ));
+        assert!(wallet_fields_real_ready(
+            Some("wallet-id"),
+            Some("0x1111111111111111111111111111111111111111"),
+            Some("0x2222222222222222222222222222222222222222")
+        ));
+    }
+
+    #[test]
+    fn planning_value_prefers_live_price_and_stable_fallback() {
+        let mut prices = HashMap::new();
+        prices.insert("BTC".to_string(), 77_000.0);
+
+        assert_eq!(marked_allocation_value("BTC", 840.0, 0.01, &prices), 770.0);
+        assert_eq!(
+            marked_allocation_value("USYC", 60.0, 60.0, &HashMap::new()),
+            60.0
+        );
+        assert_eq!(
+            marked_allocation_value("ETH", 300.0, 0.1, &HashMap::new()),
+            300.0
+        );
+    }
+
+    fn leg(kind: &str) -> LegView {
+        LegView {
+            id: Uuid::new_v4(),
+            rebalance_id: Uuid::new_v4(),
+            leg_index: 0,
+            kind: kind.to_string(),
+            src_chain: Some("arc".into()),
+            dest_chain: Some("arc".into()),
+            src_symbol: Some("USDC".into()),
+            dest_symbol: Some("USYC".into()),
+            amount_usdc: 10.0,
+            status: "pending".into(),
+            tx_hash: None,
+            failure_reason: None,
+            submitted_at: None,
+            confirmed_at: None,
+        }
+    }
+
+    fn planned_leg(
+        kind: crate::modules::rebalance::models::LegKind,
+        chain: ChainKey,
+    ) -> PlannedLeg {
+        PlannedLeg {
+            leg_index: 0,
+            kind,
+            src_chain: Some(chain),
+            dest_chain: Some(chain),
+            src_symbol: Some("USDC".into()),
+            dest_symbol: Some("ETH".into()),
+            amount_usdc: 10.0,
+            min_out: None,
+        }
+    }
+
+    #[test]
+    fn plan_route_surface_uses_single_chain_from_plan_legs() {
+        assert_eq!(
+            plan_route_surface(&[planned_leg(
+                crate::modules::rebalance::models::LegKind::LocalSwap,
+                ChainKey::Base,
+            )]),
+            "Base transaction"
+        );
+        assert_eq!(
+            plan_route_surface(&[planned_leg(
+                crate::modules::rebalance::models::LegKind::LocalSwap,
+                ChainKey::Arc,
+            )]),
+            "Arc transaction"
+        );
+    }
+
+    #[test]
+    fn real_execution_capability_blocks_synthetic_executor_legs() {
+        let missing =
+            unsupported_real_execution_capabilities(&[leg("fx_stablefx"), leg("local_swap")]);
+        assert!(missing.iter().any(|cap| cap.code == "STABLEFX_ADAPTER"));
+        assert!(missing.iter().any(|cap| cap.code == "LOCAL_SWAP_ADAPTER"));
+        assert!(unsupported_real_execution_message(&missing).contains("StableFX"));
+    }
+
+    #[cfg(not(feature = "real-cctp"))]
+    #[test]
+    fn real_execution_capability_blocks_uncompiled_cctp() {
+        let missing = unsupported_real_execution_capabilities(&[leg("cross_chain_burn")]);
+        assert!(missing.iter().any(|cap| cap.code == "REAL_CCTP_FEATURE"));
+    }
+
+    #[cfg(not(feature = "real-usyc"))]
+    #[test]
+    fn real_execution_capability_blocks_uncompiled_usyc() {
+        let missing = unsupported_real_execution_capabilities(&[leg("park_usyc")]);
+        assert!(missing.iter().any(|cap| cap.code == "REAL_USYC_FEATURE"));
+    }
+
+    #[cfg(not(feature = "real-usyc"))]
+    #[test]
+    fn real_execution_capability_reports_all_missing_capabilities() {
+        let missing =
+            unsupported_real_execution_capabilities(&[leg("park_usyc"), leg("fx_stablefx")]);
+        assert_eq!(missing.len(), 2);
+        assert!(unsupported_real_execution_message(&missing).contains("USYC"));
+        assert!(unsupported_real_execution_message(&missing).contains("StableFX"));
     }
 }

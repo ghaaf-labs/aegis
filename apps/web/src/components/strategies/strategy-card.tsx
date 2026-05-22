@@ -14,6 +14,7 @@ interface Props {
   disabled?: boolean;
   disabledReason?: string;
   actionHref?: string;
+  actionTone?: "pnl" | "agent";
 }
 
 const RISK_TONE = {
@@ -29,6 +30,7 @@ export function StrategyCard({
   disabled,
   disabledReason,
   actionHref,
+  actionTone = "pnl",
 }: Props) {
   const entries = Object.entries(strategy.targetAllocation).sort(
     (a, b) => b[1] - a[1],
@@ -74,7 +76,9 @@ export function StrategyCard({
           {actionHref ? (
             <Link
               href={actionHref}
-              className="inline-flex w-full items-center justify-center gap-2 px-3 py-2 text-sm font-semibold border-brutal border-black rounded-sharp bg-accent-pnl text-black hover:shadow-brutal-sm transition-[box-shadow] active:translate-y-px"
+              className={`inline-flex w-full items-center justify-center gap-2 px-3 py-2 text-sm font-semibold border-brutal border-black rounded-sharp text-black hover:shadow-brutal-sm transition-[box-shadow] active:translate-y-px ${
+                actionTone === "agent" ? "bg-accent-agent" : "bg-accent-pnl"
+              }`}
             >
               {actionLabel}
             </Link>

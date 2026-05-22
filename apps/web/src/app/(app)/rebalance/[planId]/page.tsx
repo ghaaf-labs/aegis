@@ -8,6 +8,7 @@ import {
   ratesApi,
   agentApi,
   type RebalanceApprovalSafety,
+  type RebalancePlanResponse,
 } from "@/lib/api";
 import type { AgentDecision } from "@/types";
 import { ModelBadge } from "@aegis/ui";
@@ -35,27 +36,14 @@ export default function RebalancePage({ params }: PageProps) {
   const [feeFetchedAt, setFeeFetchedAt] = useState<Date | null>(null);
   const [feeSource, setFeeSource] = useState<"plan" | "paymaster">("plan");
   const [portfolioId, setPortfolioId] = useState<string | null>(null);
-  const [plan, setPlan] = useState<{
-    rebalanceId: string;
-    decisionId: string;
-    executionMode?: "mock" | "real";
-    totalLegs: number;
-    legs: Array<{
-      legIndex: number;
-      kind: string;
-      srcChain: string | null;
-      destChain: string | null;
-      srcSymbol: string | null;
-      destSymbol: string | null;
-      amountUsdc: number;
-    }>;
-  } | null>(null);
+  const [plan, setPlan] = useState<RebalancePlanResponse | null>(null);
   const [approved, setApproved] = useState(false);
   const [planStatus, setPlanStatus] = useState<string>("planned");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [decision, setDecision] = useState<AgentDecision | null>(null);
   const [approvalSafety, setApprovalSafety] =
     useState<RebalanceApprovalSafety | null>(null);
+  const hasCrossChainLeg = plan?.legs.some(isCrossChainLeg) ?? false;
 
   useEffect(() => {
     let cancelled = false;
@@ -205,10 +193,12 @@ export default function RebalancePage({ params }: PageProps) {
         ) : (
           <p className="text-sm text-text-lo">
             {approvalSafety?.approvable === false
-              ? "This historical plan is blocked from approval because it no longer matches the current real-execution state. Open Dashboard and build a fresh review."
+              ? blockedReviewCopy(approvalSafety)
               : plan?.executionMode === "mock"
                 ? "The agent has built a local demo plan. Review the legs, then run the executor to update the mock portfolio and Gateway balances."
-                : "The agent has built a cross-chain plan. Review the legs, then approve to settle on Arc + Base."}
+                : hasCrossChainLeg
+                  ? "The agent has built a cross-chain plan. Review the legs, then approve to settle on Arc + Base."
+                  : `The agent has built a single-chain ${singleChainLabel(plan)} plan. Review the legs, then approve to execute the non-USDC target sleeves while the USDC sleeve stays in wallet cash.`}
           </p>
         )}
 
@@ -233,4 +223,37 @@ export default function RebalancePage({ params }: PageProps) {
       </div>
     </main>
   );
+}
+
+function isCrossChainLeg(leg: { kind: string }) {
+  return leg.kind === "cross_chain_burn" || leg.kind === "cross_chain_mint";
+}
+
+function singleChainLabel(plan: RebalancePlanResponse | null) {
+  const chain = plan?.legs
+    .map((leg) => leg.destChain ?? leg.srcChain)
+    .find(
+      (value): value is "arc" | "base" => value === "arc" || value === "base",
+    );
+  return chain === "base" ? "Base" : "Arc";
+}
+
+function blockedReviewCopy(safety: RebalanceApprovalSafety) {
+  switch (safety.code) {
+    case "EXECUTION_UNAVAILABLE":
+      return "This review matches the current plan, but the running API cannot execute every leg in real mode. Approval stays locked until the missing adapter or cargo feature is enabled, or the target excludes that sleeve.";
+    case "SUPERSEDED":
+      return "A newer rebalance review exists for this portfolio. Open the latest review or build a fresh one before approving.";
+    case "STALE_PLAN":
+      return "Wallet cash or portfolio holdings changed after this review was created. Build a fresh review so the amounts match current execution state.";
+    case "BALANCE_UNAVAILABLE":
+      return "Aegis cannot verify Gateway balance right now, so real execution approval is locked until Circle Gateway responds.";
+    case "MOCK_OR_LEGACY_PLAN":
+      return "This review was created by an older or mock planner. Build a fresh real-execution review before approving.";
+    default:
+      return (
+        safety.message ||
+        "Approval is blocked for this review. Build a fresh review from Dashboard before executing."
+      );
+  }
 }

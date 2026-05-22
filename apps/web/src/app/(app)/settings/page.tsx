@@ -16,11 +16,12 @@ import {
   ArrowRight,
   ListChecks,
   SquareTerminal,
+  LockKeyhole,
 } from "lucide-react";
 import { PRICING_UI_ENABLED } from "@/lib/flags";
 import { DigestOptIn } from "@/components/settings/digest-opt-in";
 import { DiaryVisibilityToggle } from "@/components/settings/diary-visibility-toggle";
-import { portfolioApi } from "@/lib/api";
+import { portfolioApi, walletApi } from "@/lib/api";
 import { useApiQuery } from "@/lib/use-api-query";
 import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
 
@@ -30,6 +31,7 @@ interface SectionLink {
   title: string;
   description: string;
   enabled?: boolean;
+  requiresWallet?: boolean;
 }
 
 export default function SettingsIndex() {
@@ -49,7 +51,23 @@ export default function SettingsIndex() {
 
   const [storedEmail, setStoredEmail] = useState("");
   useEffect(() => {
-    setStoredEmail(localStorage.getItem("aegis_email") ?? "");
+    let cancelled = false;
+    const remembered = localStorage.getItem("aegis_email") ?? "";
+    setStoredEmail(remembered);
+    if (remembered) return;
+    walletApi
+      .me()
+      .then((user) => {
+        if (cancelled) return;
+        localStorage.setItem("aegis_email", user.email);
+        setStoredEmail(user.email);
+      })
+      .catch(() => {
+        if (!cancelled) setStoredEmail("");
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const sections: SectionLink[] = [
@@ -58,6 +76,7 @@ export default function SettingsIndex() {
       icon: Wallet,
       title: "Wallets",
       description: "Per-chain USDC + EURC balances and addresses",
+      requiresWallet: false,
     },
     {
       href: "/transactions",
@@ -106,6 +125,7 @@ export default function SettingsIndex() {
       icon: CircleHelp,
       title: "Help",
       description: "Answers for wallet cash, approvals, logs, and exports",
+      requiresWallet: false,
     },
     {
       href: "/settings/billing",
@@ -122,6 +142,30 @@ export default function SettingsIndex() {
         Settings
       </h1>
 
+      {!wallet && (
+        <section className="border border-warn/40 bg-warn/5 p-4 font-mono">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-[10px] uppercase tracking-widest text-warn">
+                Wallet setup required
+              </p>
+              <p className="mt-2 max-w-2xl text-xs leading-relaxed text-text-lo">
+                This browser may have an app session, but Aegis has not received
+                real Arc + Base Circle wallet addresses yet. Portfolio, tax,
+                billing, peg, and agent controls stay locked until wallet setup
+                finishes.
+              </p>
+            </div>
+            <Link
+              href="/wallets"
+              className="inline-flex min-h-9 items-center justify-center rounded-sharp border border-warn/40 bg-bg px-3 text-[11px] uppercase tracking-widest text-warn hover:bg-warn/10"
+            >
+              Finish setup
+            </Link>
+          </div>
+        </section>
+      )}
+
       <section>
         <h2 className="text-xs uppercase tracking-wider text-text-mut font-mono mb-3">
           Sections
@@ -129,24 +173,46 @@ export default function SettingsIndex() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {sections
             .filter((s) => s.enabled !== false)
-            .map((s) => (
-              <Link
-                key={s.href}
-                href={s.href}
-                className="group border-brutal border-border-default rounded-sharp bg-bg hover:border-border-hi p-4 flex items-start gap-3 transition-colors"
-              >
-                <s.icon className="w-4 h-4 text-accent-agent shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-text-hi font-mono">
-                    {s.title}
-                  </p>
-                  <p className="text-[11px] text-text-lo font-mono mt-0.5 leading-relaxed">
-                    {s.description}
-                  </p>
-                </div>
-                <ArrowRight className="w-3.5 h-3.5 text-text-mut group-hover:text-text-hi shrink-0 mt-0.5" />
-              </Link>
-            ))}
+            .map((s) => {
+              const locked = !wallet && s.requiresWallet !== false;
+              return (
+                <Link
+                  key={s.href}
+                  href={locked ? "/wallets" : s.href}
+                  title={
+                    locked
+                      ? `${s.title} unlocks after Circle returns Arc + Base wallet addresses`
+                      : s.title
+                  }
+                  className={`group flex items-start gap-3 rounded-sharp border-brutal bg-bg p-4 transition-colors ${
+                    locked
+                      ? "border-warn/35 hover:border-warn/60"
+                      : "border-border-default hover:border-border-hi"
+                  }`}
+                >
+                  <s.icon
+                    className={`mt-0.5 h-4 w-4 shrink-0 ${
+                      locked ? "text-warn" : "text-accent-agent"
+                    }`}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-text-hi font-mono">
+                      {s.title}
+                    </p>
+                    <p className="text-[11px] text-text-lo font-mono mt-0.5 leading-relaxed">
+                      {locked
+                        ? "Finish wallet setup first. This page uses wallet-backed data or actions."
+                        : s.description}
+                    </p>
+                  </div>
+                  {locked ? (
+                    <LockKeyhole className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warn" />
+                  ) : (
+                    <ArrowRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-mut group-hover:text-text-hi" />
+                  )}
+                </Link>
+              );
+            })}
         </div>
       </section>
 

@@ -1,5 +1,6 @@
 import type {
   AgentDecision,
+  ChainKey,
   DiaryEntry,
   HarvestableLoss,
   Invoice,
@@ -17,17 +18,37 @@ import type {
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
-const TOKEN_KEY = "aegis.jwt";
+const LEGACY_TOKEN_KEY = "aegis.jwt";
+const REMEMBERED_EMAIL_KEY = "aegis_email";
 
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
-  return window.localStorage.getItem(TOKEN_KEY);
+  window.localStorage.removeItem(LEGACY_TOKEN_KEY);
+  return null;
 }
 
 export function setToken(t: string | null) {
   if (typeof window === "undefined") return;
-  if (t) window.localStorage.setItem(TOKEN_KEY, t);
-  else window.localStorage.removeItem(TOKEN_KEY);
+  window.localStorage.removeItem(LEGACY_TOKEN_KEY);
+  void t;
+}
+
+function clearRememberedAuthState() {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(LEGACY_TOKEN_KEY);
+  window.localStorage.removeItem(REMEMBERED_EMAIL_KEY);
+}
+
+async function assertServerSignedOut() {
+  const res = await fetch(`${BASE_URL}/auth/me`, {
+    cache: "no-store",
+    credentials: "include",
+  });
+  if (res.status === 401) return;
+  if (res.ok) {
+    throw new Error("logout failed: server still accepts this browser session");
+  }
+  throw new Error(`logout verification failed: ${res.status}`);
 }
 
 interface FetchOptions {
@@ -38,30 +59,20 @@ interface FetchOptions {
 
 async function request<T>(path: string, opts: FetchOptions = {}): Promise<T> {
   const body = opts.body !== undefined ? JSON.stringify(opts.body) : undefined;
-  const token = opts.authed ? getToken() : null;
+  if (opts.authed) getToken();
 
-  const doFetch = (includeBearer: boolean) => {
-    const headers: Record<string, string> = {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: opts.method ?? "GET",
+    headers: {
       "Content-Type": "application/json",
-    };
-    if (includeBearer && token) headers["Authorization"] = `Bearer ${token}`;
-    return fetch(`${BASE_URL}${path}`, {
-      method: opts.method ?? "GET",
-      headers,
-      // `credentials: 'include'` ensures the httpOnly auth cookie set by the
-      // wallet endpoints rides on every cross-origin request. Backend CORS
-      // enables `Access-Control-Allow-Credentials` with a specific origin
-      // allow-list (no wildcard).
-      credentials: "include",
-      body,
-    });
-  };
-
-  let res = await doFetch(true);
-  if (res.status === 401 && token) {
-    setToken(null);
-    res = await doFetch(false);
-  }
+    },
+    // `credentials: 'include'` ensures the httpOnly auth cookie set by the
+    // wallet endpoints rides on every cross-origin request. Backend CORS
+    // enables `Access-Control-Allow-Credentials` with a specific origin
+    // allow-list (no wildcard).
+    credentials: "include",
+    body,
+  });
   if (!res.ok) {
     let detail = res.statusText;
     try {
@@ -98,10 +109,10 @@ export interface UserTokenBundle {
 }
 
 export interface WalletAuthResponse {
-  token: string;
   user: { id: string; email: string; riskTolerance: string };
   wallet: WalletInfo | null;
-  bundle: UserTokenBundle;
+  /** Present only when the browser must execute a Circle challenge. */
+  bundle?: UserTokenBundle | null;
   isNewUser: boolean;
 }
 
@@ -109,16 +120,46 @@ export interface WalletStatusResponse {
   wallet: WalletInfo | null;
 }
 
+export interface WalletAuthCodeResponse {
+  challengeId: string;
+  email: string;
+  expiresAt: string;
+  /** Present only in local dev when RESEND_API_KEY is not configured. */
+  devCode?: string;
+}
+
+export interface WalletAuthReadinessResponse {
+  circleMock: boolean;
+  emailDeliveryConfigured: boolean;
+  devCodesEnabled: boolean;
+}
+
 export const walletApi = {
-  create: (email: string, referrerHandle?: string) =>
+  readiness: () =>
+    request<WalletAuthReadinessResponse>("/auth/wallet/readiness"),
+  requestCode: (
+    email: string,
+    intent: "signup" | "login",
+    referrerHandle?: string,
+  ) =>
+    request<WalletAuthCodeResponse>("/auth/wallet/code", {
+      method: "POST",
+      body: { email, intent, referrerHandle },
+    }),
+  create: (
+    email: string,
+    challengeId: string,
+    code: string,
+    referrerHandle?: string,
+  ) =>
     request<WalletAuthResponse>("/auth/wallet/create", {
       method: "POST",
-      body: { email, referrerHandle },
+      body: { email, challengeId, code, referrerHandle },
     }),
-  login: (email: string) =>
+  login: (email: string, challengeId: string, code: string) =>
     request<WalletAuthResponse>("/auth/wallet/login", {
       method: "POST",
-      body: { email },
+      body: { email, challengeId, code },
     }),
   status: () =>
     request<WalletStatusResponse>("/auth/wallet/status", { authed: true }),
@@ -129,11 +170,22 @@ export const walletApi = {
   meFromCookie: () =>
     request<{ id: string; email: string; riskTolerance: string }>("/auth/me"),
   logout: async () => {
-    await fetch(`${BASE_URL}/auth/logout`, {
+    const res = await fetch(`${BASE_URL}/auth/logout`, {
       method: "POST",
       credentials: "include",
     });
-    setToken(null);
+    if (!res.ok) {
+      let detail = res.statusText;
+      try {
+        const body = await res.json();
+        detail = body.message ?? body.code ?? detail;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(`${res.status}: ${detail || "logout failed"}`);
+    }
+    await assertServerSignedOut();
+    clearRememberedAuthState();
   },
 };
 
@@ -204,7 +256,17 @@ interface WireAllocation {
 }
 
 export const portfolioApi = {
-  list: () => request<Portfolio[]>("/portfolios", { authed: true }),
+  list: async (): Promise<Portfolio[]> => {
+    // The list endpoint intentionally omits allocation rows for speed. Keep
+    // the shared Portfolio shape honest for UI code by normalising the field.
+    const rows = await request<
+      Array<Omit<Portfolio, "allocations"> & { allocations?: WireAllocation[] }>
+    >("/portfolios", { authed: true });
+    return rows.map((p) => ({
+      ...p,
+      allocations: (p.allocations ?? []).map(normalizeAllocation),
+    }));
+  },
   get: async (id: string): Promise<Portfolio> => {
     // The backend returns the full Portfolio inline with an `allocations`
     // array. Allocations come in with `assetSymbol`; normalise to `symbol`
@@ -214,14 +276,7 @@ export const portfolioApi = {
     >(`/portfolios/${id}`, { authed: true });
     return {
       ...raw,
-      allocations: raw.allocations.map((a) => ({
-        assetId: a.id,
-        symbol: a.assetSymbol as Portfolio["allocations"][number]["symbol"],
-        quantity: a.quantity,
-        targetWeight: a.targetWeight,
-        currentWeight: a.currentWeight,
-        valueUsd: a.valueUsd,
-      })),
+      allocations: raw.allocations.map(normalizeAllocation),
     };
   },
   create: (payload: CreatePortfolioInput) =>
@@ -254,6 +309,19 @@ export const portfolioApi = {
       { method: "PATCH", body: { diaryPublic }, authed: true },
     ),
 };
+
+function normalizeAllocation(
+  a: WireAllocation,
+): Portfolio["allocations"][number] {
+  return {
+    assetId: a.id,
+    symbol: a.assetSymbol as Portfolio["allocations"][number]["symbol"],
+    quantity: a.quantity,
+    targetWeight: a.targetWeight,
+    currentWeight: a.currentWeight,
+    valueUsd: a.valueUsd,
+  };
+}
 
 // ── Market ─────────────────────────────────────────────────────────────────
 
@@ -339,8 +407,8 @@ export interface RebalancePlanResponse {
   legs: Array<{
     legIndex: number;
     kind: string;
-    srcChain: string | null;
-    destChain: string | null;
+    srcChain: ChainKey | null;
+    destChain: ChainKey | null;
     srcSymbol: string | null;
     destSymbol: string | null;
     amountUsdc: number;
@@ -351,6 +419,11 @@ export interface RebalanceApprovalSafety {
   approvable: boolean;
   code: string;
   message: string;
+  missingCapabilities?: Array<{
+    code: string;
+    label: string;
+    detail: string;
+  }>;
 }
 
 export const rebalanceApi = {
@@ -390,8 +463,8 @@ export const rebalanceApi = {
         rebalanceId: string;
         legIndex: number;
         kind: string;
-        srcChain: string | null;
-        destChain: string | null;
+        srcChain: ChainKey | null;
+        destChain: ChainKey | null;
         srcSymbol: string | null;
         destSymbol: string | null;
         amountUsdc: number;
@@ -406,10 +479,20 @@ export const rebalanceApi = {
     request<
       Array<{
         id: string;
+        portfolioId: string;
+        decisionId: string;
         status: string;
+        executionMode?: "mock" | "real";
+        approvalSafety?: RebalanceApprovalSafety;
+        totalAmountUsdc?: number;
         totalLegs: number;
         completedLegs: number;
+        totalGasUsdc?: number | null;
+        failureReason?: string | null;
+        approvedAt?: string | null;
+        completedAt?: string | null;
         createdAt: string;
+        updatedAt: string;
       }>
     >(`/portfolios/${portfolioId}/rebalance/history`, { authed: true }),
 };
@@ -517,12 +600,8 @@ export const taxApi = {
     year: number,
   ): Promise<{ mockExcluded: number }> => {
     const params = new URLSearchParams({ portfolioId, year: String(year) });
-    const token = getToken();
-    const headers: Record<string, string> = {};
-    if (token) headers["Authorization"] = `Bearer ${token}`;
     const res = await fetch(`${BASE_URL}/tax/export.csv?${params}`, {
       credentials: "include",
-      headers,
     });
     if (!res.ok) {
       throw new Error(`${res.status}: ${res.statusText}`);

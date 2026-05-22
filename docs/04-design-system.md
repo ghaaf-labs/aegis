@@ -79,7 +79,7 @@ When in doubt: ask "is this number money or signal?" Money → green/magenta. Si
 | `Pill` (regime)    | `RISK-ON` solid green, `NEUTRAL` solid white, `RISK-OFF` solid magenta — text always black, monospace |
 | `DataTable`        | Dense rows (28px), monospace numerics, right-aligned numbers                                          |
 | `ModelBadge`       | `[opus-4-7]` style chip, cyan border, monospace                                                       |
-| `ChainBadge`       | `ARC` / `BASE` / `AVAX` chip with chain accent stripe                                                 |
+| `ChainBadge`       | `ARC` / `BASE` settlement-chain chip with chain accent stripe                                         |
 | `FeePreview`       | Always shows `~$0.0123 USDC` with `via Paymaster` provenance                                          |
 | `ProvenanceLine`   | `via CoinGecko · 2.1s ago` muted text under any fetched value                                         |
 

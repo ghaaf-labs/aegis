@@ -62,7 +62,6 @@ thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
-serde_urlencoded = "0.7.1"
 
 # Crypto utils used by the digest unsubscribe token + CCTP hook hashing.
 sha2 = "0.10"
@@ -88,7 +87,7 @@ base64 = "0.22"
 # Alloy for real CCTP V2 + Hook execution (Phase 2).
 # Gated behind the "real-cctp" feature. Default build stays fast.
 # cargo build --features real-cctp
-alloy = { version = "0.5", features = ["contract", "json", "node-bindings", "signer-local", "sol-types"], optional = true }
+alloy = { version = "2.0.5", features = ["contract", "json", "node-bindings", "signer-local", "sol-types"], optional = true }
 
 [features]
 default = []

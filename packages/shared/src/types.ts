@@ -167,6 +167,8 @@ export interface AgentDecision {
   completionTokens?: number;
   latencyMs?: number;
   criticVerdict?: CriticVerdict;
+  /** Decision-time portfolio/wallet snapshot. Shape varies by planner. */
+  snapshot?: Record<string, unknown>;
 
   // F-CONF-4 / F-CONF-5: calibrated confidence + critic counterfactual.
   // Only populated when CALIBRATED_CONF_ENABLED=true on the API; the UI

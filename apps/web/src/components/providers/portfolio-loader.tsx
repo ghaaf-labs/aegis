@@ -35,6 +35,9 @@ export function PortfolioLoader() {
   const setUnifiedUsdc = usePortfolioStore((s) => s.setUnifiedUsdc);
   const setUnifiedEurc = usePortfolioStore((s) => s.setUnifiedEurc);
   const setPerChain = usePortfolioStore((s) => s.setPerChain);
+  const setGatewayBalanceStatus = usePortfolioStore(
+    (s) => s.setGatewayBalanceStatus,
+  );
   const patchPortfolio = usePortfolioStore((s) => s.patchPortfolio);
   const activePortfolioId = usePortfolioStore((s) => s.activePortfolioId);
   const pathname = usePathname();
@@ -45,22 +48,32 @@ export function PortfolioLoader() {
       setPortfoliosLoaded(true);
       return;
     }
-    portfolioApi
-      .list()
-      .then(setPortfolios)
-      .catch(() => {
-        // Auth failures (401) are expected when the session has expired.
-        // Mark as loaded so the dashboard can redirect to /login rather
-        // than spinning forever.
-        setPortfoliosLoaded(true);
-      });
+    let alive = true;
     walletApi
       .status()
       .then((r) => {
-        if (r.wallet) setWallet(r.wallet);
+        if (!alive) return;
+        if (!r.wallet) {
+          setWallet(null);
+          setPortfolios([]);
+          setPortfoliosLoaded(true);
+          return;
+        }
+        setWallet(r.wallet);
+        return portfolioApi
+          .list()
+          .then((portfolios) => {
+            if (alive) setPortfolios(portfolios);
+          })
+          .catch(() => {
+            if (alive) setPortfoliosLoaded(true);
+          });
       })
       .catch(() => {
-        /* unauthed or wallet pending — leave store null */
+        if (!alive) return;
+        setWallet(null);
+        setPortfolios([]);
+        setPortfoliosLoaded(true);
       });
     // Market snapshot drives MarketOverview, AssetTable prices, etc. SSE only
     // emits per-tick deltas — without the initial snapshot the panels render
@@ -71,6 +84,9 @@ export function PortfolioLoader() {
       .catch(() => {
         /* upstream provider may rate-limit — panels degrade to skeleton */
       });
+    return () => {
+      alive = false;
+    };
   }, [
     isExplore,
     setPortfolios,
@@ -97,24 +113,39 @@ export function PortfolioLoader() {
       .decisions(activePortfolioId)
       .then(setDecisions)
       .catch((e) => console.warn("agent decisions fetch failed", e));
+    setGatewayBalanceStatus("loading");
     gatewayApi
       .balance()
       .then((b) => {
         setUnifiedUsdc(b.unifiedUsdc);
         setUnifiedEurc(b.unifiedEurc);
         setPerChain(b.perChain ?? {}, b.perChainEurc ?? {});
+        setGatewayBalanceStatus("ready");
       })
-      .catch((e) => console.warn("gateway balance fetch failed", e));
+      .catch((e) => {
+        setGatewayBalanceStatus("error", gatewayBalanceError(e));
+        console.warn("gateway balance fetch failed", e);
+      });
   }, [
     activePortfolioId,
     isExplore,
     patchPortfolio,
     pathname,
     setDecisions,
+    setGatewayBalanceStatus,
     setPerChain,
     setUnifiedEurc,
     setUnifiedUsdc,
   ]);
 
   return null;
+}
+
+function gatewayBalanceError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("401")) return "Session expired before Gateway replied.";
+  if (message.toLowerCase().includes("gateway")) {
+    return "Circle Gateway balance check failed.";
+  }
+  return "Circle Gateway balance is unavailable.";
 }

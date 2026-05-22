@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { explorerTxUrl, type ExplorerChain } from "@/lib/explorers";
 
 interface DecisionLeg {
   legIndex: number;
@@ -35,11 +36,6 @@ export interface DecisionFull {
   createdAt: string;
   legs: DecisionLeg[];
 }
-
-const EXPLORERS: Record<string, string> = {
-  arc: "https://testnet.arcscan.app/tx/",
-  base: "https://sepolia.basescan.org/tx/",
-};
 
 export function AuditTrail({ data }: { data: DecisionFull }) {
   const rec = data.recommendation as Record<string, unknown> | null;
@@ -219,7 +215,12 @@ export function AuditTrail({ data }: { data: DecisionFull }) {
                   </span>
                   {leg.txHash && (
                     <a
-                      href={`${EXPLORERS[leg.destChain ?? leg.srcChain ?? "base"] ?? EXPLORERS.base}${leg.txHash}`}
+                      href={
+                        explorerTxUrl(
+                          explorerChain(leg.destChain ?? leg.srcChain),
+                          leg.txHash,
+                        ) ?? "#"
+                      }
                       target="_blank"
                       rel="noreferrer"
                       className="text-accent-agent underline-offset-4 hover:underline"
@@ -235,6 +236,10 @@ export function AuditTrail({ data }: { data: DecisionFull }) {
       </Section>
     </section>
   );
+}
+
+function explorerChain(chain: string | null): ExplorerChain {
+  return chain === "arc" || chain === "base" ? chain : "base";
 }
 
 function Section({

@@ -263,8 +263,7 @@ mod usyc_chain {
             .convertToShares(U256::from(amount))
             .call()
             .await
-            .map_err(|e| anyhow::anyhow!("convertToShares: {e}"))?
-            .shares;
+            .map_err(|e| anyhow::anyhow!("convertToShares: {e}"))?;
 
         let receipt = teller_c
             .redeem(shares, signer_addr, signer_addr)
@@ -279,12 +278,7 @@ mod usyc_chain {
 
     fn build_provider(
         config: &Config,
-    ) -> Result<(
-        impl alloy::providers::Provider<alloy::transports::http::Http<reqwest::Client>>,
-        Address,
-        Address,
-        Address,
-    )> {
+    ) -> Result<(impl alloy::providers::Provider, Address, Address, Address)> {
         let signer: PrivateKeySigner = config
             .chain_private_key_arc
             .parse()
@@ -295,10 +289,7 @@ mod usyc_chain {
             .arc_rpc_url
             .parse()
             .map_err(|e| AppError::Internal(anyhow::anyhow!("bad arc rpc url: {e}")))?;
-        let provider = ProviderBuilder::new()
-            .with_recommended_fillers()
-            .wallet(wallet)
-            .on_http(rpc_url);
+        let provider = ProviderBuilder::new().wallet(wallet).connect_http(rpc_url);
         let teller: Address = config
             .usyc_teller_arc
             .parse()

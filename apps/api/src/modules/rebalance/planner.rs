@@ -33,10 +33,15 @@ pub fn plan_legs(input: &PlanInput) -> Vec<PlannedLeg> {
     let idle_total: f64 = input.usdc_per_chain.values().copied().sum();
 
     // First-deploy: a freshly-funded user has zero invested positions but real
-    // USDC sitting in Gateway. Without this branch the planner emits nothing
-    // (current == target == 0 → all deltas are zero) and the user's $216
-    // never reaches the BTC/ETH/SOL/USYC mix they asked for.
-    let first_deploy = input.portfolio_value_usd <= input.dust_threshold_usd
+    // USDC sitting in Gateway. `portfolio_value_usd` is the planning basis
+    // after idle USDC is included, so detect this from current exposure rather
+    // than total basis. Otherwise a target USDC sleeve becomes a bogus
+    // USDC->USDC buy leg.
+    let has_current_exposure = input
+        .current_weights
+        .values()
+        .any(|w| (w * input.portfolio_value_usd).abs() > input.dust_threshold_usd);
+    let first_deploy = !has_current_exposure
         && idle_total > input.dust_threshold_usd
         && !input.target_weights.is_empty();
 
@@ -530,6 +535,44 @@ mod tests {
         // USDC is not bought from USDC — skip.
         assert!(legs.iter().all(|l| l.dest_symbol.as_deref() != Some("USDC")
             || matches!(l.kind, LegKind::CrossChainMint)));
+    }
+
+    #[test]
+    fn first_deploy_keeps_usdc_target_as_cash_reserve() {
+        let i = input(
+            100.0,
+            &[],
+            &[("EURC", 0.10), ("USDC", 0.70), ("USYC", 0.20)],
+            40.0,
+            60.0,
+        );
+        let legs = plan_legs(&i);
+        assert!(
+            legs.iter()
+                .all(|l| !(l.src_symbol.as_deref() == Some("USDC")
+                    && l.dest_symbol.as_deref() == Some("USDC")
+                    && matches!(l.kind, LegKind::LocalSwap))),
+            "USDC target sleeve must stay reserve cash, got {legs:?}"
+        );
+        let routed: f64 = legs
+            .iter()
+            .filter(|l| l.kind != LegKind::CrossChainMint)
+            .map(|l| l.amount_usdc)
+            .sum();
+        assert!(
+            (routed - 30.0).abs() < 0.01,
+            "only non-USDC targets should consume wallet USDC, got {routed}"
+        );
+        assert!(
+            legs.iter()
+                .any(|l| l.dest_symbol.as_deref() == Some("EURC")),
+            "EURC target should still route through StableFX, got {legs:?}"
+        );
+        assert!(
+            legs.iter()
+                .any(|l| l.dest_symbol.as_deref() == Some("USYC")),
+            "USYC target should still route through park leg, got {legs:?}"
+        );
     }
 
     #[test]

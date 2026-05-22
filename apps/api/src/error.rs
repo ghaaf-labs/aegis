@@ -22,6 +22,12 @@ pub enum AppError {
     #[error("conflict: {0}")]
     Conflict(String),
 
+    #[error("too many requests: {0}")]
+    TooManyRequests(String),
+
+    #[error("service unavailable: {0}")]
+    ServiceUnavailable(String),
+
     /// HTTP 402 — emitted when a tier cap is hit (decisions/month, AUM,
     /// portfolios). UI maps this to an "upgrade required" prompt.
     #[allow(dead_code)]
@@ -45,6 +51,10 @@ impl IntoResponse for AppError {
             AppError::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "UNAUTHORIZED"),
             AppError::BadRequest(_) => (StatusCode::BAD_REQUEST, "BAD_REQUEST"),
             AppError::Conflict(_) => (StatusCode::CONFLICT, "CONFLICT"),
+            AppError::TooManyRequests(_) => (StatusCode::TOO_MANY_REQUESTS, "TOO_MANY_REQUESTS"),
+            AppError::ServiceUnavailable(_) => {
+                (StatusCode::SERVICE_UNAVAILABLE, "SERVICE_UNAVAILABLE")
+            }
             AppError::PaymentRequired(_) => (StatusCode::PAYMENT_REQUIRED, "PAYMENT_REQUIRED"),
             AppError::Database(e) => {
                 tracing::error!("database error: {e}");

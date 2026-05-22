@@ -75,9 +75,16 @@ export function PegRuleEditor() {
   const [dismissed, setDismissed] = useState(false);
   const alerts = dismissed ? [] : storePegAlerts;
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const thresholdValid =
+    Number.isFinite(draft.thresholdPrice) &&
+    draft.thresholdPrice > 0 &&
+    draft.thresholdPrice <= 1;
+  const targetValid =
+    draft.targetAsset === "" || draft.targetAsset !== draft.asset;
   const canCreate =
     !submitting &&
-    draft.thresholdPrice > 0 &&
+    thresholdValid &&
+    targetValid &&
     draft.windowSeconds >= 0 &&
     draft.actionKind !== "auto_execute";
 
@@ -154,7 +161,7 @@ export function PegRuleEditor() {
                   <span className="flex items-center gap-2">
                     <BrutalPill tone="warn">{a.asset}</BrutalPill>
                     <span>
-                      ${a.observedPrice.toFixed(4)} &lt; threshold $
+                      ${a.observedPrice.toFixed(4)} &le; threshold $
                       {a.thresholdPrice.toFixed(4)}
                     </span>
                     <span className="text-text-mut">
@@ -184,12 +191,15 @@ export function PegRuleEditor() {
               <select
                 className="bg-raised border-brutal border-border-default rounded-sharp px-2 py-1"
                 value={draft.asset}
-                onChange={(e) =>
+                onChange={(e) => {
+                  const asset = e.target.value as PegAssetSymbol;
                   setDraft({
                     ...draft,
-                    asset: e.target.value as PegAssetSymbol,
-                  })
-                }
+                    asset,
+                    targetAsset:
+                      draft.targetAsset === asset ? "" : draft.targetAsset,
+                  });
+                }}
               >
                 {ASSETS.map((a) => (
                   <option key={a} value={a}>
@@ -201,12 +211,13 @@ export function PegRuleEditor() {
 
             <label className="flex flex-col gap-1 text-xs">
               <span className="font-semibold uppercase tracking-wider">
-                Fire when price &lt;
+                Fire when price &le;
               </span>
               <input
                 type="number"
                 step="0.0001"
                 min="0"
+                max="1"
                 className="bg-raised border-brutal border-border-default rounded-sharp px-2 py-1 font-mono"
                 value={draft.thresholdPrice}
                 onChange={(e) =>
@@ -216,6 +227,15 @@ export function PegRuleEditor() {
                   })
                 }
               />
+              <span className="text-[11px] text-text-mut font-mono">
+                Use a sub-$1 depeg trigger. Values above 1.0000 would alert
+                while the asset is healthy, so they are blocked.
+              </span>
+              {!thresholdValid ? (
+                <span className="text-[11px] text-risk font-mono">
+                  Enter a value greater than 0 and at or below 1.0000.
+                </span>
+              ) : null}
             </label>
 
             <label className="flex flex-col gap-1 text-xs">
@@ -258,6 +278,11 @@ export function PegRuleEditor() {
                   </option>
                 ))}
               </select>
+              {!targetValid ? (
+                <span className="text-[11px] text-risk font-mono">
+                  Pick a different destination asset.
+                </span>
+              ) : null}
             </label>
 
             <fieldset className="md:col-span-2 flex flex-col gap-2 text-xs">
@@ -336,7 +361,7 @@ export function PegRuleEditor() {
                       {rule.asset}
                     </BrutalPill>
                     <span className="font-mono">
-                      &lt; ${rule.thresholdPrice.toFixed(4)}
+                      &le; ${rule.thresholdPrice.toFixed(4)}
                     </span>
                     <span className="text-text-mut">
                       window {rule.windowSeconds}s &middot;{" "}

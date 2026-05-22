@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useParams, useRouter } from "next/navigation";
-import { Loader2, Rocket } from "lucide-react";
+import { CircleAlert, Loader2, LockKeyhole, Rocket } from "lucide-react";
 import { PortfolioSummaryCard } from "@/components/dashboard/portfolio-summary-card";
 import { AllocationChart } from "@/components/dashboard/allocation-chart";
 import { AssetTable } from "@/components/dashboard/asset-table";
@@ -13,11 +13,13 @@ import { MarketOverview } from "@/components/dashboard/market-overview";
 import { TrustabilityCard } from "@/components/dashboard/trustability-card";
 import { IdleCashCard } from "@/components/dashboard/idle-cash-card";
 import { DashboardTopology } from "@/components/dashboard/dashboard-topology";
+import { ValueFlowCard } from "@/components/dashboard/value-flow-card";
 import { FaucetButton } from "@/components/wallet/faucet-button";
 import { BrutalButton } from "@aegis/ui";
 import { rebalanceApi } from "@/lib/api";
 import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
 import { formatCurrency } from "@/lib/utils";
+import { derivePortfolioPositionMetrics } from "@/lib/portfolio-values";
 
 const stagger = { visible: { transition: { staggerChildren: 0.08 } } };
 const fadeUp = {
@@ -43,21 +45,50 @@ export default function PortfolioDashboardPage() {
 
   const unifiedUsdc = usePortfolioStore((s) => s.unifiedUsdc);
   const unifiedEurc = usePortfolioStore((s) => s.unifiedEurc);
+  const snapshot = usePortfolioStore((s) => s.marketSnapshot);
   const wallet = usePortfolioStore((s) => s.wallet);
+  const gatewayBalanceStatus = usePortfolioStore((s) => s.gatewayBalanceStatus);
+  const gatewayBalanceError = usePortfolioStore((s) => s.gatewayBalanceError);
   const activePortfolio = useActivePortfolio();
   const router = useRouter();
   const [deploying, setDeploying] = useState(false);
   const [deployError, setDeployError] = useState<string | null>(null);
 
   const deployableUsdc = unifiedUsdc;
-  const investedUsd = activePortfolio?.totalValueUsd ?? 0;
+  const gatewayBalanceReady = gatewayBalanceStatus === "ready";
+  const gatewayBalanceUnavailable = gatewayBalanceStatus === "error";
+  const positionMetrics = derivePortfolioPositionMetrics(
+    activePortfolio,
+    snapshot,
+  );
+  const investedUsd = positionMetrics.investedUsd;
   const hasInvestedPositions = investedUsd > 0.5;
-  const hasIdleCash = unifiedUsdc > 0.5 || unifiedEurc > 0.5;
-  const showFaucet = !!wallet && !hasInvestedPositions && !hasIdleCash;
+  const hasIdleCash =
+    gatewayBalanceReady && (unifiedUsdc > 0.5 || unifiedEurc > 0.5);
+  const showFaucet =
+    !!wallet && gatewayBalanceReady && !hasInvestedPositions && !hasIdleCash;
   const showNoIdleCash =
-    !!wallet && hasInvestedPositions && !hasIdleCash && !!activePortfolio;
-  const showDeploy = deployableUsdc > 5 && !!activePortfolio;
+    !!wallet &&
+    gatewayBalanceReady &&
+    hasInvestedPositions &&
+    !hasIdleCash &&
+    !!activePortfolio;
+  const showDeploy =
+    gatewayBalanceReady && deployableUsdc > 5 && !!activePortfolio;
+  const maxTargetDriftPct = positionMetrics.maxDriftPct;
+  const hasReviewableDrift = maxTargetDriftPct >= 5;
   const isFirstDeploy = investedUsd <= 5;
+  const targetSymbols =
+    activePortfolio?.allocations
+      ?.filter((a) => a.targetWeight > 0 && a.symbol !== "USDC")
+      .map((a) => a.symbol) ?? [];
+  const usdcTargetWeight =
+    activePortfolio?.allocations?.find((a) => a.symbol === "USDC")
+      ?.targetWeight ?? 0;
+  const targetAssetText =
+    targetSymbols.length > 0
+      ? formatAssetList(targetSymbols)
+      : "the target mix";
 
   const handleDeploy = async () => {
     if (!activePortfolio) return;
@@ -76,9 +107,16 @@ export default function PortfolioDashboardPage() {
       // raises a 500 with the raw model output in the body. Dumping that into
       // the UI looks like a crash. Map known signatures to a friendlier
       // "agent hiccup, try again" message.
-      const friendly = /parse strategist proposal|json|JSON/i.test(raw)
-        ? "Agent had a formatting hiccup. Click Review deployment again — the second pass usually succeeds."
-        : raw;
+      const cleaned = raw
+        .replace(/^\d{3}:\s*/, "")
+        .replace(/^conflict:\s*/i, "");
+      const friendly = cleaned
+        .toLowerCase()
+        .includes("no rebalance plan was created")
+        ? cleaned
+        : /parse strategist proposal|json|JSON/i.test(raw)
+          ? "Agent had a formatting hiccup. Click Review deployment again — the second pass usually succeeds."
+          : raw;
       setDeployError(friendly);
       setDeploying(false);
     }
@@ -96,7 +134,8 @@ export default function PortfolioDashboardPage() {
         className="relative overflow-hidden border-brutal border-border-default bg-surface p-4 md:p-5 rounded-sharp"
       >
         <DashboardTopology />
-        <div className="absolute inset-0 bg-gradient-to-r from-bg via-bg/85 to-bg/35" />
+        <div className="absolute inset-0 bg-bg/75" />
+        <div className="absolute inset-y-0 right-0 hidden w-1/3 bg-bg/35 md:block" />
         <div className="relative z-10 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
@@ -117,12 +156,20 @@ export default function PortfolioDashboardPage() {
             <HeaderStat label="Invested" value={formatCurrency(investedUsd)} />
             <HeaderStat
               label="Idle USDC"
-              value={formatCurrency(deployableUsdc)}
+              value={
+                gatewayBalanceUnavailable
+                  ? "Unavailable"
+                  : formatCurrency(deployableUsdc)
+              }
               tone={deployableUsdc > 5 ? "pnl" : "muted"}
             />
             <HeaderStat
-              label="EURC"
-              value={formatCurrency(unifiedEurc)}
+              label="EURC cash"
+              value={
+                gatewayBalanceUnavailable
+                  ? "Unavailable"
+                  : `€${unifiedEurc.toFixed(2)}`
+              }
               tone={unifiedEurc > 0 ? "pnl" : "muted"}
             />
             <HeaderStat
@@ -133,6 +180,61 @@ export default function PortfolioDashboardPage() {
           </dl>
         </div>
       </motion.div>
+
+      {gatewayBalanceUnavailable && (
+        <motion.div
+          variants={fadeUp}
+          className="border-brutal border-warn/50 bg-warn/5 p-4 rounded-sharp"
+        >
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+            <div className="flex items-start gap-3">
+              <CircleAlert className="mt-0.5 h-5 w-5 shrink-0 text-warn" />
+              <div>
+                <p className="font-mono text-sm font-semibold text-text-hi">
+                  Gateway balance could not be confirmed
+                </p>
+                <p className="mt-1 max-w-3xl font-mono text-xs leading-relaxed text-text-lo">
+                  {gatewayBalanceError ??
+                    "Circle Gateway did not return Arc + Base balances."}{" "}
+                  The dashboard keeps deploy, faucet, and rebalance cash actions
+                  hidden so a backend outage cannot look like a real $0 wallet.
+                </p>
+                {hasReviewableDrift && (
+                  <div className="mt-3 grid gap-2 border border-warn/40 bg-bg/70 p-3 font-mono text-xs md:grid-cols-[auto_1fr]">
+                    <LockKeyhole className="h-4 w-4 text-warn" />
+                    <div>
+                      <p className="font-semibold text-text-hi">
+                        Rebalance review locked by balance check
+                      </p>
+                      <p className="mt-1 leading-relaxed text-text-lo">
+                        Aegis sees {maxTargetDriftPct.toFixed(1)}% max target
+                        drift, but it will not build a new execution review
+                        until Gateway confirms current Arc + Base USDC. This
+                        prevents approving a plan from stale cash.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 lg:min-w-[260px] lg:grid-cols-1">
+              {hasReviewableDrift && (
+                <div className="grid grid-cols-3 gap-2 text-center text-[10px] font-mono">
+                  <StepBadge active label="1 Drift" />
+                  <StepBadge active={false} label="2 Balance" />
+                  <StepBadge active={false} label="3 Review" />
+                </div>
+              )}
+              <a
+                href="/wallets"
+                className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-sharp border border-warn/40 bg-warn/10 px-3 font-mono text-xs font-semibold text-warn hover:bg-warn/15"
+              >
+                Open wallet status
+              </a>
+            </div>
+          </div>
+        </motion.div>
+      )}
 
       {showFaucet && (
         <motion.div
@@ -160,22 +262,52 @@ export default function PortfolioDashboardPage() {
           <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
             <div className="min-w-0">
               <p className="text-[10px] font-mono uppercase tracking-widest text-accent-agent">
-                Portfolio is invested · no idle USDC
+                {hasReviewableDrift
+                  ? "Target drift detected · no idle USDC"
+                  : "Portfolio is invested · no idle USDC"}
               </p>
               <h2 className="mt-1 text-lg font-mono font-semibold text-text-hi">
-                {formatCurrency(investedUsd)} is already in positions
+                {hasReviewableDrift
+                  ? `${maxTargetDriftPct.toFixed(1)}% max target drift needs review`
+                  : `${formatCurrency(investedUsd)} is already in positions`}
               </h2>
               <p className="text-xs text-text-lo font-mono mt-2 max-w-3xl leading-relaxed">
-                Your Gateway wallet has no deployable USDC right now, so there
-                is nothing for Deploy to move. Use Review rebalance when target
-                weights drift, or fund the wallet if you want the agent to
-                invest new cash.
+                {hasReviewableDrift
+                  ? "Your wallet has no idle USDC, but the invested positions no longer match the target. Build a review plan to sell overweight sleeves and buy underweight sleeves; no trade executes until the approval screen."
+                  : "Your Gateway wallet has no deployable USDC right now, so there is nothing for Deploy to move. Fund the wallet if you want the agent to invest new cash."}
               </p>
+              {deployError && (
+                <p className="text-xs text-risk font-mono mt-2">
+                  {deployError}
+                </p>
+              )}
             </div>
-            <div className="grid gap-2 text-[10px] font-mono sm:grid-cols-3 lg:min-w-[320px]">
-              <StepBadge active label="1 Invested" />
-              <StepBadge active={false} label="2 Waiting" />
-              <StepBadge active={false} label="3 Fund cash" />
+            <div className="grid gap-3 lg:min-w-[320px]">
+              <div className="grid gap-2 text-[10px] font-mono sm:grid-cols-3">
+                <StepBadge active label="1 Invested" />
+                <StepBadge active={hasReviewableDrift} label="2 Review" />
+                <StepBadge active={false} label="3 Execute" />
+              </div>
+              {hasReviewableDrift && (
+                <BrutalButton
+                  variant="agent"
+                  onClick={() => void handleDeploy()}
+                  disabled={deploying}
+                  className="w-full"
+                >
+                  {deploying ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Preparing review…
+                    </>
+                  ) : (
+                    <>
+                      <Rocket className="w-4 h-4 mr-2" />
+                      Review rebalance
+                    </>
+                  )}
+                </BrutalButton>
+              )}
             </div>
           </div>
         </motion.div>
@@ -200,15 +332,22 @@ export default function PortfolioDashboardPage() {
               </h2>
               <p className="text-xs text-text-lo font-mono mt-2 max-w-3xl leading-relaxed">
                 {isFirstDeploy
-                  ? "Right now the USDC is safe in your Circle Gateway wallet. It is not in BTC, ETH, SOL, or USYC yet."
+                  ? `Right now the USDC is safe in your Circle Gateway wallet. It has not been routed into ${targetAssetText} yet.`
                   : `${formatCurrency(investedUsd)} is already in positions. The remaining USDC is not following the target mix yet.`}{" "}
                 Review the exact USDC deployment first; no trade executes until
                 you approve the next screen.
+                {usdcTargetWeight > 0 && (
+                  <>
+                    {" "}
+                    The {usdcTargetWeight.toFixed(0)}% USDC sleeve stays as cash
+                    reserve; no swap is needed for that part.
+                  </>
+                )}
                 {unifiedEurc > 0 && (
                   <>
                     {" "}
-                    EURC remains visible in Wallet until the StableFX deploy
-                    rail is enabled.
+                    Existing EURC wallet cash stays separate until an approved
+                    StableFX leg confirms it as portfolio exposure.
                   </>
                 )}
               </p>
@@ -254,6 +393,16 @@ export default function PortfolioDashboardPage() {
           </div>
         </motion.div>
       )}
+
+      <motion.div variants={fadeUp}>
+        <ValueFlowCard
+          portfolio={activePortfolio}
+          idleUsdc={unifiedUsdc}
+          idleEurc={unifiedEurc}
+          investedUsd={investedUsd}
+          walletCashStatus={gatewayBalanceStatus}
+        />
+      </motion.div>
 
       <motion.div
         variants={fadeUp}
@@ -320,7 +469,7 @@ function HeaderStat({
           : "text-text-hi";
 
   return (
-    <div className="border border-border-default bg-bg/80 px-3 py-2 rounded-sharp backdrop-blur-sm">
+    <div className="border border-border-default bg-bg/90 px-3 py-2 rounded-sharp">
       <dt className="text-[10px] font-mono uppercase text-text-mut">{label}</dt>
       <dd
         className={`mt-1 truncate text-sm font-mono font-semibold tabular-nums ${valueClass}`}
@@ -331,6 +480,13 @@ function HeaderStat({
   );
 }
 
+function formatAssetList(symbols: string[]) {
+  const unique = Array.from(new Set(symbols));
+  if (unique.length === 0) return "";
+  if (unique.length === 1) return unique[0] ?? "";
+  if (unique.length === 2) return `${unique[0]} and ${unique[1]}`;
+  return `${unique.slice(0, -1).join(", ")}, and ${unique[unique.length - 1]}`;
+}
 function StepBadge({ active, label }: { active: boolean; label: string }) {
   return (
     <span

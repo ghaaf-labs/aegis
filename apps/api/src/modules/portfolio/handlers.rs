@@ -47,10 +47,10 @@ pub async fn get(
     }))
 }
 
-/// Upsert the user's single portfolio. Aegis is one-portfolio-per-user; if
-/// the user already has one this handler replaces its name, goal, and
-/// allocations rather than creating a second. Returns 201 when freshly
-/// created, 200 when an existing portfolio was overwritten.
+/// Create a portfolio owned by the authenticated user. Users can keep multiple
+/// portfolios side-by-side: one custom goal, plus strategy-adopted targets for
+/// comparison. The agent still requires per-portfolio human approval before
+/// any deployment or rebalance executes.
 pub async fn create(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
@@ -58,58 +58,106 @@ pub async fn create(
 ) -> crate::error::Result<(StatusCode, Json<Portfolio>)> {
     let goal_value = body.goal.clone().unwrap_or(serde_json::json!({}));
 
-    let existing: Option<Uuid> =
-        sqlx::query_scalar("SELECT id FROM portfolios WHERE user_id = $1 LIMIT 1")
-            .bind(claims.sub)
-            .fetch_optional(&state.db)
-            .await?;
-
     let mut tx = state.db.begin().await?;
-    let (portfolio, status) = if let Some(id) = existing {
-        let updated = sqlx::query_as::<_, Portfolio>(
-            "UPDATE portfolios SET name = $1, goal = $2, updated_at = NOW()
-             WHERE id = $3 RETURNING *",
-        )
-        .bind(&body.name)
-        .bind(&goal_value)
-        .bind(id)
-        .fetch_one(&mut *tx)
-        .await?;
-        sqlx::query("DELETE FROM allocations WHERE portfolio_id = $1")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-        (updated, StatusCode::OK)
-    } else {
-        let created = sqlx::query_as::<_, Portfolio>(
-            "INSERT INTO portfolios (id, user_id, name, goal) VALUES ($1, $2, $3, $4)
-             RETURNING *",
-        )
-        .bind(Uuid::new_v4())
-        .bind(claims.sub)
-        .bind(&body.name)
-        .bind(&goal_value)
-        .fetch_one(&mut *tx)
-        .await?;
-        (created, StatusCode::CREATED)
-    };
+    let created = sqlx::query_as::<_, Portfolio>(
+        "INSERT INTO portfolios (id, user_id, name, goal) VALUES ($1, $2, $3, $4)
+         RETURNING *",
+    )
+    .bind(Uuid::new_v4())
+    .bind(claims.sub)
+    .bind(&body.name)
+    .bind(&goal_value)
+    .fetch_one(&mut *tx)
+    .await?;
+    let portfolio_id = created.id;
+
+    let target_symbols = body
+        .allocations
+        .iter()
+        .map(|a| a.symbol.clone())
+        .collect::<Vec<_>>();
 
     for alloc in &body.allocations {
+        // Portfolio creation captures the target allocation only. Execution
+        // updates real holdings later; trusting request quantity here makes
+        // setup screens look invested before any approved leg confirms.
         sqlx::query(
-            "INSERT INTO allocations (id, portfolio_id, asset_symbol, quantity, target_weight, current_weight, value_usd)
-             VALUES ($1, $2, $3, $4, $5, $5, 0)",
+            "INSERT INTO allocations
+                (id, portfolio_id, asset_symbol, quantity, target_weight, current_weight, value_usd)
+             VALUES ($1, $2, $3, $4, $5, 0, 0)
+             ON CONFLICT (portfolio_id, asset_symbol) DO UPDATE
+                SET target_weight = EXCLUDED.target_weight,
+                    updated_at = NOW()",
         )
         .bind(Uuid::new_v4())
-        .bind(portfolio.id)
+        .bind(portfolio_id)
         .bind(&alloc.symbol)
-        .bind(alloc.quantity)
+        .bind(0.0_f64)
         .bind(alloc.target_weight)
         .execute(&mut *tx)
         .await?;
     }
 
+    sqlx::query(
+        "UPDATE allocations
+         SET target_weight = 0,
+             updated_at = NOW()
+         WHERE portfolio_id = $1
+           AND asset_symbol <> ALL($2)",
+    )
+    .bind(portfolio_id)
+    .bind(&target_symbols)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        "DELETE FROM allocations
+         WHERE portfolio_id = $1
+           AND target_weight = 0
+           AND quantity = 0
+           AND value_usd = 0
+           AND asset_symbol <> ALL($2)",
+    )
+    .bind(portfolio_id)
+    .bind(&target_symbols)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        "UPDATE allocations a
+            SET current_weight = CASE
+                WHEN totals.total_value_usd > 0
+                THEN (a.value_usd / totals.total_value_usd) * 100
+                ELSE 0
+            END,
+            updated_at = NOW()
+         FROM (
+            SELECT COALESCE(SUM(value_usd), 0)::DOUBLE PRECISION AS total_value_usd
+            FROM allocations
+            WHERE portfolio_id = $1
+         ) totals
+         WHERE a.portfolio_id = $1",
+    )
+    .bind(portfolio_id)
+    .execute(&mut *tx)
+    .await?;
+
+    let portfolio = sqlx::query_as::<_, Portfolio>(
+        "UPDATE portfolios p
+            SET total_value_usd = COALESCE(
+                (SELECT SUM(value_usd) FROM allocations WHERE portfolio_id = p.id),
+                0
+            ),
+            updated_at = NOW()
+         WHERE id = $1
+         RETURNING *",
+    )
+    .bind(portfolio_id)
+    .fetch_one(&mut *tx)
+    .await?;
+
     tx.commit().await?;
-    Ok((status, Json(portfolio)))
+    Ok((StatusCode::CREATED, Json(portfolio)))
 }
 
 pub async fn update(

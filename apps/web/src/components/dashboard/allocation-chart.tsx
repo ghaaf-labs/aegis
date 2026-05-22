@@ -4,16 +4,17 @@ import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
 import { formatPercent } from "@/lib/utils";
+import { derivePortfolioPositionMetrics } from "@/lib/portfolio-values";
 import { ProvenanceLine } from "@aegis/ui";
 
 // Chart palette sourced from design-system tokens + complementary shades.
 const CHART_COLORS = [
-  "#00E0FF", // accent-agent
+  "#00FF88", // accent-pnl
   "#FFB800", // warn
   "#FF2D7A", // risk
-  "#00FF88", // accent-pnl
   "#A855F7", // violet
   "#F97316", // orange
+  "#FFFFFF", // neutral cash/other
 ];
 
 interface Props {
@@ -28,39 +29,19 @@ export function AllocationChart({ compact = false }: Props) {
 
   if (!portfolio) return null;
 
-  const priceMap = snapshot
-    ? Object.fromEntries(snapshot.assets.map((a) => [a.symbol, a.priceUsd]))
-    : {};
-
-  // Re-derive current weight from holdings × price each render — the stored
-  // `current_weight` column is initialised to the target and isn't kept fresh
-  // by the executor, so reading it would paint a fictional pie.
   const allocations = portfolio.allocations ?? [];
-  const investedUsdBySymbol = allocations.map((a) => ({
-    symbol: a.symbol,
-    target: a.targetWeight,
-    valueUsd:
-      (priceMap[a.symbol] ?? 0) * a.quantity > 0
-        ? (priceMap[a.symbol] ?? 0) * a.quantity
-        : a.valueUsd,
-  }));
-  const derivedInvestedUsd = investedUsdBySymbol.reduce(
-    (sum, a) => sum + a.valueUsd,
-    0,
-  );
-  const totalInvestedUsd =
-    derivedInvestedUsd > 0.5 ? derivedInvestedUsd : portfolio.totalValueUsd;
+  const metrics = derivePortfolioPositionMetrics(portfolio, snapshot);
 
-  const isUninvested = totalInvestedUsd < 0.5; // ~half a dollar of dust
+  const isUninvested = metrics.investedUsd < 0.5; // ~half a dollar of dust
   const data = isUninvested
     ? allocations.map((a) => ({
         name: a.symbol,
         value: a.targetWeight,
         valueUsd: 0,
       }))
-    : investedUsdBySymbol.map((a) => ({
+    : metrics.positions.map((a) => ({
         name: a.symbol,
-        value: (a.valueUsd / totalInvestedUsd) * 100,
+        value: a.currentWeight,
         valueUsd: a.valueUsd,
       }));
 
@@ -95,10 +76,14 @@ export function AllocationChart({ compact = false }: Props) {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div
-          className={`flex ${compact ? "flex-col gap-4" : "items-center gap-6"}`}
-        >
-          <div className={compact ? "h-40" : "h-44 w-44 shrink-0"}>
+        <div className={compact ? "grid gap-4" : "grid gap-4"}>
+          <div
+            className={
+              compact
+                ? "mx-auto h-40 w-full max-w-[220px]"
+                : "mx-auto h-36 w-full max-w-[170px]"
+            }
+          >
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
@@ -137,11 +122,11 @@ export function AllocationChart({ compact = false }: Props) {
             </ResponsiveContainer>
           </div>
 
-          <div className="flex-1 min-w-0 space-y-1.5">
+          <div className="min-w-0 space-y-1.5">
             {data.map((item, i) => (
               <div
                 key={item.name}
-                className="flex items-center justify-between gap-2"
+                className="grid min-h-6 grid-cols-[minmax(0,1fr)_auto] items-center gap-2"
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <span

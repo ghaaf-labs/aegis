@@ -82,7 +82,6 @@ pub async fn build(db: Db, config: Config) -> Router {
 
     let authed = Router::new()
         .route("/auth/me", get(wallet::handlers::me))
-        .route("/auth/logout", post(wallet::handlers::logout))
         .route("/auth/wallet/status", get(wallet::handlers::status))
         .route("/faucet/usdc", post(faucet::handlers::claim_usdc))
         .route("/gateway/balance", get(gateway::handlers::balance))
@@ -216,9 +215,12 @@ pub async fn build(db: Db, config: Config) -> Router {
         .route("/health", get(health))
         .route("/metrics", get(observability::handlers::metrics))
         // Wallet auth — public (cookies + token set on success).
-        // W3S User-Controlled flow: `create` issues a UserTokenBundle the
-        // browser SDK uses to complete PIN setup; `status` is then polled
-        // (authed) until the wallet addresses arrive.
+        .route("/auth/wallet/readiness", get(wallet::handlers::readiness))
+        .route("/auth/wallet/code", post(wallet::handlers::request_code))
+        .route("/auth/logout", post(wallet::handlers::logout))
+        // W3S User-Controlled flow: `create` issues Circle challenge
+        // credentials only when the browser SDK must complete PIN setup;
+        // `status` is then polled (authed) until wallet addresses arrive.
         .route("/auth/wallet/create", post(wallet::handlers::create))
         .route("/auth/wallet/login", post(wallet::handlers::login))
         // Market data — public.

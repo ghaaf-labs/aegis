@@ -6,9 +6,9 @@ import { trustabilityApi, type TrustabilityResponse } from "@/lib/api";
 import { ProvenanceLine } from "@aegis/ui";
 
 const LABEL_TONE: Record<string, string> = {
-  excellent: "text-accent-pnl border-emerald-500/30 bg-emerald-500/5",
-  strong: "text-accent-pnl/70 border-emerald-500/20 bg-emerald-500/3",
-  stable: "text-text-hi border-white/15 bg-white/3",
+  excellent: "text-accent-agent border-accent-agent/40 bg-accent-agent/10",
+  strong: "text-accent-agent/80 border-accent-agent/30 bg-accent-agent/5",
+  stable: "text-text-hi border-border-default bg-bg",
   shaky: "text-warn border-amber-500/30 bg-amber-500/5",
   underperforming: "text-risk border-rose-500/30 bg-rose-500/5",
 };
@@ -138,7 +138,7 @@ export function TrustabilityCard() {
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="border-2 border-white/10 bg-[#141414] p-4 space-y-1">
+    <div className="space-y-1 border-brutal border-border-default bg-surface p-4 rounded-sharp">
       <div className="flex items-center gap-2 mb-1">
         <ShieldCheck className="w-3.5 h-3.5 text-accent-agent" />
         <span className="text-xs font-semibold text-text-hi">Trustability</span>
@@ -156,7 +156,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-white/2 border border-white/5 px-2 py-1.5">
+    <div className="border border-border-default bg-bg px-2 py-1.5">
       <div className="text-[10px] text-text-lo">{label}</div>
       <div className="text-text-default tabular-nums">{value}</div>
     </div>

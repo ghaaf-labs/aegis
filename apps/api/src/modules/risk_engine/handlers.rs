@@ -325,13 +325,15 @@ pub async fn patch(
 ) -> Result<Json<PegRuleView>> {
     ensure_peg_enabled(&state)?;
     own_rule_or_404(&state, claims.sub, rule_id).await?;
+    let current_asset: String =
+        sqlx::query_scalar("SELECT asset FROM peg_rules WHERE id = $1 AND user_id = $2")
+            .bind(rule_id)
+            .bind(claims.sub)
+            .fetch_one(&state.db)
+            .await?;
 
     if let Some(p) = body.threshold_price {
-        if !p.is_finite() || p <= 0.0 {
-            return Err(AppError::BadRequest(
-                "thresholdPrice must be positive".into(),
-            ));
-        }
+        validate_threshold_price(p)?;
     }
     if let Some(w) = body.window_seconds {
         if w < 0 {
@@ -352,6 +354,9 @@ pub async fn patch(
                     .into(),
             ));
         }
+    }
+    if let Some(Some(ref ta)) = body.target_asset {
+        validate_target_asset(ta, Some(&current_asset))?;
     }
 
     let row: PegRuleView = sqlx::query_as(
@@ -455,11 +460,7 @@ fn validate_create(body: &CreateRuleBody) -> Result<()> {
             "asset must be one of {ALLOWED_ASSETS:?}"
         )));
     }
-    if !body.threshold_price.is_finite() || body.threshold_price <= 0.0 {
-        return Err(AppError::BadRequest(
-            "thresholdPrice must be positive".into(),
-        ));
-    }
+    validate_threshold_price(body.threshold_price)?;
     if body.window_seconds < 0 {
         return Err(AppError::BadRequest(
             "windowSeconds must be non-negative".into(),
@@ -476,13 +477,33 @@ fn validate_create(body: &CreateRuleBody) -> Result<()> {
                 .into(),
         ));
     }
-    if let Some(ref ta) = body.target_asset {
-        let ta = ta.to_uppercase();
-        if !ALLOWED_ASSETS.contains(&ta.as_str()) {
-            return Err(AppError::BadRequest(format!(
-                "targetAsset must be one of {ALLOWED_ASSETS:?}"
-            )));
-        }
+    validate_target_asset(body.target_asset.as_deref().unwrap_or(""), Some(&asset))?;
+    Ok(())
+}
+
+fn validate_threshold_price(price: f64) -> Result<()> {
+    if !price.is_finite() || price <= 0.0 || price > 1.0 {
+        return Err(AppError::BadRequest(
+            "thresholdPrice must be greater than 0 and at or below 1.0".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_target_asset(target_asset: &str, source_asset: Option<&str>) -> Result<()> {
+    if target_asset.trim().is_empty() {
+        return Ok(());
+    }
+    let target_asset = target_asset.to_uppercase();
+    if !ALLOWED_ASSETS.contains(&target_asset.as_str()) {
+        return Err(AppError::BadRequest(format!(
+            "targetAsset must be one of {ALLOWED_ASSETS:?}"
+        )));
+    }
+    if source_asset.is_some_and(|source| source == target_asset) {
+        return Err(AppError::BadRequest(
+            "targetAsset must differ from asset".into(),
+        ));
     }
     Ok(())
 }
@@ -549,6 +570,12 @@ mod tests {
     }
 
     #[test]
+    fn validate_rejects_always_firing_threshold() {
+        let err = validate_create(&body("USDC", 1.0001, "alert")).unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+    }
+
+    #[test]
     fn validate_rejects_unknown_action_kind() {
         assert!(validate_create(&body("USDC", 0.995, "yolo")).is_err());
     }
@@ -563,6 +590,13 @@ mod tests {
     fn validate_rejects_unknown_target_asset() {
         let mut b = body("USDC", 0.995, "propose_rebalance");
         b.target_asset = Some("ETH".into());
+        assert!(validate_create(&b).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_target_matching_source_asset() {
+        let mut b = body("USDC", 0.995, "propose_rebalance");
+        b.target_asset = Some("USDC".into());
         assert!(validate_create(&b).is_err());
     }
 }

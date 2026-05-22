@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { Plus, RefreshCw } from "lucide-react";
+import { CircleAlert, Plus, RefreshCw, ShieldCheck } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { BrutalButton } from "@aegis/ui";
@@ -8,12 +8,21 @@ import { AssetTable } from "@/components/dashboard/asset-table";
 import { RebalanceModal } from "@/components/portfolio/rebalance-modal";
 import { RiskScoreCard } from "@/components/portfolio/risk-score-card";
 import { AllocationChart } from "@/components/dashboard/allocation-chart";
-import { useActivePortfolio } from "@/stores/portfolio";
+import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
 
 export default function PortfolioPage() {
   const router = useRouter();
   const [rebalanceOpen, setRebalanceOpen] = useState(false);
   const portfolio = useActivePortfolio();
+  const wallet = usePortfolioStore((s) => s.wallet);
+  const gatewayBalanceStatus = usePortfolioStore((s) => s.gatewayBalanceStatus);
+  const gatewayBalanceError = usePortfolioStore((s) => s.gatewayBalanceError);
+  const reviewReady = !!wallet && gatewayBalanceStatus === "ready";
+  const readiness = rebalanceReadinessCopy(
+    !!wallet,
+    gatewayBalanceStatus,
+    gatewayBalanceError,
+  );
 
   if (!portfolio) {
     return (
@@ -56,12 +65,101 @@ export default function PortfolioPage() {
             <Plus className="w-4 h-4 mr-2" />
             Change target
           </BrutalButton>
-          <BrutalButton variant="agent" onClick={() => setRebalanceOpen(true)}>
-            <RefreshCw className="w-4 h-4 mr-2" />
-            Review rebalance
+          <BrutalButton
+            variant={reviewReady ? "agent" : "ghost"}
+            onClick={() => setRebalanceOpen(true)}
+          >
+            {reviewReady ? (
+              <RefreshCw className="w-4 h-4 mr-2" />
+            ) : (
+              <CircleAlert className="w-4 h-4 mr-2" />
+            )}
+            {reviewReady ? "Review rebalance" : "Check readiness"}
           </BrutalButton>
         </div>
       </div>
+
+      <section
+        aria-label="Rebalance readiness"
+        className={`rounded-sharp border-brutal p-4 md:p-5 ${
+          reviewReady
+            ? "border-accent-agent/40 bg-accent-agent/5"
+            : "border-warn/50 bg-warn/5"
+        }`}
+      >
+        <div className="grid gap-4 lg:grid-cols-[1fr_360px] lg:items-center">
+          <div className="flex items-start gap-3">
+            <div
+              className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-sharp border-brutal border-black ${
+                reviewReady ? "bg-accent-agent" : "bg-warn"
+              }`}
+            >
+              {reviewReady ? (
+                <ShieldCheck className="h-4 w-4 text-black" />
+              ) : (
+                <CircleAlert className="h-4 w-4 text-black" />
+              )}
+            </div>
+            <div>
+              <p
+                className={`font-mono text-[10px] uppercase tracking-widest ${
+                  reviewReady ? "text-accent-agent" : "text-warn"
+                }`}
+              >
+                Rebalance readiness
+              </p>
+              <h2 className="mt-1 font-mono text-lg font-semibold text-text-hi">
+                {readiness.title}
+              </h2>
+              <p className="mt-2 max-w-3xl font-mono text-xs leading-relaxed text-text-lo">
+                {readiness.copy}
+              </p>
+            </div>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-1">
+            <ReadinessFact label="Portfolio" value="selected" ok />
+            <ReadinessFact
+              label="Wallet"
+              value={wallet ? "Arc + Base ready" : "setup required"}
+              ok={!!wallet}
+            />
+            <ReadinessFact
+              label="Gateway"
+              value={gatewayStatusLabel(gatewayBalanceStatus)}
+              ok={gatewayBalanceStatus === "ready"}
+            />
+          </div>
+        </div>
+        <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+          <BrutalButton
+            variant={reviewReady ? "agent" : "ghost"}
+            onClick={() => setRebalanceOpen(true)}
+          >
+            {reviewReady ? (
+              <RefreshCw className="w-4 h-4 mr-2" />
+            ) : (
+              <CircleAlert className="w-4 h-4 mr-2" />
+            )}
+            {reviewReady ? "Build review plan" : "Open readiness details"}
+          </BrutalButton>
+          {!wallet && (
+            <Link
+              href="/wallets"
+              className="inline-flex min-h-10 items-center justify-center rounded-sharp border border-warn/40 px-3 font-mono text-xs font-semibold text-warn hover:bg-warn/10"
+            >
+              Finish wallet setup
+            </Link>
+          )}
+          {gatewayBalanceStatus === "error" && (
+            <Link
+              href="/wallets"
+              className="inline-flex min-h-10 items-center justify-center rounded-sharp border border-warn/40 px-3 font-mono text-xs font-semibold text-warn hover:bg-warn/10"
+            >
+              Open wallet status
+            </Link>
+          )}
+        </div>
+      </section>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
         <div className="space-y-6">
@@ -77,6 +175,71 @@ export default function PortfolioPage() {
         open={rebalanceOpen}
         onClose={() => setRebalanceOpen(false)}
       />
+    </div>
+  );
+}
+
+type GatewayBalanceStatus = "idle" | "loading" | "ready" | "error";
+
+function rebalanceReadinessCopy(
+  hasWallet: boolean,
+  gatewayBalanceStatus: GatewayBalanceStatus,
+  gatewayBalanceError: string | null,
+) {
+  if (!hasWallet) {
+    return {
+      title: "Rebalance is locked until wallet setup finishes",
+      copy: "Aegis needs real Arc + Base Circle wallet addresses before it can route, estimate, or approve rebalance legs. This prevents a plan from being built against a placeholder account.",
+    };
+  }
+  if (gatewayBalanceStatus === "error") {
+    return {
+      title: "Rebalance is locked because Gateway cash is unknown",
+      copy:
+        gatewayBalanceError ??
+        "Circle Gateway did not confirm balances. Aegis will not treat an unavailable balance as $0, and it will not create rebalance legs from stale wallet cash.",
+    };
+  }
+  if (gatewayBalanceStatus === "idle" || gatewayBalanceStatus === "loading") {
+    return {
+      title: "Checking Gateway before rebalance review",
+      copy: "Aegis is waiting for Circle Gateway to confirm wallet cash. The review builder unlocks only after balances are known, because idle USDC changes what should be bought or left in reserve.",
+    };
+  }
+  return {
+    title: "Ready to build a rebalance review",
+    copy: "Wallet setup and Gateway balances are confirmed. Aegis can build a deterministic review from current positions, target weights, and idle cash; execution still requires approval on the next screen.",
+  };
+}
+
+function gatewayStatusLabel(status: GatewayBalanceStatus) {
+  if (status === "ready") return "confirmed";
+  if (status === "error") return "unavailable";
+  if (status === "loading") return "checking";
+  return "waiting";
+}
+
+function ReadinessFact({
+  label,
+  value,
+  ok,
+}: {
+  label: string;
+  value: string;
+  ok: boolean;
+}) {
+  return (
+    <div
+      className={`border px-3 py-2 font-mono ${
+        ok ? "border-accent-agent/30 bg-accent-agent/5" : "border-warn/40 bg-bg"
+      }`}
+    >
+      <p className="text-[10px] uppercase tracking-widest text-text-mut">
+        {label}
+      </p>
+      <p className={`mt-1 text-xs ${ok ? "text-accent-agent" : "text-warn"}`}>
+        {value}
+      </p>
     </div>
   );
 }

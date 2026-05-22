@@ -1,12 +1,16 @@
 import { test, expect } from "@playwright/test";
+import { requireDevCodes } from "./helpers/auth";
 
 // SET-series — settings hub and sub-pages. Requires the Rust API.
 // Auth state is loaded from global-setup.ts via storageState.
 
 test.use({ storageState: "./e2e/.auth/user.json" });
 
-test.beforeEach(() => {
+test.beforeEach(async () => {
   if (!process.env.PLAYWRIGHT_API_ENABLED) test.skip();
+  if (!(await requireDevCodes())) {
+    test.skip(true, "settings e2e auth state requires mock dev codes");
+  }
 });
 
 test("SET1 — settings hub shows Wallet, Agent, Peg, Tax links", async ({
@@ -67,8 +71,12 @@ test("SET7 — sidebar logout clears JWT and redirects to login", async ({
   // The mobile drawer sidebar is always in the DOM (off-screen); use .first()
   // to target the visible desktop sidebar.
   await page.locator('[data-testid="sidebar-logout"]').first().click();
-  await expect(page).toHaveURL(/\/login/, { timeout: 10_000 });
-  // JWT must be gone from localStorage.
+  await expect(page).toHaveURL(/\/login\?signedOut=1/, { timeout: 10_000 });
+  await expect(page.getByText(/Signed out/i)).toBeVisible();
+  await expect(
+    page.getByText(/fresh one-time code is verified/i),
+  ).toBeVisible();
+  // Legacy client tokens must still be cleared if an old browser has one.
   const jwt = await page.evaluate(() => localStorage.getItem("aegis.jwt"));
   expect(jwt).toBeNull();
 });

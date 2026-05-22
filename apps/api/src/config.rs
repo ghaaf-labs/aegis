@@ -237,6 +237,17 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
+        let cors_allow_origin =
+            std::env::var("CORS_ALLOW_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".into());
+        let public_base_url =
+            std::env::var("PUBLIC_BASE_URL").unwrap_or_else(|_| "http://localhost:3000".into());
+        let api_base_url =
+            std::env::var("API_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".into());
+        let session_cookie_secure = parse_or(
+            "SESSION_COOKIE_SECURE",
+            default_session_cookie_secure(&public_base_url, &api_base_url, &cors_allow_origin),
+        )?;
+
         let cfg = Self {
             database_url: required("DATABASE_URL")?,
             jwt_secret: required("JWT_SECRET")?,
@@ -300,11 +311,10 @@ impl Config {
             gateway_poll_secs: parse_or("GATEWAY_POLL_SECS", 10)?,
             faucet_max_usdc_per_day: parse_or("FAUCET_MAX_USDC_PER_DAY", 100.0)?,
 
-            cors_allow_origin: std::env::var("CORS_ALLOW_ORIGIN")
-                .unwrap_or_else(|_| "http://localhost:3000".into()),
+            cors_allow_origin,
             session_cookie_name: std::env::var("SESSION_COOKIE_NAME")
                 .unwrap_or_else(|_| "aegis_jwt".into()),
-            session_cookie_secure: parse_or("SESSION_COOKIE_SECURE", false)?,
+            session_cookie_secure,
 
             cctp_attestation_url: std::env::var("CCTP_ATTESTATION_URL")
                 .unwrap_or_else(|_| "https://iris-api-sandbox.circle.com".into()),
@@ -352,10 +362,8 @@ impl Config {
                 .unwrap_or_else(|_| "Aegis <noreply@aegis.local>".into()),
             digest_secret: std::env::var("DIGEST_SECRET")
                 .unwrap_or_else(|_| "dev-digest-secret-change-me".into()),
-            public_base_url: std::env::var("PUBLIC_BASE_URL")
-                .unwrap_or_else(|_| "http://localhost:3000".into()),
-            api_base_url: std::env::var("API_BASE_URL")
-                .unwrap_or_else(|_| "http://localhost:8080".into()),
+            public_base_url,
+            api_base_url,
 
             regime_backtest_enabled: parse_or("REGIME_BACKTEST_ENABLED", true)?,
             peg_defense_enabled: parse_or("PEG_DEFENSE_ENABLED", true)?,
@@ -467,6 +475,26 @@ where
             .map_err(|e| anyhow::anyhow!("{key} must parse: {e}")),
         Err(_) => Ok(default),
     }
+}
+
+fn default_session_cookie_secure(
+    public_base_url: &str,
+    api_base_url: &str,
+    cors_allow_origin: &str,
+) -> bool {
+    let origins = std::iter::once(public_base_url)
+        .chain(std::iter::once(api_base_url))
+        .chain(cors_allow_origin.split(','));
+    !origins
+        .filter(|origin| !origin.trim().is_empty())
+        .all(is_local_http_origin)
+}
+
+fn is_local_http_origin(origin: &str) -> bool {
+    let origin = origin.trim();
+    origin.starts_with("http://localhost")
+        || origin.starts_with("http://127.0.0.1")
+        || origin.starts_with("http://[::1]")
 }
 
 #[cfg(test)]
@@ -581,5 +609,28 @@ mod tests {
             cfg.model_for(ModelRoute::MarketCommentary),
             "commentary-model"
         );
+    }
+
+    #[test]
+    fn secure_cookie_default_stays_off_for_localhost_dev() {
+        assert!(!default_session_cookie_secure(
+            "http://localhost:3000",
+            "http://localhost:8080",
+            "http://localhost:3000"
+        ));
+    }
+
+    #[test]
+    fn secure_cookie_default_turns_on_for_public_origins() {
+        assert!(default_session_cookie_secure(
+            "https://aegis.example",
+            "https://api.aegis.example",
+            "https://aegis.example"
+        ));
+        assert!(default_session_cookie_secure(
+            "http://localhost:3000",
+            "http://localhost:8080",
+            "https://aegis.example"
+        ));
     }
 }

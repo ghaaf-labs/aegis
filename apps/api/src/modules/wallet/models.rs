@@ -39,21 +39,26 @@ pub struct UserTokenBundle {
     pub challenge_id: Option<String>,
 }
 
-/// Response sent after a successful wallet init or login. JWT is also set in
-/// an `httpOnly` cookie so SSR can read it; we return the raw token for SPA
-/// clients that prefer `Authorization` headers.
+/// Response sent after a successful wallet init or login. JWT is set only in
+/// an `httpOnly` cookie; the raw app token is intentionally not serialized to
+/// the browser because storing it in JS-visible storage makes logout
+/// unreliable.
 ///
 /// `wallet` is populated immediately for returning users whose wallet is
 /// already provisioned; for fresh signups it's `None` until the browser
 /// completes the SDK challenge and `/auth/wallet/status` reports the wallet
-/// is ready.
+/// is ready. `bundle` is present only when the browser must execute a Circle
+/// challenge; returning users with an existing wallet do not need short-lived
+/// Circle credentials in the response.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WalletAuthResponse {
+    #[serde(skip_serializing)]
     pub token: String,
     pub user: WalletUserPublic,
     pub wallet: Option<WalletInfo>,
-    pub bundle: UserTokenBundle,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bundle: Option<UserTokenBundle>,
     pub is_new_user: bool,
 }
 
@@ -64,6 +69,24 @@ pub struct WalletAuthResponse {
 #[serde(rename_all = "camelCase")]
 pub struct WalletStatusResponse {
     pub wallet: Option<WalletInfo>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WalletAuthCodeResponse {
+    pub challenge_id: Uuid,
+    pub email: String,
+    pub expires_at: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dev_code: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WalletAuthReadinessResponse {
+    pub circle_mock: bool,
+    pub email_delivery_configured: bool,
+    pub dev_codes_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -80,9 +103,36 @@ pub struct WalletUserPublic {
 #[serde(rename_all = "camelCase")]
 pub struct InitWalletRequest {
     pub email: String,
+    pub challenge_id: Uuid,
+    pub code: String,
     /// Optional 8-char user handle of the referrer (matches the `handle`
     /// column on `v_trustability_per_user`). Drives the referral payout
     /// loop in `billing::record_referral`. Honoured only on signup.
+    #[serde(default)]
+    pub referrer_handle: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum WalletAuthIntent {
+    Signup,
+    Login,
+}
+
+impl WalletAuthIntent {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Signup => "signup",
+            Self::Login => "login",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestWalletAuthCode {
+    pub email: String,
+    pub intent: WalletAuthIntent,
     #[serde(default)]
     pub referrer_handle: Option<String>,
 }

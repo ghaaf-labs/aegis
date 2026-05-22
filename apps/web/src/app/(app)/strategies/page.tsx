@@ -4,7 +4,13 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { StrategyCard } from "@/components/strategies/strategy-card";
-import { getToken, strategiesApi, type StrategyPublic } from "@/lib/api";
+import {
+  portfolioApi,
+  strategiesApi,
+  walletApi,
+  type StrategyPublic,
+  type WalletAuthReadinessResponse,
+} from "@/lib/api";
 import { useApiQuery } from "@/lib/use-api-query";
 import { usePortfolioStore } from "@/stores/portfolio";
 
@@ -22,9 +28,49 @@ export default function StrategiesPage() {
   const [adopting, setAdopting] = useState<string | null>(null);
   const [adoptError, setAdoptError] = useState<string | null>(null);
   const [authed, setAuthed] = useState(false);
+  const [authReadiness, setAuthReadiness] =
+    useState<WalletAuthReadinessResponse | null>(null);
   const hasPortfolio = usePortfolioStore((s) => s.portfolios.length > 0);
+  const setSessionActive = usePortfolioStore((s) => s.setSessionActive);
+  const addPortfolio = usePortfolioStore((s) => s.addPortfolio);
+
+  const authLocked =
+    !!authReadiness &&
+    !authReadiness.emailDeliveryConfigured &&
+    !authReadiness.devCodesEnabled;
+
   useEffect(() => {
-    setAuthed(getToken() !== null);
+    let alive = true;
+    walletApi
+      .me()
+      .then(() => {
+        if (!alive) return;
+        setAuthed(true);
+        setSessionActive(true);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setAuthed(false);
+        setSessionActive(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [setSessionActive]);
+
+  useEffect(() => {
+    let alive = true;
+    walletApi
+      .readiness()
+      .then((readiness) => {
+        if (alive) setAuthReadiness(readiness);
+      })
+      .catch(() => {
+        if (alive) setAuthReadiness(null);
+      });
+    return () => {
+      alive = false;
+    };
   }, []);
 
   const onAdopt = async (id: string) => {
@@ -32,6 +78,8 @@ export default function StrategiesPage() {
     setAdoptError(null);
     try {
       const res = await strategiesApi.adopt(id);
+      const portfolio = await portfolioApi.get(res.portfolioId);
+      addPortfolio(portfolio);
       router.push(`/dashboard/${res.portfolioId}`);
     } catch (e) {
       setAdoptError(e instanceof Error ? e.message : "adopt failed");
@@ -62,14 +110,30 @@ export default function StrategiesPage() {
         </p>
       )}
       {authed && hasPortfolio && (
-        <p className="text-xs font-mono text-text-lo border-brutal border-border-default bg-raised px-3 py-2">
-          Strategy adoption is available before you create a portfolio. Your
-          current portfolio stays active;{" "}
-          <Link href="/onboarding" className="text-accent-pnl hover:underline">
-            open the rebuild wizard
-          </Link>{" "}
-          if you want new targets from scratch.
-        </p>
+        <section className="grid gap-4 border-brutal border-border-default bg-raised p-4 md:grid-cols-[1fr_280px]">
+          <div className="space-y-2">
+            <p className="text-[10px] font-mono uppercase tracking-widest text-accent-agent">
+              Existing portfolio detected
+            </p>
+            <p className="text-xs font-mono leading-relaxed text-text-lo">
+              Adopting a strategy now creates a separate portfolio from the
+              selected card. Your current portfolio stays untouched, and no USDC
+              moves until you open the new dashboard and approve a deploy or
+              rebalance plan.
+            </p>
+            <p className="text-xs font-mono text-text-mut">
+              Want a completely custom target instead?{" "}
+              <Link
+                href="/onboarding"
+                className="text-accent-agent hover:underline"
+              >
+                Open the build-from-scratch wizard
+              </Link>
+              .
+            </p>
+          </div>
+          <StrategyAdoptionSvg />
+        </section>
       )}
 
       {isLoading && !data ? (
@@ -98,29 +162,36 @@ export default function StrategiesPage() {
                 key={s.id}
                 strategy={s}
                 actionLabel={
-                  hasPortfolio
-                    ? "Rebuild targets"
-                    : adopting === s.id
-                      ? "Adopting…"
-                      : "Adopt"
+                  adopting === s.id
+                    ? "Creating portfolio…"
+                    : hasPortfolio
+                      ? "Adopt as new portfolio"
+                      : "Adopt strategy"
                 }
-                actionHref={hasPortfolio ? "/onboarding" : undefined}
-                onAction={hasPortfolio ? undefined : () => void onAdopt(s.id)}
-                disabled={!hasPortfolio && adopting !== null}
+                onAction={() => void onAdopt(s.id)}
+                disabled={adopting !== null}
                 disabledReason={
-                  hasPortfolio
-                    ? "Creates a new portfolio in the wizard. Your current portfolio stays active until you switch."
-                    : adopting !== null
-                      ? "Finishing the current adoption request."
-                      : undefined
+                  adopting !== null && adopting !== s.id
+                    ? "Finishing the current adoption request."
+                    : hasPortfolio
+                      ? "Creates a separate portfolio from this strategy. Review deployment before any money moves."
+                      : "Creates a portfolio target from this strategy. You still approve every deploy."
                 }
               />
             ) : (
               <StrategyCard
                 key={s.id}
                 strategy={s}
-                actionLabel="Sign up to adopt"
-                actionHref="/signup"
+                actionLabel={
+                  authLocked ? "Open signup status" : "Sign up to adopt"
+                }
+                actionHref={authHref("/signup", "/strategies")}
+                actionTone={authLocked ? "agent" : "pnl"}
+                disabledReason={
+                  authLocked
+                    ? "Real signup is waiting on email delivery. You can inspect the signup status, but Aegis will not create a wallet from email alone."
+                    : "Creates a wallet first, then returns here so you can adopt a strategy."
+                }
               />
             ),
           )}
@@ -129,17 +200,105 @@ export default function StrategiesPage() {
 
       {!authed && (
         <footer className="text-xs text-text-mut font-mono">
-          Already have an account?{" "}
-          <Link href="/dashboard" className="text-accent-agent hover:underline">
-            Open dashboard
+          {authLocked
+            ? "Real auth is currently locked because verification email delivery is not configured. "
+            : "Already have an account? "}
+          <Link
+            href={authLocked ? authHref("/login", "/dashboard") : "/dashboard"}
+            className="text-accent-agent hover:underline"
+          >
+            {authLocked ? "Open sign-in status" : "Open dashboard"}
           </Link>
-          . Want to adopt one?{" "}
-          <Link href="/signup" className="text-accent-pnl hover:underline">
-            Create a wallet
+          . {authLocked ? "New user? " : "Want to adopt one? "}
+          <Link
+            href={authHref("/signup", "/strategies")}
+            className={
+              authLocked
+                ? "text-accent-agent hover:underline"
+                : "text-accent-pnl hover:underline"
+            }
+          >
+            {authLocked ? "Open signup status" : "Create a wallet"}
           </Link>
           .
         </footer>
       )}
     </div>
+  );
+}
+
+function authHref(path: "/login" | "/signup", next: string) {
+  const params = new URLSearchParams({ next });
+  return `${path}?${params.toString()}`;
+}
+
+function StrategyAdoptionSvg() {
+  const steps = [
+    { x: 30, label: "Pick", value: "Strategy" },
+    { x: 118, label: "Create", value: "Portfolio" },
+    { x: 214, label: "Approve", value: "USDC" },
+  ];
+
+  return (
+    <svg
+      viewBox="0 0 280 104"
+      role="img"
+      aria-label="Strategy adoption creates a portfolio before any USDC deployment"
+      className="h-auto w-full border border-border-default bg-bg"
+    >
+      <defs>
+        <pattern
+          id="strategy-adoption-grid"
+          width="14"
+          height="14"
+          patternUnits="userSpaceOnUse"
+        >
+          <path d="M14 0H0V14" fill="none" stroke="#242424" strokeWidth="1" />
+        </pattern>
+      </defs>
+      <rect width="280" height="104" fill="url(#strategy-adoption-grid)" />
+      <path
+        d="M70 48H102M160 48H196"
+        fill="none"
+        stroke="#00E0FF"
+        strokeWidth="3"
+        strokeLinecap="square"
+      />
+      {steps.map((step, index) => (
+        <g key={step.label} transform={`translate(${step.x} 18)`}>
+          <rect
+            width="56"
+            height="60"
+            fill="#141414"
+            stroke={index === 2 ? "#00FF88" : "#00E0FF"}
+            strokeWidth="2"
+          />
+          <text
+            x="28"
+            y="22"
+            textAnchor="middle"
+            fontFamily="monospace"
+            fontSize="9"
+            fill="#8A8A8A"
+          >
+            {step.label}
+          </text>
+          <text
+            x="28"
+            y="40"
+            textAnchor="middle"
+            fontFamily="monospace"
+            fontSize="9"
+            fontWeight="700"
+            fill="#FFFFFF"
+          >
+            {step.value}
+          </text>
+        </g>
+      ))}
+      <text x="24" y="94" fontFamily="monospace" fontSize="9" fill="#8A8A8A">
+        {"selected card -> draft -> approval gate"}
+      </text>
+    </svg>
   );
 }

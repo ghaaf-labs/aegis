@@ -35,6 +35,12 @@ pnpm-debug.log*
 # Testing
 coverage/
 .nyc_output/
+apps/web/test-results/
+
+# Local QA artifacts
+screenshots/
+output/
+tmp/
 
 # Rust
 apps/api/target/

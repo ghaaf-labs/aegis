@@ -1,8 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Loader2, RefreshCw, TrendingUp, TrendingDown } from "lucide-react";
+import {
+  CircleAlert,
+  Loader2,
+  RefreshCw,
+  TrendingUp,
+  TrendingDown,
+} from "lucide-react";
 import { BrutalButton } from "@aegis/ui";
 import {
   Dialog,
@@ -22,15 +29,19 @@ interface Props {
   onClose: () => void;
 }
 
-const AGENT_TIMEOUT_MS = 30_000;
+type GatewayBalanceStatus = "idle" | "loading" | "ready" | "error";
+
+const AGENT_TIMEOUT_MS = 90_000;
+const PLAN_TIMEOUT_MS = 30_000;
 
 async function withTimeout<T>(
   promise: Promise<T>,
   message: string,
+  timeoutMs: number,
 ): Promise<T> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => reject(new Error(message)), AGENT_TIMEOUT_MS);
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
   });
   try {
     return await Promise.race([promise, timeout]);
@@ -42,7 +53,13 @@ async function withTimeout<T>(
 export function RebalanceModal({ open, onClose }: Props) {
   const router = useRouter();
   const active = useActivePortfolio();
-  const { addDecision, setIsRebalancing } = usePortfolioStore();
+  const {
+    addDecision,
+    gatewayBalanceError,
+    gatewayBalanceStatus,
+    setIsRebalancing,
+    wallet,
+  } = usePortfolioStore();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isPlanning, setIsPlanning] = useState(false);
   const [startedAt, setStartedAt] = useState<number | null>(null);
@@ -56,6 +73,13 @@ export function RebalanceModal({ open, onClose }: Props) {
     decision?.criticVerdict?.verdict === "revised" ||
     decision?.criticVerdict?.verdict === "veto";
   const isBusy = isAnalyzing || isPlanning;
+  const noPlan = isNoPlanError(error);
+  const gatewayBlocked =
+    gatewayBalanceStatus === "idle" ||
+    gatewayBalanceStatus === "loading" ||
+    gatewayBalanceStatus === "error";
+  const planBlocked = !active || !wallet || gatewayBlocked;
+  const commentaryBlocked = planBlocked;
   const elapsedSeconds = startedAt
     ? Math.max(0, Math.floor((now - startedAt) / 1000))
     : 0;
@@ -63,14 +87,25 @@ export function RebalanceModal({ open, onClose }: Props) {
     ? "Building review plan"
     : isAnalyzing
       ? "Running strategist + critic"
-      : "Ready to analyze";
+      : planBlocked
+        ? "Review is waiting on wallet state"
+        : "Ready to review";
   const statusCopy = isPlanning
     ? "Converting target drift and wallet cash into concrete review legs."
     : isAnalyzing
       ? activityCopy(elapsedSeconds)
-      : active?.name
-        ? `Run the strategist + critic loop on "${active.name}" — it checks your target allocation, current holdings, wallet cash, and recent decisions before proposing any moves.`
-        : "Select a portfolio to analyze.";
+      : !active
+        ? "Select a portfolio before building a review."
+        : !wallet
+          ? "Finish Arc + Base wallet setup before Aegis can read balances or route rebalance legs."
+          : gatewayBalanceStatus === "error"
+            ? "Circle Gateway did not return a confirmed balance. Aegis will not build a rebalance from stale or unknown cash."
+            : gatewayBalanceStatus === "idle" ||
+                gatewayBalanceStatus === "loading"
+              ? "Waiting for Circle Gateway to confirm wallet cash before building a review."
+              : active?.name
+                ? `Build a deterministic review for "${active.name}" from confirmed holdings, target weights, and Circle Gateway cash. Use AI commentary only when you want extra reasoning.`
+                : "Select a portfolio to review.";
 
   useEffect(() => {
     if (!isBusy) return;
@@ -83,6 +118,10 @@ export function RebalanceModal({ open, onClose }: Props) {
       setError("Select a portfolio first.");
       return;
     }
+    if (commentaryBlocked) {
+      setError(blockedPlanMessage(gatewayBalanceStatus, gatewayBalanceError));
+      return;
+    }
     setIsAnalyzing(true);
     setStartedAt(Date.now());
     setNow(Date.now());
@@ -90,7 +129,8 @@ export function RebalanceModal({ open, onClose }: Props) {
     try {
       const result = await withTimeout(
         agentApi.analyze(active.id),
-        "Agent analysis is taking longer than expected. Try again in a moment.",
+        "Agent commentary is taking longer than expected. Build the review plan directly; no funds move without approval.",
+        AGENT_TIMEOUT_MS,
       );
       setDecision(result);
       addDecision(result);
@@ -102,7 +142,10 @@ export function RebalanceModal({ open, onClose }: Props) {
   };
 
   const handleExecute = async () => {
-    if (!active) return;
+    if (planBlocked) {
+      setError(blockedPlanMessage(gatewayBalanceStatus, gatewayBalanceError));
+      return;
+    }
     setIsPlanning(true);
     setIsRebalancing(true);
     setStartedAt(Date.now());
@@ -112,11 +155,12 @@ export function RebalanceModal({ open, onClose }: Props) {
       const planned = await withTimeout(
         rebalanceApi.plan(active.id),
         "Plan creation is taking longer than expected. Try again in a moment.",
+        PLAN_TIMEOUT_MS,
       );
       onClose();
       router.push(`/rebalance/${planned.rebalanceId}`);
     } catch (e) {
-      setError((e as Error).message || "Plan creation failed");
+      setError(friendlyPlanError(e));
       setIsRebalancing(false);
     } finally {
       setIsPlanning(false);
@@ -132,8 +176,8 @@ export function RebalanceModal({ open, onClose }: Props) {
             Portfolio Rebalance
           </DialogTitle>
           <DialogDescription>
-            Step 1 analyzes drift. Step 2 builds a review plan. Nothing changes
-            until you approve the next screen.
+            Build the concrete review first. Optional AI commentary can explain
+            the reasoning, but no trade runs until the approval screen.
           </DialogDescription>
         </DialogHeader>
 
@@ -162,47 +206,62 @@ export function RebalanceModal({ open, onClose }: Props) {
               />
             )}
 
-            {error && (
-              <div className="p-3 rounded-sharp bg-risk/10 border border-risk/30 text-xs text-risk">
-                {error}
-              </div>
+            {planBlocked && (
+              <BlockedPlanPanel
+                gatewayBalanceError={gatewayBalanceError}
+                gatewayBalanceStatus={gatewayBalanceStatus}
+                hasPortfolio={!!active}
+                hasWallet={!!wallet}
+              />
             )}
 
+            {error && <PlanErrorMessage message={error} />}
+
             <BrutalButton
-              variant="agent"
+              variant={planBlocked ? "ghost" : "pnl"}
               className="w-full"
-              onClick={handleAnalyze}
-              disabled={isBusy || !active}
+              onClick={handleExecute}
+              disabled={isBusy || planBlocked}
             >
-              {isBusy ? (
+              {isPlanning ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  {isPlanning ? "Building plan…" : "Analyzing portfolio..."}
+                  Building plan…
+                </>
+              ) : planBlocked ? (
+                <>
+                  <CircleAlert className="w-4 h-4 mr-2" />
+                  Review unavailable
+                </>
+              ) : noPlan ? (
+                <>
+                  <RefreshCw className="w-4 h-4 mr-2" />
+                  Check again
                 </>
               ) : (
                 <>
                   <RefreshCw className="w-4 h-4 mr-2" />
-                  Run strategist + critic
+                  Build review plan
                 </>
               )}
             </BrutalButton>
-            {error && active && !isAnalyzing && (
-              <BrutalButton
-                variant="ghost"
-                className="w-full"
-                onClick={handleExecute}
-                disabled={isPlanning}
-              >
-                {isPlanning ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Building plan…
-                  </>
-                ) : (
-                  <>Build review plan directly</>
-                )}
-              </BrutalButton>
-            )}
+            <BrutalButton
+              variant="ghost"
+              className="w-full"
+              onClick={handleAnalyze}
+              disabled={isBusy || commentaryBlocked}
+            >
+              {isAnalyzing ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Getting commentary…
+                </>
+              ) : commentaryBlocked ? (
+                <>Commentary locked until balances are trusted</>
+              ) : (
+                <>Add strategist commentary</>
+              )}
+            </BrutalButton>
           </div>
         ) : (
           <div className="space-y-4">
@@ -292,11 +351,16 @@ export function RebalanceModal({ open, onClose }: Props) {
               )}
             </div>
 
-            {error && (
-              <div className="p-3 rounded-sharp bg-risk/10 border border-risk/30 text-xs text-risk">
-                {error}
-              </div>
+            {planBlocked && (
+              <BlockedPlanPanel
+                gatewayBalanceError={gatewayBalanceError}
+                gatewayBalanceStatus={gatewayBalanceStatus}
+                hasPortfolio={!!active}
+                hasWallet={!!wallet}
+              />
             )}
+
+            {error && <PlanErrorMessage message={error} />}
 
             <div className="flex gap-3">
               <BrutalButton
@@ -308,10 +372,10 @@ export function RebalanceModal({ open, onClose }: Props) {
                 Cancel
               </BrutalButton>
               <BrutalButton
-                variant="pnl"
+                variant={planBlocked ? "ghost" : "pnl"}
                 className="flex-1"
                 onClick={handleExecute}
-                disabled={isPlanning || !active}
+                disabled={isPlanning || planBlocked}
               >
                 {isPlanning ? (
                   <>
@@ -334,6 +398,187 @@ export function RebalanceModal({ open, onClose }: Props) {
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function friendlyPlanError(error: unknown) {
+  const raw = (error as Error).message || "Plan creation failed";
+  const message = raw.replace(/^\d{3}:\s*/, "").replace(/^conflict:\s*/i, "");
+  if (message.toLowerCase().includes("no rebalance plan was created")) {
+    return message;
+  }
+  if (message.toLowerCase().includes("stale_plan")) {
+    return "Holdings or wallet cash changed while this plan was loading. Build a fresh review.";
+  }
+  return message;
+}
+
+function blockedPlanMessage(
+  gatewayBalanceStatus: GatewayBalanceStatus,
+  gatewayBalanceError: string | null,
+) {
+  if (gatewayBalanceStatus === "error") {
+    return (
+      gatewayBalanceError ??
+      "Circle Gateway balance is unavailable. Aegis will not build a review from unknown wallet cash."
+    );
+  }
+  if (gatewayBalanceStatus === "idle" || gatewayBalanceStatus === "loading") {
+    return "Circle Gateway is still confirming wallet cash. Wait for the balance check before building a rebalance review.";
+  }
+  return "Finish wallet setup before building a rebalance review.";
+}
+
+function isNoPlanError(message: string | null) {
+  return (
+    message?.toLowerCase().includes("no rebalance plan was created") ?? false
+  );
+}
+
+function isWalletSetupError(message: string | null) {
+  return (
+    message?.toLowerCase().includes("complete real circle wallet setup") ??
+    false
+  );
+}
+
+function BlockedPlanPanel({
+  gatewayBalanceError,
+  gatewayBalanceStatus,
+  hasPortfolio,
+  hasWallet,
+}: {
+  gatewayBalanceError: string | null;
+  gatewayBalanceStatus: GatewayBalanceStatus;
+  hasPortfolio: boolean;
+  hasWallet: boolean;
+}) {
+  const checks = [
+    {
+      label: "Portfolio",
+      value: hasPortfolio ? "selected" : "missing",
+      ok: hasPortfolio,
+    },
+    {
+      label: "Wallet",
+      value: hasWallet ? "connected" : "setup required",
+      ok: hasWallet,
+    },
+    {
+      label: "Gateway",
+      value:
+        gatewayBalanceStatus === "ready"
+          ? "confirmed"
+          : gatewayBalanceStatus === "error"
+            ? "unavailable"
+            : "checking",
+      ok: gatewayBalanceStatus === "ready",
+    },
+  ];
+
+  return (
+    <div className="rounded-sharp border border-warn/40 bg-warn/5 p-3 font-mono">
+      <div className="flex items-start gap-2">
+        <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warn" />
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-warn">
+            Review plan locked
+          </p>
+          <p className="mt-1 text-[11px] leading-relaxed text-text-lo">
+            Aegis needs a portfolio, a completed Arc + Base wallet, and a
+            confirmed Circle Gateway balance before it can calculate rebalance
+            legs. Unknown wallet cash is not treated as zero.
+          </p>
+        </div>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-3">
+        {checks.map((check) => (
+          <div
+            key={check.label}
+            className={`border px-2 py-2 ${
+              check.ok
+                ? "border-accent-agent/30 bg-accent-agent/5"
+                : "border-warn/40 bg-bg"
+            }`}
+          >
+            <p className="text-[9px] uppercase tracking-widest text-text-mut">
+              {check.label}
+            </p>
+            <p
+              className={`mt-1 text-[11px] ${
+                check.ok ? "text-accent-agent" : "text-warn"
+              }`}
+            >
+              {check.value}
+            </p>
+          </div>
+        ))}
+      </div>
+      {gatewayBalanceStatus === "error" && (
+        <p className="mt-3 border border-warn/30 bg-bg px-2 py-1.5 text-[11px] leading-relaxed text-warn">
+          {gatewayBalanceError ??
+            "Circle Gateway did not return balances for this wallet."}
+        </p>
+      )}
+      {!hasWallet && (
+        <Link
+          href="/wallets"
+          className="mt-3 inline-flex min-h-8 items-center justify-center border border-warn/40 px-2 py-1 text-[11px] font-semibold text-warn hover:bg-warn/10"
+        >
+          Open wallet setup
+        </Link>
+      )}
+      {hasWallet && gatewayBalanceStatus === "error" && (
+        <Link
+          href="/wallets"
+          className="mt-3 inline-flex min-h-8 items-center justify-center border border-warn/40 px-2 py-1 text-[11px] font-semibold text-warn hover:bg-warn/10"
+        >
+          Open wallet status
+        </Link>
+      )}
+    </div>
+  );
+}
+
+function PlanErrorMessage({ message }: { message: string }) {
+  const noPlan = isNoPlanError(message);
+  const walletSetup = isWalletSetupError(message);
+  return (
+    <div
+      className={`p-3 rounded-sharp border text-xs ${
+        noPlan
+          ? "bg-accent-agent/10 border-accent-agent/30 text-accent-agent"
+          : walletSetup
+            ? "bg-warn/10 border-warn/40 text-warn"
+            : "bg-risk/10 border-risk/30 text-risk"
+      }`}
+    >
+      <p>{message}</p>
+      {noPlan && (
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <Link
+            href="/onboarding"
+            className="inline-flex min-h-9 items-center justify-center border border-accent-agent/40 px-2 py-1 text-[11px] font-semibold text-accent-agent hover:bg-accent-agent/10"
+          >
+            Change target
+          </Link>
+          <Link
+            href="/wallets"
+            className="inline-flex min-h-9 items-center justify-center border border-accent-agent/40 px-2 py-1 text-[11px] font-semibold text-accent-agent hover:bg-accent-agent/10"
+          >
+            Add wallet cash
+          </Link>
+        </div>
+      )}
+      {walletSetup && (
+        <Link
+          href="/wallets"
+          className="mt-2 inline-flex border border-warn/40 px-2 py-1 text-[11px] text-warn hover:bg-warn/10"
+        >
+          Open wallet setup
+        </Link>
+      )}
+    </div>
   );
 }
 

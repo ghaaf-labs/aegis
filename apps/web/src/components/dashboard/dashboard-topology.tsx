@@ -2,16 +2,11 @@ export function DashboardTopology() {
   return (
     <svg
       aria-hidden="true"
-      viewBox="0 0 760 260"
-      className="absolute inset-y-0 right-0 hidden h-full w-[62%] min-w-[560px] text-accent-agent/70 md:block"
+      viewBox="0 0 820 260"
+      className="absolute inset-y-0 right-0 hidden h-full w-[64%] min-w-[620px] text-accent-agent/70 md:block"
       preserveAspectRatio="xMidYMid slice"
     >
       <defs>
-        <linearGradient id="topologyFade" x1="0" x2="1" y1="0" y2="0">
-          <stop offset="0%" stopColor="#0a0a0a" stopOpacity="0" />
-          <stop offset="36%" stopColor="#0a0a0a" stopOpacity="0.28" />
-          <stop offset="100%" stopColor="#0a0a0a" stopOpacity="0.86" />
-        </linearGradient>
         <pattern
           id="topologyGrid"
           width="28"
@@ -27,114 +22,192 @@ export function DashboardTopology() {
         </pattern>
       </defs>
 
-      <rect width="760" height="260" fill="url(#topologyGrid)" />
-      <rect width="760" height="260" fill="url(#topologyFade)" />
+      <rect width="820" height="260" fill="#0A0A0A" />
+      <rect width="820" height="260" fill="url(#topologyGrid)" />
+      <rect
+        x="0"
+        y="0"
+        width="250"
+        height="260"
+        fill="#0A0A0A"
+        opacity="0.88"
+      />
+      <rect
+        x="250"
+        y="0"
+        width="190"
+        height="260"
+        fill="#0A0A0A"
+        opacity="0.68"
+      />
+      <rect
+        x="440"
+        y="0"
+        width="380"
+        height="260"
+        fill="#0A0A0A"
+        opacity="0.42"
+      />
 
       <g
         fill="none"
-        stroke="rgba(255,255,255,0.22)"
+        stroke="rgba(255,255,255,0.2)"
         strokeWidth="1"
         vectorEffect="non-scaling-stroke"
       >
-        <path d="M62 55h146l28 28h112" />
-        <path d="M62 204h146l28-28h112" />
-        <path d="M402 78h68l28 34h96" />
-        <path d="M402 176h68l28-34h96" />
-        <path d="M350 130h244" />
+        <path d="M74 80h120l24 50h70" />
+        <path d="M74 180h120l24-50h70" />
+        <path d="M438 130h66l34-50h84" />
+        <path d="M438 130h66l34 50h84" />
+        <path d="M438 130h184" />
       </g>
 
       <g
         fill="none"
         stroke="currentColor"
-        strokeWidth="2"
+        strokeWidth="3"
+        strokeDasharray="11 9"
         vectorEffect="non-scaling-stroke"
       >
-        <path d="M242 82c58 0 78 48 118 48" />
-        <path d="M242 178c58 0 78-48 118-48" />
-        <path d="M518 112c24 0 34-18 62-18h76" />
-        <path d="M518 148c24 0 34 18 62 18h76" />
+        <path d="M194 80h40l44 50h54">
+          <AnimateRail active />
+        </path>
+        <path d="M194 180h40l44-50h54">
+          <AnimateRail active />
+        </path>
+        <path d="M468 130h66l34-50h54">
+          <AnimateRail active />
+        </path>
+        <path d="M468 130h66l34 50h54">
+          <AnimateRail active />
+        </path>
       </g>
 
-      <g className="text-accent-pnl">
-        <RailCard x={118} y={42} tone="pnl" />
-        <RailCard x={118} y={178} tone="pnl" />
-        <Node x={262} y={130} tone="pnl" />
-        <Node x={404} y={82} tone="pnl" />
-        <Node x={404} y={178} tone="pnl" />
-      </g>
+      <SystemCard x={64} y={50} label="ARC" value="USDC" tone="pnl" />
+      <SystemCard x={64} y={150} label="BASE" value="USDC" tone="pnl" />
+      <GateCard x={302} y={88} />
+      <SystemCard x={632} y={50} label="USYC" value="yield" tone="pnl" />
+      <SystemCard x={632} y={112} label="EURC" value="fx" tone="pnl" />
+      <SystemCard x={632} y={174} label="USDC" value="reserve" tone="pnl" />
 
-      <g>
-        <Node x={404} y={130} tone="agent" />
-        <Switch x={510} y={108} />
-        <Switch x={510} y={134} />
-      </g>
-
-      <g>
-        <PositionCard x={624} y={56} tone="pnl" />
-        <PositionCard x={624} y={116} tone="agent" />
-        <PositionCard x={624} y={176} tone="pnl" />
-      </g>
-
-      <g fill="rgba(255,176,32,0.86)">
-        <rect x="708" y="76" width="4" height="4" />
-        <rect x="708" y="136" width="4" height="4" />
-        <rect x="708" y="196" width="4" height="4" />
-      </g>
+      <DecisionNode x={224} y={130} tone="pnl" />
+      <DecisionNode x={468} y={130} tone="agent" />
+      <ApprovalStamp x={540} y={104} />
     </svg>
   );
 }
 
-function RailCard({ x, y }: { x: number; y: number; tone: "pnl" | "agent" }) {
-  return (
-    <g transform={`translate(${x} ${y})`}>
-      <rect
-        width="96"
-        height="40"
-        fill="rgba(10,10,10,0.78)"
-        stroke="rgba(255,255,255,0.18)"
-      />
-      <rect x="12" y="10" width="34" height="5" fill="currentColor" />
-      <rect x="12" y="22" width="58" height="4" fill="rgba(255,255,255,0.16)" />
-      <rect
-        x="76"
-        y="10"
-        width="10"
-        height="20"
-        fill="currentColor"
-        opacity="0.75"
-      />
-    </g>
-  );
-}
-
-function Node({ x, y, tone }: { x: number; y: number; tone: "pnl" | "agent" }) {
+function SystemCard({
+  x,
+  y,
+  label,
+  value,
+  tone,
+}: {
+  x: number;
+  y: number;
+  label: string;
+  value: string;
+  tone: "pnl" | "agent";
+}) {
   const className = tone === "pnl" ? "text-accent-pnl" : "text-accent-agent";
   return (
     <g className={className} transform={`translate(${x} ${y})`}>
-      <circle r="18" fill="rgba(10,10,10,0.82)" stroke="currentColor" />
-      <circle r="7" fill="currentColor" />
-      <circle r="26" fill="none" stroke="currentColor" opacity="0.24" />
+      <rect
+        width="130"
+        height="58"
+        fill="rgba(10,10,10,0.78)"
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+      <rect
+        x="10"
+        y="10"
+        width="4"
+        height="38"
+        fill="currentColor"
+        opacity="0.82"
+      />
+      <text
+        x="22"
+        y="27"
+        fill="#FFFFFF"
+        fontFamily="monospace"
+        fontSize="13"
+        fontWeight="700"
+      >
+        {label}
+      </text>
+      <text x="22" y="44" fill="#8A8A8A" fontFamily="monospace" fontSize="10">
+        {value}
+      </text>
+      <rect
+        x="96"
+        y="15"
+        width="20"
+        height="8"
+        fill="currentColor"
+        opacity="0.8"
+      />
+      <rect
+        x="96"
+        y="31"
+        width="12"
+        height="8"
+        fill="currentColor"
+        opacity="0.35"
+      />
     </g>
   );
 }
 
-function Switch({ x, y }: { x: number; y: number }) {
+function GateCard({ x, y }: { x: number; y: number }) {
   return (
     <g transform={`translate(${x} ${y})`}>
       <rect
-        width="50"
-        height="18"
-        fill="rgba(10,10,10,0.82)"
-        stroke="rgba(255,255,255,0.18)"
+        width="136"
+        height="84"
+        fill="rgba(10,10,10,0.92)"
+        stroke="#00E0FF"
+        strokeWidth="2"
       />
-      <rect x="7" y="6" width="5" height="5" fill="currentColor" />
-      <rect x="20" y="6" width="5" height="5" fill="currentColor" />
-      <rect x="33" y="6" width="5" height="5" fill="currentColor" />
+      <text
+        x="14"
+        y="24"
+        fill="#00E0FF"
+        fontFamily="monospace"
+        fontSize="11"
+        fontWeight="700"
+      >
+        AGENT REVIEW
+      </text>
+      <text
+        x="14"
+        y="44"
+        fill="#FFFFFF"
+        fontFamily="monospace"
+        fontSize="12"
+        fontWeight="700"
+      >
+        no auto-trade
+      </text>
+      <text x="14" y="62" fill="#8A8A8A" fontFamily="monospace" fontSize="10">
+        approve plan first
+      </text>
+      <rect
+        x="104"
+        y="14"
+        width="16"
+        height="56"
+        fill="#00E0FF"
+        opacity="0.18"
+      />
+      <rect x="110" y="22" width="4" height="40" fill="#00E0FF" />
     </g>
   );
 }
 
-function PositionCard({
+function DecisionNode({
   x,
   y,
   tone,
@@ -143,25 +216,69 @@ function PositionCard({
   y: number;
   tone: "pnl" | "agent";
 }) {
-  const className = tone === "pnl" ? "text-accent-pnl" : "text-accent-agent";
+  const color = tone === "pnl" ? "#00FF88" : "#00E0FF";
   return (
-    <g className={className} transform={`translate(${x} ${y})`}>
+    <g transform={`translate(${x} ${y})`}>
       <rect
-        width="92"
-        height="36"
-        fill="rgba(10,10,10,0.8)"
-        stroke="rgba(255,255,255,0.2)"
+        x="-26"
+        y="-26"
+        width="52"
+        height="52"
+        fill="#0A0A0A"
+        stroke={color}
+        strokeWidth="2"
       />
-      <rect x="10" y="9" width="36" height="5" fill="currentColor" />
-      <rect x="10" y="20" width="54" height="4" fill="rgba(255,255,255,0.16)" />
-      <rect
-        x="70"
-        y="8"
-        width="12"
-        height="20"
-        fill="currentColor"
-        opacity="0.68"
-      />
+      <rect x="-9" y="-9" width="18" height="18" fill={color} />
+      <path d="M-14 36H14M-14 43H8" stroke={color} strokeWidth="2" />
     </g>
+  );
+}
+
+function ApprovalStamp({ x, y }: { x: number; y: number }) {
+  return (
+    <g transform={`translate(${x} ${y})`}>
+      <rect
+        width="76"
+        height="52"
+        fill="rgba(255,184,0,0.08)"
+        stroke="#FFB800"
+        strokeWidth="2"
+      />
+      <text
+        x="38"
+        y="22"
+        fill="#FFB800"
+        fontFamily="monospace"
+        fontSize="10"
+        fontWeight="700"
+        textAnchor="middle"
+      >
+        USER
+      </text>
+      <text
+        x="38"
+        y="38"
+        fill="#FFB800"
+        fontFamily="monospace"
+        fontSize="10"
+        fontWeight="700"
+        textAnchor="middle"
+      >
+        APPROVAL
+      </text>
+    </g>
+  );
+}
+
+function AnimateRail({ active }: { active: boolean }) {
+  if (!active) return null;
+  return (
+    <animate
+      attributeName="stroke-dashoffset"
+      dur="2.8s"
+      from="40"
+      repeatCount="indefinite"
+      to="0"
+    />
   );
 }

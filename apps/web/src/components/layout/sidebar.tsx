@@ -1,69 +1,168 @@
 "use client";
 
-import { useEffect, type ComponentType } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   BarChart3,
   Bot,
   CreditCard,
+  CircleAlert,
   CircleHelp,
+  Compass,
   LayoutDashboard,
   LayoutGrid,
   ListChecks,
+  LockKeyhole,
   LogOut,
   PieChart,
   ReceiptText,
   Settings,
   Shield,
   SquareTerminal,
+  Trophy,
   Wallet,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PRICING_UI_ENABLED } from "@/lib/flags";
-import { userAgentApi, walletApi } from "@/lib/api";
+import {
+  userAgentApi,
+  walletApi,
+  type WalletAuthReadinessResponse,
+} from "@/lib/api";
 import { usePortfolioStore } from "@/stores/portfolio";
 
 interface NavItem {
   href: string;
   icon: ComponentType<{ className?: string }>;
   label: string;
+  description: string;
   match?: string[];
   exact?: boolean;
 }
 
 interface NavSection {
   label: string;
+  description: string;
+  tone: "pnl" | "agent" | "neutral";
   items: NavItem[];
 }
 
 const BASE_NAV_SECTIONS: NavSection[] = [
   {
     label: "Portfolio",
+    description: "Money, targets, approvals",
+    tone: "pnl",
     items: [
-      { href: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
-      { href: "/wallets", icon: Wallet, label: "Wallets", match: ["/wallet"] },
-      { href: "/portfolio", icon: PieChart, label: "Portfolio" },
-      { href: "/strategies", icon: LayoutGrid, label: "Strategies" },
-      { href: "/transactions", icon: ListChecks, label: "Transactions" },
-      { href: "/analytics", icon: BarChart3, label: "Analytics" },
+      {
+        href: "/dashboard",
+        icon: LayoutDashboard,
+        label: "Dashboard",
+        description: "cash, targets, review",
+      },
+      {
+        href: "/wallets",
+        icon: Wallet,
+        label: "Wallets",
+        description: "Arc + Base balances",
+        match: ["/wallet"],
+      },
+      {
+        href: "/portfolio",
+        icon: PieChart,
+        label: "Portfolio",
+        description: "positions and target mix",
+      },
+      {
+        href: "/strategies",
+        icon: LayoutGrid,
+        label: "Strategies",
+        description: "adoptable templates",
+      },
+      {
+        href: "/transactions",
+        icon: ListChecks,
+        label: "Transactions",
+        description: "plans and execution",
+      },
+      {
+        href: "/analytics",
+        icon: BarChart3,
+        label: "Analytics",
+        description: "performance diagnostics",
+      },
     ],
   },
   {
     label: "Agent",
+    description: "AI reasoning and controls",
+    tone: "agent",
     items: [
-      { href: "/agent-logs", icon: SquareTerminal, label: "Agent Logs" },
-      { href: "/agent-studio", icon: Bot, label: "Agent Studio" },
-      { href: "/settings/peg", icon: Shield, label: "Peg defense" },
+      {
+        href: "/agent-logs",
+        icon: SquareTerminal,
+        label: "Agent Logs",
+        description: "model outputs and SSE",
+      },
+      {
+        href: "/agent-studio",
+        icon: Bot,
+        label: "Agent Studio",
+        description: "manual analysis runs",
+      },
+      {
+        href: "/settings/peg",
+        icon: Shield,
+        label: "Peg defense",
+        description: "stablecoin triggers",
+      },
     ],
   },
   {
     label: "Account",
+    description: "Exports and settings",
+    tone: "neutral",
     items: [
-      { href: "/tax-center", icon: ReceiptText, label: "Tax center" },
-      { href: "/settings", icon: Settings, label: "Settings", exact: true },
-      { href: "/help", icon: CircleHelp, label: "Help" },
+      {
+        href: "/tax-center",
+        icon: ReceiptText,
+        label: "Tax center",
+        description: "CSV and accountant links",
+        match: ["/settings/tax"],
+      },
+      {
+        href: "/settings",
+        icon: Settings,
+        label: "Settings",
+        description: "rules and preferences",
+        exact: true,
+      },
+      {
+        href: "/help",
+        icon: CircleHelp,
+        label: "Help",
+        description: "plain-English answers",
+      },
+    ],
+  },
+  {
+    label: "Discover",
+    description: "Public product surfaces",
+    tone: "agent",
+    items: [
+      {
+        href: "/explore",
+        icon: Compass,
+        label: "Explore demos",
+        description: "read-only examples",
+      },
+      {
+        href: "/leaderboard",
+        icon: Trophy,
+        label: "Leaderboard",
+        description: "public trustability",
+      },
     ],
   },
 ];
@@ -75,13 +174,25 @@ const NAV_SECTIONS = PRICING_UI_ENABLED
             ...section,
             items: [
               ...section.items.slice(0, 2),
-              { href: "/settings/billing", icon: CreditCard, label: "Billing" },
+              {
+                href: "/settings/billing",
+                icon: CreditCard,
+                label: "Billing",
+                description: "tiers and invoices",
+              },
               ...section.items.slice(2),
             ],
           }
         : section,
     )
   : BASE_NAV_SECTIONS;
+
+const PUBLIC_NAV_HREFS = new Set([
+  "/explore",
+  "/leaderboard",
+  "/strategies",
+  "/help",
+]);
 
 function isActivePath(pathname: string, item: NavItem) {
   const paths = [item.href, ...(item.match ?? [])];
@@ -102,23 +213,61 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
   const agentPausedAt = usePortfolioStore((s) => s.agentPausedAt);
   const setAgentPausedAt = usePortfolioStore((s) => s.setAgentPausedAt);
   const agentPaused = agentPausedAt !== null;
+  const walletPending = sessionActive && !wallet;
+  const [logoutError, setLogoutError] = useState<string | null>(null);
+  const [authReadiness, setAuthReadiness] =
+    useState<WalletAuthReadinessResponse | null>(null);
+  const [authReadinessChecked, setAuthReadinessChecked] = useState(false);
+  const navSections = NAV_SECTIONS;
+  const authLocked =
+    (authReadinessChecked && !authReadiness) ||
+    (!!authReadiness &&
+      !authReadiness.emailDeliveryConfigured &&
+      !authReadiness.devCodesEnabled);
+  const authReadinessFailed = authReadinessChecked && !authReadiness;
+  const showLogoutInSidebar = Boolean(onClose);
 
   const handleLogout = async () => {
+    setLogoutError(null);
     try {
       await walletApi.logout();
-    } catch {
-      /* already unauthed */
+    } catch (e) {
+      setLogoutError(logoutFailureMessage(e));
+      return;
     }
     resetSession();
-    router.push("/login");
+    router.replace(logoutRedirect());
   };
 
   useEffect(() => {
+    if (!wallet) {
+      setAgentPausedAt(null);
+      return;
+    }
     userAgentApi
       .status()
       .then((s) => setAgentPausedAt(s.pausedAt))
       .catch(() => {});
-  }, [setAgentPausedAt]);
+  }, [setAgentPausedAt, wallet]);
+
+  useEffect(() => {
+    if (sessionActive) return;
+    let alive = true;
+    walletApi
+      .readiness()
+      .then((readiness) => {
+        if (alive) setAuthReadiness(readiness);
+      })
+      .catch(() => {
+        if (alive) setAuthReadiness(null);
+      })
+      .finally(() => {
+        if (alive) setAuthReadinessChecked(true);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [sessionActive]);
 
   return (
     <aside
@@ -152,38 +301,118 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-4">
-        {NAV_SECTIONS.map((section) => (
+      <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
+        {navSections.map((section) => (
           <div key={section.label}>
-            <p className="px-3 pb-1.5 text-[10px] font-mono uppercase tracking-widest text-text-mut">
-              {section.label}
-            </p>
+            <div className="px-3 pb-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] font-mono uppercase tracking-widest text-text-mut">
+                  {section.label}
+                </p>
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "h-1.5 w-8 border border-black",
+                    section.tone === "pnl"
+                      ? "bg-accent-pnl"
+                      : section.tone === "agent"
+                        ? "bg-accent-agent"
+                        : "bg-text-lo",
+                  )}
+                />
+              </div>
+              <p className="mt-0.5 truncate text-[10px] font-mono text-text-mut">
+                {section.description}
+              </p>
+            </div>
             <div className="space-y-0.5">
               {section.items.map((item) => {
                 const Icon = item.icon;
                 const active = isActivePath(pathname, item);
+                const publicNav = isPublicNavItem(item);
+                const recoveryNav = isWalletRecoveryNavItem(item);
+                const locked =
+                  !publicNav && (!sessionActive || (!wallet && !recoveryNav));
+                const href = locked
+                  ? walletPending
+                    ? "/wallet"
+                    : authHref("/login", item.href)
+                  : item.href;
                 return (
                   <Link
                     key={item.href}
-                    href={item.href}
+                    href={href}
                     aria-current={active ? "page" : undefined}
+                    title={
+                      locked
+                        ? walletPending
+                          ? `${item.label} requires completed Arc + Base wallet setup`
+                          : `${item.label} requires a verified wallet session`
+                        : item.label
+                    }
                     className={cn(
-                      "group flex min-h-9 items-center gap-3 rounded-sharp border px-3 py-2 text-xs font-mono transition-colors",
+                      "group relative grid min-h-[46px] grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-2 rounded-sharp border px-2.5 py-2 font-mono transition-colors",
                       active
-                        ? "border-accent-agent/40 bg-accent-agent/10 text-accent-agent"
+                        ? activeNavClasses(section.tone)
                         : "border-transparent text-text-lo hover:border-border-default hover:bg-raised hover:text-text-hi",
                     )}
                   >
+                    {active && (
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          "absolute left-0 top-1/2 h-7 w-1 -translate-y-1/2 border-y border-r border-black",
+                          section.tone === "pnl"
+                            ? "bg-accent-pnl"
+                            : section.tone === "agent"
+                              ? "bg-accent-agent"
+                              : "bg-text-hi",
+                        )}
+                      />
+                    )}
                     <Icon
                       className={cn(
-                        "h-4 w-4 shrink-0",
+                        "h-4 w-4 justify-self-center",
                         active
-                          ? "text-accent-agent"
+                          ? iconActiveClass(section.tone)
                           : "text-text-mut group-hover:text-text-hi",
                       )}
                       aria-hidden="true"
                     />
-                    <span className="truncate">{item.label}</span>
+                    <span className="min-w-0">
+                      <span className="block truncate text-xs font-semibold">
+                        {item.label}
+                      </span>
+                      <span className="mt-0.5 block truncate text-[10px] text-text-mut">
+                        {locked
+                          ? lockedDescription(walletPending)
+                          : item.description}
+                      </span>
+                    </span>
+                    {locked && (
+                      <LockKeyhole
+                        className={cn(
+                          "h-3.5 w-3.5 shrink-0",
+                          authLocked
+                            ? "text-warn"
+                            : "text-text-mut group-hover:text-accent-agent",
+                        )}
+                        aria-hidden="true"
+                      />
+                    )}
+                    {!locked && active && (
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          "h-1.5 w-1.5 shrink-0",
+                          section.tone === "pnl"
+                            ? "bg-accent-pnl"
+                            : section.tone === "agent"
+                              ? "bg-accent-agent"
+                              : "bg-text-hi",
+                        )}
+                      />
+                    )}
                   </Link>
                 );
               })}
@@ -194,7 +423,62 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
 
       {/* Agent status indicator */}
       <div className="px-4 py-4 border-t border-border-default">
-        {agentPaused ? (
+        {!sessionActive ? (
+          <div className="space-y-3">
+            <div
+              className={cn(
+                "flex items-center gap-2 rounded-sharp border bg-bg px-3 py-2",
+                authLocked ? "border-warn/40" : "border-border-default",
+              )}
+            >
+              {authLocked ? (
+                <CircleAlert className="h-3.5 w-3.5 shrink-0 text-warn" />
+              ) : (
+                <span className="h-1.5 w-1.5 shrink-0 rounded-sharp bg-text-mut" />
+              )}
+              <span
+                className={cn(
+                  "font-mono text-xs uppercase tracking-widest",
+                  authLocked ? "text-warn" : "text-text-mut",
+                )}
+              >
+                {authReadinessFailed
+                  ? "Auth check failed"
+                  : authLocked
+                    ? "Auth locked"
+                    : "Signed out"}
+              </span>
+            </div>
+            <p className="px-1 text-[11px] font-mono leading-relaxed text-text-mut">
+              {authReadinessFailed
+                ? "Full product navigation is visible, but locked routes stay closed because Aegis cannot verify the auth backend."
+                : authLocked
+                  ? "Full product navigation is visible, but locked routes go to sign-in status until RESEND_API_KEY enables real one-time codes."
+                  : "Browse strategies and help without a wallet. Sign in to manage balances, approvals, agent runs, and tax exports."}
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <Link
+                href={authHref("/login", pathname)}
+                className="inline-flex min-h-[34px] items-center justify-center rounded-sharp border border-border-default bg-bg px-2 text-center text-[11px] font-mono text-text-lo hover:border-accent-agent/50 hover:bg-accent-agent/5 hover:text-accent-agent"
+              >
+                {authLocked ? "Sign-in status" : "Sign in"}
+              </Link>
+              <Link
+                href={authHref("/signup", pathname)}
+                className="inline-flex min-h-[34px] items-center justify-center rounded-sharp border border-black bg-accent-agent px-2 text-center text-[11px] font-mono font-semibold text-black shadow-brutal-sm hover:shadow-brutal"
+              >
+                {authLocked ? "Signup status" : "Create wallet"}
+              </Link>
+            </div>
+          </div>
+        ) : walletPending ? (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-sharp bg-warn/5 border border-warn/30">
+            <span className="w-1.5 h-1.5 rounded-sharp bg-warn shrink-0" />
+            <span className="text-xs text-warn font-mono uppercase tracking-widest">
+              Wallet setup pending
+            </span>
+          </div>
+        ) : agentPaused ? (
           <div className="flex items-center gap-2 px-3 py-2 rounded-sharp bg-warn/5 border border-warn/30">
             <span className="w-1.5 h-1.5 rounded-sharp bg-warn shrink-0" />
             <span className="text-xs text-warn font-mono uppercase tracking-widest">
@@ -221,22 +505,91 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
             <span className="text-[11px] font-mono text-text-mut truncate flex-1">
               {wallet
                 ? `${wallet.arcAddress.slice(0, 6)}…${wallet.arcAddress.slice(-4)}`
-                : "Session active"}
+                : "Wallet setup pending"}
             </span>
           </div>
-          <button
-            type="button"
-            data-testid="sidebar-logout"
-            onClick={() => void handleLogout()}
-            title="Log out"
-            aria-label="Log out"
-            className="w-full min-h-[36px] inline-flex items-center justify-center gap-2 rounded-sharp border border-border-default bg-bg px-3 text-xs font-mono text-text-lo hover:border-risk/50 hover:bg-risk/5 hover:text-risk transition-colors"
-          >
-            <LogOut className="w-3.5 h-3.5" aria-hidden="true" />
-            Log out
-          </button>
+          {showLogoutInSidebar ? (
+            <button
+              type="button"
+              data-testid="sidebar-logout"
+              onClick={() => void handleLogout()}
+              title="Log out"
+              aria-label="Log out"
+              className="w-full min-h-[36px] inline-flex items-center justify-center gap-2 rounded-sharp border border-border-default bg-bg px-3 text-xs font-mono text-text-lo hover:border-risk/50 hover:bg-risk/5 hover:text-risk transition-colors"
+            >
+              <LogOut className="w-3.5 h-3.5" aria-hidden="true" />
+              Log out
+            </button>
+          ) : (
+            <p className="text-[10px] font-mono leading-relaxed text-text-mut">
+              Sign out from the top bar. This rail keeps navigation focused.
+            </p>
+          )}
+          {showLogoutInSidebar && logoutError && (
+            <p role="alert" className="text-[11px] font-mono text-risk">
+              {logoutError}
+            </p>
+          )}
         </div>
       )}
     </aside>
   );
+}
+
+function logoutRedirect() {
+  const params = new URLSearchParams({ signedOut: "1" });
+  return `/login?${params.toString()}`;
+}
+
+function logoutFailureMessage(error: unknown) {
+  const message = (error as Error).message.toLowerCase();
+  if (message.includes("still accepts")) {
+    return "Logout was rejected because the server still accepts this browser session.";
+  }
+  if (message.includes("verification failed")) {
+    return "Aegis could not verify sign-out with the API, so this session stays active.";
+  }
+  return "Logout did not reach the API. Your server session may still be active.";
+}
+
+function authHref(path: "/login" | "/signup", next: string) {
+  const params = new URLSearchParams();
+  const safeNext = safeNextPath(next);
+  if (safeNext) params.set("next", safeNext);
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
+}
+
+function isPublicNavItem(item: NavItem) {
+  return PUBLIC_NAV_HREFS.has(item.href);
+}
+
+function isWalletRecoveryNavItem(item: NavItem) {
+  return item.href === "/wallets" || item.href === "/settings";
+}
+
+function activeNavClasses(tone: NavSection["tone"]) {
+  if (tone === "pnl") {
+    return "border-accent-pnl/40 bg-accent-pnl/10 text-accent-pnl";
+  }
+  if (tone === "agent") {
+    return "border-accent-agent/40 bg-accent-agent/10 text-accent-agent";
+  }
+  return "border-border-hi/40 bg-white/5 text-text-hi";
+}
+
+function iconActiveClass(tone: NavSection["tone"]) {
+  if (tone === "pnl") return "text-accent-pnl";
+  if (tone === "agent") return "text-accent-agent";
+  return "text-text-hi";
+}
+
+function lockedDescription(walletPending: boolean) {
+  return walletPending ? "finish wallet setup first" : "sign in required";
+}
+
+function safeNextPath(path: string | null | undefined) {
+  if (!path || !path.startsWith("/") || path.startsWith("//")) return null;
+  if (path.startsWith("/login") || path.startsWith("/signup")) return null;
+  return path;
 }

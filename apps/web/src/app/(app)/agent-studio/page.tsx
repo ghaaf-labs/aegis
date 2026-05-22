@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Bot, Pause, Play, Sparkles, Target } from "lucide-react";
+import { Bot, CircleAlert, Pause, Play, Sparkles, Target } from "lucide-react";
 import {
   BrutalButton,
   BrutalCard,
@@ -18,9 +18,20 @@ export default function AgentStudioPage() {
   const pausedAt = usePortfolioStore((s) => s.agentPausedAt);
   const setPausedAt = usePortfolioStore((s) => s.setAgentPausedAt);
   const addDecision = usePortfolioStore((s) => s.addDecision);
+  const wallet = usePortfolioStore((s) => s.wallet);
+  const gatewayBalanceStatus = usePortfolioStore((s) => s.gatewayBalanceStatus);
+  const gatewayBalanceError = usePortfolioStore((s) => s.gatewayBalanceError);
   const [busy, setBusy] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const analysisBlocked =
+    !portfolio || !wallet || gatewayBalanceStatus !== "ready";
+  const analysisBlock = manualAnalysisBlockCopy(
+    !!portfolio,
+    !!wallet,
+    gatewayBalanceStatus,
+    gatewayBalanceError,
+  );
 
   useEffect(() => {
     userAgentApi
@@ -45,7 +56,10 @@ export default function AgentStudioPage() {
   }, [pausedAt, setPausedAt]);
 
   const runAnalysis = useCallback(async () => {
-    if (!portfolio) return;
+    if (analysisBlocked) {
+      setError(analysisBlock.copy);
+      return;
+    }
     setAnalyzing(true);
     setError(null);
     try {
@@ -56,7 +70,7 @@ export default function AgentStudioPage() {
     } finally {
       setAnalyzing(false);
     }
-  }, [addDecision, portfolio]);
+  }, [addDecision, analysisBlock.copy, analysisBlocked, portfolio]);
 
   const paused = pausedAt !== null;
 
@@ -118,20 +132,42 @@ export default function AgentStudioPage() {
               wallet cash, market snapshot, and recent decisions. It does not
               execute trades.
             </p>
+            {analysisBlocked && (
+              <div className="border border-warn/40 bg-warn/5 px-3 py-2 font-mono">
+                <div className="flex items-start gap-2">
+                  <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warn" />
+                  <div>
+                    <p className="text-[10px] uppercase tracking-widest text-warn">
+                      Analysis input locked
+                    </p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-text-lo">
+                      {analysisBlock.copy}
+                    </p>
+                  </div>
+                </div>
+                {analysisBlock.href && (
+                  <Link
+                    href={analysisBlock.href}
+                    className="mt-3 inline-flex min-h-8 items-center justify-center border border-warn/40 px-2 py-1 text-[11px] font-semibold text-warn hover:bg-warn/10"
+                  >
+                    {analysisBlock.cta}
+                  </Link>
+                )}
+              </div>
+            )}
             <BrutalButton
               type="button"
               variant="agent"
-              disabled={!portfolio || analyzing}
+              disabled={analysisBlocked || analyzing}
               onClick={() => void runAnalysis()}
             >
               <Sparkles className="h-4 w-4" />
-              {analyzing ? "Analyzing..." : "Run analysis"}
+              {analyzing
+                ? "Analyzing..."
+                : analysisBlocked
+                  ? "Analysis locked"
+                  : "Run analysis"}
             </BrutalButton>
-            {!portfolio && (
-              <p className="text-xs font-mono text-warn">
-                Create a portfolio before running analysis.
-              </p>
-            )}
           </BrutalCardBody>
         </BrutalCard>
       </div>
@@ -168,6 +204,42 @@ export default function AgentStudioPage() {
       )}
     </div>
   );
+}
+
+function manualAnalysisBlockCopy(
+  hasPortfolio: boolean,
+  hasWallet: boolean,
+  gatewayBalanceStatus: "idle" | "loading" | "ready" | "error",
+  gatewayBalanceError: string | null,
+) {
+  if (!hasPortfolio) {
+    return {
+      copy: "Create a portfolio target before asking the agent for allocation advice.",
+      href: "/onboarding",
+      cta: "Create portfolio",
+    };
+  }
+  if (!hasWallet) {
+    return {
+      copy: "Finish Circle wallet setup first. The strategist should not reason about deployable cash without real Arc + Base wallet addresses.",
+      href: "/wallets",
+      cta: "Open wallet setup",
+    };
+  }
+  if (gatewayBalanceStatus === "error") {
+    return {
+      copy:
+        gatewayBalanceError ??
+        "Circle Gateway did not return balances. Manual analysis is locked so advice cannot treat unknown wallet cash as zero.",
+      href: "/wallets",
+      cta: "Open wallet status",
+    };
+  }
+  return {
+    copy: "Aegis is still checking Circle Gateway balances. Manual analysis unlocks after wallet cash is confirmed.",
+    href: "/wallets",
+    cta: "Check wallet status",
+  };
 }
 
 function StudioLink({

@@ -58,9 +58,8 @@ export function useEventSource(
 
     const open = () => {
       if (cancelled) return;
-      // withCredentials forwards the httpOnly auth cookie set by the
-      // wallet endpoints. The middleware also accepts `?token=` so the
-      // current bridge keeps working when the cookie isn't yet present.
+      // withCredentials forwards the HttpOnly auth cookie set by the
+      // wallet endpoints. The frontend no longer exposes app JWTs to JS.
       source = new EventSource(url, { withCredentials: true });
 
       source.onopen = () => {

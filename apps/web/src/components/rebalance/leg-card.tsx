@@ -2,13 +2,14 @@
 
 import { cn } from "@/lib/utils";
 import { ChainBadge } from "@aegis/ui";
-import type { LegStatus } from "@/types";
+import type { ChainKey, LegStatus } from "@/types";
+import { explorerTxUrl } from "@/lib/explorers";
 
 interface LegCardProps {
   legIndex: number;
   kind: string;
-  srcChain?: string | null;
-  destChain?: string | null;
+  srcChain?: ChainKey | null;
+  destChain?: ChainKey | null;
   srcSymbol?: string | null;
   destSymbol?: string | null;
   amountUsdc: number;
@@ -33,16 +34,6 @@ const STATUS_CLASSES: Record<LegStatus, string> = {
   failed: "bg-rose-500/20 text-risk",
 };
 
-function explorerUrl(
-  chain: string | null | undefined,
-  tx: string | null | undefined,
-) {
-  if (!chain || !tx) return null;
-  if (chain === "base") return `https://sepolia.basescan.org/tx/${tx}`;
-  if (chain === "arc") return `https://explorer.testnet.arc.network/tx/${tx}`;
-  return null;
-}
-
 export function LegCard({
   legIndex,
   kind,
@@ -55,7 +46,7 @@ export function LegCard({
   txHash,
   failureReason,
 }: LegCardProps) {
-  const explorer = explorerUrl(destChain ?? srcChain, txHash);
+  const explorer = explorerTxUrl(destChain ?? srcChain, txHash);
   return (
     <div
       data-testid="leg-card"
@@ -90,18 +81,10 @@ export function LegCard({
         </div>
         <div className="text-xs text-text-lo font-mono flex items-center gap-2 flex-wrap">
           {srcSymbol ?? "?"}
-          {srcChain && (
-            <ChainBadge
-              chain={srcChain.toUpperCase() as "ARC" | "BASE" | "AVAX"}
-            />
-          )}
+          {srcChain && <ChainBadge chain={toChainBadge(srcChain)} />}
           <span className="text-text-mut">→</span>
           {destSymbol ?? "?"}
-          {destChain && (
-            <ChainBadge
-              chain={destChain.toUpperCase() as "ARC" | "BASE" | "AVAX"}
-            />
-          )}
+          {destChain && <ChainBadge chain={toChainBadge(destChain)} />}
           <span className="ml-2 text-accent-agent">
             ${amountUsdc.toFixed(2)}
           </span>
@@ -124,4 +107,8 @@ export function LegCard({
       </div>
     </div>
   );
+}
+
+function toChainBadge(chain: ChainKey): "ARC" | "BASE" {
+  return chain === "arc" ? "ARC" : "BASE";
 }

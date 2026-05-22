@@ -15,6 +15,10 @@ import {
 } from "@aegis/ui";
 import { formatCurrency, formatPercent, timeAgo } from "@/lib/utils";
 import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
+import {
+  deriveIdleCashUsd,
+  derivePortfolioPositionMetrics,
+} from "@/lib/portfolio-values";
 
 export default function AnalyticsPage() {
   const portfolio = useActivePortfolio();
@@ -27,7 +31,17 @@ export default function AnalyticsPage() {
     decisions.length > 0
       ? decisions.reduce((sum, d) => sum + d.confidence, 0) / decisions.length
       : 0;
-  const netWorth = (portfolio?.totalValueUsd ?? 0) + unifiedUsdc + unifiedEurc;
+  const hasMarketCap = (snapshot?.totalMarketCapUsd ?? 0) > 0;
+  const hasBtcDominance = (snapshot?.btcDominance ?? 0) > 0;
+  const positionMetrics = derivePortfolioPositionMetrics(portfolio, snapshot);
+  const investedUsd = positionMetrics.investedUsd;
+  const idleCashUsd = deriveIdleCashUsd(unifiedUsdc, unifiedEurc, snapshot);
+  const netWorth = investedUsd + idleCashUsd;
+  const hasConfirmedCapital = netWorth > 0.5;
+  const targetAllocation = portfolio?.goal?.targetAllocation ?? {};
+  const targetRows = Object.entries(targetAllocation)
+    .filter(([, value]) => (value ?? 0) > 0)
+    .sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0));
 
   return (
     <div className="mx-auto max-w-[1400px] space-y-6">
@@ -50,7 +64,7 @@ export default function AnalyticsPage() {
           icon={CircleDollarSign}
           label="Net worth"
           value={formatCurrency(netWorth)}
-          detail={`${formatCurrency(portfolio?.totalValueUsd ?? 0)} invested · ${formatCurrency(unifiedUsdc)} wallet USDC`}
+          detail={`${formatCurrency(investedUsd)} invested · ${formatCurrency(idleCashUsd)} idle cash`}
           tone="pnl"
         />
         <MetricCard
@@ -63,17 +77,35 @@ export default function AnalyticsPage() {
         <MetricCard
           icon={ShieldCheck}
           label="Risk score"
-          value={portfolio ? `${portfolio.riskScore}/100` : "--"}
-          detail={portfolio?.goal?.riskTolerance ?? "No portfolio"}
+          value={
+            portfolio
+              ? hasConfirmedCapital
+                ? `${portfolio.riskScore}/100`
+                : "--"
+              : "--"
+          }
+          detail={
+            portfolio
+              ? hasConfirmedCapital
+                ? (portfolio.goal?.riskTolerance ?? "Goal set")
+                : "computed after first deploy"
+              : "No portfolio"
+          }
           tone="agent"
         />
         <MetricCard
           icon={Brain}
-          label="Agent confidence"
+          label={hasConfirmedCapital ? "Agent confidence" : "Current guidance"}
           value={
-            decisions.length ? `${Math.round(avgConfidence * 100)}%` : "--"
+            hasConfirmedCapital && decisions.length
+              ? `${Math.round(avgConfidence * 100)}%`
+              : "--"
           }
-          detail={`${decisions.length} decisions loaded`}
+          detail={
+            hasConfirmedCapital
+              ? `${decisions.length} decisions loaded`
+              : `${decisions.length} historical decisions in audit`
+          }
           tone="agent"
         />
       </div>
@@ -89,28 +121,23 @@ export default function AnalyticsPage() {
             </span>
           </BrutalCardHeader>
           <BrutalCardBody className="space-y-3">
-            {portfolio?.goal ? (
-              Object.entries(portfolio.goal.targetAllocation)
-                .filter(([, value]) => (value ?? 0) > 0)
-                .sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0))
-                .map(([symbol, weight]) => (
-                  <div key={symbol}>
-                    <div className="mb-1 flex items-center justify-between text-xs font-mono">
-                      <span className="text-text-hi">{symbol}</span>
-                      <span className="text-text-lo tabular-nums">
-                        {weight}%
-                      </span>
-                    </div>
-                    <div className="h-2 border border-border-default bg-bg">
-                      <div
-                        className="h-full bg-accent-pnl"
-                        style={{
-                          width: `${Math.min(100, Number(weight) || 0)}%`,
-                        }}
-                      />
-                    </div>
+            {targetRows.length ? (
+              targetRows.map(([symbol, weight]) => (
+                <div key={symbol}>
+                  <div className="mb-1 flex items-center justify-between text-xs font-mono">
+                    <span className="text-text-hi">{symbol}</span>
+                    <span className="text-text-lo tabular-nums">{weight}%</span>
                   </div>
-                ))
+                  <div className="h-2 border border-border-default bg-bg">
+                    <div
+                      className="h-full bg-accent-pnl"
+                      style={{
+                        width: `${Math.min(100, Number(weight) || 0)}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              ))
             ) : (
               <p className="text-xs font-mono text-text-lo">
                 Create a portfolio goal to populate allocation analytics.
@@ -135,24 +162,36 @@ export default function AnalyticsPage() {
             />
             <Row
               label="BTC dominance"
-              value={snapshot ? `${snapshot.btcDominance.toFixed(1)}%` : "--"}
+              value={
+                snapshot
+                  ? hasBtcDominance
+                    ? `${snapshot.btcDominance.toFixed(1)}%`
+                    : "Unavailable"
+                  : "--"
+              }
+              muted={snapshot ? !hasBtcDominance : true}
             />
             <Row
               label="Market cap"
               value={
                 snapshot
-                  ? formatCurrency(snapshot.totalMarketCapUsd, {
-                      compact: true,
-                    })
+                  ? hasMarketCap
+                    ? formatCurrency(snapshot.totalMarketCapUsd, {
+                        compact: true,
+                      })
+                    : "Unavailable"
                   : "--"
               }
+              muted={snapshot ? !hasMarketCap : true}
             />
             <Row
               label="Snapshot"
               value={snapshot ? timeAgo(snapshot.capturedAt) : "Loading"}
             />
             <p className="border-t border-border-default pt-3 text-[11px] leading-relaxed text-text-mut">
-              via market snapshot API. Price ticks stream separately over SSE.
+              via market snapshot API. Price ticks stream separately over SSE;
+              aggregate market-cap fields show unavailable when the active
+              provider does not supply them.
             </p>
           </BrutalCardBody>
         </BrutalCard>
@@ -200,11 +239,23 @@ function MetricCard({
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({
+  label,
+  value,
+  muted = false,
+}: {
+  label: string;
+  value: string;
+  muted?: boolean;
+}) {
   return (
     <div className="flex items-center justify-between gap-3">
       <span className="text-text-lo">{label}</span>
-      <span className="text-text-hi tabular-nums">{value}</span>
+      <span
+        className={"tabular-nums " + (muted ? "text-text-mut" : "text-text-hi")}
+      >
+        {value}
+      </span>
     </div>
   );
 }

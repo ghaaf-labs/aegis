@@ -93,6 +93,11 @@ export interface PricingTableProps {
   onSelect?: (tier: Tier) => void;
   /** Optional disabled state, e.g. while a Nanopayments call is in-flight. */
   busyTier?: Tier | null;
+  /** Public-page CTA overrides used when signup is unavailable or contextual. */
+  publicActionHref?: string;
+  publicActionLabel?: string | ((tier: PricingTier) => string);
+  publicActionTone?: "pnl" | "agent";
+  publicActionHint?: string | null;
 }
 
 export function PricingTable({
@@ -100,6 +105,10 @@ export function PricingTable({
   currentTier = null,
   onSelect,
   busyTier = null,
+  publicActionHref = "/signup",
+  publicActionLabel,
+  publicActionTone = "pnl",
+  publicActionHint = null,
 }: PricingTableProps) {
   return (
     <div className="grid gap-4 md:grid-cols-3" data-testid="pricing-table">
@@ -186,13 +195,30 @@ export function PricingTable({
                       : `Upgrade to ${t.name ?? t.code}`}
               </BrutalButton>
             ) : (
-              <a href="/signup" className="contents">
-                <BrutalButton variant="pnl" className="w-full">
-                  {t.tier === "free"
+              <a
+                href={publicActionHref}
+                className={cn(
+                  "inline-flex w-full items-center justify-center gap-2 px-3 py-2 text-sm font-semibold",
+                  "border-brutal border-black rounded-sharp text-black",
+                  publicActionTone === "agent"
+                    ? "bg-accent-agent"
+                    : "bg-accent-pnl",
+                  "transition-[box-shadow,transform] duration-100 hover:shadow-brutal-sm active:translate-y-px",
+                )}
+              >
+                {publicActionLabel
+                  ? typeof publicActionLabel === "function"
+                    ? publicActionLabel(t)
+                    : publicActionLabel
+                  : t.tier === "free"
                     ? "Get started — free"
                     : `Choose ${t.name ?? t.code}`}
-                </BrutalButton>
               </a>
+            )}
+            {!onSelect && publicActionHint && (
+              <p className="mt-2 text-[11px] font-mono leading-relaxed text-text-mut">
+                {publicActionHint}
+              </p>
             )}
           </BrutalCard>
         );

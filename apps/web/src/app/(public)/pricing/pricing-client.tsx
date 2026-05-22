@@ -2,26 +2,17 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { Shield } from "lucide-react";
-import { BrutalButton } from "@aegis/ui";
+import { CircleAlert, Shield } from "lucide-react";
 import {
   DEFAULT_PRICING_TIERS,
   PricingTable,
 } from "@/components/billing/PricingTable";
 import { UpgradeModal } from "@/components/billing/UpgradeModal";
 import { useBillingStore } from "@/stores/billing";
-import { getToken } from "@/lib/api";
+import { walletApi, type WalletAuthReadinessResponse } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import { usePortfolioStore } from "@/stores/portfolio";
 import type { Tier } from "@/types";
-
-/** Cheap auth check — server-side cookies aren't exposed here, but the
- * legacy JWT path stores in localStorage. Treat either as "authenticated"
- * so the inline upgrade flow is offered. */
-function hasSession(): boolean {
-  if (typeof window === "undefined") return false;
-  if (getToken()) return true;
-  return document.cookie.includes("aegis_session=");
-}
 
 export function PricingPageClient() {
   const tiers = useBillingStore((s) => s.tiers);
@@ -30,14 +21,41 @@ export function PricingPageClient() {
   const portfolios = usePortfolioStore((s) => s.portfolios);
 
   const [authed, setAuthed] = useState(false);
+  const [authReadiness, setAuthReadiness] =
+    useState<WalletAuthReadinessResponse | null>(null);
   const [pendingTier, setPendingTier] = useState<Tier | null>(null);
 
   useEffect(() => {
-    setAuthed(hasSession());
-    if (hasSession()) {
-      void fetchBilling();
-    }
+    let alive = true;
+    walletApi
+      .me()
+      .then(() => {
+        if (!alive) return;
+        setAuthed(true);
+        void fetchBilling();
+      })
+      .catch(() => {
+        if (alive) setAuthed(false);
+      });
+    return () => {
+      alive = false;
+    };
   }, [fetchBilling]);
+
+  useEffect(() => {
+    let alive = true;
+    walletApi
+      .readiness()
+      .then((readiness) => {
+        if (alive) setAuthReadiness(readiness);
+      })
+      .catch(() => {
+        if (alive) setAuthReadiness(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const aumUsd = useMemo(
     () => portfolios.reduce((sum, p) => sum + (p.totalValueUsd ?? 0), 0),
@@ -46,6 +64,13 @@ export function PricingPageClient() {
 
   const effectiveTiers = tiers.length > 0 ? tiers : DEFAULT_PRICING_TIERS;
   const currentTier: Tier = subscription?.tier ?? "free";
+  const authLocked =
+    !!authReadiness &&
+    !authReadiness.emailDeliveryConfigured &&
+    !authReadiness.devCodesEnabled;
+  const signupHref = authLocked ? "/signup?next=%2Fpricing" : "/signup";
+  const signupLabel = authLocked ? "Open signup status" : "Get started — free";
+  const signupTone = authLocked ? "agent" : "pnl";
 
   return (
     <div className="min-h-screen bg-[#030712] text-text-hi">
@@ -63,8 +88,11 @@ export function PricingPageClient() {
           <Link href="/explore" className="text-text-lo hover:text-text-hi">
             Demo
           </Link>
-          <Link href="/signup">
-            <BrutalButton variant="pnl">Get started — free</BrutalButton>
+          <Link
+            href={signupHref}
+            className={pricingLinkButtonClass(signupTone)}
+          >
+            {signupLabel}
           </Link>
         </div>
       </nav>
@@ -79,10 +107,38 @@ export function PricingPageClient() {
         </p>
       </section>
 
+      {authLocked && (
+        <section className="max-w-6xl mx-auto px-6 pb-8">
+          <div className="grid gap-3 border-2 border-warn/40 bg-warn/5 p-4 font-mono md:grid-cols-[auto_1fr] md:items-start">
+            <div className="flex h-9 w-9 items-center justify-center rounded-sharp border-brutal border-black bg-warn">
+              <CircleAlert className="h-4 w-4 text-black" />
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-widest text-warn">
+                Real signup locked
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-text-lo">
+                Pricing is visible, but this backend cannot send one-time
+                verification codes yet. Aegis will not create a wallet or start
+                paid billing from a remembered email alone.
+              </p>
+            </div>
+          </div>
+        </section>
+      )}
+
       <section className="max-w-6xl mx-auto px-6 pb-16">
         <PricingTable
           tiers={effectiveTiers}
           currentTier={authed ? currentTier : null}
+          publicActionHref={signupHref}
+          publicActionLabel={authLocked ? "Open signup status" : undefined}
+          publicActionTone={signupTone}
+          publicActionHint={
+            authLocked
+              ? "Signup is waiting on email delivery. You can inspect the status, but no wallet or subscription is created."
+              : null
+          }
           onSelect={
             authed
               ? (tier) => {
@@ -103,8 +159,11 @@ export function PricingPageClient() {
             refunded automatically. You always see which model decided what.
           </p>
           {!authed && (
-            <Link href="/signup">
-              <BrutalButton variant="pnl">Get started — free</BrutalButton>
+            <Link
+              href={signupHref}
+              className={pricingLinkButtonClass(signupTone)}
+            >
+              {signupLabel}
             </Link>
           )}
         </div>
@@ -121,5 +180,15 @@ export function PricingPageClient() {
         />
       )}
     </div>
+  );
+}
+
+function pricingLinkButtonClass(tone: "pnl" | "agent", className?: string) {
+  return cn(
+    "inline-flex items-center justify-center gap-2 px-3 py-2 text-sm font-semibold",
+    "border-brutal border-black rounded-sharp text-black",
+    tone === "agent" ? "bg-accent-agent" : "bg-accent-pnl",
+    "transition-[box-shadow,transform] duration-100 hover:shadow-brutal-sm active:translate-y-px",
+    className,
   );
 }

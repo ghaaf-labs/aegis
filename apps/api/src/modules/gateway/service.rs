@@ -85,7 +85,15 @@ pub async fn fetch_balance_for_user(
     user_id: Uuid,
 ) -> crate::error::Result<GatewayBalance> {
     if !config.circle_mock {
-        return fetch_balance(http, config, user_id).await;
+        let user_has_provisioned_wallet = user_has_provisioned_wallet(db, user_id).await?;
+        let balance = fetch_balance(http, config, user_id).await?;
+        if user_has_provisioned_wallet && circle_returned_no_wallets(&balance) {
+            return Err(AppError::ServiceUnavailable(
+                "Circle Gateway returned no wallets for this provisioned user; balance is unknown"
+                    .into(),
+            ));
+        }
+        return Ok(balance);
     }
     let mut balance = mock_balance(user_id);
     let invested_usd: f64 = sqlx::query_scalar(
@@ -98,6 +106,26 @@ pub async fn fetch_balance_for_user(
     .unwrap_or(0.0);
     apply_mock_usdc_spend(&mut balance, invested_usd);
     Ok(balance)
+}
+
+async fn user_has_provisioned_wallet(db: &Db, user_id: Uuid) -> crate::error::Result<bool> {
+    let has_wallet = sqlx::query_scalar(
+        "SELECT COALESCE(wallet_id <> '' AND arc_address <> '' AND base_address <> '', FALSE)
+         FROM users
+         WHERE id = $1",
+    )
+    .bind(user_id)
+    .fetch_optional(db)
+    .await?
+    .unwrap_or(false);
+    Ok(has_wallet)
+}
+
+fn circle_returned_no_wallets(balance: &GatewayBalance) -> bool {
+    balance.arc_address.is_none()
+        && balance.base_address.is_none()
+        && balance.per_chain.is_empty()
+        && balance.per_chain_eurc.is_empty()
 }
 
 fn blockchain_to_key(blockchain: &str) -> String {
@@ -279,5 +307,31 @@ mod tests {
         apply_mock_usdc_spend(&mut b, initial_usdc / 2.0);
         assert!((b.unified_usdc - initial_usdc / 2.0).abs() < 1e-6);
         assert!((b.unified_eurc - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn empty_real_gateway_response_is_not_a_confirmed_zero() {
+        let b = GatewayBalance {
+            unified_usdc: 0.0,
+            unified_eurc: 0.0,
+            per_chain: HashMap::new(),
+            per_chain_eurc: HashMap::new(),
+            arc_address: None,
+            base_address: None,
+        };
+        assert!(circle_returned_no_wallets(&b));
+    }
+
+    #[test]
+    fn real_gateway_zero_with_wallet_addresses_is_confirmed() {
+        let b = GatewayBalance {
+            unified_usdc: 0.0,
+            unified_eurc: 0.0,
+            per_chain: HashMap::new(),
+            per_chain_eurc: HashMap::new(),
+            arc_address: Some("0x1111111111111111111111111111111111111111".into()),
+            base_address: Some("0x2222222222222222222222222222222222222222".into()),
+        };
+        assert!(!circle_returned_no_wallets(&b));
     }
 }

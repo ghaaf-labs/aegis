@@ -15,7 +15,6 @@ import type {
   RegimeFlip,
   WalletInfo,
 } from "@/types";
-import { getToken } from "@/lib/api";
 
 /**
  * Bridges the SSE channel into the Zustand store.
@@ -25,8 +24,7 @@ import { getToken } from "@/lib/api";
  * Centralizing the subscription keeps the connection count at one regardless
  * of how many cards listen for live data.
  *
- * `/sse` is authenticated — the EventSource only opens once a JWT is in
- * localStorage. On the public landing page the hook stays dormant.
+ * `/sse` is authenticated through the HttpOnly session cookie.
  */
 export function RealtimeBridge() {
   const addDecision = usePortfolioStore((s) => s.addDecision);
@@ -41,13 +39,10 @@ export function RealtimeBridge() {
   const pushAbstain = usePortfolioStore((s) => s.pushAbstain);
   const applyRebalanceStatus = usePortfolioStore((s) => s.applyRebalanceStatus);
   const pushPegAlert = usePortfolioStore((s) => s.pushPegAlert);
+  const sessionActive = usePortfolioStore((s) => s.sessionActive);
 
-  // The EventSource API doesn't support custom headers, so we put the token
-  // in a query param. The handler in the server-side router could also read
-  // it from a cookie — left as future hardening.
-  const token = typeof window !== "undefined" ? getToken() : null;
-  const enabled = !!token;
-  const url = `${defaultSseUrl()}${token ? `?token=${encodeURIComponent(token)}` : ""}`;
+  const enabled = sessionActive;
+  const url = defaultSseUrl();
 
   const onPriceTick = useCallback(
     (data: PriceTick) => applyPriceTick(data),

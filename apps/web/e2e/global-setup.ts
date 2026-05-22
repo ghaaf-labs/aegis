@@ -1,21 +1,26 @@
-import { chromium, type FullConfig } from "@playwright/test";
+import { type FullConfig } from "@playwright/test";
 import * as fs from "fs";
 import * as path from "path";
+import {
+  API_BASE,
+  createVerifiedAccount,
+  loginVerifiedAccount,
+  requireDevCodes,
+  storageStateForToken,
+} from "./helpers/auth";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 const AUTH_STATE_PATH = path.join(__dirname, ".auth", "user.json");
 const TEST_EMAIL = "e2e-test@aegis.local";
 
 /**
  * Global setup — runs once before all tests.
  *
- * When PLAYWRIGHT_API_ENABLED=true (set by the CI job that starts the Rust
- * API), this creates a test user via POST /auth/wallet/create and saves the
- * JWT + browser storage state to e2e/.auth/user.json so S/D/R/SET-series
- * tests can use it via storageState.
+ * When PLAYWRIGHT_API_ENABLED=true, this completes the same two-step
+ * verification-code auth flow the UI uses, then stores the HttpOnly cookie in
+ * e2e/.auth/user.json so S/D/R/SET-series tests exercise real cookie auth.
  *
- * When the env var is absent (frontend-only runs), the file is written with
- * an empty localStorage so authed tests are skipped gracefully.
+ * When the env var is absent, the file is written with no cookies so authed
+ * tests are skipped gracefully.
  */
 export default async function globalSetup(_config: FullConfig) {
   const authDir = path.dirname(AUTH_STATE_PATH);
@@ -32,58 +37,29 @@ export default async function globalSetup(_config: FullConfig) {
 
   // Wait for the API to be ready (up to 120s).
   await waitForApi();
-
-  const browser = await chromium.launch();
-  const context = await browser.newContext();
-  const page = await context.newPage();
-
-  // Sign up (or re-login if the test user already exists from a previous run).
-  // Note: both endpoints work with MOCK_CIRCLE=true — the mock provider skips
-  // the Circle W3S challenge so no real credential exchange happens.
-  const res = await fetch(`${API_BASE}/auth/wallet/create`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: TEST_EMAIL }),
-  });
+  if (!(await requireDevCodes())) {
+    fs.writeFileSync(
+      AUTH_STATE_PATH,
+      JSON.stringify({ cookies: [], origins: [] }),
+    );
+    return;
+  }
 
   let token: string;
-  if (!res.ok) {
-    // User already exists from a previous CI run — log in instead.
-    const loginRes = await fetch(`${API_BASE}/auth/wallet/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: TEST_EMAIL }),
-    });
-    if (!loginRes.ok)
-      throw new Error(
-        `Auth setup failed: ${loginRes.status} ${await loginRes.text()}`,
-      );
-    ({ token } = (await loginRes.json()) as { token: string });
-  } else {
-    ({ token } = (await res.json()) as { token: string });
+  try {
+    ({ token } = await createVerifiedAccount(TEST_EMAIL));
+  } catch {
+    ({ token } = await loginVerifiedAccount(TEST_EMAIL));
   }
 
   // Seed a portfolio so D-series tests land on /dashboard/<id> rather than
   // being redirected to /onboarding (which happens when no portfolio exists).
   await seedPortfolio(token);
 
-  // The API authenticates via Bearer header read from localStorage("aegis.jwt").
-  // There are no httpOnly auth cookies — credentials: "include" in api.ts is
-  // for CORS preflight only, not authentication.
-  await injectToken(page, token);
-  await context.storageState({ path: AUTH_STATE_PATH });
-  await browser.close();
-}
-
-async function injectToken(
-  page: import("@playwright/test").Page,
-  token: string,
-) {
-  // Navigate to app root so localStorage is scoped to the right origin.
-  await page.goto(process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000", {
-    waitUntil: "domcontentloaded",
-  });
-  await page.evaluate((t) => localStorage.setItem("aegis.jwt", t), token);
+  fs.writeFileSync(
+    AUTH_STATE_PATH,
+    JSON.stringify(storageStateForToken(token)),
+  );
 }
 
 async function seedPortfolio(token: string): Promise<void> {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Mail } from "lucide-react";
 import { digestApi, analyticsApi } from "@/lib/api";
 
@@ -20,6 +20,11 @@ export function DigestOptIn({ defaultEmail = "" }: Props) {
   const [error, setError] = useState<string | null>(null);
   const trimmedEmail = email.trim();
   const canSubscribe = trimmedEmail.includes("@");
+
+  useEffect(() => {
+    if (!defaultEmail) return;
+    setEmail((current) => (current.trim() ? current : defaultEmail));
+  }, [defaultEmail]);
 
   const handle = async () => {
     setBusy(true);

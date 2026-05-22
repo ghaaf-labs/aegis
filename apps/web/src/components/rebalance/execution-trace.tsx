@@ -10,8 +10,9 @@ import {
   portfolioApi,
 } from "@/lib/api";
 import { buildShareIntent } from "@/lib/share";
-import type { LegStatus } from "@/types";
+import type { ChainKey, LegStatus } from "@/types";
 import { usePortfolioStore } from "@/stores/portfolio";
+import { explorerTxUrl } from "@/lib/explorers";
 
 import { LegCard } from "./leg-card";
 
@@ -26,8 +27,8 @@ interface InternalLeg {
   id: string;
   legIndex: number;
   kind: string;
-  srcChain: string | null;
-  destChain: string | null;
+  srcChain: ChainKey | null;
+  destChain: ChainKey | null;
   srcSymbol: string | null;
   destSymbol: string | null;
   amountUsdc: number;
@@ -297,10 +298,7 @@ function getExplorerUrlForTx(tx: string, legs: InternalLeg[]): string {
   const hasBase = legs.some(
     (l) => l.destChain === "base" || l.srcChain === "base",
   );
-  const base = hasBase
-    ? "https://sepolia.basescan.org/tx/"
-    : "https://explorer.testnet.arc.network/tx/";
-  return `${base}${tx}`;
+  return explorerTxUrl(hasBase ? "base" : "arc", tx) ?? "#";
 }
 
 function ShareBlock({ decisionId }: { decisionId: string }) {

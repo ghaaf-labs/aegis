@@ -28,19 +28,18 @@ export function ModelBadge({
 }
 
 /**
- * Chain pill — ARC / BASE / AVAX. Distinct stripe per chain.
+ * Settlement-chain pill. Product settlement is locked to Arc + Base.
  */
 export function ChainBadge({
   chain,
   className,
 }: {
-  chain: "ARC" | "BASE" | "AVAX";
+  chain: "ARC" | "BASE";
   className?: string;
 }) {
   const stripe = {
     ARC: "border-accent-pnl/60",
     BASE: "border-accent-agent/60",
-    AVAX: "border-risk/60",
   }[chain];
   return (
     <span

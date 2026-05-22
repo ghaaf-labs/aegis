@@ -7,12 +7,17 @@ import { injectTestJwt } from "./helpers/auth";
 const GATED_ROUTES = ["/dashboard", "/portfolio", "/wallet", "/settings"];
 
 for (const route of GATED_ROUTES) {
-  test(`A1-A4 — unauthenticated ${route} shows wallet gate`, async ({
+  test(`A1-A4 — unauthenticated ${route} redirects to verified login`, async ({
     page,
   }) => {
     await page.goto(route);
-    await expect(page.getByText(/Sign in to continue/i)).toBeVisible();
-    await expect(page.getByRole("link", { name: /Sign in/i })).toBeVisible();
+    await expect(page).toHaveURL(/\/login\?next=/);
+    await expect(page.getByText(/Session required/i)).toBeVisible();
+    await expect(
+      page.getByRole("button", {
+        name: /login email unavailable|send one-time login code/i,
+      }),
+    ).toBeVisible();
   });
 }
 
@@ -37,5 +42,6 @@ test("A7 — fake JWT in localStorage does not bypass auth gate", async ({
 }) => {
   await injectTestJwt(page);
   await page.goto("/dashboard");
-  await expect(page.getByText(/Sign in to continue/i)).toBeVisible();
+  await expect(page).toHaveURL(/\/login\?next=/);
+  await expect(page.getByText(/Session required/i)).toBeVisible();
 });

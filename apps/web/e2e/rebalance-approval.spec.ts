@@ -1,4 +1,10 @@
 import { test, expect, type Page } from "@playwright/test";
+import {
+  API_BASE,
+  authCookie,
+  createVerifiedAccount,
+  requireDevCodes,
+} from "./helpers/auth";
 
 // R-series — rebalance approval modal + execution trace. Requires the Rust
 // API with EXECUTION_MOCK=true and MOCK_CIRCLE=true. The global-setup creates
@@ -6,10 +12,11 @@ import { test, expect, type Page } from "@playwright/test";
 
 test.use({ storageState: "./e2e/.auth/user.json" });
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
-
-test.beforeEach(() => {
+test.beforeEach(async () => {
   if (!process.env.PLAYWRIGHT_API_ENABLED) test.skip();
+  if (!(await requireDevCodes())) {
+    test.skip(true, "rebalance e2e account setup requires mock dev codes");
+  }
 });
 
 /** Create a portfolio + trigger a rebalance plan via the API.
@@ -59,21 +66,14 @@ async function seedPlan(): Promise<{ planId: string; jwt: string }> {
 
 async function createTestJwt(): Promise<string> {
   const email = `rebalance-${Date.now()}-${Math.random().toString(16).slice(2)}@aegis.local`;
-  const res = await fetch(`${API_BASE}/auth/wallet/create`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email }),
-  });
-  if (!res.ok)
-    throw new Error(`auth create failed: ${res.status} ${await res.text()}`);
-  const body = (await res.json()) as { token: string };
-  return body.token;
+  const { token } = await createVerifiedAccount(email);
+  return token;
 }
 
 async function openSeededPlan(page: Page): Promise<string> {
   const { planId, jwt } = await seedPlan();
-  await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.evaluate((token) => localStorage.setItem("aegis.jwt", token), jwt);
+  await page.context().clearCookies();
+  await page.context().addCookies([authCookie(jwt)]);
   await page.goto(`/rebalance/${planId}`);
   return planId;
 }

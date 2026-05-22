@@ -197,15 +197,14 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
     .fetch_all(&state.db)
     .await?;
 
-    for leg in legs {
+    for leg in &legs {
         let kind = parse_kind(&leg.kind)?;
-        mark_leg_submitted(state, rebalance_id, leg.id, user_id, &leg).await?;
+        mark_leg_submitted(state, rebalance_id, leg.id, user_id, leg).await?;
 
-        let (tx_hash, cctp_hash) = match dispatch(state, rebalance_id, kind, &leg, user_id).await {
+        let (tx_hash, cctp_hash) = match dispatch(state, rebalance_id, kind, leg, user_id).await {
             Ok(v) => v,
             Err(e) => {
-                mark_leg_failed(state, rebalance_id, leg.id, user_id, &leg, &format!("{e}"))
-                    .await?;
+                mark_leg_failed(state, rebalance_id, leg.id, user_id, leg, &format!("{e}")).await?;
                 return Err(e);
             }
         };
@@ -215,17 +214,30 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
             rebalance_id,
             leg.id,
             user_id,
-            &leg,
+            leg,
             &tx_hash,
             cctp_hash.as_deref(),
         )
         .await?;
 
-        // Tax lot disposal: a successful sell leg that produced USDC closes
-        // the oldest matching open lots FIFO. Best-effort — failures here
-        // log + continue rather than rolling back the (already on-chain) leg.
-        if is_sell_leg(kind, &leg) {
-            if let Err(e) = record_disposal_for_leg(state, portfolio_id, &leg).await {
+        let mut holdings_changed = false;
+
+        // Sell-side holdings writeback: a successful non-USDC → USDC leg must
+        // reduce the sold allocation before the dashboard reloads. Tax lot
+        // disposal is separate bookkeeping and cannot be the holdings source
+        // of truth.
+        if is_sell_leg(kind, leg) {
+            if let Err(e) = record_allocation_disposal_for_leg(state, portfolio_id, leg).await {
+                tracing::warn!(leg_id=?leg.id, error=%e, "allocations: disposal writeback failed");
+            } else {
+                holdings_changed = true;
+            }
+
+            // Tax lot disposal: a successful sell leg that produced USDC
+            // closes the oldest matching open lots FIFO. Best-effort —
+            // failures here log + continue rather than rolling back the
+            // already-confirmed leg.
+            if let Err(e) = record_tax_disposal_for_leg(state, portfolio_id, leg).await {
                 tracing::warn!(leg_id=?leg.id, error=%e, "tax: lot disposal failed");
             }
         }
@@ -237,13 +249,18 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
         // portfolio total after every buy so a *partial* plan (e.g.
         // USYC leg reverts on Arc but BTC/ETH/SOL already settled) still
         // surfaces the holdings the user actually owns.
-        if is_buy_leg(kind, &leg) {
-            if let Err(e) = record_acquisition_for_leg(state, portfolio_id, &leg).await {
+        if is_buy_leg(kind, leg) {
+            if let Err(e) = record_acquisition_for_leg(state, portfolio_id, leg).await {
                 tracing::warn!(leg_id=?leg.id, error=%e, "allocations: acquisition writeback failed");
+            } else {
+                holdings_changed = true;
             }
-            if let Err(e) = recompute_portfolio_total_value(state, portfolio_id).await {
-                tracing::warn!(?portfolio_id, error=%e, "portfolios: total_value_usd recompute failed");
-            }
+        }
+
+        if holdings_changed {
+            if let Err(e) = recompute_portfolio_values(state, portfolio_id).await {
+                tracing::warn!(?portfolio_id, error=%e, "portfolios: value recompute failed");
+            };
         }
 
         sqlx::query(
@@ -265,17 +282,11 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
     .execute(&state.db)
     .await?;
 
-    // Record the 25 bps protocol fee once for the entire plan, against the
-    // sum of leg notionals. The leg loop above intentionally does not touch
-    // billing — fee-per-leg would multiply the fee by the leg count.
-    let plan_total: f64 = sqlx::query_scalar(
-        "SELECT COALESCE(SUM(amount_usdc), 0)::DOUBLE PRECISION
-         FROM rebalance_legs WHERE rebalance_id = $1",
-    )
-    .bind(rebalance_id)
-    .fetch_one(&state.db)
-    .await
-    .unwrap_or(0.0);
+    // Record the 25 bps protocol fee once for the executed economic notional.
+    // CCTP mint legs are the receive-side accounting event for a burn leg, not
+    // a second user-initiated movement. Billing them would double-charge bridge
+    // plans and disagree with the review UI/history totals.
+    let plan_total = protocol_fee_notional_from_legs(&legs);
 
     crate::modules::observability::counters::record_rebalance_succeeded(plan_total);
 
@@ -487,6 +498,13 @@ struct LegRow {
     amount_usdc: f64,
 }
 
+fn protocol_fee_notional_from_legs(legs: &[LegRow]) -> f64 {
+    legs.iter()
+        .filter(|leg| leg.kind != LegKind::CrossChainMint.as_str())
+        .map(|leg| leg.amount_usdc)
+        .sum()
+}
+
 async fn mark_leg_submitted(
     state: &AppState,
     rebalance_id: Uuid,
@@ -639,19 +657,10 @@ async fn record_acquisition_for_leg(
     let Some(symbol) = leg.dest_symbol.as_deref() else {
         return Ok(());
     };
-    // USYC and other stablecoins aren't in price_history — treat as $1.
-    let fallback_price = if matches!(symbol, "USYC" | "USDC" | "EURC") {
-        1.0
-    } else {
-        0.0
-    };
-    let spot_price = latest_spot_price(state, symbol)
-        .await
-        .unwrap_or(fallback_price);
-    if spot_price <= 0.0 {
+    let spot_price = latest_spot_price_with_stable_fallback(state, symbol).await;
+    let Some(acquired_qty) = quantity_for_notional(leg.amount_usdc, spot_price) else {
         return Ok(());
-    }
-    let acquired_qty = leg.amount_usdc / spot_price;
+    };
 
     let result = sqlx::query(
         "UPDATE allocations
@@ -687,10 +696,58 @@ async fn record_acquisition_for_leg(
     Ok(())
 }
 
-/// Recompute `portfolios.total_value_usd` as the sum of `allocations.value_usd`.
-/// Called after every plan completes so the headline reflects the post-trade
-/// portfolio. PnL is left for a separate cost-basis-aware computation.
-async fn recompute_portfolio_total_value(state: &AppState, portfolio_id: Uuid) -> Result<()> {
+async fn record_allocation_disposal_for_leg(
+    state: &AppState,
+    portfolio_id: Uuid,
+    leg: &LegRow,
+) -> Result<()> {
+    let Some(symbol) = leg.src_symbol.as_deref() else {
+        return Ok(());
+    };
+    let spot_price = latest_spot_price_with_stable_fallback(state, symbol).await;
+    let Some(sold_qty) = quantity_for_notional(leg.amount_usdc, spot_price) else {
+        return Ok(());
+    };
+
+    sqlx::query(
+        "UPDATE allocations
+            SET quantity = GREATEST(quantity - $3, 0),
+                value_usd = GREATEST(quantity - $3, 0) * $4,
+                updated_at = NOW()
+          WHERE portfolio_id = $1 AND asset_symbol = $2",
+    )
+    .bind(portfolio_id)
+    .bind(symbol)
+    .bind(sold_qty)
+    .bind(spot_price)
+    .execute(&state.db)
+    .await?;
+    Ok(())
+}
+
+/// Recompute portfolio totals and allocation weights from allocation values.
+/// Called after every confirmed buy/sell writeback so the dashboard and the
+/// next planner run read the same post-trade state.
+async fn recompute_portfolio_values(state: &AppState, portfolio_id: Uuid) -> Result<()> {
+    sqlx::query(
+        "UPDATE allocations a
+            SET current_weight = CASE
+                WHEN totals.total_value_usd > 0
+                THEN (a.value_usd / totals.total_value_usd) * 100
+                ELSE 0
+            END,
+            updated_at = NOW()
+          FROM (
+            SELECT COALESCE(SUM(value_usd), 0)::DOUBLE PRECISION AS total_value_usd
+            FROM allocations
+            WHERE portfolio_id = $1
+          ) totals
+          WHERE a.portfolio_id = $1",
+    )
+    .bind(portfolio_id)
+    .execute(&state.db)
+    .await?;
+
     sqlx::query(
         "UPDATE portfolios
             SET total_value_usd = COALESCE(
@@ -722,7 +779,28 @@ async fn latest_spot_price(state: &AppState, symbol: &str) -> Option<f64> {
     .flatten()
 }
 
-async fn record_disposal_for_leg(state: &AppState, portfolio_id: Uuid, leg: &LegRow) -> Result<()> {
+async fn latest_spot_price_with_stable_fallback(state: &AppState, symbol: &str) -> f64 {
+    latest_spot_price(state, symbol).await.unwrap_or({
+        if matches!(symbol, "USYC" | "USDC" | "EURC") {
+            1.0
+        } else {
+            0.0
+        }
+    })
+}
+
+fn quantity_for_notional(amount_usdc: f64, spot_price: f64) -> Option<f64> {
+    if amount_usdc <= 0.0 || spot_price <= 0.0 {
+        return None;
+    }
+    Some(amount_usdc / spot_price)
+}
+
+async fn record_tax_disposal_for_leg(
+    state: &AppState,
+    portfolio_id: Uuid,
+    leg: &LegRow,
+) -> Result<()> {
     let Some(symbol) = leg.src_symbol.as_deref() else {
         return Ok(());
     };
@@ -755,4 +833,80 @@ async fn record_disposal_for_leg(state: &AppState, portfolio_id: Uuid, leg: &Leg
     }
     let qty = leg.amount_usdc / price;
     crate::modules::tax::service::record_disposal(state, allocation_id, qty).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn leg(kind: LegKind, amount_usdc: f64) -> LegRow {
+        LegRow {
+            id: Uuid::new_v4(),
+            leg_index: 0,
+            kind: kind.as_str().to_string(),
+            src_chain: None,
+            dest_chain: None,
+            src_symbol: None,
+            dest_symbol: None,
+            amount_usdc,
+        }
+    }
+
+    fn swap_leg(src: &str, dest: &str) -> LegRow {
+        LegRow {
+            id: Uuid::new_v4(),
+            leg_index: 0,
+            kind: LegKind::LocalSwap.as_str().to_string(),
+            src_chain: Some(ChainKey::Base.as_str().to_string()),
+            dest_chain: Some(ChainKey::Base.as_str().to_string()),
+            src_symbol: Some(src.to_string()),
+            dest_symbol: Some(dest.to_string()),
+            amount_usdc: 600.0,
+        }
+    }
+
+    #[test]
+    fn protocol_fee_notional_excludes_cctp_mint_receive_side() {
+        let legs = vec![
+            leg(LegKind::CrossChainBurn, 100.0),
+            leg(LegKind::CrossChainMint, 100.0),
+            leg(LegKind::LocalSwap, 25.0),
+        ];
+
+        assert_eq!(protocol_fee_notional_from_legs(&legs), 125.0);
+    }
+
+    #[test]
+    fn protocol_fee_notional_counts_single_chain_and_usyc_legs() {
+        let legs = vec![
+            leg(LegKind::ParkUsyc, 50.0),
+            leg(LegKind::RedeemUsyc, 20.0),
+            leg(LegKind::FxStablefx, 10.0),
+        ];
+
+        assert_eq!(protocol_fee_notional_from_legs(&legs), 80.0);
+    }
+
+    #[test]
+    fn local_swap_into_usdc_is_sell_not_buy() {
+        let sell = swap_leg("BTC", "USDC");
+
+        assert!(is_sell_leg(LegKind::LocalSwap, &sell));
+        assert!(!is_buy_leg(LegKind::LocalSwap, &sell));
+    }
+
+    #[test]
+    fn local_swap_from_usdc_is_buy_not_sell() {
+        let buy = swap_leg("USDC", "ETH");
+
+        assert!(is_buy_leg(LegKind::LocalSwap, &buy));
+        assert!(!is_sell_leg(LegKind::LocalSwap, &buy));
+    }
+
+    #[test]
+    fn quantity_for_notional_rejects_zero_or_missing_prices() {
+        assert_eq!(quantity_for_notional(600.0, 100_000.0), Some(0.006));
+        assert_eq!(quantity_for_notional(0.0, 100_000.0), None);
+        assert_eq!(quantity_for_notional(600.0, 0.0), None);
+    }
 }

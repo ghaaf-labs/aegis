@@ -5,6 +5,7 @@ import { TrendingUp, TrendingDown, Wallet, ArrowRight } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
 import { formatCurrency, formatPercent, changeColor } from "@/lib/utils";
+import { derivePortfolioPositionMetrics } from "@/lib/portfolio-values";
 import { ProvenanceLine, Skeleton } from "@aegis/ui";
 
 /// EURC's mid-market USD price for the Total Wealth headline. Cheap stable
@@ -18,6 +19,7 @@ export function PortfolioSummaryCard() {
   const unifiedEurc = usePortfolioStore((s) => s.unifiedEurc);
   const perChainUsdc = usePortfolioStore((s) => s.perChainUsdc);
   const perChainEurc = usePortfolioStore((s) => s.perChainEurc);
+  const gatewayBalanceStatus = usePortfolioStore((s) => s.gatewayBalanceStatus);
 
   if (!portfolio) {
     return (
@@ -51,7 +53,13 @@ export function PortfolioSummaryCard() {
     snapshot?.assets.find((a) => a.symbol === "EURC")?.priceUsd ??
     EURC_USD_APPROX;
   const idleCashUsd = unifiedUsdc + unifiedEurc * eurcUsd;
-  const totalWealthUsd = portfolio.totalValueUsd + idleCashUsd;
+  const positionMetrics = derivePortfolioPositionMetrics(portfolio, snapshot);
+  const investedUsd = positionMetrics.investedUsd;
+  const walletBalanceUnavailable = gatewayBalanceStatus === "error";
+  const walletBalanceLoading =
+    gatewayBalanceStatus === "idle" || gatewayBalanceStatus === "loading";
+  const confirmedIdleCashUsd = walletBalanceUnavailable ? 0 : idleCashUsd;
+  const totalWealthUsd = investedUsd + confirmedIdleCashUsd;
 
   const arcTotal = (perChainUsdc.arc ?? 0) + (perChainEurc.arc ?? 0) * eurcUsd;
   const baseTotal =
@@ -70,11 +78,14 @@ export function PortfolioSummaryCard() {
           {formatCurrency(totalWealthUsd)}
         </p>
         <p className="text-[11px] font-mono text-text-mut mb-3">
-          {formatCurrency(portfolio.totalValueUsd, { compact: true })} invested
-          {" · "}
-          {formatCurrency(idleCashUsd, { compact: true })} in wallet
+          {formatCurrency(investedUsd, { compact: true })} invested{" · "}
+          {walletBalanceUnavailable
+            ? "wallet balance unavailable"
+            : walletBalanceLoading
+              ? "checking wallet balance"
+              : `${formatCurrency(idleCashUsd, { compact: true })} in wallet`}
         </p>
-        {portfolio.totalValueUsd > 0.5 ? (
+        {investedUsd > 0.5 ? (
           <div
             className={`flex items-center gap-1.5 text-sm ${changeColor(portfolio.totalPnlUsd)}`}
           >
@@ -92,33 +103,35 @@ export function PortfolioSummaryCard() {
           </p>
         )}
 
-        {idleCashUsd > 0.5 && (
-          <div className="mt-4 grid grid-cols-2 gap-2 text-[11px] font-mono">
-            <div className="p-2 rounded-sharp bg-raised border border-border-default">
-              <p className="text-text-mut uppercase tracking-wider text-[9px] mb-0.5">
-                Arc wallet
-              </p>
-              <p className="text-text-hi tabular-nums">
-                {formatCurrency(arcTotal, { compact: true })}
-              </p>
+        {!walletBalanceUnavailable &&
+          !walletBalanceLoading &&
+          idleCashUsd > 0.5 && (
+            <div className="mt-4 grid grid-cols-2 gap-2 text-[11px] font-mono">
+              <div className="p-2 rounded-sharp bg-raised border border-border-default">
+                <p className="text-text-mut uppercase tracking-wider text-[9px] mb-0.5">
+                  Arc wallet
+                </p>
+                <p className="text-text-hi tabular-nums">
+                  {formatCurrency(arcTotal, { compact: true })}
+                </p>
+              </div>
+              <div className="p-2 rounded-sharp bg-raised border border-border-default">
+                <p className="text-text-mut uppercase tracking-wider text-[9px] mb-0.5">
+                  Base wallet
+                </p>
+                <p className="text-text-hi tabular-nums">
+                  {formatCurrency(baseTotal, { compact: true })}
+                </p>
+              </div>
+              <Link
+                href="/wallets"
+                className="col-span-2 flex items-center justify-between px-2 py-1.5 rounded-sharp text-[10px] text-accent-pnl/80 hover:text-accent-pnl hover:bg-accent-pnl/5 transition-colors"
+              >
+                <span>Wallet addresses + per-token breakdown</span>
+                <ArrowRight className="w-3 h-3" />
+              </Link>
             </div>
-            <div className="p-2 rounded-sharp bg-raised border border-border-default">
-              <p className="text-text-mut uppercase tracking-wider text-[9px] mb-0.5">
-                Base wallet
-              </p>
-              <p className="text-text-hi tabular-nums">
-                {formatCurrency(baseTotal, { compact: true })}
-              </p>
-            </div>
-            <Link
-              href="/wallet"
-              className="col-span-2 flex items-center justify-between px-2 py-1.5 rounded-sharp text-[10px] text-accent-pnl/80 hover:text-accent-pnl hover:bg-accent-pnl/5 transition-colors"
-            >
-              <span>Wallet addresses + per-token breakdown</span>
-              <ArrowRight className="w-3 h-3" />
-            </Link>
-          </div>
-        )}
+          )}
 
         <div className="mt-4 grid grid-cols-2 gap-3">
           <div className="p-3 rounded-sharp bg-raised border border-border-default">
@@ -129,11 +142,11 @@ export function PortfolioSummaryCard() {
           </div>
           <div className="p-3 rounded-sharp bg-raised border border-border-default">
             <p className="text-xs text-text-mut mb-1">Risk Score</p>
-            {portfolio.totalValueUsd > 0.5 ? (
+            {investedUsd > 0.5 ? (
               <>
                 <div className="flex items-center gap-2">
                   <p
-                    className={`text-sm font-semibold ${portfolio.riskScore < 40 ? "text-accent-pnl" : portfolio.riskScore < 65 ? "text-warn" : "text-risk"}`}
+                    className={`text-sm font-semibold ${portfolio.riskScore < 40 ? "text-accent-agent" : portfolio.riskScore < 65 ? "text-warn" : "text-risk"}`}
                   >
                     {portfolio.riskScore}/100
                   </p>
@@ -166,8 +179,17 @@ export function PortfolioSummaryCard() {
 
           <div className="col-span-2 pt-2 border-t border-white/10">
             <ProvenanceLine
-              source="Gateway unified balance + on-chain positions"
-              freshness="live"
+              source={
+                walletBalanceUnavailable
+                  ? "confirmed positions · Gateway balance check failed"
+                  : walletBalanceLoading
+                    ? "confirmed positions · Gateway balance warming up"
+                    : positionMetrics.usingLivePrices
+                      ? "Gateway unified balance + live position marks"
+                      : "Gateway unified balance + confirmed positions"
+              }
+              freshness={walletBalanceUnavailable ? "needs retry" : "live"}
+              className={walletBalanceUnavailable ? "text-warn" : undefined}
             />
           </div>
         </div>

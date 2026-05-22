@@ -116,6 +116,47 @@ function bridgedAmountUsdc(plan: RebalancePlanResponse): number {
     .reduce((acc, leg) => acc + leg.amountUsdc, 0);
 }
 
+function chainDestinationTotals(plan: RebalancePlanResponse) {
+  const totals = new Map<string, number>();
+  for (const leg of plan.legs) {
+    if (leg.kind === "cross_chain_mint") continue;
+    if (!leg.destSymbol || leg.destSymbol === "USDC") continue;
+    const chain = leg.destChain ?? leg.srcChain ?? "arc";
+    totals.set(chain, (totals.get(chain) ?? 0) + leg.amountUsdc);
+  }
+  return {
+    arc: totals.get("arc") ?? 0,
+    base: totals.get("base") ?? 0,
+  };
+}
+
+function chainSourceTotals(plan: RebalancePlanResponse) {
+  const totals = new Map<string, number>();
+  for (const leg of plan.legs) {
+    if (leg.kind === "cross_chain_mint") continue;
+    const chain = leg.srcChain ?? "arc";
+    totals.set(chain, (totals.get(chain) ?? 0) + leg.amountUsdc);
+  }
+  return {
+    arc: totals.get("arc") ?? 0,
+    base: totals.get("base") ?? 0,
+  };
+}
+
+function chainPositionSaleTotals(plan: RebalancePlanResponse) {
+  const totals = new Map<string, number>();
+  for (const leg of plan.legs) {
+    if (!leg.srcSymbol || leg.srcSymbol === "USDC") continue;
+    if (leg.destSymbol !== "USDC") continue;
+    const chain = leg.srcChain ?? leg.destChain ?? "arc";
+    totals.set(chain, (totals.get(chain) ?? 0) + leg.amountUsdc);
+  }
+  return {
+    arc: totals.get("arc") ?? 0,
+    base: totals.get("base") ?? 0,
+  };
+}
+
 export function ApprovalModal({
   open,
   plan,
@@ -132,22 +173,35 @@ export function ApprovalModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [counterfactualOpen, setCounterfactualOpen] = useState(false);
-  const [routeOpen, setRouteOpen] = useState(false);
+  const [routeOpen, setRouteOpen] = useState(true);
 
   if (!open || !plan) return null;
 
   const routedUsdc = routedAmountUsdc(plan);
   const isMockExecution = plan.executionMode === "mock";
+  const hasCrossChainLeg = plan.legs.some(isCrossChainLeg);
   const destinations = destinationAmounts(plan);
   const sources = sourceAmounts(plan);
   const bridgedUsdc = bridgedAmountUsdc(plan);
+  const bridgeLeg = plan.legs.find((leg) => leg.kind === "cross_chain_burn");
+  const bridgeSourceChain = normalizeRouteChain(bridgeLeg?.srcChain ?? "arc");
+  const bridgeTargetChain = normalizeRouteChain(bridgeLeg?.destChain ?? "base");
   const hasPositionSales = sources.length > 0;
+  const positionSaleUsdc = sources.reduce(
+    (acc, source) => acc + source.amountUsdc,
+    0,
+  );
+  const destinationUsdc = destinations.reduce(
+    (acc, destination) => acc + destination.amountUsdc,
+    0,
+  );
+  const netTurnoverUsdc = Math.max(positionSaleUsdc, destinationUsdc);
   const approvalBlocked = approvalSafety?.approvable === false;
   const changeHeadline =
     plan.totalLegs === 0
       ? "No portfolio changes needed"
       : hasPositionSales
-        ? `Rebalance ${routedUsdc.toFixed(2)} USD across positions`
+        ? `Rebalance $${netTurnoverUsdc.toFixed(2)} from overweight positions`
         : destinations.length > 0
           ? `Deploy $${routedUsdc.toFixed(2)} of wallet USDC`
           : `Route $${routedUsdc.toFixed(2)} USDC`;
@@ -231,7 +285,9 @@ export function ApprovalModal({
               {bridgedUsdc > 0 && (
                 <div className="flex items-center justify-between border border-cyan-500/20 bg-cyan-500/5 px-3 py-2 text-accent-agent">
                   <span>
-                    {isMockExecution ? "Simulate bridge" : "Bridge"} Arc → Base
+                    {isMockExecution ? "Simulate bridge" : "Bridge"}{" "}
+                    {chainDisplayName(bridgeSourceChain)} →{" "}
+                    {chainDisplayName(bridgeTargetChain)}
                   </span>
                   <span>${bridgedUsdc.toFixed(2)}</span>
                 </div>
@@ -239,7 +295,7 @@ export function ApprovalModal({
             </div>
             <p className="mt-3 text-[11px] leading-relaxed text-text-lo">
               {approvalBlocked
-                ? "These amounts are historical and cannot be executed from this screen. Build a fresh review to see the current wallet and position route."
+                ? blockedAmountCopy(approvalSafety)
                 : isMockExecution
                   ? "This updates the local demo portfolio and mock Gateway balance so you can see the state change immediately."
                   : hasPositionSales
@@ -248,18 +304,35 @@ export function ApprovalModal({
             </p>
           </div>
 
+          <RebalanceRouteMap plan={plan} />
+
           {approvalBlocked && (
             <div className="mb-4 border-brutal border-warn/50 bg-warn/10 p-3 text-xs font-mono text-warn">
               <p className="text-[10px] uppercase tracking-wider">
                 Approval blocked · {approvalSafety.code}
               </p>
               <p className="mt-1 leading-relaxed">{approvalSafety.message}</p>
-              <a
-                href={portfolioId ? `/dashboard/${portfolioId}` : "/dashboard"}
-                className="mt-2 inline-flex border border-warn/40 px-2 py-1 text-[11px] text-warn hover:bg-warn/10"
-              >
-                Open Dashboard for fresh review
-              </a>
+              {approvalSafety.missingCapabilities?.length ? (
+                <ul className="mt-3 grid gap-2">
+                  {approvalSafety.missingCapabilities.map((capability) => (
+                    <li
+                      key={capability.code}
+                      className="border border-warn/30 bg-black/20 px-2 py-1.5"
+                    >
+                      <p className="text-[10px] uppercase tracking-wider text-warn">
+                        {capability.label}
+                      </p>
+                      <p className="mt-1 text-[11px] leading-relaxed text-text-lo">
+                        {capability.detail}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              <BlockedRecoveryActions
+                portfolioId={portfolioId ?? null}
+                safety={approvalSafety}
+              />
             </div>
           )}
 
@@ -405,11 +478,7 @@ export function ApprovalModal({
 
           <p className="text-sm text-text-default mb-3">
             {approvalBlocked ? (
-              <>
-                Aegis is showing these <strong>{plan.totalLegs}</strong> stale
-                leg{plan.totalLegs === 1 ? "" : "s"} for audit only. Build a
-                fresh review before any execution.
-              </>
+              <>{blockedLegCopy(plan, approvalSafety)}</>
             ) : (
               <>
                 The agent has planned <strong>{plan.totalLegs}</strong> leg
@@ -417,7 +486,9 @@ export function ApprovalModal({
                 its target.{" "}
                 {isMockExecution
                   ? "This local demo updates mock positions and Gateway balances; no real chain transaction is sent."
-                  : "One approval settles the plan on Arc + Base; SSE streams each leg as it confirms."}
+                  : hasCrossChainLeg
+                    ? "One approval settles the plan on Arc + Base; SSE streams each leg as it confirms."
+                    : `One approval executes the ${singleChainLabel(plan)} legs; SSE streams each leg as it confirms.`}
               </>
             )}
           </p>
@@ -450,28 +521,14 @@ export function ApprovalModal({
                         {KIND_LABEL[leg.kind] ?? leg.kind}
                       </span>
                       {leg.srcChain && (
-                        <ChainBadge
-                          chain={
-                            leg.srcChain.toUpperCase() as
-                              | "ARC"
-                              | "BASE"
-                              | "AVAX"
-                          }
-                        />
+                        <ChainBadge chain={toChainBadge(leg.srcChain)} />
                       )}
                       {leg.destChain && leg.destChain !== leg.srcChain && (
-                        <ChainBadge
-                          chain={
-                            leg.destChain.toUpperCase() as
-                              | "ARC"
-                              | "BASE"
-                              | "AVAX"
-                          }
-                        />
+                        <ChainBadge chain={toChainBadge(leg.destChain)} />
                       )}
                     </span>
                     <span className="text-text-lo">
-                      {leg.srcSymbol} → {leg.destSymbol}
+                      {legRouteText(leg)}
                       <span className="text-accent-pnl ml-2">
                         ${leg.amountUsdc.toFixed(2)}
                       </span>
@@ -504,7 +561,7 @@ export function ApprovalModal({
               </span>
             </div>
             <div className="flex justify-between text-text-lo mt-1">
-              <span>Total amount routed</span>
+              <span>Gross leg notional</span>
               <span className="text-text-hi">${routedUsdc.toFixed(2)}</span>
             </div>
             <div className="text-[10px] text-text-mut mt-2">
@@ -591,4 +648,610 @@ export function ApprovalModal({
       </div>
     </div>
   );
+}
+
+function legRouteText(plan: RebalancePlanResponse["legs"][number]) {
+  if (plan.kind === "cross_chain_burn") {
+    return `${plan.srcSymbol ?? "USDC"} bridge intent → ${plan.destSymbol ?? "destination asset"}`;
+  }
+  if (plan.kind === "cross_chain_mint") {
+    return `Receive bridged ${plan.destSymbol ?? "USDC"} on ${plan.destChain ?? "destination"}`;
+  }
+  return `${plan.srcSymbol ?? "source"} → ${plan.destSymbol ?? "destination"}`;
+}
+
+function toChainBadge(chain: "arc" | "base"): "ARC" | "BASE" {
+  return chain === "arc" ? "ARC" : "BASE";
+}
+
+function isCrossChainLeg(plan: RebalancePlanResponse["legs"][number]) {
+  return plan.kind === "cross_chain_burn" || plan.kind === "cross_chain_mint";
+}
+
+function singleChainLabel(plan: RebalancePlanResponse) {
+  const chain = plan.legs
+    .map((leg) => leg.destChain ?? leg.srcChain)
+    .find(
+      (value): value is "arc" | "base" => value === "arc" || value === "base",
+    );
+  return chain === "base" ? "Base" : "Arc";
+}
+
+function blockedAmountCopy(safety?: RebalanceApprovalSafety | null): string {
+  switch (safety?.code) {
+    case "EXECUTION_UNAVAILABLE":
+      return "These amounts are current, but this API cannot execute one or more legs in real mode. Enable the missing adapter or build a target that avoids the unsupported sleeve.";
+    case "SUPERSEDED":
+      return "These amounts belong to an older review. Open the latest review to see the active route.";
+    case "STALE_PLAN":
+      return "These amounts no longer match current wallet cash or holdings. Build a fresh review before approving.";
+    case "BALANCE_UNAVAILABLE":
+      return "Gateway balance cannot be verified right now, so real execution stays locked.";
+    case "MOCK_OR_LEGACY_PLAN":
+      return "This review came from a mock or legacy planner and cannot be used for real execution.";
+    default:
+      return "Approval is blocked for this review. Build a fresh review before any execution.";
+  }
+}
+
+function blockedLegCopy(
+  plan: RebalancePlanResponse,
+  safety?: RebalanceApprovalSafety | null,
+) {
+  if (safety?.code === "EXECUTION_UNAVAILABLE") {
+    const count = safety.missingCapabilities?.length ?? 0;
+    return (
+      <>
+        Aegis is showing <strong>{plan.totalLegs}</strong> valid review leg
+        {plan.totalLegs === 1 ? "" : "s"}, but execution is locked because this
+        environment cannot perform{" "}
+        {count > 1 ? `${count} required adapters` : "a required adapter"}.
+        Configure the missing capability, then build a fresh review.
+      </>
+    );
+  }
+  if (safety?.code === "SUPERSEDED" || safety?.code === "STALE_PLAN") {
+    return (
+      <>
+        Aegis is showing these <strong>{plan.totalLegs}</strong> historical leg
+        {plan.totalLegs === 1 ? "" : "s"} for audit only. Build a fresh review
+        before any execution.
+      </>
+    );
+  }
+  return (
+    <>
+      Aegis is showing <strong>{plan.totalLegs}</strong> blocked leg
+      {plan.totalLegs === 1 ? "" : "s"}. Read the block reason above before
+      creating the next review.
+    </>
+  );
+}
+
+function BlockedRecoveryActions({
+  portfolioId,
+  safety,
+}: {
+  portfolioId: string | null;
+  safety: RebalanceApprovalSafety;
+}) {
+  const dashboardHref = portfolioId
+    ? `/dashboard/${portfolioId}`
+    : "/dashboard";
+  const actions =
+    safety.code === "BALANCE_UNAVAILABLE"
+      ? [
+          {
+            href: "/wallets",
+            label: "Check Wallets / Gateway",
+            primary: true,
+          },
+          {
+            href: dashboardHref,
+            label: "Build fresh review after Gateway recovers",
+            primary: false,
+          },
+        ]
+      : safety.code === "EXECUTION_UNAVAILABLE"
+        ? [
+            {
+              href: dashboardHref,
+              label: "Change target or rebuild review",
+              primary: true,
+            },
+            {
+              href: "/transactions",
+              label: "Back to ledger",
+              primary: false,
+            },
+          ]
+        : [
+            {
+              href: dashboardHref,
+              label: "Build fresh review",
+              primary: true,
+            },
+            {
+              href: "/transactions",
+              label: "Back to ledger",
+              primary: false,
+            },
+          ];
+
+  return (
+    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+      {actions.map((action) => (
+        <a
+          key={action.label}
+          href={action.href}
+          className={
+            action.primary
+              ? "inline-flex min-h-9 flex-1 items-center justify-center border border-warn/50 bg-warn/10 px-3 py-1.5 text-center text-[11px] font-semibold text-warn hover:bg-warn/15"
+              : "inline-flex min-h-9 flex-1 items-center justify-center border border-border-default bg-black/20 px-3 py-1.5 text-center text-[11px] text-text-lo hover:border-border-hi hover:text-text-hi"
+          }
+        >
+          {action.label}
+        </a>
+      ))}
+    </div>
+  );
+}
+
+function RebalanceRouteMap({ plan }: { plan: RebalancePlanResponse }) {
+  const bridged = bridgedAmountUsdc(plan);
+  const sourceTotals = chainSourceTotals(plan);
+  const saleTotals = chainPositionSaleTotals(plan);
+  const targetTotals = chainDestinationTotals(plan);
+  const targets = destinationAmounts(plan).slice(0, 4);
+  const hasPositionSales = sourceAmounts(plan).length > 0;
+  const hasBridge = bridged > 0;
+  const bridgeLeg = plan.legs.find((leg) => leg.kind === "cross_chain_burn");
+  const sourceChain = normalizeRouteChain(bridgeLeg?.srcChain ?? "arc");
+  const targetChain = normalizeRouteChain(bridgeLeg?.destChain ?? "base");
+  const sourceUsd = hasPositionSales
+    ? chainAmount(saleTotals, sourceChain)
+    : chainAmount(sourceTotals, sourceChain);
+  const targetUsd = chainAmount(targetTotals, targetChain);
+
+  if (!hasBridge) {
+    const chain = normalizeRouteChain(
+      plan.legs[0]?.srcChain ?? plan.legs[0]?.destChain ?? "arc",
+    );
+    return (
+      <SingleChainRouteMap
+        chain={chain}
+        legCount={plan.totalLegs}
+        sourceUsd={
+          hasPositionSales
+            ? chainAmount(saleTotals, chain)
+            : chainAmount(sourceTotals, chain)
+        }
+        targetUsd={chainAmount(targetTotals, chain)}
+        targets={targets}
+        sourceKind={hasPositionSales ? "positions" : "wallet"}
+      />
+    );
+  }
+
+  return (
+    <div className="mb-4 border border-white/10 bg-black/30 p-3">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <p className="text-[10px] font-mono uppercase tracking-wider text-accent-agent">
+          Execution route
+        </p>
+        <p className="text-[10px] font-mono text-text-mut">
+          {chainLabel(sourceChain)} → {chainLabel(targetChain)} ·{" "}
+          {plan.totalLegs} legs
+        </p>
+      </div>
+      <svg
+        viewBox="0 0 560 170"
+        role="img"
+        aria-label={`Route map showing ${chainLabel(sourceChain)} source cash, CCTP bridge, ${chainLabel(targetChain)} target exposure, and target assets`}
+        className="h-auto w-full"
+      >
+        <rect
+          x="1"
+          y="1"
+          width="558"
+          height="168"
+          fill="#0A0A0A"
+          stroke="#2A2A2A"
+          strokeWidth="2"
+        />
+        <g>
+          <rect
+            x="22"
+            y="34"
+            width="132"
+            height="78"
+            fill="#101010"
+            stroke={hasPositionSales ? "#fb7185" : "#38E27D"}
+            strokeWidth="2"
+          />
+          <text
+            x="38"
+            y="61"
+            fill={hasPositionSales ? "#fb7185" : "#38E27D"}
+            fontFamily="monospace"
+            fontSize="12"
+            fontWeight="700"
+          >
+            {chainLabel(sourceChain)} {hasPositionSales ? "SOLD" : "SOURCE"}
+          </text>
+          <text
+            x="38"
+            y="86"
+            fill="#E8E8E8"
+            fontFamily="monospace"
+            fontSize="18"
+          >
+            ${sourceUsd.toFixed(2)}
+          </text>
+          <text
+            x="38"
+            y="103"
+            fill="#8A8A8A"
+            fontFamily="monospace"
+            fontSize="10"
+          >
+            {hasPositionSales ? "positions to USDC" : "source wallet cash"}
+          </text>
+        </g>
+
+        <path
+          d="M158 73H242"
+          fill="none"
+          stroke={hasBridge ? "#55D7FF" : "#3A3A3A"}
+          strokeWidth="3"
+          strokeDasharray={hasBridge ? "8 6" : "0"}
+        >
+          {hasBridge && (
+            <animate
+              attributeName="stroke-dashoffset"
+              from="0"
+              to="-28"
+              dur="1.5s"
+              repeatCount="indefinite"
+            />
+          )}
+        </path>
+        <g>
+          <rect
+            x="232"
+            y="45"
+            width="96"
+            height="56"
+            fill="#061318"
+            stroke="#55D7FF"
+            strokeWidth="2"
+          />
+          <text
+            x="280"
+            y="69"
+            textAnchor="middle"
+            fill="#55D7FF"
+            fontFamily="monospace"
+            fontSize="11"
+            fontWeight="700"
+          >
+            CCTP V2
+          </text>
+          <text
+            x="280"
+            y="88"
+            textAnchor="middle"
+            fill="#E8E8E8"
+            fontFamily="monospace"
+            fontSize="13"
+          >
+            ${bridged.toFixed(2)}
+          </text>
+        </g>
+        <path
+          d="M328 73H406"
+          fill="none"
+          stroke={hasBridge ? "#55D7FF" : "#3A3A3A"}
+          strokeWidth="3"
+          strokeDasharray={hasBridge ? "8 6" : "0"}
+        >
+          {hasBridge && (
+            <animate
+              attributeName="stroke-dashoffset"
+              from="0"
+              to="-28"
+              dur="1.5s"
+              repeatCount="indefinite"
+            />
+          )}
+        </path>
+
+        <g>
+          <rect
+            x="406"
+            y="34"
+            width="132"
+            height="78"
+            fill="#101010"
+            stroke="#38E27D"
+            strokeWidth="2"
+          />
+          <text
+            x="422"
+            y="61"
+            fill="#38E27D"
+            fontFamily="monospace"
+            fontSize="12"
+            fontWeight="700"
+          >
+            {chainLabel(targetChain)} TARGET
+          </text>
+          <text
+            x="422"
+            y="86"
+            fill="#E8E8E8"
+            fontFamily="monospace"
+            fontSize="18"
+          >
+            ${targetUsd.toFixed(2)}
+          </text>
+          <text
+            x="422"
+            y="103"
+            fill="#8A8A8A"
+            fontFamily="monospace"
+            fontSize="10"
+          >
+            final exposure
+          </text>
+        </g>
+
+        <g transform="translate(24 130)">
+          {targets.map((target, index) => (
+            <g key={target.symbol} transform={`translate(${index * 132} 0)`}>
+              <rect
+                width="116"
+                height="24"
+                fill="#151515"
+                stroke="#2A2A2A"
+                strokeWidth="1"
+              />
+              <text
+                x="9"
+                y="16"
+                fill="#E8E8E8"
+                fontFamily="monospace"
+                fontSize="10"
+                fontWeight="700"
+              >
+                {target.symbol}
+              </text>
+              <text
+                x="107"
+                y="16"
+                textAnchor="end"
+                fill="#38E27D"
+                fontFamily="monospace"
+                fontSize="10"
+              >
+                ${target.amountUsdc.toFixed(0)}
+              </text>
+            </g>
+          ))}
+        </g>
+      </svg>
+    </div>
+  );
+}
+
+function SingleChainRouteMap({
+  chain,
+  legCount,
+  sourceUsd,
+  targetUsd,
+  targets,
+  sourceKind,
+}: {
+  chain: "arc" | "base";
+  legCount: number;
+  sourceUsd: number;
+  targetUsd: number;
+  targets: Array<{ symbol: string; amountUsdc: number }>;
+  sourceKind: "wallet" | "positions";
+}) {
+  const sourceStroke = sourceKind === "positions" ? "#fb7185" : "#38E27D";
+  return (
+    <div className="mb-4 border border-white/10 bg-black/30 p-3">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <p className="text-[10px] font-mono uppercase tracking-wider text-accent-agent">
+          Execution route
+        </p>
+        <p className="text-[10px] font-mono text-text-mut">
+          single-chain {chainLabel(chain)} · {legCount} legs
+        </p>
+      </div>
+      <svg
+        viewBox="0 0 560 170"
+        role="img"
+        aria-label={`Route map showing ${chainLabel(chain)} wallet USDC flowing into target sleeves without a CCTP bridge`}
+        className="h-auto w-full"
+      >
+        <rect
+          x="1"
+          y="1"
+          width="558"
+          height="168"
+          fill="#0A0A0A"
+          stroke="#2A2A2A"
+          strokeWidth="2"
+        />
+        <g>
+          <rect
+            x="24"
+            y="34"
+            width="150"
+            height="78"
+            fill="#101010"
+            stroke={sourceStroke}
+            strokeWidth="2"
+          />
+          <text
+            x="42"
+            y="61"
+            fill={sourceStroke}
+            fontFamily="monospace"
+            fontSize="12"
+            fontWeight="700"
+          >
+            {chainLabel(chain)} {sourceKind === "positions" ? "SOLD" : "WALLET"}
+          </text>
+          <text
+            x="42"
+            y="86"
+            fill="#E8E8E8"
+            fontFamily="monospace"
+            fontSize="18"
+          >
+            ${sourceUsd.toFixed(2)}
+          </text>
+          <text
+            x="42"
+            y="103"
+            fill="#8A8A8A"
+            fontFamily="monospace"
+            fontSize="10"
+          >
+            {sourceKind === "positions" ? "positions to USDC" : "USDC used now"}
+          </text>
+        </g>
+
+        <path
+          d="M178 73H322"
+          fill="none"
+          stroke="#38E27D"
+          strokeWidth="3"
+          strokeDasharray="9 7"
+        >
+          <animate
+            attributeName="stroke-dashoffset"
+            from="0"
+            to="-32"
+            dur="1.4s"
+            repeatCount="indefinite"
+          />
+        </path>
+        <g>
+          <rect
+            x="312"
+            y="34"
+            width="224"
+            height="78"
+            fill="#101010"
+            stroke="#38E27D"
+            strokeWidth="2"
+          />
+          <text
+            x="332"
+            y="61"
+            fill="#38E27D"
+            fontFamily="monospace"
+            fontSize="12"
+            fontWeight="700"
+          >
+            TARGET SLEEVES
+          </text>
+          <text
+            x="332"
+            y="86"
+            fill="#E8E8E8"
+            fontFamily="monospace"
+            fontSize="18"
+          >
+            ${targetUsd.toFixed(2)}
+          </text>
+          <text
+            x="332"
+            y="103"
+            fill="#8A8A8A"
+            fontFamily="monospace"
+            fontSize="10"
+          >
+            no bridge needed
+          </text>
+        </g>
+
+        <g transform="translate(24 130)">
+          {targets.map((target, index) => (
+            <g key={target.symbol} transform={`translate(${index * 132} 0)`}>
+              <rect
+                width="116"
+                height="24"
+                fill="#151515"
+                stroke="#2A2A2A"
+                strokeWidth="1"
+              />
+              <text
+                x="9"
+                y="16"
+                fill="#E8E8E8"
+                fontFamily="monospace"
+                fontSize="10"
+                fontWeight="700"
+              >
+                {target.symbol}
+              </text>
+              <text
+                x="107"
+                y="16"
+                textAnchor="end"
+                fill="#38E27D"
+                fontFamily="monospace"
+                fontSize="10"
+              >
+                ${target.amountUsdc.toFixed(0)}
+              </text>
+            </g>
+          ))}
+          <g transform={`translate(${Math.min(targets.length, 3) * 132} 0)`}>
+            <rect
+              width="128"
+              height="24"
+              fill="#111A14"
+              stroke="#38E27D"
+              strokeWidth="1"
+            />
+            <text
+              x="9"
+              y="16"
+              fill="#38E27D"
+              fontFamily="monospace"
+              fontSize="10"
+              fontWeight="700"
+            >
+              USDC RESERVE
+            </text>
+          </g>
+        </g>
+      </svg>
+    </div>
+  );
+}
+
+function normalizeRouteChain(chain: string): "arc" | "base" {
+  return chain.toLowerCase() === "base" ? "base" : "arc";
+}
+
+function chainAmount(
+  totals: { arc: number; base: number },
+  chain: "arc" | "base",
+) {
+  return chain === "base" ? totals.base : totals.arc;
+}
+
+function chainLabel(chain: "arc" | "base") {
+  return chain.toUpperCase();
+}
+
+function chainDisplayName(chain: "arc" | "base") {
+  return chain === "base" ? "Base" : "Arc";
 }

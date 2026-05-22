@@ -1,7 +1,8 @@
 import { test, expect } from "@playwright/test";
+import { requireDevCodes } from "./helpers/auth";
 
 // D-series — dashboard + wallet surfaces. Requires the Rust API running
-// with EXECUTION_MOCK=true and MOCK_CIRCLE=true. Auth state is injected
+// with EXECUTION_MOCK=true and MOCK_CIRCLE=true. Auth state is created
 // by global-setup.ts (PLAYWRIGHT_API_ENABLED=true).
 //
 // Tests are skipped when no API is available (storageState file exists but
@@ -13,6 +14,9 @@ test.beforeEach(async ({ page }) => {
   // Skip gracefully when running without the API.
   if (!process.env.PLAYWRIGHT_API_ENABLED) {
     test.skip();
+  }
+  if (!(await requireDevCodes())) {
+    test.skip(true, "dashboard e2e auth state requires mock dev codes");
   }
   // Wait for the dashboard to redirect to an actual portfolio page.
   await page.goto("/dashboard");
