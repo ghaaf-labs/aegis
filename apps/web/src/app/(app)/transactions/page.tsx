@@ -44,7 +44,11 @@ export default function TransactionsPage() {
       })
       .catch((e) => {
         if (!cancelled)
-          setError(e instanceof Error ? e.message : "Failed to load history");
+          setError(
+            e instanceof Error
+              ? e.message
+              : "Transaction history is unavailable right now.",
+          );
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -120,17 +124,18 @@ export default function TransactionsPage() {
           </BrutalCardHeader>
           <BrutalCardBody>
             {error && (
-              <p className="mb-3 border border-risk/40 bg-risk/5 px-3 py-2 text-xs font-mono text-risk">
+              <p
+                aria-live="polite"
+                className="mb-3 border border-risk/40 bg-risk/5 px-3 py-2 text-xs font-mono text-risk"
+              >
                 {error}
               </p>
             )}
-            {rows.length === 0 ? (
+            {loading ? (
+              <LoadingState />
+            ) : rows.length === 0 ? (
               <EmptyState
-                title={
-                  loading
-                    ? "Loading transaction history"
-                    : "No transactions yet"
-                }
+                title="No transactions yet"
                 body="Build a review from Dashboard or Portfolio. After you approve it, the move appears here."
                 href="/portfolio"
                 cta="Review portfolio"
@@ -344,6 +349,22 @@ function executionModeLabel(mode: string | null | undefined) {
   if (mode === "mock") return "historical test";
   if (mode === "real") return "real execution";
   return "execution review";
+}
+
+function LoadingState() {
+  return (
+    <div
+      aria-live="polite"
+      className="border border-border-default bg-bg px-4 py-5"
+    >
+      <p className="text-sm font-mono font-semibold text-text-hi">
+        Loading transaction history
+      </p>
+      <p className="mt-1 max-w-xl text-xs font-mono leading-relaxed text-text-lo">
+        Checking approved moves and execution traces for this portfolio.
+      </p>
+    </div>
+  );
 }
 
 function ApprovalStatePill({ row }: { row: RebalanceHistoryRow }) {
