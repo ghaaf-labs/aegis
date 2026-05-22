@@ -137,10 +137,10 @@ export default function StrategiesPage() {
               <StrategyCard
                 key={s.id}
                 strategy={s}
-                actionLabel="Continue"
+                description={strategyPreviewCopy(s)}
+                actionLabel="Sign in"
                 actionHref={authHref("/login", "/strategies")}
                 actionTone="agent"
-                disabledReason="Use one email code. Aegis signs you in or creates the account, then returns here."
               />
             ),
           )}
@@ -149,12 +149,12 @@ export default function StrategiesPage() {
 
       {!sessionResolved ? null : !authed ? (
         <footer className="text-xs text-text-mut font-mono">
-          Ready to adopt a strategy?{" "}
+          Sign in to adopt a strategy. No money moves without your approval.{" "}
           <Link
             href={authHref("/login", "/strategies")}
             className="inline-flex min-h-9 items-center rounded-sharp text-accent-agent hover:underline"
           >
-            Continue with email
+            Sign in
           </Link>
           .
         </footer>
@@ -169,6 +169,19 @@ function authHref(path: "/login", next: string) {
   if (safeNext) params.set("next", safeNext);
   const query = params.toString();
   return query ? `${path}?${query}` : path;
+}
+
+function strategyPreviewCopy(strategy: StrategyPublic) {
+  if (strategy.name === "Conservative Treasury") {
+    return "Mostly USDC with a small yield sleeve for idle cash.";
+  }
+  if (strategy.name === "Operating Reserve") {
+    return "USDC and EURC for operating cash, plus a yield sleeve.";
+  }
+  if (strategy.name === "Balanced") {
+    return "Stablecoin base with BTC and ETH exposure.";
+  }
+  return strategy.description.split(".")[0] + ".";
 }
 
 function StrategyAdoptionSvg() {

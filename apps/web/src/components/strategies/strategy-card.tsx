@@ -15,6 +15,7 @@ interface Props {
   disabledReason?: string;
   actionHref?: string;
   actionTone?: "pnl" | "agent";
+  description?: string;
 }
 
 const RISK_TONE = {
@@ -31,6 +32,7 @@ export function StrategyCard({
   disabledReason,
   actionHref,
   actionTone = "pnl",
+  description,
 }: Props) {
   const entries = Object.entries(strategy.targetAllocation).sort(
     (a, b) => b[1] - a[1],
@@ -59,7 +61,7 @@ export function StrategyCard({
       </BrutalCardHeader>
       <BrutalCardBody className="flex-1 flex flex-col gap-4">
         <p className="text-xs text-text-lo leading-relaxed">
-          {strategy.description}
+          {description ?? strategy.description}
         </p>
         <dl className="grid grid-cols-2 gap-1 text-[11px] font-mono">
           {entries.map(([sym, pct]) => (
