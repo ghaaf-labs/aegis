@@ -20,6 +20,29 @@ describe("portfolio store onboarding state", () => {
     expect(state.portfolios).toHaveLength(1);
   });
 
+  it("does not erase freshly submitted allocations when the list response arrives", () => {
+    usePortfolioStore.getState().addPortfolio(
+      portfolio("p1", [
+        {
+          assetId: "BTC",
+          symbol: "BTC",
+          quantity: 0,
+          targetWeight: 50,
+          currentWeight: 0,
+          valueUsd: 0,
+        },
+      ]),
+    );
+
+    usePortfolioStore.getState().setPortfolios([portfolio("p1")]);
+
+    const [stored] = usePortfolioStore.getState().portfolios;
+    expect(stored).toBeDefined();
+    if (!stored) return;
+    expect(stored.allocations).toHaveLength(1);
+    expect(stored.allocations[0]?.symbol).toBe("BTC");
+  });
+
   it("uses product language for unknown wallet cash", () => {
     usePortfolioStore.getState().setGatewayBalanceStatus("error");
 
@@ -29,7 +52,10 @@ describe("portfolio store onboarding state", () => {
   });
 });
 
-function portfolio(id: string): Portfolio {
+function portfolio(
+  id: string,
+  allocations: Portfolio["allocations"] = [],
+): Portfolio {
   const now = new Date().toISOString();
   return {
     id,
@@ -38,7 +64,7 @@ function portfolio(id: string): Portfolio {
     totalValueUsd: 0,
     totalPnlUsd: 0,
     totalPnlPct: 0,
-    allocations: [],
+    allocations,
     riskScore: 0,
     goal: null,
     createdAt: now,

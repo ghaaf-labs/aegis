@@ -116,6 +116,7 @@ describe("<EmailAuthCard />", () => {
       email: "exists@example.com",
       expiresAt: new Date(Date.now() + 600_000).toISOString(),
       resendInSeconds: 30,
+      devCode: "123456",
     });
 
     const { root, container } = render(<EmailAuthCard />);
@@ -134,6 +135,8 @@ describe("<EmailAuthCard />", () => {
     expect(container.querySelector(".animate-spin")).toBe(null);
     expect(container.textContent).not.toContain("This email is new");
     expect(container.textContent).not.toContain("Mock dev code");
+    expect(container.textContent).not.toContain("Local code");
+    expect(container.textContent).not.toContain("123456");
 
     act(() => root.unmount());
   });

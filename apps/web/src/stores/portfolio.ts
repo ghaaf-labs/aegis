@@ -140,14 +140,28 @@ export const usePortfolioStore = create<PortfolioState>()(
 
       setPortfolios: (portfolios) =>
         set((state) => {
+          const existingById = new Map(state.portfolios.map((p) => [p.id, p]));
+          const mergedPortfolios = portfolios.map((portfolio) => {
+            const existing = existingById.get(portfolio.id);
+            const existingAllocations = existing?.allocations;
+            if (
+              (portfolio.allocations?.length ?? 0) === 0 &&
+              (existingAllocations?.length ?? 0) > 0
+            ) {
+              return { ...portfolio, allocations: existingAllocations ?? [] };
+            }
+            return portfolio;
+          });
           const preferred =
             state.activePortfolioId ?? loadStoredActivePortfolioId();
-          const activePortfolioId = portfolios.some((p) => p.id === preferred)
+          const activePortfolioId = mergedPortfolios.some(
+            (p) => p.id === preferred,
+          )
             ? preferred
-            : (portfolios[0]?.id ?? null);
+            : (mergedPortfolios[0]?.id ?? null);
           saveStoredActivePortfolioId(activePortfolioId);
           return {
-            portfolios,
+            portfolios: mergedPortfolios,
             portfoliosLoaded: true,
             activePortfolioId,
           };

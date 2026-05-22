@@ -44,7 +44,6 @@ export function EmailAuthCard() {
     id: string;
     email: string;
     expiresAt: string;
-    devCode?: string;
   } | null>(null);
   const [mode, setMode] = useState<Mode>("email");
   const [submitting, setSubmitting] = useState(false);
@@ -205,7 +204,6 @@ export function EmailAuthCard() {
         id: resp.challengeId,
         email: resp.email,
         expiresAt: resp.expiresAt,
-        devCode: resp.devCode,
       });
       setResendSeconds(resp.resendInSeconds);
       setMode("verify");
@@ -234,7 +232,6 @@ export function EmailAuthCard() {
         id: resp.challengeId,
         email: resp.email,
         expiresAt: resp.expiresAt,
-        devCode: resp.devCode,
       });
       setResendSeconds(resp.resendInSeconds);
     } catch (e) {
@@ -404,14 +401,6 @@ export function EmailAuthCard() {
               Sent to{" "}
               <span className="text-text-hi">{codeChallenge.email}</span>.
             </p>
-            {codeChallenge.devCode && (
-              <p className="border border-accent-agent/30 bg-accent-agent/5 px-3 py-2 font-mono text-[11px] text-text-lo">
-                Local code:{" "}
-                <span className="tracking-[0.25em] text-text-hi">
-                  {codeChallenge.devCode}
-                </span>
-              </p>
-            )}
             <label
               htmlFor={`${emailInputId}-code`}
               className="block font-mono text-xs text-text-lo"

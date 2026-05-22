@@ -16,6 +16,7 @@
 pub mod handlers;
 pub mod models;
 pub mod provider;
+pub mod reconciler;
 pub mod service;
 pub mod sse;
 

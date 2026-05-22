@@ -1,6 +1,13 @@
 use std::{net::SocketAddr, path::Path};
 
-use aegis_api::{config::Config, router};
+use aegis_api::{
+    config::Config,
+    modules::{
+        sse,
+        wallet::{provider::MockProvider, service::WalletService},
+    },
+    router,
+};
 use reqwest::StatusCode;
 use serde_json::{json, Value};
 use sqlx::{postgres::PgPoolOptions, PgPool};
@@ -140,9 +147,43 @@ async fn account_delete_endpoint_refuses_when_balance_cannot_be_verified() {
     assert_eq!(delete.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
+#[tokio::test]
+async fn wallet_reconciler_heals_pending_wallet_without_user_polling() {
+    let Some(ctx) = TestContext::start().await else {
+        return;
+    };
+    let user_id = seed_pending_user_without_wallet(&ctx.pool, &unique_email("reconcile")).await;
+    let sse = sse::new_channel();
+    let provider = MockProvider;
+    let service = WalletService::new(&ctx.pool, &provider, &ctx.config, &sse);
+
+    let healed = service
+        .reconcile_pending_wallets(5000)
+        .await
+        .expect("reconcile pending wallets");
+    assert!(healed >= 1);
+
+    let status: String = sqlx::query_scalar("SELECT account_status FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_one(&ctx.pool)
+        .await
+        .expect("account status");
+    assert_eq!(status, "active");
+
+    let routes: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM user_wallet_networks WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_one(&ctx.pool)
+            .await
+            .expect("wallet route count");
+    assert_eq!(routes, 2);
+}
+
 struct TestContext {
     pool: PgPool,
+    config: Config,
     client: reqwest::Client,
+    client_key: String,
     addr: SocketAddr,
     _server: tokio::task::JoinHandle<()>,
 }
@@ -176,7 +217,8 @@ impl TestContext {
             .await
             .expect("run migrations");
 
-        let app = router::build(pool.clone(), test_config(&db_url)).await;
+        let config = test_config(&db_url);
+        let app = router::build(pool.clone(), config.clone()).await;
         let listener = tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0)))
             .await
             .expect("bind test server");
@@ -187,7 +229,9 @@ impl TestContext {
 
         Some(Self {
             pool,
+            config,
             client: reqwest::Client::new(),
+            client_key: format!("test-{}", Uuid::new_v4()),
             addr,
             _server: server,
         })
@@ -231,6 +275,7 @@ async fn start_code_response(ctx: &TestContext, email: &str) -> reqwest::Respons
     ctx.client
         .post(ctx.url("/auth/email/start"))
         .header("X-Aegis-Request", "1")
+        .header("X-Forwarded-For", &ctx.client_key)
         .json(&json!({ "email": email }))
         .send()
         .await
@@ -252,6 +297,7 @@ async fn verify_code(
         .client
         .post(ctx.url("/auth/email/verify"))
         .header("X-Aegis-Request", "1")
+        .header("X-Forwarded-For", &ctx.client_key)
         .json(&body);
     if let Some(cookie) = cookie {
         req = req.header("Cookie", cookie);
@@ -316,6 +362,22 @@ async fn seed_user(pool: &PgPool, email: &str, tos_version: &str, privacy_versio
     .fetch_one(pool)
     .await
     .expect("seed user")
+}
+
+async fn seed_pending_user_without_wallet(pool: &PgPool, email: &str) -> Uuid {
+    sqlx::query_scalar(
+        "INSERT INTO users (
+            email, account_status, custody_model,
+            tos_version, privacy_version, consented_at,
+            wallet_provision_next_retry_at
+         )
+         VALUES ($1, 'pending_wallet', 'circle_developer', '2026-05', '2026-05', NOW(), NOW())
+         RETURNING id",
+    )
+    .bind(email)
+    .fetch_one(pool)
+    .await
+    .expect("seed pending user")
 }
 
 async fn seed_real_wallet_routes(pool: &PgPool, user_id: Uuid) {

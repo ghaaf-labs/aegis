@@ -68,7 +68,6 @@ export default function SettingsIndex() {
   const [emailChallenge, setEmailChallenge] = useState<{
     id: string;
     email: string;
-    devCode?: string;
   } | null>(null);
   const [emailStatus, setEmailStatus] = useState<
     "idle" | "sending" | "verifying" | "sent" | "updated" | "error"
@@ -143,7 +142,6 @@ export default function SettingsIndex() {
       setEmailChallenge({
         id: response.challengeId,
         email: response.email,
-        devCode: response.devCode,
       });
       setEmailCode("");
       setEmailStatus("sent");
@@ -302,14 +300,6 @@ export default function SettingsIndex() {
                 />
                 {emailChallenge && (
                   <div className="mt-2 space-y-2">
-                    {emailChallenge.devCode && (
-                      <p className="border border-accent-agent/30 bg-accent-agent/5 px-3 py-2 font-mono text-[11px] text-text-lo">
-                        Local code:{" "}
-                        <span className="tracking-[0.25em] text-text-hi">
-                          {emailChallenge.devCode}
-                        </span>
-                      </p>
-                    )}
                     <input
                       value={emailCode}
                       onChange={(e) =>

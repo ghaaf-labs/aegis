@@ -23,6 +23,8 @@ const AUTH_CODE_EXPIRY_MINUTES: i64 = 10;
 const AUTH_CODE_RESEND_COOLDOWN_SECONDS: u64 = 30;
 const AUTH_IP_RATE_WINDOW_SECONDS: i64 = 10 * 60;
 const AUTH_IP_RATE_LIMIT: i32 = 20;
+const WALLET_PROVISION_RETRY_BASE_SECONDS: i32 = 30;
+const WALLET_PROVISION_RETRY_MAX_SECONDS: i32 = 15 * 60;
 pub const CURRENT_TOS_VERSION: &str = "2026-05";
 pub const CURRENT_PRIVACY_VERSION: &str = "2026-05";
 
@@ -609,6 +611,23 @@ impl<'a> WalletService<'a> {
         })
     }
 
+    pub async fn reconcile_pending_wallets(&self, limit: i64) -> crate::error::Result<usize> {
+        let user_ids = self.pending_wallet_user_ids(limit).await?;
+        let mut healed = 0;
+
+        for user_id in user_ids {
+            match self.session(user_id).await {
+                Ok(session) if session.wallet.is_some() => healed += 1,
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!(error=%e, %user_id, "wallet provisioning reconciler user retry failed");
+                }
+            }
+        }
+
+        Ok(healed)
+    }
+
     async fn refresh_wallet(&self, user_id: Uuid) -> crate::error::Result<Option<WalletInfo>> {
         if let Some(existing) = self.find_user_by_id(user_id).await? {
             if let Some(w) = self.wallet_from_network_routes(&existing).await? {
@@ -630,7 +649,8 @@ impl<'a> WalletService<'a> {
         let info = match self.provider.provision_wallet(user_id).await {
             Ok(Some(info)) => info,
             Ok(None) => {
-                self.set_account_status(user_id, "pending_wallet").await?;
+                self.schedule_wallet_retry(user_id, "provider_returned_empty")
+                    .await?;
                 crate::modules::analytics::service::emit(
                     self.db,
                     Some(user_id),
@@ -643,6 +663,8 @@ impl<'a> WalletService<'a> {
                 return Ok(None);
             }
             Err(e) => {
+                self.schedule_wallet_retry(user_id, "provider_error")
+                    .await?;
                 crate::modules::analytics::service::emit(
                     self.db,
                     Some(user_id),
@@ -683,6 +705,45 @@ impl<'a> WalletService<'a> {
     }
 
     // ── DB helpers ────────────────────────────────────────────────────────
+
+    async fn pending_wallet_user_ids(&self, limit: i64) -> crate::error::Result<Vec<Uuid>> {
+        let user_ids = sqlx::query_scalar(
+            r#"SELECT u.id
+               FROM users u
+               WHERE u.deletion_requested_at IS NULL
+                 AND u.anonymized_at IS NULL
+                 AND u.custody_model = 'circle_developer'
+                 AND COALESCE(u.wallet_provision_next_retry_at, NOW()) <= NOW()
+                 AND (
+                   u.account_status = 'pending_wallet'
+                   OR NOT EXISTS (
+                     SELECT 1
+                     FROM user_wallet_networks n
+                     WHERE n.user_id = u.id
+                       AND n.blockchain = 'ARC-TESTNET'
+                       AND n.account_type = 'SCA'
+                       AND n.state = 'LIVE'
+                       AND (NULLIF($1, '') IS NULL OR n.wallet_set_id = NULLIF($1, ''))
+                   )
+                   OR NOT EXISTS (
+                     SELECT 1
+                     FROM user_wallet_networks n
+                     WHERE n.user_id = u.id
+                       AND n.blockchain = 'BASE-SEPOLIA'
+                       AND n.account_type = 'SCA'
+                       AND n.state = 'LIVE'
+                       AND (NULLIF($1, '') IS NULL OR n.wallet_set_id = NULLIF($1, ''))
+                   )
+                 )
+               ORDER BY COALESCE(u.wallet_provision_next_retry_at, u.updated_at), u.updated_at
+               LIMIT $2"#,
+        )
+        .bind(self.config.circle_wallet_set_id.trim())
+        .bind(limit.max(1))
+        .fetch_all(self.db)
+        .await?;
+        Ok(user_ids)
+    }
 
     async fn wallet_from_network_routes(
         &self,
@@ -911,7 +972,10 @@ impl<'a> WalletService<'a> {
             "UPDATE users
                 SET wallet_set_id = NULLIF($2, ''),
                     custody_model = 'circle_developer',
-                    account_status = 'active'
+                    account_status = 'active',
+                    wallet_provision_attempts = 0,
+                    wallet_provision_next_retry_at = NULL,
+                    wallet_provision_last_error = NULL
               WHERE id = $1",
         )
         .bind(user_id)
@@ -923,11 +987,44 @@ impl<'a> WalletService<'a> {
     }
 
     async fn set_account_status(&self, user_id: Uuid, status: &str) -> crate::error::Result<()> {
-        sqlx::query("UPDATE users SET account_status = $2 WHERE id = $1")
+        if status == "active" {
+            sqlx::query(
+                "UPDATE users
+                 SET account_status = 'active',
+                     wallet_provision_attempts = 0,
+                     wallet_provision_next_retry_at = NULL,
+                     wallet_provision_last_error = NULL
+                 WHERE id = $1",
+            )
             .bind(user_id)
-            .bind(status)
             .execute(self.db)
             .await?;
+        } else {
+            sqlx::query("UPDATE users SET account_status = $2 WHERE id = $1")
+                .bind(user_id)
+                .bind(status)
+                .execute(self.db)
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn schedule_wallet_retry(&self, user_id: Uuid, reason: &str) -> crate::error::Result<()> {
+        sqlx::query(
+            "UPDATE users
+             SET account_status = 'pending_wallet',
+                 wallet_provision_attempts = wallet_provision_attempts + 1,
+                 wallet_provision_next_retry_at =
+                    NOW() + make_interval(secs => LEAST($2, $3 * CAST(POWER(2, LEAST(wallet_provision_attempts, 5)) AS INTEGER))),
+                 wallet_provision_last_error = LEFT($4, 160)
+             WHERE id = $1",
+        )
+        .bind(user_id)
+        .bind(WALLET_PROVISION_RETRY_MAX_SECONDS)
+        .bind(WALLET_PROVISION_RETRY_BASE_SECONDS)
+        .bind(reason)
+        .execute(self.db)
+        .await?;
         Ok(())
     }
 }

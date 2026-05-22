@@ -523,7 +523,9 @@ CREATE INDEX users_deletion_pending_idx ON users (deletion_requested_at)
 hashed bucket ids — §10.4), `0028_clear_legacy_wallet_rows` (null pre-cutover
 wallet rows so `/auth/session` self-heals — §8.3), `0029_user_wallet_networks`
 (the §9.2 routes table + backfill), `0031_account_export_jobs` (queued export
-rows behind `POST /account/export` — §7.7/§11.3).
+rows behind `POST /account/export` — §7.7/§11.3), and
+`0032_wallet_provision_retries` (persisted bounded retry state for the background
+wallet reconciler — §8.3/§8.5).
 
 ---
 
