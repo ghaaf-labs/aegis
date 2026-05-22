@@ -269,8 +269,24 @@ describe("<EmailAuthCard />", () => {
     await flushEffects();
 
     expect(window.localStorage.getItem("aegis_email")).toBe(null);
-    expect(container.textContent).toContain(
-      "Signed out. Enter your email to continue.",
+    expect(container.textContent).toContain("Signed out.");
+
+    act(() => root.unmount());
+  });
+
+  it("does not show a warning banner for a routine protected-page redirect", async () => {
+    mockSearchParams = new URLSearchParams(
+      "next=%2Fdashboard&reason=session_required",
+    );
+    vi.mocked(walletApi.session).mockRejectedValue(new Error("missing"));
+
+    const { root, container } = render(<EmailAuthCard />);
+    await flushEffects();
+
+    expect(container.textContent).toContain("Continue with email");
+    expect(container.textContent).toContain("We'll email you a 6-digit code.");
+    expect(container.textContent).not.toContain(
+      "Enter your email to continue.",
     );
 
     act(() => root.unmount());

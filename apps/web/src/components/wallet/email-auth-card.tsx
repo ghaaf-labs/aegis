@@ -351,7 +351,7 @@ export function EmailAuthCard() {
       <BrutalCardBody>
         {showSignedOutNotice && (
           <div className="mb-4 border border-accent-agent/40 bg-accent-agent/5 px-3 py-2 font-mono text-[11px] leading-relaxed text-text-lo">
-            Signed out. Enter your email to continue.
+            Signed out.
           </div>
         )}
 
@@ -604,7 +604,7 @@ function authRedirectNotice(
     case "session_check_failed":
       return "Aegis could not confirm this browser. Enter your email to continue.";
     default:
-      return "Enter your email to continue.";
+      return null;
   }
 }
 
