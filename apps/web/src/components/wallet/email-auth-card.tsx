@@ -602,7 +602,7 @@ function authRedirectNotice(
     case "session_expired":
       return "Your session expired. Enter your email to continue.";
     case "session_check_failed":
-      return "Aegis could not confirm this browser. Enter your email to continue.";
+      return "We could not verify this sign-in. Enter your email to continue.";
     default:
       return "Enter your email to continue.";
   }

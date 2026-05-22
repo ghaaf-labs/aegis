@@ -76,7 +76,7 @@ export default function OnboardingPage() {
       resetSession();
       setSessionResolved(true);
       setAuthState({ kind: "signed_out" });
-      setSetupError("Aegis could not check setup. Try again.");
+      setSetupError("Aegis could not finish account setup. Try again.");
     } finally {
       setRefreshingAccount(false);
     }
@@ -289,7 +289,7 @@ function logoutFailureMessage(error: unknown) {
     return "Sign out did not finish. Try again.";
   }
   if (message.includes("verification failed")) {
-    return "Aegis could not confirm sign out. Try again.";
+    return "Sign out did not finish. Try again.";
   }
-  return "Aegis could not sign out. Check the connection and try again.";
+  return "Could not sign out. Check the connection and try again.";
 }

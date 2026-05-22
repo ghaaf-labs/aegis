@@ -121,9 +121,8 @@ export default function PolicyPage() {
                 <span className="text-text-hi font-semibold">
                   Move funds out before closing
                 </span>{" "}
-                — Phase 1 uses an Aegis-managed Circle wallet so approved plans
-                can execute for you. Closing the account requires moving funds
-                out first.
+                — approved plans can execute for you from your Aegis account.
+                Closing the account requires moving funds out first.
               </span>
             </li>
             <li className="flex gap-3">
@@ -132,7 +131,7 @@ export default function PolicyPage() {
                 <span className="text-text-hi font-semibold">
                   Close the account
                 </span>{" "}
-                — Settings → <em>Close account</em> revokes sessions and starts
+                — Settings → <em>Close account</em> signs you out and starts
                 erasure. PII is anonymized where legally allowed; required tax,
                 compliance, and on-chain records may be retained.
               </span>
@@ -210,9 +209,9 @@ export default function PolicyPage() {
             Terms
           </h2>
           <p className="text-sm font-mono leading-relaxed text-text-lo">
-            By continuing, you ask Aegis to open an account session, prepare a
-            managed Circle wallet for approved portfolio actions, and keep
-            execution paused until you approve a plan.
+            By continuing, you ask Aegis to verify your email, prepare your
+            account for approved portfolio actions, and keep execution paused
+            until you approve a plan.
           </p>
         </section>
 

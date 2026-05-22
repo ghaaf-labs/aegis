@@ -292,6 +292,22 @@ describe("<EmailAuthCard />", () => {
     act(() => root.unmount());
   });
 
+  it("keeps failed sign-in check copy user-safe", async () => {
+    mockSearchParams = new URLSearchParams("reason=session_check_failed");
+    vi.mocked(walletApi.session).mockRejectedValue(new Error("missing"));
+
+    const { root, container } = render(<EmailAuthCard />);
+    await flushEffects();
+
+    expect(container.textContent).toContain(
+      "We could not verify this sign-in. Enter your email to continue.",
+    );
+    expect(container.textContent).not.toContain("browser");
+    expect(container.textContent).not.toContain("session check");
+
+    act(() => root.unmount());
+  });
+
   it("resends the current challenge after the cooldown", async () => {
     mockSearchParams = new URLSearchParams("email=resend@example.com");
     vi.mocked(walletApi.session).mockRejectedValue(new Error("missing"));
