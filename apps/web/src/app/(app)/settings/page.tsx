@@ -25,6 +25,7 @@ import { PRICING_UI_ENABLED } from "@/lib/flags";
 import { DigestOptIn } from "@/components/settings/digest-opt-in";
 import { DiaryVisibilityToggle } from "@/components/settings/diary-visibility-toggle";
 import { accountApi, portfolioApi, walletApi } from "@/lib/api";
+import { friendlyAccountError } from "@/lib/account-error-copy";
 import { useApiQuery } from "@/lib/use-api-query";
 import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
 
@@ -259,9 +260,8 @@ export default function SettingsIndex() {
                 Account setup required
               </p>
               <p className="mt-2 max-w-2xl text-xs leading-relaxed text-text-lo">
-                This browser may have an app session, but account setup is not
-                ready yet. Portfolio, tax, billing, peg, and agent controls stay
-                locked until setup finishes.
+                Account setup is still finishing. Portfolio, tax, billing, peg,
+                and agent controls unlock when your wallet is ready.
               </p>
             </div>
             <Link
@@ -496,35 +496,6 @@ export default function SettingsIndex() {
       )}
     </div>
   );
-}
-
-function friendlyAccountError(error: unknown) {
-  const message = error instanceof Error ? error.message.toLowerCase() : "";
-  if (message.includes("funds_present")) {
-    return "Move your funds out before closing your account.";
-  }
-  if (message.includes("email_in_use") || message.includes("already in use")) {
-    return "That email is already in use.";
-  }
-  if (
-    message.includes("email_unchanged") ||
-    message.includes("different email")
-  ) {
-    return "Enter a different email address.";
-  }
-  if (message.includes("code")) {
-    return "That code did not work. Check it or request a new one.";
-  }
-  if (message.includes("export email is not configured")) {
-    return "Aegis could not prepare the export email. Try again later.";
-  }
-  if (message.includes("balance cannot be verified")) {
-    return "Aegis could not verify balances. Try again later.";
-  }
-  if (message.includes("401") || message.includes("unauthorized")) {
-    return "Your session expired. Enter your email to continue.";
-  }
-  return "Something went wrong. Try again.";
 }
 
 function isValidEmail(value: string) {

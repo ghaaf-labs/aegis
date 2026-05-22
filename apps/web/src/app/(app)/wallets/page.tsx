@@ -19,6 +19,10 @@ import { usePortfolioStore } from "@/stores/portfolio";
 import { formatCurrency } from "@/lib/utils";
 import { gatewayApi, walletApi } from "@/lib/api";
 import { explorerAddressUrl, type ExplorerChain } from "@/lib/explorers";
+import {
+  formatGatewayBalanceError,
+  walletStatusError,
+} from "@/lib/account-error-copy";
 
 /**
  * Dedicated wallet view — one account wallet, with per-network token balances
@@ -672,36 +676,4 @@ function selectAddress(node: HTMLElement | null) {
   selection.addRange(range);
   node.focus();
   return true;
-}
-
-function walletStatusError(error: unknown) {
-  const raw = (error as Error).message || "wallet status check failed";
-  const message = raw.replace(/^\d{3}:\s*/, "");
-  const lower = message.toLowerCase();
-  if (lower.includes("missing token") || lower.includes("unauthorized")) {
-    return "The server session is not active anymore. Sign in and verify a fresh one-time code before checking account setup.";
-  }
-  if (lower.includes("failed to fetch") || lower.includes("networkerror")) {
-    return "Aegis could not reach the API. Check that the backend is running, then try again.";
-  }
-  return message;
-}
-
-function formatGatewayBalanceError(error: unknown) {
-  const raw = (error as Error).message || "Balance check failed";
-  const message = raw.replace(/^\d{3}:\s*/, "");
-  const lower = message.toLowerCase();
-  if (lower.includes("session expired") || lower.includes("unauthorized")) {
-    return "Session expired before the balance check finished. Sign in again before checking balances.";
-  }
-  if (lower.includes("returned no wallets")) {
-    return "The balance service returned no wallet for this account, so wallet cash is unknown.";
-  }
-  if (lower.includes("gateway") || lower.includes("circle")) {
-    return "Wallet balance check failed.";
-  }
-  if (lower.includes("failed to fetch") || lower.includes("networkerror")) {
-    return "Aegis could not reach the API while checking balances.";
-  }
-  return message;
 }
