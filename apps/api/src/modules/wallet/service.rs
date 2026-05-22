@@ -23,6 +23,8 @@ const AUTH_CODE_EXPIRY_MINUTES: i64 = 10;
 const AUTH_CODE_RESEND_COOLDOWN_SECONDS: u64 = 30;
 const AUTH_IP_RATE_WINDOW_SECONDS: i64 = 10 * 60;
 const AUTH_IP_RATE_LIMIT: i32 = 20;
+pub const CURRENT_TOS_VERSION: &str = "2026-05";
+pub const CURRENT_PRIVACY_VERSION: &str = "2026-05";
 
 pub struct WalletService<'a> {
     pub db: &'a Db,
@@ -264,10 +266,13 @@ impl<'a> WalletService<'a> {
         consent: Option<&EmailAuthConsent>,
     ) -> crate::error::Result<VerifiedAuthCode> {
         let checked = self.check_auth_code(challenge_id, code).await?;
+        let existing = self.find_user_by_email(&checked.email).await?;
+        let needs_consent = match existing.as_ref() {
+            Some(user) => self.user_needs_current_consent(user.id).await?,
+            None => true,
+        };
 
-        if self.find_user_by_email(&checked.email).await?.is_none()
-            && !has_required_consent(consent)
-        {
+        if needs_consent && !has_required_consent(consent) {
             return Err(AppError::BadRequest("consent_required".into()));
         }
 
@@ -275,6 +280,34 @@ impl<'a> WalletService<'a> {
             .await?;
         crate::modules::analytics::service::emit(self.db, None, "auth.code_verified", json!({}))
             .await;
+        Ok(VerifiedAuthCode {
+            email: checked.email,
+            referrer_handle: checked.referrer_handle,
+        })
+    }
+
+    pub async fn verify_auth_code_for_email_update(
+        &self,
+        current_user_id: Uuid,
+        challenge_id: Uuid,
+        code: &str,
+    ) -> crate::error::Result<VerifiedAuthCode> {
+        let checked = self.check_auth_code(challenge_id, code).await?;
+        if let Some(owner) = self.find_user_by_email(&checked.email).await? {
+            if owner.id != current_user_id {
+                return Err(AppError::Conflict("email_in_use".into()));
+            }
+        }
+
+        self.consume_auth_code(challenge_id, &checked.code_hash)
+            .await?;
+        crate::modules::analytics::service::emit(
+            self.db,
+            Some(current_user_id),
+            "account.email_verified",
+            json!({}),
+        )
+        .await;
         Ok(VerifiedAuthCode {
             email: checked.email,
             referrer_handle: checked.referrer_handle,
@@ -404,10 +437,7 @@ impl<'a> WalletService<'a> {
             return Err(AppError::BadRequest("consent_required".into()));
         }
         if let Some(user) = existing.as_ref() {
-            if let Some(marketing_opt_in) = consent.and_then(|c| c.marketing_opt_in) {
-                self.update_marketing_opt_in(user.id, marketing_opt_in)
-                    .await?;
-            }
+            self.update_consent_preferences(user.id, consent).await?;
         }
         let mut response = if existing.is_some() {
             self.init_login(&email).await?
@@ -723,6 +753,54 @@ impl<'a> WalletService<'a> {
         Ok(user)
     }
 
+    async fn user_needs_current_consent(&self, user_id: Uuid) -> crate::error::Result<bool> {
+        use sqlx::Row;
+
+        let row = sqlx::query(
+            "SELECT tos_version, privacy_version, consented_at
+             FROM users
+             WHERE id = $1",
+        )
+        .bind(user_id)
+        .fetch_optional(self.db)
+        .await?;
+
+        let Some(row) = row else {
+            return Ok(true);
+        };
+        let tos_version: Option<String> = row.try_get("tos_version")?;
+        let privacy_version: Option<String> = row.try_get("privacy_version")?;
+        let consented_at: Option<chrono::DateTime<Utc>> = row.try_get("consented_at")?;
+        Ok(consented_at.is_none()
+            || tos_version.as_deref() != Some(CURRENT_TOS_VERSION)
+            || privacy_version.as_deref() != Some(CURRENT_PRIVACY_VERSION))
+    }
+
+    async fn update_consent_preferences(
+        &self,
+        user_id: Uuid,
+        consent: Option<&EmailAuthConsent>,
+    ) -> crate::error::Result<()> {
+        let marketing_opt_in = consent.and_then(|c| c.marketing_opt_in);
+        let has_current_consent = has_required_consent(consent);
+        sqlx::query(
+            "UPDATE users
+             SET marketing_opt_in = COALESCE($2, marketing_opt_in),
+                 tos_version = CASE WHEN $3 THEN $4 ELSE tos_version END,
+                 privacy_version = CASE WHEN $3 THEN $5 ELSE privacy_version END,
+                 consented_at = CASE WHEN $3 THEN NOW() ELSE consented_at END
+             WHERE id = $1",
+        )
+        .bind(user_id)
+        .bind(marketing_opt_in)
+        .bind(has_current_consent)
+        .bind(CURRENT_TOS_VERSION)
+        .bind(CURRENT_PRIVACY_VERSION)
+        .execute(self.db)
+        .await?;
+        Ok(())
+    }
+
     /// Create-or-find a user row by email. Returns `(user, is_new)` where
     /// `is_new` is true when this call inserted the row.
     ///
@@ -739,8 +817,12 @@ impl<'a> WalletService<'a> {
         consent: Option<&EmailAuthConsent>,
     ) -> crate::error::Result<(WalletUser, bool)> {
         use sqlx::Row;
-        let tos_version = consent.and_then(|c| c.tos_version.as_deref());
-        let privacy_version = consent.and_then(|c| c.privacy_version.as_deref());
+        let tos_version = consent
+            .and_then(|c| c.tos_version.as_deref())
+            .filter(|version| *version == CURRENT_TOS_VERSION);
+        let privacy_version = consent
+            .and_then(|c| c.privacy_version.as_deref())
+            .filter(|version| *version == CURRENT_PRIVACY_VERSION);
         let consented = has_required_consent(consent);
         let marketing_opt_in = consent.and_then(|c| c.marketing_opt_in);
         let row = sqlx::query(
@@ -848,19 +930,6 @@ impl<'a> WalletService<'a> {
             .await?;
         Ok(())
     }
-
-    async fn update_marketing_opt_in(
-        &self,
-        user_id: Uuid,
-        marketing_opt_in: bool,
-    ) -> crate::error::Result<()> {
-        sqlx::query("UPDATE users SET marketing_opt_in = $2 WHERE id = $1")
-            .bind(user_id)
-            .bind(marketing_opt_in)
-            .execute(self.db)
-            .await?;
-        Ok(())
-    }
 }
 
 fn wallet_from_networks(
@@ -941,13 +1010,9 @@ fn has_required_consent(consent: Option<&EmailAuthConsent>) -> bool {
     consent.is_some_and(|c| {
         c.tos
             && c.privacy
-            && non_empty_opt(c.tos_version.as_deref())
-            && non_empty_opt(c.privacy_version.as_deref())
+            && c.tos_version.as_deref() == Some(CURRENT_TOS_VERSION)
+            && c.privacy_version.as_deref() == Some(CURRENT_PRIVACY_VERSION)
     })
-}
-
-fn non_empty_opt(value: Option<&str>) -> bool {
-    value.is_some_and(|v| !v.trim().is_empty())
 }
 
 fn auth_rate_bucket(action: &str, client_key: &str) -> String {

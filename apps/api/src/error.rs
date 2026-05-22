@@ -138,11 +138,7 @@ impl ErrorDetail {
                 message: "Move your funds out before closing your account.",
                 retry_after: None,
             },
-            AppError::Conflict(_) => Self {
-                code: "conflict",
-                message: "This action could not be completed.",
-                retry_after: None,
-            },
+            AppError::Conflict(message) => conflict_detail(message),
             AppError::NotFound(_) => Self {
                 code: "not_found",
                 message: "That record was not found.",
@@ -195,9 +191,34 @@ fn bad_request_detail(message: &str) -> ErrorDetail {
             message: "Confirm before closing your account.",
             retry_after: None,
         },
+        "email_unchanged" => ErrorDetail {
+            code: "email_unchanged",
+            message: "Enter a different email address.",
+            retry_after: None,
+        },
         _ => ErrorDetail {
             code: "bad_request",
             message: "Check the request and try again.",
+            retry_after: None,
+        },
+    }
+}
+
+fn conflict_detail(message: &str) -> ErrorDetail {
+    match message {
+        "email_in_use" => ErrorDetail {
+            code: "email_in_use",
+            message: "That email is already in use.",
+            retry_after: None,
+        },
+        "funds_present" => ErrorDetail {
+            code: "funds_present",
+            message: "Move your funds out before closing your account.",
+            retry_after: None,
+        },
+        _ => ErrorDetail {
+            code: "conflict",
+            message: "This action could not be completed.",
             retry_after: None,
         },
     }

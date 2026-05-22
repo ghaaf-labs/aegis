@@ -63,6 +63,17 @@ export default function SettingsIndex() {
     "idle" | "closing" | "error"
   >("idle");
   const [deleteMessage, setDeleteMessage] = useState("");
+  const [newEmail, setNewEmail] = useState("");
+  const [emailCode, setEmailCode] = useState("");
+  const [emailChallenge, setEmailChallenge] = useState<{
+    id: string;
+    email: string;
+    devCode?: string;
+  } | null>(null);
+  const [emailStatus, setEmailStatus] = useState<
+    "idle" | "sending" | "verifying" | "sent" | "updated" | "error"
+  >("idle");
+  const [emailMessage, setEmailMessage] = useState("");
   useEffect(() => {
     let cancelled = false;
     const remembered = localStorage.getItem("aegis_email") ?? "";
@@ -115,6 +126,58 @@ export default function SettingsIndex() {
       setDeleteStatus("error");
       setDeleteMessage(friendlyAccountError(e));
       setDeleteConfirming(false);
+    }
+  };
+
+  const requestEmailUpdate = async () => {
+    const normalized = newEmail.trim().toLowerCase();
+    if (!isValidEmail(normalized)) {
+      setEmailStatus("error");
+      setEmailMessage("Enter a valid email address.");
+      return;
+    }
+    setEmailStatus("sending");
+    setEmailMessage("");
+    try {
+      const response = await accountApi.startEmailUpdate(normalized);
+      setEmailChallenge({
+        id: response.challengeId,
+        email: response.email,
+        devCode: response.devCode,
+      });
+      setEmailCode("");
+      setEmailStatus("sent");
+      setEmailMessage(`Code sent to ${response.email}.`);
+    } catch (e) {
+      setEmailStatus("error");
+      setEmailMessage(friendlyAccountError(e));
+    }
+  };
+
+  const confirmEmailUpdate = async () => {
+    if (!emailChallenge) return;
+    if (!/^\d{6}$/.test(emailCode.trim())) {
+      setEmailStatus("error");
+      setEmailMessage("Enter the 6-digit code.");
+      return;
+    }
+    setEmailStatus("verifying");
+    setEmailMessage("");
+    try {
+      const response = await accountApi.verifyEmailUpdate(
+        emailChallenge.id,
+        emailCode.trim(),
+      );
+      localStorage.setItem("aegis_email", response.email);
+      setStoredEmail(response.email);
+      setNewEmail("");
+      setEmailCode("");
+      setEmailChallenge(null);
+      setEmailStatus("updated");
+      setEmailMessage("Email updated.");
+    } catch (e) {
+      setEmailStatus("error");
+      setEmailMessage(friendlyAccountError(e));
     }
   };
 
@@ -217,7 +280,83 @@ export default function SettingsIndex() {
         <h2 className="text-xs uppercase tracking-wider text-text-mut font-mono mb-3">
           Account
         </h2>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+          <div className="rounded-sharp border-brutal border-border-default bg-bg p-4">
+            <div className="flex items-start gap-3">
+              <Mail className="mt-0.5 h-4 w-4 shrink-0 text-accent-agent" />
+              <div className="min-w-0 flex-1">
+                <p className="font-mono text-sm font-semibold text-text-hi">
+                  Email
+                </p>
+                <p className="mt-1 break-all font-mono text-[11px] leading-relaxed text-text-lo">
+                  {storedEmail || "No email found in this browser."}
+                </p>
+                <input
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.target.value)}
+                  type="email"
+                  inputMode="email"
+                  autoComplete="email"
+                  placeholder="new@example.com"
+                  className="mt-3 min-h-10 w-full rounded-sharp border-brutal border-border-default bg-bg px-3 py-2 font-mono text-sm text-text-hi outline-none focus:border-border-hi"
+                />
+                {emailChallenge && (
+                  <div className="mt-2 space-y-2">
+                    {emailChallenge.devCode && (
+                      <p className="border border-accent-agent/30 bg-accent-agent/5 px-3 py-2 font-mono text-[11px] text-text-lo">
+                        Local code:{" "}
+                        <span className="tracking-[0.25em] text-text-hi">
+                          {emailChallenge.devCode}
+                        </span>
+                      </p>
+                    )}
+                    <input
+                      value={emailCode}
+                      onChange={(e) =>
+                        setEmailCode(
+                          e.target.value.replace(/\D/g, "").slice(0, 6),
+                        )
+                      }
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      placeholder="123456"
+                      className="min-h-10 w-full rounded-sharp border-brutal border-border-default bg-bg px-3 py-2 font-mono text-sm tracking-[0.3em] text-text-hi outline-none focus:border-border-hi"
+                    />
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() =>
+                    void (emailChallenge
+                      ? confirmEmailUpdate()
+                      : requestEmailUpdate())
+                  }
+                  disabled={
+                    emailStatus === "sending" || emailStatus === "verifying"
+                  }
+                  className="mt-3 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-sharp border-brutal border-black bg-accent-agent px-4 font-mono text-sm font-semibold text-black shadow-brutal-sm hover:shadow-brutal disabled:opacity-50"
+                >
+                  {emailStatus === "sending" || emailStatus === "verifying" ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Mail className="h-4 w-4" />
+                  )}
+                  {emailChallenge ? "Confirm email" : "Change email"}
+                </button>
+                {emailMessage && (
+                  <p
+                    className={`mt-2 font-mono text-[11px] leading-relaxed ${
+                      emailStatus === "error" ? "text-risk" : "text-text-lo"
+                    }`}
+                  >
+                    {emailMessage}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+
           <div className="rounded-sharp border-brutal border-border-default bg-bg p-4">
             <div className="flex items-start gap-3">
               <Download className="mt-0.5 h-4 w-4 shrink-0 text-accent-agent" />
@@ -346,7 +485,7 @@ export default function SettingsIndex() {
         <h2 className="text-xs uppercase tracking-wider text-text-mut font-mono mb-3 flex items-center gap-2">
           <Mail className="w-3 h-3" /> Notifications
         </h2>
-        <DigestOptIn defaultEmail={storedEmail} />
+        <DigestOptIn key={storedEmail} defaultEmail={storedEmail} />
       </section>
 
       {portfolioId && (
@@ -374,6 +513,18 @@ function friendlyAccountError(error: unknown) {
   if (message.includes("funds_present")) {
     return "Move your funds out before closing your account.";
   }
+  if (message.includes("email_in_use") || message.includes("already in use")) {
+    return "That email is already in use.";
+  }
+  if (
+    message.includes("email_unchanged") ||
+    message.includes("different email")
+  ) {
+    return "Enter a different email address.";
+  }
+  if (message.includes("code")) {
+    return "That code did not work. Check it or request a new one.";
+  }
   if (message.includes("export email is not configured")) {
     return "Aegis could not prepare the export email. Try again later.";
   }
@@ -384,4 +535,8 @@ function friendlyAccountError(error: unknown) {
     return "Your session expired. Enter your email to continue.";
   }
   return "Something went wrong. Try again.";
+}
+
+function isValidEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) && value.length <= 254;
 }

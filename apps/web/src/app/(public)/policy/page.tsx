@@ -201,6 +201,34 @@ export default function PolicyPage() {
             ))}
           </ul>
         </section>
+
+        <section
+          id="terms"
+          className="scroll-mt-24 border-brutal border-border-default bg-raised p-6"
+        >
+          <h2 className="text-base font-bold text-text-hi uppercase tracking-wider mb-4">
+            Terms
+          </h2>
+          <p className="text-sm font-mono leading-relaxed text-text-lo">
+            By continuing, you ask Aegis to open an account session, prepare a
+            managed Circle wallet for approved portfolio actions, and keep
+            execution paused until you approve a plan.
+          </p>
+        </section>
+
+        <section
+          id="privacy"
+          className="scroll-mt-24 border-brutal border-border-default bg-raised p-6"
+        >
+          <h2 className="text-base font-bold text-text-hi uppercase tracking-wider mb-4">
+            Privacy Policy
+          </h2>
+          <p className="text-sm font-mono leading-relaxed text-text-lo">
+            Aegis uses your email for sign-in, security notices, export links,
+            and account recovery. You can export your data, change your email,
+            or close the account from Settings.
+          </p>
+        </section>
       </div>
 
       <footer className="mt-10 border-t border-border-default pt-6 text-xs font-mono text-text-mut">

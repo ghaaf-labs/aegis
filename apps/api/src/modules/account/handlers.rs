@@ -17,7 +17,13 @@ use uuid::Uuid;
 use crate::{
     error::AppError,
     middleware::auth::Claims,
-    modules::{gateway, wallet_routes},
+    modules::{
+        gateway,
+        wallet::{
+            self, models::WalletAuthCodeResponse, provider::MockProvider, service::WalletService,
+        },
+        wallet_routes,
+    },
     router::AppState,
 };
 
@@ -125,6 +131,38 @@ const EXPORT_ARCHIVE_SQL: &str = r#"
             FROM rebalance_events r
             JOIN portfolios p ON p.id = r.portfolio_id
             WHERE p.user_id = u.id
+          ), '[]'::jsonb),
+          'taxLots', COALESCE((
+            SELECT jsonb_agg(jsonb_build_object(
+              'id', l.id,
+              'allocationId', l.allocation_id,
+              'portfolioId', p.id,
+              'assetSymbol', a.asset_symbol,
+              'acquiredAt', l.acquired_at,
+              'quantity', l.quantity,
+              'basisUsd', l.basis_usd,
+              'disposedAt', l.disposed_at
+            ) ORDER BY l.acquired_at)
+            FROM cost_basis_lots l
+            JOIN allocations a ON a.id = l.allocation_id
+            JOIN portfolios p ON p.id = a.portfolio_id
+            WHERE p.user_id = u.id
+          ), '[]'::jsonb),
+          'referrals', COALESCE((
+            SELECT jsonb_agg(jsonb_build_object(
+              'id', r.id,
+              'role', CASE
+                WHEN r.referrer_user_id = u.id THEN 'referrer'
+                ELSE 'referred'
+              END,
+              'rewardUsdc', r.reward_usdc,
+              'paidAt', r.paid_at,
+              'txHash', r.tx_hash,
+              'createdAt', r.created_at
+            ) ORDER BY r.created_at)
+            FROM referrals r
+            WHERE r.referrer_user_id = u.id
+               OR r.new_user_id = u.id
           ), '[]'::jsonb)
         )
         FROM users u
@@ -142,6 +180,25 @@ pub struct AccountExportResponse {
 #[derive(Debug, Deserialize)]
 pub struct DeleteAccountRequest {
     confirm: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountEmailStartRequest {
+    email: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountEmailVerifyRequest {
+    challenge_id: Uuid,
+    code: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountEmailUpdateResponse {
+    email: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -285,6 +342,67 @@ pub async fn delete(
         .into_response())
 }
 
+pub async fn start_email_update(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Json(body): Json<AccountEmailStartRequest>,
+) -> crate::error::Result<Json<WalletAuthCodeResponse>> {
+    let user = account_user(&state, claims.sub).await?;
+    let normalized = body.email.trim().to_ascii_lowercase();
+    if normalized == user.email {
+        return Err(AppError::BadRequest("email_unchanged".into()));
+    }
+    ensure_email_available(&state, user.id, &normalized).await?;
+
+    let provider = MockProvider;
+    let service = WalletService::new(&state.db, &provider, &state.config, &state.sse);
+    let issue = service.request_auth_code(&normalized, None).await?;
+    wallet::handlers::deliver_code_issue(&state, issue).await
+}
+
+pub async fn verify_email_update(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Json(body): Json<AccountEmailVerifyRequest>,
+) -> crate::error::Result<Json<AccountEmailUpdateResponse>> {
+    let user = account_user(&state, claims.sub).await?;
+    let provider = MockProvider;
+    let service = WalletService::new(&state.db, &provider, &state.config, &state.sse);
+    let verified = service
+        .verify_auth_code_for_email_update(user.id, body.challenge_id, &body.code)
+        .await?;
+    ensure_email_available(&state, user.id, &verified.email).await?;
+    let email = sqlx::query_scalar::<_, String>(
+        "UPDATE users
+         SET email = $2
+         WHERE id = $1
+           AND NOT EXISTS (
+             SELECT 1
+             FROM users other
+             WHERE other.email = $2
+               AND other.id <> $1
+               AND other.deletion_requested_at IS NULL
+               AND other.anonymized_at IS NULL
+           )
+         RETURNING email",
+    )
+    .bind(user.id)
+    .bind(&verified.email)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::Conflict("email_in_use".into()))?;
+
+    crate::modules::analytics::service::emit(
+        &state.db,
+        Some(user.id),
+        "account.email_updated",
+        json!({}),
+    )
+    .await;
+
+    Ok(Json(AccountEmailUpdateResponse { email }))
+}
+
 async fn account_user(state: &AppState, user_id: Uuid) -> crate::error::Result<AccountUser> {
     let user = sqlx::query_as::<_, AccountUser>(
         "SELECT id, email, deletion_requested_at
@@ -297,6 +415,31 @@ async fn account_user(state: &AppState, user_id: Uuid) -> crate::error::Result<A
     .await?
     .ok_or_else(|| AppError::Unauthorized("unknown user".into()))?;
     Ok(user)
+}
+
+async fn ensure_email_available(
+    state: &AppState,
+    user_id: Uuid,
+    email: &str,
+) -> crate::error::Result<()> {
+    let in_use: bool = sqlx::query_scalar(
+        "SELECT EXISTS (
+           SELECT 1
+           FROM users
+           WHERE email = $1
+             AND id <> $2
+             AND deletion_requested_at IS NULL
+             AND anonymized_at IS NULL
+         )",
+    )
+    .bind(email)
+    .bind(user_id)
+    .fetch_one(&state.db)
+    .await?;
+    if in_use {
+        return Err(AppError::Conflict("email_in_use".into()));
+    }
+    Ok(())
 }
 
 async fn ensure_account_can_close(
@@ -506,6 +649,14 @@ mod tests {
         assert!(!EXPORT_ARCHIVE_SQL.contains("u.wallet_id"));
         assert!(!EXPORT_ARCHIVE_SQL.contains("u.arc_address"));
         assert!(!EXPORT_ARCHIVE_SQL.contains("u.base_address"));
+    }
+
+    #[test]
+    fn account_export_includes_gdpr_portability_surfaces() {
+        assert!(EXPORT_ARCHIVE_SQL.contains("'taxLots'"));
+        assert!(EXPORT_ARCHIVE_SQL.contains("cost_basis_lots"));
+        assert!(EXPORT_ARCHIVE_SQL.contains("'referrals'"));
+        assert!(EXPORT_ARCHIVE_SQL.contains("FROM referrals"));
     }
 
     #[test]

@@ -198,6 +198,10 @@ export interface DeleteAccountResponse {
   completesAt: string;
 }
 
+export interface AccountEmailUpdateResponse {
+  email: string;
+}
+
 export const accountApi = {
   exportData: () =>
     request<AccountExportResponse>("/account/export", {
@@ -208,6 +212,18 @@ export const accountApi = {
     request<DeleteAccountResponse>("/account/delete", {
       method: "POST",
       body: { confirm: true },
+      authed: true,
+    }),
+  startEmailUpdate: (email: string) =>
+    request<WalletAuthCodeResponse>("/account/email/start", {
+      method: "POST",
+      body: { email },
+      authed: true,
+    }),
+  verifyEmailUpdate: (challengeId: string, code: string) =>
+    request<AccountEmailUpdateResponse>("/account/email/verify", {
+      method: "POST",
+      body: { challengeId, code },
       authed: true,
     }),
 };

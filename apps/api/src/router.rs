@@ -87,6 +87,14 @@ pub async fn build(db: Db, config: Config) -> Router {
         .route("/auth/session", get(wallet::handlers::session))
         .route("/account/export", post(account::handlers::export))
         .route("/account/delete", post(account::handlers::delete))
+        .route(
+            "/account/email/start",
+            post(account::handlers::start_email_update),
+        )
+        .route(
+            "/account/email/verify",
+            post(account::handlers::verify_email_update),
+        )
         .route("/faucet/usdc", post(faucet::handlers::claim_usdc))
         .route("/gateway/balance", get(gateway::handlers::balance))
         .route("/analytics/event", post(analytics::handlers::track))

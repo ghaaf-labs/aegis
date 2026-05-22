@@ -662,6 +662,8 @@ function isCorrectableCodeError(error: unknown) {
   return (
     lower.includes("invalid verification code") ||
     lower.includes("verification code not found") ||
-    lower.includes("code_invalid")
+    lower.includes("code_invalid") ||
+    lower.includes("that code didn't match") ||
+    lower.includes("that code did not match")
   );
 }

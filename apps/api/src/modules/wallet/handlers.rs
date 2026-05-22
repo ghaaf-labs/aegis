@@ -68,7 +68,7 @@ async fn resend_code(
     deliver_code_issue(state, issue).await
 }
 
-async fn deliver_code_issue(
+pub(crate) async fn deliver_code_issue(
     state: &AppState,
     issue: super::service::WalletAuthCodeIssue,
 ) -> crate::error::Result<Json<WalletAuthCodeResponse>> {
