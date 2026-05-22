@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, use } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import {
@@ -118,9 +119,38 @@ export default function RebalancePage({ params }: PageProps) {
   }, [planId]);
 
   if (loadError) {
+    const missing = loadError.includes("404");
     return (
-      <main className="p-8 text-risk font-mono text-sm">
-        Failed to load rebalance plan: {loadError}
+      <main className="min-h-screen bg-[#0A0A0A] px-6 py-8 text-text-hi">
+        <section className="mx-auto max-w-2xl border-brutal border-border-default bg-surface p-5 shadow-brutal font-mono">
+          <p className="text-[10px] uppercase tracking-widest text-warn">
+            Review unavailable
+          </p>
+          <h1 className="mt-2 text-2xl font-semibold text-text-hi">
+            {missing
+              ? "This review is no longer available"
+              : "Aegis could not open this review"}
+          </h1>
+          <p className="mt-3 text-sm leading-relaxed text-text-lo">
+            {missing
+              ? "The link may point to an old or deleted review. Build a fresh review from your current portfolio before approving any move."
+              : "Your portfolio and wallet are unchanged. Open Portfolio to build a fresh review, or check Transactions for recent review history."}
+          </p>
+          <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+            <Link
+              href="/portfolio"
+              className="inline-flex min-h-10 flex-1 items-center justify-center rounded-sharp border-brutal border-black bg-accent-agent px-4 text-sm font-semibold text-black shadow-brutal-sm hover:shadow-brutal"
+            >
+              Build fresh review
+            </Link>
+            <Link
+              href="/transactions"
+              className="inline-flex min-h-10 flex-1 items-center justify-center rounded-sharp border border-border-default bg-bg px-4 text-sm text-text-lo hover:border-border-hi hover:text-text-hi"
+            >
+              View history
+            </Link>
+          </div>
+        </section>
       </main>
     );
   }
