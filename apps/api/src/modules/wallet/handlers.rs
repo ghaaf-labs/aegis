@@ -117,19 +117,16 @@ pub async fn email_verify(
 ) -> crate::error::Result<axum::response::Response> {
     let verifier = MockProvider;
     let verifier_svc = WalletService::new(&state.db, &verifier, &state.config, &state.sse);
-    let referrer_from_code = match verifier_svc
-        .verify_auth_code(
-            &body.email,
-            body.challenge_id,
-            &body.code,
-            body.consent.as_ref(),
-        )
+    let verified_code = match verifier_svc
+        .verify_auth_code(body.challenge_id, &body.code, body.consent.as_ref())
         .await
     {
-        Ok(referrer) => referrer,
+        Ok(verified) => verified,
         Err(crate::error::AppError::BadRequest(message)) if message == "code_used" => {
-            if let Some(resp) = idempotent_verify_response(&state, &headers, &body.email).await? {
-                return Ok(auth_response(&state.config, StatusCode::OK, resp).into_response());
+            if let Some(email) = verifier_svc.auth_code_email(body.challenge_id).await? {
+                if let Some(resp) = idempotent_verify_response(&state, &headers, &email).await? {
+                    return Ok(auth_response(&state.config, StatusCode::OK, resp).into_response());
+                }
             }
             return Err(crate::error::AppError::BadRequest("code_used".into()));
         }
@@ -139,18 +136,15 @@ pub async fn email_verify(
     let resp = if state.config.circle_mock {
         let p = MockProvider;
         let svc = WalletService::new(&state.db, &p, &state.config, &state.sse);
-        svc.init_continue(&body.email, body.consent.as_ref())
+        svc.init_continue(&verified_code.email, body.consent.as_ref())
             .await?
     } else {
         let p = CircleProvider::new(&state.http, &state.config);
         let svc = WalletService::new(&state.db, &p, &state.config, &state.sse);
-        svc.init_continue(&body.email, body.consent.as_ref())
+        svc.init_continue(&verified_code.email, body.consent.as_ref())
             .await?
     };
-    let referrer = body
-        .referrer_handle
-        .as_deref()
-        .or(referrer_from_code.as_deref());
+    let referrer = verified_code.referrer_handle.as_deref();
     maybe_credit_referral(&state, referrer, &resp).await;
     Ok(auth_response(&state.config, StatusCode::OK, resp).into_response())
 }

@@ -4,7 +4,7 @@
 //!
 //! 1. `POST /auth/email/start { email }` — server sends a short-lived
 //!    verification code. Localhost mock runs may return `devCode` for tests.
-//! 2. `POST /auth/email/verify { email, challengeId, code, consent }` —
+//! 2. `POST /auth/email/verify { challengeId, code, consent }` —
 //!    server creates or restores the account, opens a session cookie, and
 //!    returns wallet readiness.
 //! 3. `GET /auth/session` is the authenticated gate and retries pending wallet

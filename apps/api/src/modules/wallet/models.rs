@@ -86,11 +86,8 @@ pub struct ResendEmailAuthRequest {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VerifyEmailAuthRequest {
-    pub email: String,
     pub challenge_id: Uuid,
     pub code: String,
-    #[serde(default)]
-    pub referrer_handle: Option<String>,
     #[serde(default)]
     pub consent: Option<EmailAuthConsent>,
 }
@@ -108,4 +105,31 @@ pub struct EmailAuthConsent {
     pub privacy_version: Option<String>,
     #[allow(dead_code)]
     pub marketing_opt_in: Option<bool>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn verify_request_is_challenge_scoped() {
+        let challenge_id = Uuid::new_v4();
+        let request: VerifyEmailAuthRequest = serde_json::from_value(json!({
+            "challengeId": challenge_id,
+            "code": "123456",
+            "consent": {
+                "tos": true,
+                "privacy": true,
+                "tosVersion": "2026-05",
+                "privacyVersion": "2026-05",
+                "marketingOptIn": false
+            }
+        }))
+        .expect("verify request should not require email");
+
+        assert_eq!(request.challenge_id, challenge_id);
+        assert_eq!(request.code, "123456");
+        assert!(request.consent.as_ref().is_some_and(|c| c.tos && c.privacy));
+    }
 }

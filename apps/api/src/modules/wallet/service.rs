@@ -34,8 +34,14 @@ pub struct WalletAuthCodeIssue {
 }
 
 struct AuthCodeCheck {
+    email: String,
     code_hash: String,
     referrer_handle: Option<String>,
+}
+
+pub struct VerifiedAuthCode {
+    pub email: String,
+    pub referrer_handle: Option<String>,
 }
 
 impl<'a> WalletService<'a> {
@@ -197,53 +203,69 @@ impl<'a> WalletService<'a> {
 
     pub async fn verify_auth_code(
         &self,
-        email: &str,
         challenge_id: Uuid,
         code: &str,
         consent: Option<&EmailAuthConsent>,
-    ) -> crate::error::Result<Option<String>> {
-        let normalized = normalize_email(email);
-        let checked = self
-            .check_auth_code(&normalized, challenge_id, code)
-            .await?;
+    ) -> crate::error::Result<VerifiedAuthCode> {
+        let checked = self.check_auth_code(challenge_id, code).await?;
 
-        if self.find_user_by_email(&normalized).await?.is_none() && !has_required_consent(consent) {
+        if self.find_user_by_email(&checked.email).await?.is_none()
+            && !has_required_consent(consent)
+        {
             return Err(AppError::BadRequest("consent_required".into()));
         }
 
         self.consume_auth_code(challenge_id, &checked.code_hash)
             .await?;
-        Ok(checked.referrer_handle)
+        Ok(VerifiedAuthCode {
+            email: checked.email,
+            referrer_handle: checked.referrer_handle,
+        })
+    }
+
+    pub async fn auth_code_email(
+        &self,
+        challenge_id: Uuid,
+    ) -> crate::error::Result<Option<String>> {
+        let email = sqlx::query_scalar::<_, String>(
+            "SELECT email
+             FROM wallet_auth_codes
+             WHERE id = $1",
+        )
+        .bind(challenge_id)
+        .fetch_optional(self.db)
+        .await?;
+
+        Ok(email)
     }
 
     async fn check_auth_code(
         &self,
-        normalized: &str,
         challenge_id: Uuid,
         code: &str,
     ) -> crate::error::Result<AuthCodeCheck> {
         use sqlx::Row;
 
-        validate_email(normalized)?;
         let trimmed_code = code.trim();
         if trimmed_code.len() != 6 || !trimmed_code.chars().all(|c| c.is_ascii_digit()) {
             return Err(AppError::BadRequest("code_invalid".into()));
         }
 
         let row = sqlx::query(
-            "SELECT code_hash, attempts, expires_at, referrer_handle, consumed_at
+            "SELECT email, code_hash, attempts, expires_at, referrer_handle, consumed_at
              FROM wallet_auth_codes
-             WHERE id = $1
-               AND email = $2",
+             WHERE id = $1",
         )
         .bind(challenge_id)
-        .bind(normalized)
         .fetch_optional(self.db)
         .await?;
 
         let Some(row) = row else {
             return Err(AppError::BadRequest("code_invalid".into()));
         };
+
+        let email = normalize_email(&row.try_get::<String, _>("email")?);
+        validate_email(&email)?;
 
         let consumed_at: Option<chrono::DateTime<Utc>> = row.try_get("consumed_at")?;
         if consumed_at.is_some() {
@@ -260,7 +282,7 @@ impl<'a> WalletService<'a> {
         }
 
         let actual_hash: String = row.try_get("code_hash")?;
-        let expected_hash = code_hash(self.config, normalized, challenge_id, trimmed_code);
+        let expected_hash = code_hash(self.config, &email, challenge_id, trimmed_code);
         if actual_hash
             .as_bytes()
             .ct_eq(expected_hash.as_bytes())
@@ -287,6 +309,7 @@ impl<'a> WalletService<'a> {
         }
 
         Ok(AuthCodeCheck {
+            email,
             code_hash: expected_hash,
             referrer_handle: row.try_get("referrer_handle")?,
         })

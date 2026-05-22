@@ -170,19 +170,13 @@ describe("<CreateWalletCard />", () => {
     await click(container, '[data-testid="wallet-auth-submit"]');
     await flushEffects();
 
-    expect(walletApi.verifyEmail).toHaveBeenCalledWith(
-      "new@example.com",
-      "code-2",
-      "123456",
-      {
-        tos: true,
-        privacy: true,
-        tosVersion: "2026-05",
-        privacyVersion: "2026-05",
-        marketingOptIn: false,
-      },
-      undefined,
-    );
+    expect(walletApi.verifyEmail).toHaveBeenCalledWith("code-2", "123456", {
+      tos: true,
+      privacy: true,
+      tosVersion: "2026-05",
+      privacyVersion: "2026-05",
+      marketingOptIn: false,
+    });
     expect(routerReplace).toHaveBeenCalledWith("/dashboard");
 
     act(() => root.unmount());

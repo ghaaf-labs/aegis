@@ -114,7 +114,6 @@ export const walletApi = {
       body: { email, referrerHandle },
     }),
   verifyEmail: (
-    email: string,
     challengeId: string,
     code: string,
     consent: {
@@ -124,11 +123,10 @@ export const walletApi = {
       privacyVersion: string;
       marketingOptIn: boolean;
     },
-    referrerHandle?: string,
   ) =>
     request<WalletAuthResponse>("/auth/email/verify", {
       method: "POST",
-      body: { email, challengeId, code, consent, referrerHandle },
+      body: { challengeId, code, consent },
     }),
   resendEmail: (challengeId: string) =>
     request<WalletAuthCodeResponse>("/auth/email/resend", {

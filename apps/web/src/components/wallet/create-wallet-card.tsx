@@ -220,7 +220,6 @@ export function CreateWalletCard() {
   };
 
   const submitVerificationCode = async () => {
-    const normalizedEmail = email.trim().toLowerCase();
     const normalizedCode = code.trim();
     if (checkingAccount) {
       setError("Aegis is still checking whether you are already signed in.");
@@ -239,7 +238,6 @@ export function CreateWalletCard() {
     setError(null);
     try {
       const resp = await walletApi.verifyEmail(
-        normalizedEmail,
         codeChallenge.id,
         normalizedCode,
         {
@@ -249,7 +247,6 @@ export function CreateWalletCard() {
           privacyVersion: "2026-05",
           marketingOptIn,
         },
-        referrerHandle || undefined,
       );
       setCodeChallenge(null);
       setCode("");
