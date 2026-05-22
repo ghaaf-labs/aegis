@@ -317,13 +317,13 @@ export function EmailAuthCard() {
           <div className="flex flex-wrap items-center gap-2">
             <Loader2 className="h-4 w-4 animate-spin text-accent-agent" />
             <span className="text-sm font-semibold text-text-hi">
-              Opening Aegis
+              Checking sign-in
             </span>
           </div>
         </BrutalCardHeader>
         <BrutalCardBody>
           <p className="font-mono text-xs leading-relaxed text-text-lo">
-            Checking whether this browser is already signed in.
+            One moment.
           </p>
         </BrutalCardBody>
       </BrutalCard>

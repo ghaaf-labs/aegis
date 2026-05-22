@@ -51,8 +51,8 @@ describe("<EmailAuthCard />", () => {
     const { root, container } = render(<EmailAuthCard />);
     await flushEffects();
 
-    expect(container.textContent).toContain("Opening Aegis");
-    expect(container.textContent).toContain("already signed in");
+    expect(container.textContent).toContain("Checking sign-in");
+    expect(container.textContent).toContain("One moment.");
     expect(container.querySelector('[data-testid="wallet-auth-email"]')).toBe(
       null,
     );
