@@ -31,6 +31,11 @@ describe("auth route protection", () => {
     expect(safeNextPath("/dashboard?tab=agent")).toBe("/dashboard?tab=agent");
   });
 
+  it("normalizes the legacy wallet destination", () => {
+    expect(safeNextPath("/wallet")).toBe("/wallets");
+    expect(safeNextPath("/wallet?tab=cash")).toBe("/wallets?tab=cash");
+  });
+
   it("builds a login redirect with the original protected destination", () => {
     const redirect = buildLoginRedirectUrl(
       new URL("http://localhost:3000/dashboard/abc?x=1"),
@@ -40,5 +45,16 @@ describe("auth route protection", () => {
     expect(redirect.pathname).toBe("/login");
     expect(redirect.searchParams.get("next")).toBe("/dashboard/abc?x=1");
     expect(redirect.searchParams.get("reason")).toBe("session_expired");
+  });
+
+  it("builds wallet redirects with the canonical wallets destination", () => {
+    const redirect = buildLoginRedirectUrl(
+      new URL("http://localhost:3000/wallet"),
+      "session_required",
+    );
+
+    expect(redirect.pathname).toBe("/login");
+    expect(redirect.searchParams.get("next")).toBe("/wallets");
+    expect(redirect.searchParams.get("reason")).toBe("session_required");
   });
 });

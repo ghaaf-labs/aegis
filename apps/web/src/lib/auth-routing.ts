@@ -33,6 +33,9 @@ export function safeNextPath(path: string | null | undefined) {
     return null;
   }
   if (path.length > 2048) return null;
+  if (pathname === "/wallet") {
+    return path.replace(/^\/wallet(?=[?#]|$)/, "/wallets");
+  }
   return path;
 }
 
