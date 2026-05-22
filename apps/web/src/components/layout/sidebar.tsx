@@ -99,7 +99,7 @@ const BASE_NAV_SECTIONS: NavSection[] = [
         href: "/agent-logs",
         icon: SquareTerminal,
         label: "Agent Logs",
-        description: "model outputs and SSE",
+        description: "decision history",
       },
       {
         href: "/agent-studio",

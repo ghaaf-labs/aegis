@@ -62,24 +62,23 @@ export default function AgentLogsPage() {
     <div className="mx-auto max-w-[1400px] space-y-6">
       <div>
         <p className="text-[10px] font-mono uppercase tracking-widest text-accent-agent">
-          Reasoning archive
+          Decision history
         </p>
         <h1 className="mt-1 flex items-center gap-2 text-2xl font-mono font-semibold tracking-tight text-text-hi">
           <SquareTerminal className="h-5 w-5 text-accent-agent" />
           Agent Logs
         </h1>
         <p className="mt-1 max-w-2xl text-sm text-text-lo">
-          Every strategist note, critic verdict, model slug, and confidence
-          value in one scan-friendly log. Rows marked audit-only are historical
-          evidence, not current advice.
+          See what the agent recommended, how confident it was, and whether that
+          recommendation still matches your current account.
         </p>
         {decisions.length > 0 && (
           <div className="mt-3 flex flex-wrap gap-2">
             <BrutalPill tone="agent">
-              {decisions.length - auditCount} current-context
+              {decisions.length - auditCount} current
             </BrutalPill>
             {auditCount > 0 && (
-              <BrutalPill tone="warn">{auditCount} audit-only</BrutalPill>
+              <BrutalPill tone="warn">{auditCount} historical</BrutalPill>
             )}
           </div>
         )}
@@ -104,11 +103,11 @@ export default function AgentLogsPage() {
           <BrutalCard>
             <BrutalCardBody>
               <p className="text-sm font-mono font-semibold text-text-hi">
-                No agent logs yet
+                No agent decisions yet
               </p>
               <p className="mt-1 text-xs font-mono text-text-lo">
-                Run a dashboard review or open Agent Studio to create a manual
-                analysis.
+                Run a dashboard review or open Agent Studio to ask for a fresh
+                recommendation.
               </p>
               <Link
                 href="/agent-studio"
@@ -164,7 +163,7 @@ function DecisionRow({
           {audit && (
             <BrutalPill tone={audit.tone}>
               <AlertTriangle className="h-3 w-3" />
-              Audit only
+              Historical
             </BrutalPill>
           )}
         </div>
@@ -196,7 +195,7 @@ function DecisionRow({
         {decision.criticVerdict && (
           <p className="border border-accent-agent/30 bg-accent-agent/5 px-3 py-2 text-xs font-mono leading-relaxed text-text-lo">
             <span className="text-accent-agent">
-              Critic {decision.criticVerdict.verdict ?? "verdict"}:
+              Safety check {decision.criticVerdict.verdict ?? "result"}:
             </span>{" "}
             {decision.criticVerdict.notes}
           </p>

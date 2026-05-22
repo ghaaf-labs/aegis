@@ -39,7 +39,7 @@ const HELP_ITEMS: HelpItem[] = [
     href: "/agent-logs",
     icon: LifeBuoy,
     title: "What did the agent decide?",
-    body: "Agent Logs shows the model slug, confidence, critic verdict, and recommendation summary.",
+    body: "Agent Logs shows each recommendation, confidence level, and safety note in plain language.",
     cta: "Open agent reasoning",
   },
   {
