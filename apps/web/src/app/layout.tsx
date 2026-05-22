@@ -29,6 +29,7 @@ export const metadata: Metadata = {
     description: "AI-powered adaptive crypto portfolio management.",
     type: "website",
   },
+  themeColor: "#00E0FF",
 };
 
 export default function RootLayout({
