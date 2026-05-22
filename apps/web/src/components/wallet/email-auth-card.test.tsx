@@ -269,12 +269,14 @@ describe("<EmailAuthCard />", () => {
     await flushEffects();
 
     expect(window.localStorage.getItem("aegis_email")).toBe(null);
-    expect(container.textContent).toContain("Signed out.");
+    expect(container.textContent).toContain(
+      "Signed out. Enter your email to continue.",
+    );
 
     act(() => root.unmount());
   });
 
-  it("does not show a warning banner for a routine protected-page redirect", async () => {
+  it("shows a plain continuation note for a routine protected-page redirect", async () => {
     mockSearchParams = new URLSearchParams(
       "next=%2Fdashboard&reason=session_required",
     );
@@ -285,9 +287,7 @@ describe("<EmailAuthCard />", () => {
 
     expect(container.textContent).toContain("Continue with email");
     expect(container.textContent).toContain("We'll email you a 6-digit code.");
-    expect(container.textContent).not.toContain(
-      "Enter your email to continue.",
-    );
+    expect(container.textContent).toContain("Enter your email to continue.");
 
     act(() => root.unmount());
   });

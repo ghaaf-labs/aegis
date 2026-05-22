@@ -303,6 +303,12 @@ export function EmailAuthCard() {
   const redirectNotice = redirectReason
     ? authRedirectNotice(redirectReason)
     : null;
+  const emailNotice =
+    mode === "email"
+      ? showSignedOutNotice
+        ? "Signed out. Enter your email to continue."
+        : redirectNotice
+      : null;
 
   if (checkingAccount) {
     return (
@@ -349,15 +355,9 @@ export function EmailAuthCard() {
         </div>
       </BrutalCardHeader>
       <BrutalCardBody>
-        {showSignedOutNotice && (
+        {emailNotice && (
           <div className="mb-4 border border-accent-agent/40 bg-accent-agent/5 px-3 py-2 font-mono text-[11px] leading-relaxed text-text-lo">
-            Signed out.
-          </div>
-        )}
-
-        {!showSignedOutNotice && redirectNotice && mode === "email" && (
-          <div className="mb-4 border border-warn/40 bg-warn/5 px-3 py-2 font-mono text-[11px] leading-relaxed text-warn">
-            {redirectNotice}
+            {emailNotice}
           </div>
         )}
 
@@ -604,7 +604,7 @@ function authRedirectNotice(
     case "session_check_failed":
       return "Aegis could not confirm this browser. Enter your email to continue.";
     default:
-      return null;
+      return "Enter your email to continue.";
   }
 }
 
