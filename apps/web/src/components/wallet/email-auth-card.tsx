@@ -53,6 +53,7 @@ export function EmailAuthCard() {
   const [checkingAccount, setCheckingAccount] = useState(true);
   const mountedRef = useRef(true);
   const authFlowStartedRef = useRef(false);
+  const codeInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -114,6 +115,10 @@ export function EmailAuthCard() {
     setSessionResolved,
     setWallet,
   ]);
+
+  useEffect(() => {
+    if (mode === "verify") codeInputRef.current?.focus();
+  }, [mode]);
 
   useEffect(() => {
     if (mode !== "verify" || resendSeconds <= 0) return;
@@ -408,6 +413,7 @@ export function EmailAuthCard() {
               6-digit code
             </label>
             <input
+              ref={codeInputRef}
               id={`${emailInputId}-code`}
               data-testid="wallet-auth-code"
               value={code}

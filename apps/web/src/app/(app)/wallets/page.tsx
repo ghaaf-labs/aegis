@@ -120,8 +120,8 @@ export default function WalletPage() {
               </h1>
               <p className="mt-2 max-w-2xl font-mono text-xs leading-relaxed text-text-lo">
                 {sessionActive
-                  ? "Your session is active. Balances, funding, and execution unlock as soon as setup finishes."
-                  : "Use one email code before viewing balances or funding addresses."}
+                  ? "We're finishing your account. Balances and funding unlock as soon as it's ready."
+                  : "Enter your email to view balances or funding addresses."}
               </p>
             </div>
             <span
@@ -136,22 +136,8 @@ export default function WalletPage() {
               ) : (
                 <LogIn className="h-3.5 w-3.5" />
               )}
-              {sessionActive ? "Setup pending" : "Signed out"}
+              {sessionActive ? "Setting up" : "Signed out"}
             </span>
-          </div>
-
-          <div className="mt-5 grid gap-3 md:grid-cols-3">
-            <GateFact
-              label="Session"
-              value={sessionActive ? "verified" : "required"}
-              tone={sessionActive ? "agent" : "neutral"}
-            />
-            <GateFact
-              label="Wallet"
-              value="setting up"
-              tone={sessionActive ? "warn" : "neutral"}
-            />
-            <GateFact label="Execution" value="blocked" tone="warn" />
           </div>
 
           <div className="mt-5 flex flex-col gap-3 sm:flex-row">
@@ -267,7 +253,6 @@ export default function WalletPage() {
       <WalletOperationalPanel
         gatewayBalanceStatus={gatewayBalanceStatus}
         refreshingGateway={refreshingGateway}
-        networkCount={allNetworks.length}
         onRefreshGateway={() => void refreshGatewayBalance()}
       />
 
@@ -394,18 +379,14 @@ export default function WalletPage() {
 function WalletOperationalPanel({
   gatewayBalanceStatus,
   refreshingGateway,
-  networkCount,
   onRefreshGateway,
 }: {
   gatewayBalanceStatus: "idle" | "loading" | "ready" | "error";
   refreshingGateway: boolean;
-  networkCount: number;
   onRefreshGateway: () => void;
 }) {
-  const gatewayReady = gatewayBalanceStatus === "ready";
   const gatewayLoading =
     gatewayBalanceStatus === "idle" || gatewayBalanceStatus === "loading";
-  const gatewayFailed = gatewayBalanceStatus === "error";
   return (
     <section className="border-brutal border-border-default bg-surface p-4 font-mono shadow-brutal">
       <div>
@@ -432,65 +413,12 @@ function WalletOperationalPanel({
             {gatewayLoading ? "Checking balance" : "Refresh balance"}
           </button>
         </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-4">
-          <GateFact label="Session" value="verified" tone="agent" />
-          <GateFact label="Wallet" value="ready" tone="pnl" />
-          <GateFact label="Routes" value={String(networkCount)} tone="pnl" />
-          <GateFact
-            label="Cash check"
-            value={
-              gatewayReady ? "verified" : gatewayFailed ? "unknown" : "checking"
-            }
-            tone={gatewayReady ? "pnl" : gatewayFailed ? "warn" : "neutral"}
-          />
-        </div>
         <p className="mt-3 text-xs leading-relaxed text-text-lo">
           Copy the account address any time. Cash actions wait for a fresh
           balance check, so an outage is never shown as a true zero.
         </p>
       </div>
     </section>
-  );
-}
-
-function GateFact({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone: "agent" | "pnl" | "warn" | "neutral";
-}) {
-  return (
-    <div
-      className={`border px-3 py-2 font-mono ${
-        tone === "agent"
-          ? "border-accent-agent/40 bg-accent-agent/5"
-          : tone === "pnl"
-            ? "border-accent-pnl/40 bg-accent-pnl/5"
-            : tone === "warn"
-              ? "border-warn/40 bg-warn/5"
-              : "border-border-default bg-bg"
-      }`}
-    >
-      <p className="text-[10px] uppercase tracking-widest text-text-mut">
-        {label}
-      </p>
-      <p
-        className={`mt-1 text-xs ${
-          tone === "agent"
-            ? "text-accent-agent"
-            : tone === "pnl"
-              ? "text-accent-pnl"
-              : tone === "warn"
-                ? "text-warn"
-                : "text-text-hi"
-        }`}
-      >
-        {value}
-      </p>
-    </div>
   );
 }
 

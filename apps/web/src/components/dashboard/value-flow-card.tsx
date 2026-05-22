@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, ClipboardCheck, LineChart, Wallet } from "lucide-react";
+import { ClipboardCheck, LineChart, Wallet } from "lucide-react";
 import type { Portfolio } from "@/types";
 import { formatCurrency } from "@/lib/utils";
 
@@ -39,75 +39,59 @@ export function ValueFlowCard({
     : targetCount > 0
       ? `${targetCount} target assets are set`
       : "Choose a target mix first";
+  const nextActionText = walletCashUnavailable
+    ? "Retry wallet balance"
+    : hasIdleCash
+      ? "Review a plan"
+      : "Add test USDC";
 
   return (
     <section
-      aria-label="How wallet cash becomes portfolio value"
+      aria-label="Portfolio value status"
       className="rounded-sharp border-brutal border-border-default bg-bg p-4 md:p-5"
     >
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
-        <div>
-          <p className="font-mono text-[10px] uppercase tracking-widest text-accent-agent">
-            How money moves
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] lg:items-start">
+        <div className="font-mono">
+          <p className="text-[10px] uppercase tracking-widest text-accent-agent">
+            Portfolio value
           </p>
-          <h2 className="mt-1 font-mono text-lg font-semibold text-text-hi">
-            Cash and investments are tracked separately
+          <h2 className="mt-1 text-lg font-semibold text-text-hi">
+            Cash waits here until you approve a move
           </h2>
-          <p className="mt-2 max-w-3xl font-mono text-xs leading-relaxed text-text-lo">
-            Wallet cash is money waiting for your decision. Invested value only
-            changes after an approved action finishes.
+          <p className="mt-2 max-w-2xl text-xs leading-relaxed text-text-lo">
+            Wallet cash is spendable. Invested value appears after an approved
+            move finishes.
           </p>
         </div>
-        <div className="grid min-w-[220px] gap-2 text-[11px] font-mono">
-          <SummaryFact
-            label="Wallet cash"
-            value={walletCashText}
-            tone={
-              walletCashUnavailable ? "warn" : hasIdleCash ? "pnl" : "muted"
-            }
-          />
-          <SummaryFact
-            label="Invested value"
-            value={formatCurrency(investedUsd)}
-            tone={hasInvested ? "pnl" : "muted"}
-          />
+        <div className="rounded-sharp border border-border-default bg-surface p-3 font-mono">
+          <p className="text-[10px] uppercase tracking-widest text-text-mut">
+            Next action
+          </p>
+          <p className="mt-1 text-sm font-semibold text-text-hi">
+            {nextActionText}
+          </p>
         </div>
       </div>
 
-      <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_auto_1fr_auto_1fr] lg:items-stretch">
+      <div className="mt-4 grid gap-2 md:grid-cols-3">
         <FlowStep
           icon={Wallet}
-          label="1. Wallet"
+          label="Wallet cash"
           title={walletCashText}
-          copy={
-            walletCashUnavailable
-              ? "Aegis will not treat an unavailable balance as zero."
-              : hasIdleCash
-                ? "This is available cash, not invested value."
-                : "Add test USDC before the first move."
-          }
           tone={
             walletCashUnavailable ? "warn" : hasIdleCash ? "pnl" : "neutral"
           }
         />
-        <FlowArrow />
         <FlowStep
           icon={ClipboardCheck}
-          label="2. Review"
+          label="Review"
           title={reviewText}
-          copy="You see the exact changes first. Nothing moves without your approval."
           tone={hasIdleCash ? "agent" : "neutral"}
         />
-        <FlowArrow />
         <FlowStep
           icon={LineChart}
-          label="3. Invested"
+          label="Invested"
           title={hasInvested ? formatCurrency(investedUsd) : "Not invested yet"}
-          copy={
-            hasInvested
-              ? "Only completed moves count here."
-              : "This stays zero until an approved move finishes."
-          }
           tone={hasInvested ? "pnl" : "neutral"}
         />
       </div>
@@ -115,46 +99,15 @@ export function ValueFlowCard({
   );
 }
 
-function SummaryFact({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone: "pnl" | "warn" | "muted";
-}) {
-  return (
-    <div className="rounded-sharp border border-border-default bg-surface px-3 py-2">
-      <p className="text-[10px] uppercase tracking-widest text-text-mut">
-        {label}
-      </p>
-      <p
-        className={`mt-1 truncate font-semibold tabular-nums ${
-          tone === "pnl"
-            ? "text-accent-pnl"
-            : tone === "warn"
-              ? "text-warn"
-              : "text-text-lo"
-        }`}
-      >
-        {value}
-      </p>
-    </div>
-  );
-}
-
 function FlowStep({
   icon: Icon,
   label,
   title,
-  copy,
   tone,
 }: {
   icon: typeof Wallet;
   label: string;
   title: string;
-  copy: string;
   tone: "pnl" | "agent" | "warn" | "neutral";
 }) {
   const toneClass =
@@ -166,25 +119,20 @@ function FlowStep({
           ? "border-warn/45 bg-warn/5 text-warn"
           : "border-border-default bg-surface text-text-lo";
   return (
-    <div className={`rounded-sharp border p-4 font-mono ${toneClass}`}>
-      <div className="flex items-center gap-2">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sharp border border-current bg-bg/70">
-          <Icon className="h-4 w-4" />
-        </span>
+    <div
+      className={`flex min-h-16 items-center gap-3 rounded-sharp border px-3 py-2 font-mono ${toneClass}`}
+    >
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-sharp border border-current bg-bg/70">
+        <Icon className="h-4 w-4" />
+      </span>
+      <div className="min-w-0">
         <p className="text-[10px] uppercase tracking-widest text-text-mut">
           {label}
         </p>
+        <h3 className="mt-1 truncate text-sm font-semibold text-text-hi">
+          {title}
+        </h3>
       </div>
-      <h3 className="mt-3 text-sm font-semibold text-text-hi">{title}</h3>
-      <p className="mt-2 text-xs leading-relaxed text-text-lo">{copy}</p>
-    </div>
-  );
-}
-
-function FlowArrow() {
-  return (
-    <div className="hidden items-center justify-center text-text-mut lg:flex">
-      <ArrowRight className="h-5 w-5" />
     </div>
   );
 }
