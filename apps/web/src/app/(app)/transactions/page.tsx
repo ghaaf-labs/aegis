@@ -65,9 +65,8 @@ export default function TransactionsPage() {
           Transactions
         </h1>
         <p className="mt-1 max-w-2xl text-sm text-text-lo">
-          Every rebalance review becomes a ledger row here. Use this page to
-          distinguish a ready review from stale, blocked, failed, or settled
-          execution history.
+          Approved moves appear here. Reviews that are waiting, blocked, or
+          finished stay separate so it is clear what actually moved money.
         </p>
         {rows.length > 0 && (
           <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-mono">
@@ -132,7 +131,7 @@ export default function TransactionsPage() {
                     ? "Loading transaction history"
                     : "No transactions yet"
                 }
-                body="Run Review rebalance from Dashboard or Portfolio. Approved plans and blocked stale reviews will appear here."
+                body="Build a review from Dashboard or Portfolio. After you approve it, the move appears here."
                 href="/portfolio"
                 cta="Review portfolio"
               />
@@ -453,7 +452,7 @@ function rowMeaning(row: RebalanceHistoryRow) {
     return "Wallet cash could not be verified. Open the blocked review for the leg audit, then check Wallets before rebuilding.";
   }
   if (row.approvalSafety?.code === "EXECUTION_UNAVAILABLE") {
-    return "The review has executable legs, but this API build lacks one or more real adapters. Open the block details before changing targets.";
+    return "Execution is unavailable right now. Open the block details before changing targets or approving a new review.";
   }
   return row.approvalSafety?.message ?? "This row is kept for audit history.";
 }
@@ -464,10 +463,11 @@ function LedgerFlowSvg() {
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
           <p className="font-mono text-[10px] uppercase tracking-widest text-text-mut">
-            Ledger path
+            Money movement
           </p>
           <p className="mt-1 font-mono text-xs text-text-lo">
-            Review rows are not transactions until approval starts execution.
+            A review is only a proposal. A transaction is created after you
+            approve it.
           </p>
         </div>
         <Route className="h-4 w-4 shrink-0 text-accent-agent" />
@@ -475,7 +475,7 @@ function LedgerFlowSvg() {
       <svg
         viewBox="0 0 760 180"
         role="img"
-        aria-label="Transaction ledger flow from review to approval to execution trace"
+        aria-label="Transaction flow from review to approval to completed history"
         className="h-auto w-full border border-border-default bg-bg"
       >
         <defs>
@@ -512,10 +512,20 @@ function LedgerFlowSvg() {
             to="0"
           />
         </path>
-        <LedgerNode x={58} title="Review" subtitle="no movement" tone="agent" />
-        <LedgerNode x={254} title="Approve" subtitle="user gate" tone="agent" />
-        <LedgerNode x={450} title="Execute" subtitle="legs + gas" tone="pnl" />
-        <LedgerNode x={614} title="Trace" subtitle="audit row" tone="neutral" />
+        <LedgerNode x={58} title="Review" subtitle="proposal" tone="agent" />
+        <LedgerNode
+          x={254}
+          title="Approve"
+          subtitle="your choice"
+          tone="agent"
+        />
+        <LedgerNode
+          x={450}
+          title="Move funds"
+          subtitle="after approval"
+          tone="pnl"
+        />
+        <LedgerNode x={614} title="History" subtitle="result" tone="neutral" />
       </svg>
     </div>
   );
