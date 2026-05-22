@@ -20,6 +20,7 @@ import type { Portfolio } from "@/types";
 import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
 import { gatewayApi, walletApi } from "@/lib/api";
 import { safeNextPath } from "@/lib/auth-routing";
+import { logoutFailureMessage, logoutRedirect } from "./logout-copy";
 
 export function Header() {
   const router = useRouter();
@@ -383,22 +384,6 @@ export function Header() {
       </div>
     </header>
   );
-}
-
-function logoutRedirect() {
-  const params = new URLSearchParams({ signedOut: "1" });
-  return `/login?${params.toString()}`;
-}
-
-function logoutFailureMessage(error: unknown) {
-  const message = (error as Error).message.toLowerCase();
-  if (message.includes("still accepts")) {
-    return "Sign out did not finish. Try again.";
-  }
-  if (message.includes("verification failed")) {
-    return "Aegis could not confirm sign out. Try again.";
-  }
-  return "Aegis could not sign out. Check the connection and try again.";
 }
 
 function authHref(path: "/login", next: string) {

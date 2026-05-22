@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CircleAlert, Loader2, LogOut, RotateCw, Shield } from "lucide-react";
 import { BrutalButton } from "@aegis/ui";
+import { logoutFailureMessage } from "@/components/layout/logout-copy";
 import { GoalWizard } from "@/components/onboarding/goal-wizard";
 import { walletApi, type WalletSessionResponse } from "@/lib/api";
 import { usePortfolioStore } from "@/stores/portfolio";
@@ -281,15 +282,4 @@ function formatSignedInEmail(email: string) {
   const domain = email.slice(at + 1);
   if (local.length <= 20) return email;
   return `${local.slice(0, 8)}…@${domain}`;
-}
-
-function logoutFailureMessage(error: unknown) {
-  const message = (error as Error).message.toLowerCase();
-  if (message.includes("still accepts")) {
-    return "Sign out did not finish. Try again.";
-  }
-  if (message.includes("verification failed")) {
-    return "Sign out did not finish. Try again.";
-  }
-  return "Could not sign out. Check the connection and try again.";
 }
