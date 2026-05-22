@@ -112,7 +112,7 @@ export default function SettingsIndex() {
   const closeAccount = async () => {
     if (!deleteConfirming) {
       setDeleteConfirming(true);
-      setDeleteMessage("Click Close account again to confirm.");
+      setDeleteMessage("Click Confirm close account to finish.");
       return;
     }
     setDeleteStatus("closing");
@@ -289,6 +289,9 @@ export default function SettingsIndex() {
                 <p className="mt-1 break-all font-mono text-[11px] leading-relaxed text-text-lo">
                   {storedEmail || "No email found in this browser."}
                 </p>
+                <p className="mt-2 font-mono text-[11px] leading-relaxed text-text-mut">
+                  Enter a new email and verify the 6-digit code sent there.
+                </p>
                 <input
                   value={newEmail}
                   onChange={(e) => setNewEmail(e.target.value)}
@@ -296,6 +299,7 @@ export default function SettingsIndex() {
                   inputMode="email"
                   autoComplete="email"
                   placeholder="new@example.com"
+                  aria-label="New email address"
                   className="mt-3 min-h-10 w-full rounded-sharp border-brutal border-border-default bg-bg px-3 py-2 font-mono text-sm text-text-hi outline-none focus:border-border-hi"
                 />
                 {emailChallenge && (
@@ -311,6 +315,7 @@ export default function SettingsIndex() {
                       inputMode="numeric"
                       autoComplete="one-time-code"
                       placeholder="123456"
+                      aria-label="6-digit email verification code"
                       className="min-h-10 w-full rounded-sharp border-brutal border-border-default bg-bg px-3 py-2 font-mono text-sm tracking-[0.3em] text-text-hi outline-none focus:border-border-hi"
                     />
                   </div>
@@ -332,10 +337,11 @@ export default function SettingsIndex() {
                   ) : (
                     <Mail className="h-4 w-4" />
                   )}
-                  {emailChallenge ? "Confirm email" : "Change email"}
+                  {emailChallenge ? "Verify email" : "Send code"}
                 </button>
                 {emailMessage && (
                   <p
+                    aria-live="polite"
                     className={`mt-2 font-mono text-[11px] leading-relaxed ${
                       emailStatus === "error" ? "text-risk" : "text-text-lo"
                     }`}
@@ -355,7 +361,7 @@ export default function SettingsIndex() {
                   Export data
                 </p>
                 <p className="mt-1 font-mono text-[11px] leading-relaxed text-text-lo">
-                  Receive a signed download link by email.
+                  We email you a private download link when the export is ready.
                 </p>
                 <button
                   type="button"
@@ -368,10 +374,11 @@ export default function SettingsIndex() {
                   ) : (
                     <Download className="h-4 w-4" />
                   )}
-                  Export
+                  Email export link
                 </button>
                 {exportMessage && (
                   <p
+                    aria-live="polite"
                     className={`mt-2 font-mono text-[11px] leading-relaxed ${
                       exportStatus === "error" ? "text-risk" : "text-text-lo"
                     }`}
@@ -391,7 +398,8 @@ export default function SettingsIndex() {
                   Close account
                 </p>
                 <p className="mt-1 font-mono text-[11px] leading-relaxed text-text-lo">
-                  Available only after wallet balances are empty.
+                  This signs you out and starts account deletion. Wallet
+                  balances must be empty first.
                 </p>
                 <button
                   type="button"
@@ -404,10 +412,11 @@ export default function SettingsIndex() {
                   ) : (
                     <Trash2 className="h-4 w-4" />
                   )}
-                  Close account
+                  {deleteConfirming ? "Confirm close account" : "Close account"}
                 </button>
                 {deleteMessage && (
                   <p
+                    aria-live="polite"
                     className={`mt-2 font-mono text-[11px] leading-relaxed ${
                       deleteStatus === "error" ? "text-risk" : "text-text-lo"
                     }`}
