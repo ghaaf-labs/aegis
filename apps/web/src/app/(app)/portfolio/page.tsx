@@ -53,8 +53,7 @@ export default function PortfolioPage() {
             My Portfolio
           </h1>
           <p className="text-sm text-text-lo mt-1">
-            Review invested positions, target drift, and the next rebalance plan
-            before anything runs.
+            Review positions, targets, and wallet cash before approving a move.
           </p>
         </div>
         <div className="flex gap-3">
@@ -188,11 +187,11 @@ function rebalanceReadinessCopy(
   if (gatewayBalanceStatus === "idle" || gatewayBalanceStatus === "loading") {
     return {
       title: "Checking wallet cash…",
-      copy: "Aegis is confirming your balance. The review unlocks once cash is known, since idle USDC changes what to buy or hold.",
+      copy: "Aegis is confirming your balance. The review unlocks once wallet cash is known.",
     };
   }
   return {
     title: "Ready to build a rebalance review",
-    copy: "Your wallet and cash are confirmed. Build a review from current positions, targets, and idle cash — you still approve before anything runs.",
+    copy: "Your wallet and cash are confirmed. Build a review from current positions, targets, and wallet cash. You approve before anything runs.",
   };
 }

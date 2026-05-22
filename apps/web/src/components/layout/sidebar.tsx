@@ -49,14 +49,14 @@ interface NavSection {
 const BASE_NAV_SECTIONS: NavSection[] = [
   {
     label: "Portfolio",
-    description: "Money, targets, approvals",
+    description: "Money and targets",
     tone: "pnl",
     items: [
       {
         href: "/dashboard",
         icon: LayoutDashboard,
         label: "Dashboard",
-        description: "cash, targets, review",
+        description: "overview and next step",
       },
       {
         href: "/wallets",
@@ -69,70 +69,70 @@ const BASE_NAV_SECTIONS: NavSection[] = [
         href: "/portfolio",
         icon: PieChart,
         label: "Portfolio",
-        description: "positions and target mix",
+        description: "positions and targets",
       },
       {
         href: "/strategies",
         icon: LayoutGrid,
         label: "Strategies",
-        description: "adoptable templates",
+        description: "choose an approach",
       },
       {
         href: "/transactions",
         icon: ListChecks,
         label: "Transactions",
-        description: "plans and execution",
+        description: "reviews and moves",
       },
       {
         href: "/analytics",
         icon: BarChart3,
         label: "Analytics",
-        description: "performance diagnostics",
+        description: "value and decisions",
       },
     ],
   },
   {
     label: "Agent",
-    description: "AI reasoning and controls",
+    description: "Decisions and controls",
     tone: "agent",
     items: [
       {
         href: "/agent-logs",
         icon: SquareTerminal,
         label: "Agent Logs",
-        description: "decision history",
+        description: "past decisions",
       },
       {
         href: "/agent-studio",
         icon: Bot,
         label: "Agent Studio",
-        description: "ask for advice",
+        description: "ask a question",
       },
       {
         href: "/settings/peg",
         icon: Shield,
         label: "Peg defense",
-        description: "stablecoin guardrails",
+        description: "stablecoin safety",
       },
     ],
   },
   {
     label: "Account",
-    description: "Exports and settings",
+    description: "Settings and reports",
     tone: "neutral",
     items: [
       {
         href: "/tax-center",
         icon: ReceiptText,
         label: "Tax center",
-        description: "reports and sharing",
+        description: "tax reports",
         match: ["/settings/tax"],
       },
       {
         href: "/settings",
         icon: Settings,
         label: "Settings",
-        description: "rules and preferences",
+        description: "preferences",
         exact: true,
       },
       {
@@ -145,20 +145,20 @@ const BASE_NAV_SECTIONS: NavSection[] = [
   },
   {
     label: "Discover",
-    description: "Public product surfaces",
+    description: "Public pages",
     tone: "agent",
     items: [
       {
         href: "/explore",
         icon: Compass,
         label: "Explore demos",
-        description: "read-only examples",
+        description: "example portfolios",
       },
       {
         href: "/leaderboard",
         icon: Trophy,
         label: "Leaderboard",
-        description: "public trustability",
+        description: "public results",
       },
     ],
   },
@@ -175,7 +175,7 @@ const NAV_SECTIONS = PRICING_UI_ENABLED
                 href: "/settings/billing",
                 icon: CreditCard,
                 label: "Billing",
-                description: "tiers and invoices",
+                description: "plan and invoices",
               },
               ...section.items.slice(2),
             ],
@@ -407,8 +407,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
               </span>
             </div>
             <p className="px-1 text-[11px] font-mono leading-relaxed text-text-mut">
-              Sign in to manage balances, approvals, agent runs, and tax
-              exports.
+              Sign in to manage your account, reviews, and reports.
             </p>
             <div className="grid gap-2">
               <Link
@@ -470,7 +469,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
             </button>
           ) : (
             <p className="text-[10px] font-mono leading-relaxed text-text-mut">
-              Sign out from the top bar. This rail keeps navigation focused.
+              Sign out from the top bar.
             </p>
           )}
           {showLogoutInSidebar && logoutError && (
