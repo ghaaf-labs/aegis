@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter_Tight, JetBrains_Mono } from "next/font/google";
 import { Providers } from "@/components/providers";
 import "./globals.css";
@@ -29,6 +29,9 @@ export const metadata: Metadata = {
     description: "AI-powered adaptive crypto portfolio management.",
     type: "website",
   },
+};
+
+export const viewport: Viewport = {
   themeColor: "#00E0FF",
 };
 

@@ -3,6 +3,9 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   distDir: process.env.NEXT_DIST_DIR ?? ".next",
   output: "standalone",
+  turbopack: {
+    root: __dirname,
+  },
   // The bottom-left "N" dev indicator overlapped the sidebar's
   // "AGENT ACTIVE" status pill, leaving "...ENT ACTIVE" visible during
   // local dev. Hidden so the sidebar reads cleanly.
