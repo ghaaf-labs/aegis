@@ -35,15 +35,17 @@ export function ValueFlowCard({
         ? `${formatCurrency(idleUsdc)} USDC${idleEurc > 0 ? ` + EURC ${idleEurc.toFixed(2)}` : ""}`
         : "No cash ready";
   const reviewText = hasIdleCash
-    ? "Review the next move"
+    ? "Approval needed"
     : targetCount > 0
-      ? `${targetCount} target assets are set`
-      : "Choose a target mix first";
+      ? "No plan pending"
+      : "Set a target first";
   const nextActionText = walletCashUnavailable
     ? "Retry wallet balance"
     : hasIdleCash
       ? "Review a plan"
-      : "Add test USDC";
+      : targetCount > 0
+        ? "Add funds"
+        : "Create target";
 
   return (
     <section
@@ -53,14 +55,14 @@ export function ValueFlowCard({
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] lg:items-start">
         <div className="font-mono">
           <p className="text-[10px] uppercase tracking-widest text-accent-agent">
-            Portfolio value
+            Money status
           </p>
           <h2 className="mt-1 text-lg font-semibold text-text-hi">
-            Cash waits here until you approve a move
+            Where your money is right now
           </h2>
           <p className="mt-2 max-w-2xl text-xs leading-relaxed text-text-lo">
-            Wallet cash is spendable. Invested value appears after an approved
-            move finishes.
+            Cash stays in your wallet until you approve a plan. After the plan
+            finishes, that amount moves into invested positions.
           </p>
         </div>
         <div className="rounded-sharp border border-border-default bg-surface p-3 font-mono">
@@ -76,7 +78,7 @@ export function ValueFlowCard({
       <div className="mt-4 grid gap-2 md:grid-cols-3">
         <FlowStep
           icon={Wallet}
-          label="Wallet cash"
+          label="Cash in wallet"
           title={walletCashText}
           tone={
             walletCashUnavailable ? "warn" : hasIdleCash ? "pnl" : "neutral"
@@ -84,13 +86,13 @@ export function ValueFlowCard({
         />
         <FlowStep
           icon={ClipboardCheck}
-          label="Review"
+          label="Approval"
           title={reviewText}
           tone={hasIdleCash ? "agent" : "neutral"}
         />
         <FlowStep
           icon={LineChart}
-          label="Invested"
+          label="Invested positions"
           title={hasInvested ? formatCurrency(investedUsd) : "Not invested yet"}
           tone={hasInvested ? "pnl" : "neutral"}
         />

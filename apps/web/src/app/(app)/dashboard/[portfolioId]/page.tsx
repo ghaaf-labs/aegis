@@ -161,17 +161,24 @@ export default function PortfolioDashboardPage() {
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-2xl font-semibold text-text-hi font-mono tracking-tight">
-                {portfolioTitle}
-              </h1>
               <span className="border border-accent-agent/50 bg-accent-agent/10 px-2 py-1 text-[10px] font-mono uppercase text-accent-agent">
                 Dashboard
               </span>
+              <span className="max-w-full truncate border border-border-default bg-bg px-2 py-1 text-[10px] font-mono uppercase tracking-widest text-text-mut">
+                Portfolio:{" "}
+                <span className="normal-case tracking-normal text-text-hi">
+                  {portfolioTitle}
+                </span>
+              </span>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <h1 className="text-2xl font-semibold text-text-hi font-mono tracking-tight">
+                Money, targets, and approvals
+              </h1>
             </div>
             <p className="mt-2 max-w-2xl text-xs font-mono leading-relaxed text-text-lo">
-              See what is still cash, what is invested, and what needs your
-              approval. Aegis only moves money after you review and confirm the
-              next action.
+              Wallet cash is available to invest. Invested value only changes
+              after you approve a plan and the move completes.
             </p>
           </div>
           <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[520px]">
