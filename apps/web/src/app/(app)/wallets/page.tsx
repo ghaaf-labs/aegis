@@ -341,9 +341,9 @@ export default function WalletPage() {
           </p>
           <p className="text-[11px] font-mono text-text-mut mt-3">
             {balanceUnavailable
-              ? "Wallet cash is unknown because the balance check did not finish. Use retry after API connectivity is restored."
+              ? "Wallet cash is unknown because the balance check did not finish. Retry before using this balance."
               : balanceLoading
-                ? "Aegis is checking balances before enabling cash actions."
+                ? "Aegis is checking balances before showing available cash."
                 : isEmpty
                   ? "This can be $0 even when you own investments. Deployed positions are counted on Dashboard and Portfolio; newly funded USDC appears here first."
                   : "This is spendable cash that has not been invested yet. Review any deployment or rebalance plan before real execution."}
@@ -396,7 +396,7 @@ function WalletOperationalPanel({
               Wallet status
             </p>
             <h2 className="mt-1 text-base font-semibold text-text-hi">
-              Wallet is ready. Balance checks confirm available cash.
+              Wallet is ready. Aegis is checking available cash.
             </h2>
           </div>
           <button
@@ -414,8 +414,8 @@ function WalletOperationalPanel({
           </button>
         </div>
         <p className="mt-3 text-xs leading-relaxed text-text-lo">
-          Copy the account address any time. Cash actions wait for a fresh
-          balance check, so an outage is never shown as a true zero.
+          Copy your address any time. If a balance check fails, Aegis says cash
+          is unknown instead of showing a false zero.
         </p>
       </div>
     </section>
@@ -429,10 +429,10 @@ function supportedNetworkRoute(blockchain: string): {
   switch (blockchain) {
     case "ARC-TESTNET":
     case "ARC":
-      return { key: "arc", label: "Primary route" };
+      return { key: "arc", label: "Arc testnet" };
     case "BASE-SEPOLIA":
     case "BASE":
-      return { key: "base", label: "Secondary route" };
+      return { key: "base", label: "Base Sepolia" };
     default:
       return null;
   }
@@ -441,13 +441,13 @@ function supportedNetworkRoute(blockchain: string): {
 function networkLabel(blockchain: string) {
   switch (blockchain) {
     case "ARC-TESTNET":
-      return "Primary route";
+      return "Arc testnet";
     case "BASE-SEPOLIA":
-      return "Secondary route";
+      return "Base Sepolia";
     case "ETH-SEPOLIA":
-      return "Ethereum route";
+      return "Ethereum Sepolia";
     case "MATIC-AMOY":
-      return "Polygon route";
+      return "Polygon Amoy";
     default:
       return blockchain.replaceAll("-", " ");
   }
@@ -465,13 +465,13 @@ function AccountWalletCard({
       <BrutalCardHeader>
         <span className="text-sm font-mono text-text-hi">Wallet address</span>
         <span className="text-xs font-mono text-accent-agent">
-          {networks.length} routes
+          {networks.length} networks
         </span>
       </BrutalCardHeader>
       <BrutalCardBody className="space-y-3">
         <p className="text-xs leading-relaxed text-text-lo">
-          Aegis creates one wallet for the user, then enables more routes behind
-          the scenes as new networks and tokens are added.
+          Use this address to fund your account. Supported networks are listed
+          below.
         </p>
         {accountAddress ? (
           <code
@@ -482,8 +482,8 @@ function AccountWalletCard({
           </code>
         ) : (
           <p className="rounded-sharp border border-warn/40 bg-warn/5 px-3 py-2 font-mono text-[11px] text-warn">
-            This account has route-specific addresses. Aegis still treats them
-            as one wallet.
+            This account uses separate addresses on some networks. Aegis still
+            shows them as one wallet.
           </p>
         )}
         <div className="flex flex-wrap gap-2">
