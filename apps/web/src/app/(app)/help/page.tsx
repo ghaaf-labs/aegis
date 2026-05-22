@@ -20,8 +20,8 @@ export default function HelpPage() {
           Help
         </h1>
         <p className="mt-1 max-w-2xl text-sm text-text-lo">
-          Quick links for the confusing parts of Aegis: wallet cash, approvals,
-          agent reasoning, tax exports, and support policy.
+          Short answers for wallet cash, approvals, agent decisions, tax
+          exports, and support.
         </p>
       </div>
 
@@ -32,12 +32,12 @@ export default function HelpPage() {
               <BrutalPill tone="agent">Where things live</BrutalPill>
             </div>
             <h2 className="font-mono text-lg font-semibold text-text-hi">
-              Values are split by state, not hidden
+              One dollar can be in only one place
             </h2>
             <p className="max-w-2xl text-sm leading-relaxed text-text-lo">
-              Wallet pages show idle cash. Dashboard and Portfolio show invested
-              positions. Transactions explain whether a rebalance is only a
-              draft, waiting for approval, executing, or already stale.
+              Cash waits in Wallets. Approved moves become invested positions on
+              Dashboard and Portfolio. Transactions shows what is waiting,
+              running, finished, or no longer usable.
             </p>
             <div className="grid gap-2 text-[11px] font-mono sm:grid-cols-3">
               <HelpFact label="Wallet" value="idle USDC / EURC" />

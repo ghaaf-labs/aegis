@@ -25,21 +25,21 @@ const HELP_ITEMS: HelpItem[] = [
     href: "/wallets",
     icon: Wallet,
     title: "Why does wallet cash show $0?",
-    body: "Wallets shows idle USDC/EURC only. Invested positions live on Dashboard and Portfolio.",
+    body: "Wallets shows cash that is not invested yet. Dashboard and Portfolio show positions after an approved move finishes.",
     cta: "Open wallet cash view",
   },
   {
     href: "/transactions",
     icon: ShieldAlert,
     title: "Why is approval blocked?",
-    body: "Transactions keeps stale, failed, historical, and completed plans visible without letting old plans execute.",
+    body: "Old, failed, and completed plans stay visible for history, but only a fresh pending plan can run.",
     cta: "Open approval history",
   },
   {
     href: "/agent-logs",
     icon: LifeBuoy,
     title: "What did the agent decide?",
-    body: "Agent Logs shows each recommendation, confidence level, and safety note in plain language.",
+    body: "Agent Logs shows the recommendation, confidence, and safety notes behind each plan.",
     cta: "Open agent reasoning",
   },
   {
@@ -63,34 +63,42 @@ export function HelpItemGrid() {
 
   return (
     <div className="grid gap-3 md:grid-cols-2">
-      {HELP_ITEMS.map((item) => (
-        <Link key={item.href} href={item.href} className="group">
-          <BrutalCard className="h-full group-hover:border-accent-agent/50">
-            <BrutalCardHeader>
-              <div className="flex items-center gap-2">
-                <item.icon className="h-4 w-4 text-accent-agent" />
-                <span className="text-sm font-mono text-text-hi">
-                  {item.title}
-                </span>
-              </div>
-            </BrutalCardHeader>
-            <BrutalCardBody className="space-y-3">
-              <p className="text-sm font-mono leading-relaxed text-text-lo">
-                {item.body}
-              </p>
-              <div className="flex items-center justify-between gap-3">
-                <span className="font-mono text-[10px] uppercase tracking-widest text-text-mut">
-                  {accessLabel}
-                </span>
-                <span className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-widest text-accent-agent">
-                  {item.cta}
-                  <ArrowRight className="h-3 w-3" aria-hidden="true" />
-                </span>
-              </div>
-            </BrutalCardBody>
-          </BrutalCard>
-        </Link>
-      ))}
+      {HELP_ITEMS.map((item) => {
+        const href =
+          sessionResolved && !sessionActive
+            ? `/login?next=${encodeURIComponent(item.href)}`
+            : item.href;
+        const cta = sessionResolved && !sessionActive ? "Continue" : item.cta;
+
+        return (
+          <Link key={item.href} href={href} className="group">
+            <BrutalCard className="h-full group-hover:border-accent-agent/50">
+              <BrutalCardHeader>
+                <div className="flex items-center gap-2">
+                  <item.icon className="h-4 w-4 text-accent-agent" />
+                  <span className="text-sm font-mono text-text-hi">
+                    {item.title}
+                  </span>
+                </div>
+              </BrutalCardHeader>
+              <BrutalCardBody className="space-y-3">
+                <p className="text-sm font-mono leading-relaxed text-text-lo">
+                  {item.body}
+                </p>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-mono text-[10px] uppercase tracking-widest text-text-mut">
+                    {accessLabel}
+                  </span>
+                  <span className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-widest text-accent-agent">
+                    {cta}
+                    <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                  </span>
+                </div>
+              </BrutalCardBody>
+            </BrutalCard>
+          </Link>
+        );
+      })}
     </div>
   );
 }
