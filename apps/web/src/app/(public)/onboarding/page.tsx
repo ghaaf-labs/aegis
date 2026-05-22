@@ -73,11 +73,13 @@ export default function OnboardingPage() {
     try {
       const session = await walletApi.session();
       applySession(session);
-    } catch {
-      resetSession();
-      setSessionResolved(true);
-      setAuthState({ kind: "signed_out" });
-      setSetupError("Aegis could not finish account setup. Try again.");
+    } catch (e) {
+      if (isSessionExpired(e)) {
+        resetSession();
+        setSessionResolved(true);
+        setAuthState({ kind: "signed_out" });
+      }
+      setSetupError("We could not finish account setup. Try again.");
     } finally {
       setRefreshingAccount(false);
     }
@@ -230,8 +232,7 @@ function OnboardingAccountPending({
       </div>
       <p className="break-all font-mono text-sm text-text-hi">{email}</p>
       <p className="mt-2 font-mono text-xs leading-relaxed text-text-lo">
-        Aegis is finishing setup for this email. Portfolio setup opens as soon
-        as the account is ready.
+        Portfolio setup opens as soon as this account is ready.
       </p>
       <div className="mt-4 grid gap-2 sm:grid-cols-2">
         <BrutalButton
@@ -282,4 +283,14 @@ function formatSignedInEmail(email: string) {
   const domain = email.slice(at + 1);
   if (local.length <= 20) return email;
   return `${local.slice(0, 8)}…@${domain}`;
+}
+
+function isSessionExpired(error: unknown) {
+  const message = ((error as Error).message || "").toLowerCase();
+  return (
+    message.startsWith("401:") ||
+    message.includes("session expired") ||
+    message.includes("session_invalid") ||
+    message.includes("unauthorized")
+  );
 }

@@ -654,7 +654,7 @@ function friendlyAuthError(error: unknown) {
     return "Enter a valid email address.";
   }
   if (lower.includes("failed to fetch") || lower.includes("networkerror")) {
-    return "Aegis could not connect. Try again.";
+    return "We could not connect. Try again.";
   }
   if (lower.includes("unauthorized") || lower.includes("session expired")) {
     return "Your session expired. Enter your email to continue.";

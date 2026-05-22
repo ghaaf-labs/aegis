@@ -369,6 +369,26 @@ describe("<EmailAuthCard />", () => {
 
     act(() => root.unmount());
   });
+
+  it("keeps connection errors free of internal product blame", async () => {
+    mockSearchParams = new URLSearchParams("email=offline@example.com");
+    vi.mocked(walletApi.session).mockRejectedValue(new Error("missing"));
+    vi.mocked(walletApi.startEmail).mockRejectedValue(
+      new Error("NetworkError: failed to fetch"),
+    );
+
+    const { root, container } = render(<EmailAuthCard />);
+    await flushEffects();
+
+    await click(container, '[data-testid="wallet-auth-submit"]');
+    await flushEffects();
+
+    expect(container.textContent).toContain("We could not connect. Try again.");
+    expect(container.textContent).not.toContain("Aegis could not");
+    expect(container.textContent).not.toContain("backend");
+
+    act(() => root.unmount());
+  });
 });
 
 function render(element: React.ReactElement): {

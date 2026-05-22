@@ -132,6 +132,38 @@ describe("<OnboardingPage /> auth boundary", () => {
 
     act(() => root.unmount());
   });
+
+  it("keeps pending-account retry errors user-safe", async () => {
+    vi.mocked(walletApi.session).mockResolvedValueOnce({
+      user: {
+        id: "user-1",
+        email: "pending@example.com",
+        riskTolerance: "moderate",
+        accountStatus: "pending_wallet",
+      },
+      accountStatus: "pending_wallet",
+      wallet: null,
+    });
+    vi.mocked(walletApi.session).mockRejectedValueOnce(new Error("offline"));
+
+    const { container, root } = render(<OnboardingPage />);
+    await flushEffects();
+
+    const retry = buttonByText(container, "Check again");
+    await act(async () => {
+      retry.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(container.textContent).toContain(
+      "We could not finish account setup. Try again.",
+    );
+    expect(container.textContent).not.toContain("Aegis could not");
+    expect(container.textContent).not.toContain("backend");
+    expect(container.textContent).not.toContain("session");
+
+    act(() => root.unmount());
+  });
 });
 
 function render(element: React.ReactElement): {

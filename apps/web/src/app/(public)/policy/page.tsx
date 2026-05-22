@@ -4,9 +4,9 @@ import { BrutalPill } from "@aegis/ui";
 import { LandingShell } from "@/components/layout/landing-shell";
 
 export const metadata: Metadata = {
-  title: "Aegis · Outcome & Refund Policy",
+  title: "Aegis · Terms & Privacy",
   description:
-    "Plain-English policy: what we refund, what we won't, how a user pauses the agent, and how disputes escalate.",
+    "Plain-English terms, privacy, account control, and refund policy for Aegis.",
 };
 
 export default function PolicyPage() {
@@ -14,18 +14,47 @@ export default function PolicyPage() {
     <LandingShell>
       <header className="mb-10 pt-4">
         <BrutalPill tone="agent" className="mb-3">
-          Operational floor
+          Account policy
         </BrutalPill>
         <h1 className="mt-3 text-4xl font-bold text-text-hi tracking-tight">
-          Outcome &amp; Refund Policy
+          Terms &amp; Privacy
         </h1>
         <p className="mt-4 text-sm text-text-lo font-mono leading-relaxed max-w-2xl">
-          The one-line version: we refund protocol fees on agent-caused failure,
-          never on market losses, and any user can pause the agent in one click.
+          The short version: verify your email, approve plans before anything
+          moves, keep control of your account, and export or close it from
+          Settings.
         </p>
       </header>
 
       <div className="space-y-6">
+        <section
+          id="terms"
+          className="scroll-mt-24 border-brutal border-border-default bg-raised p-6"
+        >
+          <h2 className="text-base font-bold text-text-hi uppercase tracking-wider mb-4">
+            Terms
+          </h2>
+          <p className="text-sm font-mono leading-relaxed text-text-lo">
+            By continuing, you ask Aegis to verify your email, prepare your
+            account for approved portfolio actions, and keep execution paused
+            until you approve a plan.
+          </p>
+        </section>
+
+        <section
+          id="privacy"
+          className="scroll-mt-24 border-brutal border-border-default bg-raised p-6"
+        >
+          <h2 className="text-base font-bold text-text-hi uppercase tracking-wider mb-4">
+            Privacy Policy
+          </h2>
+          <p className="text-sm font-mono leading-relaxed text-text-lo">
+            Aegis uses your email for sign-in, security notices, export links,
+            and account recovery. You can export your data, change your email,
+            or close the account from Settings.
+          </p>
+        </section>
+
         {/* What we refund */}
         <section className="border-brutal border-border-default bg-raised p-6">
           <h2 className="text-base font-bold text-text-hi uppercase tracking-wider mb-4">
@@ -162,11 +191,8 @@ export default function PolicyPage() {
                 2.
               </span>
               <span>
-                Email{" "}
-                <code className="text-accent-agent bg-accent-agent/10 px-1 py-0.5">
-                  support@aegis.local
-                </code>{" "}
-                with the rebalance UUID. Reply within 1 business day.
+                Contact support from Help with the rebalance ID. We reply within
+                1 business day.
               </span>
             </li>
             <li className="flex gap-3">
@@ -199,34 +225,6 @@ export default function PolicyPage() {
               </li>
             ))}
           </ul>
-        </section>
-
-        <section
-          id="terms"
-          className="scroll-mt-24 border-brutal border-border-default bg-raised p-6"
-        >
-          <h2 className="text-base font-bold text-text-hi uppercase tracking-wider mb-4">
-            Terms
-          </h2>
-          <p className="text-sm font-mono leading-relaxed text-text-lo">
-            By continuing, you ask Aegis to verify your email, prepare your
-            account for approved portfolio actions, and keep execution paused
-            until you approve a plan.
-          </p>
-        </section>
-
-        <section
-          id="privacy"
-          className="scroll-mt-24 border-brutal border-border-default bg-raised p-6"
-        >
-          <h2 className="text-base font-bold text-text-hi uppercase tracking-wider mb-4">
-            Privacy Policy
-          </h2>
-          <p className="text-sm font-mono leading-relaxed text-text-lo">
-            Aegis uses your email for sign-in, security notices, export links,
-            and account recovery. You can export your data, change your email,
-            or close the account from Settings.
-          </p>
         </section>
       </div>
 
