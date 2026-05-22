@@ -18,37 +18,11 @@ import type {
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
-const LEGACY_TOKEN_KEY = "aegis.jwt";
 const REMEMBERED_EMAIL_KEY = "aegis_email";
-
-export function getToken(): string | null {
-  if (typeof window === "undefined") return null;
-  window.localStorage.removeItem(LEGACY_TOKEN_KEY);
-  return null;
-}
-
-export function setToken(t: string | null) {
-  if (typeof window === "undefined") return;
-  window.localStorage.removeItem(LEGACY_TOKEN_KEY);
-  void t;
-}
 
 function clearRememberedAuthState() {
   if (typeof window === "undefined") return;
-  window.localStorage.removeItem(LEGACY_TOKEN_KEY);
   window.localStorage.removeItem(REMEMBERED_EMAIL_KEY);
-}
-
-async function assertServerSignedOut() {
-  const res = await fetch(`${BASE_URL}/auth/me`, {
-    cache: "no-store",
-    credentials: "include",
-  });
-  if (res.status === 401) return;
-  if (res.ok) {
-    throw new Error("logout failed: server still accepts this browser session");
-  }
-  throw new Error(`logout verification failed: ${res.status}`);
 }
 
 interface FetchOptions {
@@ -59,12 +33,14 @@ interface FetchOptions {
 
 async function request<T>(path: string, opts: FetchOptions = {}): Promise<T> {
   const body = opts.body !== undefined ? JSON.stringify(opts.body) : undefined;
-  if (opts.authed) getToken();
 
   const res = await fetch(`${BASE_URL}${path}`, {
     method: opts.method ?? "GET",
     headers: {
       "Content-Type": "application/json",
+      ...(opts.method && opts.method !== "GET"
+        ? { "X-Aegis-Request": "1" }
+        : {}),
     },
     // `credentials: 'include'` ensures the httpOnly auth cookie set by the
     // wallet endpoints rides on every cross-origin request. Backend CORS
@@ -74,117 +50,103 @@ async function request<T>(path: string, opts: FetchOptions = {}): Promise<T> {
     body,
   });
   if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const body = await res.json();
-      detail = body.message ?? body.code ?? detail;
-    } catch {
-      /* ignore */
-    }
+    const detail = await responseErrorDetail(res);
     throw new Error(`${res.status}: ${detail}`);
   }
-  // 202/204 + zero-length bodies (e.g. /rebalance/:id/execute) have nothing
+  // 204 + zero-length bodies (e.g. DELETE endpoints) have nothing
   // to parse — return undefined cast to T rather than throwing on JSON parse.
-  if (res.status === 204 || res.status === 202) {
-    return undefined as T;
-  }
+  if (res.status === 204) return undefined as T;
   const text = await res.text();
   if (!text) return undefined as T;
   return JSON.parse(text) as T;
 }
 
-// ── Wallet auth (Circle W3S User-Controlled) ──────────────────────────────
-
-/**
- * Returned by `POST /auth/wallet/create` and `/auth/wallet/login`. The
- * `bundle` is consumed by `@circle-fin/w3s-pw-web-sdk` to complete the PIN
- * ceremony; `wallet` is `null` until that completes (poll `/auth/wallet/status`).
- */
-export interface UserTokenBundle {
-  userToken: string;
-  encryptionKey: string;
-  appId: string;
-  /** Present on new-user signup, absent on returning-user login. */
-  challengeId: string | null;
+async function responseErrorDetail(res: Response) {
+  let detail = res.statusText;
+  try {
+    const body = await res.json();
+    detail =
+      body.error?.message ??
+      body.message ??
+      body.error?.code ??
+      body.code ??
+      detail;
+  } catch {
+    /* ignore */
+  }
+  return detail;
 }
+
+// ── Wallet auth ───────────────────────────────────────────────────────────
 
 export interface WalletAuthResponse {
-  user: { id: string; email: string; riskTolerance: string };
+  status: "active" | "provisioning";
+  user: WalletAuthUser;
   wallet: WalletInfo | null;
-  /** Present only when the browser must execute a Circle challenge. */
-  bundle?: UserTokenBundle | null;
-  isNewUser: boolean;
 }
 
-export interface WalletStatusResponse {
+export interface WalletAuthUser {
+  id: string;
+  email: string;
+  riskTolerance: string;
+  accountStatus: "active" | "pending_wallet";
+}
+
+export interface WalletSessionResponse {
+  user: WalletAuthUser;
   wallet: WalletInfo | null;
+  accountStatus: "active" | "pending_wallet";
 }
 
 export interface WalletAuthCodeResponse {
   challengeId: string;
   email: string;
   expiresAt: string;
+  resendInSeconds: number;
   /** Present only in local dev when RESEND_API_KEY is not configured. */
   devCode?: string;
 }
 
-export interface WalletAuthReadinessResponse {
-  circleMock: boolean;
-  emailDeliveryConfigured: boolean;
-  devCodesEnabled: boolean;
-}
-
 export const walletApi = {
-  readiness: () =>
-    request<WalletAuthReadinessResponse>("/auth/wallet/readiness"),
-  requestCode: (
-    email: string,
-    intent: "signup" | "login",
-    referrerHandle?: string,
-  ) =>
-    request<WalletAuthCodeResponse>("/auth/wallet/code", {
+  startEmail: (email: string, referrerHandle?: string) =>
+    request<WalletAuthCodeResponse>("/auth/email/start", {
       method: "POST",
-      body: { email, intent, referrerHandle },
+      body: { email, referrerHandle },
     }),
-  create: (
+  verifyEmail: (
     email: string,
     challengeId: string,
     code: string,
+    consent: {
+      tos: boolean;
+      privacy: boolean;
+      tosVersion: string;
+      privacyVersion: string;
+      marketingOptIn: boolean;
+    },
     referrerHandle?: string,
   ) =>
-    request<WalletAuthResponse>("/auth/wallet/create", {
+    request<WalletAuthResponse>("/auth/email/verify", {
       method: "POST",
-      body: { email, challengeId, code, referrerHandle },
+      body: { email, challengeId, code, consent, referrerHandle },
     }),
-  login: (email: string, challengeId: string, code: string) =>
-    request<WalletAuthResponse>("/auth/wallet/login", {
+  resendEmail: (challengeId: string) =>
+    request<WalletAuthCodeResponse>("/auth/email/resend", {
       method: "POST",
-      body: { email, challengeId, code },
+      body: { challengeId },
     }),
-  status: () =>
-    request<WalletStatusResponse>("/auth/wallet/status", { authed: true }),
-  me: () =>
-    request<{ id: string; email: string; riskTolerance: string }>("/auth/me", {
-      authed: true,
-    }),
-  meFromCookie: () =>
-    request<{ id: string; email: string; riskTolerance: string }>("/auth/me"),
+  session: () =>
+    request<WalletSessionResponse>("/auth/session", { authed: true }),
   logout: async () => {
     const res = await fetch(`${BASE_URL}/auth/logout`, {
       method: "POST",
+      headers: { "X-Aegis-Request": "1" },
       credentials: "include",
     });
     if (!res.ok) {
-      let detail = res.statusText;
-      try {
-        const body = await res.json();
-        detail = body.message ?? body.code ?? detail;
-      } catch {
-        /* ignore */
-      }
+      const detail = await responseErrorDetail(res);
       throw new Error(`${res.status}: ${detail || "logout failed"}`);
     }
-    await assertServerSignedOut();
     clearRememberedAuthState();
   },
 };
@@ -223,6 +185,29 @@ export interface UnifiedBalance {
 }
 export const gatewayApi = {
   balance: () => request<UnifiedBalance>("/gateway/balance", { authed: true }),
+};
+
+// ── Account ────────────────────────────────────────────────────────────────
+
+export interface AccountExportResponse {
+  status: "queued";
+  deliveryEmail: string;
+}
+
+export interface DeleteAccountResponse {
+  deletionRequestedAt: string;
+  completesAt: string;
+}
+
+export const accountApi = {
+  exportData: () =>
+    request<AccountExportResponse>("/account/export", { authed: true }),
+  deleteAccount: () =>
+    request<DeleteAccountResponse>("/account/delete", {
+      method: "POST",
+      body: { confirm: true },
+      authed: true,
+    }),
 };
 
 // ── Portfolio ──────────────────────────────────────────────────────────────

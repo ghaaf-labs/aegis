@@ -2,12 +2,11 @@
 
 import { useEffect, useState, type ComponentType } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import {
   BarChart3,
   Bot,
   CreditCard,
-  CircleAlert,
   CircleHelp,
   Compass,
   LayoutDashboard,
@@ -26,11 +25,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PRICING_UI_ENABLED } from "@/lib/flags";
-import {
-  userAgentApi,
-  walletApi,
-  type WalletAuthReadinessResponse,
-} from "@/lib/api";
+import { userAgentApi, walletApi } from "@/lib/api";
+import { safeNextPath } from "@/lib/auth-routing";
 import { usePortfolioStore } from "@/stores/portfolio";
 
 interface NavItem {
@@ -205,7 +201,6 @@ function isActivePath(pathname: string, item: NavItem) {
 
 export function Sidebar({ onClose }: { onClose?: () => void }) {
   const pathname = usePathname();
-  const router = useRouter();
 
   const wallet = usePortfolioStore((s) => s.wallet);
   const resetSession = usePortfolioStore((s) => s.resetSession);
@@ -215,16 +210,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
   const agentPaused = agentPausedAt !== null;
   const walletPending = sessionActive && !wallet;
   const [logoutError, setLogoutError] = useState<string | null>(null);
-  const [authReadiness, setAuthReadiness] =
-    useState<WalletAuthReadinessResponse | null>(null);
-  const [authReadinessChecked, setAuthReadinessChecked] = useState(false);
   const navSections = NAV_SECTIONS;
-  const authLocked =
-    (authReadinessChecked && !authReadiness) ||
-    (!!authReadiness &&
-      !authReadiness.emailDeliveryConfigured &&
-      !authReadiness.devCodesEnabled);
-  const authReadinessFailed = authReadinessChecked && !authReadiness;
   const showLogoutInSidebar = Boolean(onClose);
 
   const handleLogout = async () => {
@@ -236,7 +222,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
       return;
     }
     resetSession();
-    router.replace(logoutRedirect());
+    window.location.replace(logoutRedirect());
   };
 
   useEffect(() => {
@@ -249,25 +235,6 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
       .then((s) => setAgentPausedAt(s.pausedAt))
       .catch(() => {});
   }, [setAgentPausedAt, wallet]);
-
-  useEffect(() => {
-    if (sessionActive) return;
-    let alive = true;
-    walletApi
-      .readiness()
-      .then((readiness) => {
-        if (alive) setAuthReadiness(readiness);
-      })
-      .catch(() => {
-        if (alive) setAuthReadiness(null);
-      })
-      .finally(() => {
-        if (alive) setAuthReadinessChecked(true);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [sessionActive]);
 
   return (
     <aside
@@ -346,8 +313,8 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
                     title={
                       locked
                         ? walletPending
-                          ? `${item.label} requires completed Arc + Base wallet setup`
-                          : `${item.label} requires a verified wallet session`
+                          ? `${item.label} will open after account setup finishes`
+                          : `${item.label} requires sign in`
                         : item.label
                     }
                     className={cn(
@@ -393,9 +360,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
                       <LockKeyhole
                         className={cn(
                           "h-3.5 w-3.5 shrink-0",
-                          authLocked
-                            ? "text-warn"
-                            : "text-text-mut group-hover:text-accent-agent",
+                          "text-text-mut group-hover:text-accent-agent",
                         )}
                         aria-hidden="true"
                       />
@@ -425,49 +390,22 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
       <div className="px-4 py-4 border-t border-border-default">
         {!sessionActive ? (
           <div className="space-y-3">
-            <div
-              className={cn(
-                "flex items-center gap-2 rounded-sharp border bg-bg px-3 py-2",
-                authLocked ? "border-warn/40" : "border-border-default",
-              )}
-            >
-              {authLocked ? (
-                <CircleAlert className="h-3.5 w-3.5 shrink-0 text-warn" />
-              ) : (
-                <span className="h-1.5 w-1.5 shrink-0 rounded-sharp bg-text-mut" />
-              )}
-              <span
-                className={cn(
-                  "font-mono text-xs uppercase tracking-widest",
-                  authLocked ? "text-warn" : "text-text-mut",
-                )}
-              >
-                {authReadinessFailed
-                  ? "Auth check failed"
-                  : authLocked
-                    ? "Auth locked"
-                    : "Signed out"}
+            <div className="flex items-center gap-2 rounded-sharp border border-border-default bg-bg px-3 py-2">
+              <span className="h-1.5 w-1.5 shrink-0 rounded-sharp bg-text-mut" />
+              <span className="font-mono text-xs uppercase tracking-widest text-text-mut">
+                Signed out
               </span>
             </div>
             <p className="px-1 text-[11px] font-mono leading-relaxed text-text-mut">
-              {authReadinessFailed
-                ? "Full product navigation is visible, but locked routes stay closed because Aegis cannot verify the auth backend."
-                : authLocked
-                  ? "Full product navigation is visible, but locked routes go to sign-in status until RESEND_API_KEY enables real one-time codes."
-                  : "Browse strategies and help without a wallet. Sign in to manage balances, approvals, agent runs, and tax exports."}
+              Browse strategies and help without an account. Continue with email
+              to manage balances, approvals, agent runs, and tax exports.
             </p>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid gap-2">
               <Link
                 href={authHref("/login", pathname)}
-                className="inline-flex min-h-[34px] items-center justify-center rounded-sharp border border-border-default bg-bg px-2 text-center text-[11px] font-mono text-text-lo hover:border-accent-agent/50 hover:bg-accent-agent/5 hover:text-accent-agent"
+                className="inline-flex min-h-[36px] items-center justify-center rounded-sharp border border-black bg-accent-agent px-2 text-center text-[11px] font-mono font-semibold text-black shadow-brutal-sm hover:shadow-brutal"
               >
-                {authLocked ? "Sign-in status" : "Sign in"}
-              </Link>
-              <Link
-                href={authHref("/signup", pathname)}
-                className="inline-flex min-h-[34px] items-center justify-center rounded-sharp border border-black bg-accent-agent px-2 text-center text-[11px] font-mono font-semibold text-black shadow-brutal-sm hover:shadow-brutal"
-              >
-                {authLocked ? "Signup status" : "Create wallet"}
+                Continue
               </Link>
             </div>
           </div>
@@ -475,7 +413,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
           <div className="flex items-center gap-2 px-3 py-2 rounded-sharp bg-warn/5 border border-warn/30">
             <span className="w-1.5 h-1.5 rounded-sharp bg-warn shrink-0" />
             <span className="text-xs text-warn font-mono uppercase tracking-widest">
-              Wallet setup pending
+              Account setup pending
             </span>
           </div>
         ) : agentPaused ? (
@@ -505,7 +443,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
             <span className="text-[11px] font-mono text-text-mut truncate flex-1">
               {wallet
                 ? `${wallet.arcAddress.slice(0, 6)}…${wallet.arcAddress.slice(-4)}`
-                : "Wallet setup pending"}
+                : "Account setup pending"}
             </span>
           </div>
           {showLogoutInSidebar ? (
@@ -544,15 +482,15 @@ function logoutRedirect() {
 function logoutFailureMessage(error: unknown) {
   const message = (error as Error).message.toLowerCase();
   if (message.includes("still accepts")) {
-    return "Logout was rejected because the server still accepts this browser session.";
+    return "Sign out did not finish. Try again.";
   }
   if (message.includes("verification failed")) {
-    return "Aegis could not verify sign-out with the API, so this session stays active.";
+    return "Aegis could not confirm sign out. Try again.";
   }
-  return "Logout did not reach the API. Your server session may still be active.";
+  return "Aegis could not sign out. Check the connection and try again.";
 }
 
-function authHref(path: "/login" | "/signup", next: string) {
+function authHref(path: "/login", next: string) {
   const params = new URLSearchParams();
   const safeNext = safeNextPath(next);
   if (safeNext) params.set("next", safeNext);
@@ -585,11 +523,5 @@ function iconActiveClass(tone: NavSection["tone"]) {
 }
 
 function lockedDescription(walletPending: boolean) {
-  return walletPending ? "finish wallet setup first" : "sign in required";
-}
-
-function safeNextPath(path: string | null | undefined) {
-  if (!path || !path.startsWith("/") || path.startsWith("//")) return null;
-  if (path.startsWith("/login") || path.startsWith("/signup")) return null;
-  return path;
+  return walletPending ? "account setup pending" : "sign in required";
 }

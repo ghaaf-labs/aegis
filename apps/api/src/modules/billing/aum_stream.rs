@@ -451,7 +451,12 @@ mod tests {
         use rust_decimal::prelude::ToPrimitive;
         let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL required");
         let pool = sqlx::PgPool::connect(&db_url).await.unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        sqlx::migrate::Migrator::new(std::path::Path::new("./migrations"))
+            .await
+            .unwrap()
+            .run(&pool)
+            .await
+            .unwrap();
 
         let user_id: Uuid = sqlx::query_scalar(
             "INSERT INTO users (email, password_hash) VALUES ($1, 'x') RETURNING id",

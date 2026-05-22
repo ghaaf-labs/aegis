@@ -76,7 +76,7 @@ export default async function RegimeBacktestPage() {
           Headline metrics (accuracy, precision, F1) live on the{" "}
           <Link
             href="/about/regime"
-            className="text-accent-agent hover:underline"
+            className="inline-flex min-h-9 items-center text-accent-agent hover:underline"
           >
             model card
           </Link>

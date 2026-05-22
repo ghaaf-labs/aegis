@@ -20,8 +20,14 @@ pub enum ModelRoute {
 #[derive(Debug, Clone)]
 pub struct Config {
     pub database_url: String,
+    /// Server-side HMAC secret used for email-code hashes and other internal
+    /// auth tokens. Browser sessions are opaque IDs, not JWTs.
     pub jwt_secret: String,
+    /// Absolute session lifetime in hours.
     pub jwt_expiry_hours: u64,
+    /// Idle session lifetime in minutes. Any session quiet longer than this is
+    /// rejected even if its absolute TTL has not elapsed.
+    pub session_idle_timeout_minutes: u64,
     pub host: String,
     pub port: u16,
 
@@ -59,10 +65,12 @@ pub struct Config {
     pub circle_base_url: String,
     #[allow(dead_code)]
     pub circle_env: String,
-    /// Circle Wallets App ID from Console → Wallets → User-Controlled
-    /// Configurator. Required when `!circle_mock` so the browser SDK can be
-    /// initialised with the right tenant. Empty in mock mode.
-    pub circle_app_id: String,
+    /// Wallet set used for server-side Circle developer-controlled wallets.
+    /// Empty leaves new accounts in `pending_wallet` until configured.
+    pub circle_wallet_set_id: String,
+    /// Hex-encoded Circle entity secret. Used only server-side to generate a
+    /// fresh entitySecretCiphertext for each developer-controlled wallet call.
+    pub circle_entity_secret: String,
     /// When true, the wallet module uses an in-process mock provider instead
     /// of hitting Circle WaaS. Keeps local dev moving when the sandbox is
     /// unreachable or when running CI without a key.
@@ -86,7 +94,7 @@ pub struct Config {
     /// so production deploys must set this.
     pub cors_allow_origin: String,
 
-    /// Cookie name for the JWT.
+    /// Cookie name for the opaque session id.
     pub session_cookie_name: String,
 
     /// When true, the `Secure` flag is set on the auth cookie. Default true
@@ -252,6 +260,7 @@ impl Config {
             database_url: required("DATABASE_URL")?,
             jwt_secret: required("JWT_SECRET")?,
             jwt_expiry_hours: parse_or("JWT_EXPIRY_HOURS", 24)?,
+            session_idle_timeout_minutes: parse_or("SESSION_IDLE_TIMEOUT_MINUTES", 30)?,
             host: std::env::var("API_HOST").unwrap_or_else(|_| "0.0.0.0".into()),
             port: parse_or("API_PORT", 8080)?,
 
@@ -300,7 +309,8 @@ impl Config {
             circle_base_url: std::env::var("CIRCLE_BASE_URL")
                 .unwrap_or_else(|_| "https://api.circle.com".into()),
             circle_env: std::env::var("CIRCLE_ENV").unwrap_or_else(|_| "sandbox".into()),
-            circle_app_id: std::env::var("CIRCLE_APP_ID").unwrap_or_default(),
+            circle_wallet_set_id: std::env::var("CIRCLE_WALLET_SET_ID").unwrap_or_default(),
+            circle_entity_secret: std::env::var("CIRCLE_ENTITY_SECRET").unwrap_or_default(),
             circle_mock: parse_or("MOCK_CIRCLE", true)?,
 
             arc_rpc_url: std::env::var("ARC_RPC_URL")
@@ -313,7 +323,7 @@ impl Config {
 
             cors_allow_origin,
             session_cookie_name: std::env::var("SESSION_COOKIE_NAME")
-                .unwrap_or_else(|_| "aegis_jwt".into()),
+                .unwrap_or_else(|_| default_session_cookie_name(session_cookie_secure).into()),
             session_cookie_secure,
 
             cctp_attestation_url: std::env::var("CCTP_ATTESTATION_URL")
@@ -396,17 +406,18 @@ impl Config {
                 );
             }
         }
-        if !self.circle_mock {
-            if self.circle_api_key.trim().is_empty() {
-                anyhow::bail!(
-                    "MOCK_CIRCLE=false but CIRCLE_API_KEY is empty; set it or flip MOCK_CIRCLE=true"
-                );
-            }
-            if self.circle_app_id.trim().is_empty() {
-                anyhow::bail!(
-                    "MOCK_CIRCLE=false but CIRCLE_APP_ID is empty; create a Wallet App in Circle Console → Wallets → User-Controlled and set CIRCLE_APP_ID"
-                );
-            }
+        if !self.circle_mock && self.circle_api_key.trim().is_empty() {
+            anyhow::bail!(
+                "MOCK_CIRCLE=false but CIRCLE_API_KEY is empty; set it or flip MOCK_CIRCLE=true"
+            );
+        }
+        if self.session_idle_timeout_minutes == 0 {
+            anyhow::bail!("SESSION_IDLE_TIMEOUT_MINUTES must be greater than 0");
+        }
+        if self.session_idle_timeout_minutes > self.jwt_expiry_hours.saturating_mul(60) {
+            anyhow::bail!(
+                "SESSION_IDLE_TIMEOUT_MINUTES cannot exceed JWT_EXPIRY_HOURS converted to minutes"
+            );
         }
         if self.billing_v2_enabled {
             if self.nanopayments_seller_address.trim().is_empty() {
@@ -490,6 +501,14 @@ fn default_session_cookie_secure(
         .all(is_local_http_origin)
 }
 
+fn default_session_cookie_name(secure: bool) -> &'static str {
+    if secure {
+        "__Host-aegis_session"
+    } else {
+        "aegis_session"
+    }
+}
+
 fn is_local_http_origin(origin: &str) -> bool {
     let origin = origin.trim();
     origin.starts_with("http://localhost")
@@ -506,6 +525,7 @@ mod tests {
             database_url: "postgres://test".into(),
             jwt_secret: "secret".into(),
             jwt_expiry_hours: 24,
+            session_idle_timeout_minutes: 30,
             host: "0.0.0.0".into(),
             port: 8080,
             openrouter_api_key: "test".into(),
@@ -524,14 +544,16 @@ mod tests {
             circle_api_key: "circle-key".into(),
             circle_base_url: "https://api.circle.com".into(),
             circle_env: "sandbox".into(),
-            circle_app_id: "test-app-id".into(),
+            circle_wallet_set_id: "00000000-0000-4000-8000-000000000000".into(),
+            circle_entity_secret:
+                "0000000000000000000000000000000000000000000000000000000000000000".into(),
             circle_mock: true,
             arc_rpc_url: "https://testnet.arc.network".into(),
             base_rpc_url: "https://sepolia.base.org".into(),
             gateway_poll_secs: 10,
             faucet_max_usdc_per_day: 100.0,
             cors_allow_origin: "http://localhost:3000".into(),
-            session_cookie_name: "aegis_jwt".into(),
+            session_cookie_name: "aegis_session".into(),
             session_cookie_secure: false,
             cctp_attestation_url: "https://iris-api-sandbox.circle.com".into(),
             cctp_attestation_timeout_secs: 180,

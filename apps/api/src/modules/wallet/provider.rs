@@ -1,31 +1,22 @@
-//! Circle Wallets W3S User-Controlled provider.
+//! Circle Wallets provider.
 //!
-//! Three-call server side flow:
-//!
-//! 1. `ensure_user(user_id)` — POST `/v1/w3s/users` to create the Circle user
-//!    record under our internal UUID (idempotent — "user already exists"
-//!    responses are treated as success).
-//! 2. `issue_user_token(user_id, with_initialize_challenge)` — POST
-//!    `/v1/w3s/users/token` for `userToken` + `encryptionKey`, then (only on
-//!    signup) POST `/v1/w3s/user/initialize` for a `challengeId` the browser
-//!    SDK uses to complete the PIN ceremony and provision wallets.
-//! 3. `fetch_user_wallets(user_id)` — GET `/v1/w3s/wallets?userId=` to read
-//!    out the wallet IDs and addresses once the browser SDK has finished.
-//!    Returns empty Vec while still pending so the browser can poll.
-//!
-//! F-WALLET-1 (closed 2026-05-17): live `GET /v1/w3s/{config/entity,users,wallets}`
-//! probes against `https://api.circle.com` returned 200 with the existing
-//! `TEST_API_KEY:cd732deb...` key. The 401s observed earlier were from the
-//! dead `api-sandbox.circle.com` host. Per Circle docs sandbox vs prod is
-//! keyed by `TEST_API_KEY:` / `LIVE_API_KEY:` prefix, not by separate hosts.
+//! Auth now treats the verified email as the user action and provisions the
+//! wallet server-side. The live provider therefore uses Circle's
+//! developer-controlled wallet API directly: create/fetch an SCA wallet pair
+//! for Arc Testnet + Base Sepolia under our wallet set, keyed by the Aegis
+//! `users.id` as Circle `refId`.
 
 use async_trait::async_trait;
+use base64::engine::{general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use chrono::Utc;
-use reqwest::{Client, StatusCode};
+use rand::rngs::OsRng;
+use reqwest::Client;
+use rsa::{pkcs8::DecodePublicKey, Oaep, RsaPublicKey};
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use uuid::Uuid;
 
-use super::models::{UserTokenBundle, WalletInfo};
+use super::models::WalletInfo;
 use crate::config::Config;
 use crate::error::AppError;
 
@@ -36,18 +27,10 @@ const BASE_BLOCKCHAIN: &str = "BASE-SEPOLIA";
 
 #[async_trait]
 pub trait WalletProvider: Send + Sync {
-    async fn ensure_user(&self, user_id: Uuid) -> crate::error::Result<()>;
-
-    async fn issue_user_token(
-        &self,
-        user_id: Uuid,
-        with_initialize_challenge: bool,
-    ) -> crate::error::Result<UserTokenBundle>;
-
-    async fn fetch_user_wallets(&self, user_id: Uuid) -> crate::error::Result<Option<WalletInfo>>;
+    async fn provision_wallet(&self, user_id: Uuid) -> crate::error::Result<Option<WalletInfo>>;
 }
 
-// ── Live (Circle W3S) ──────────────────────────────────────────────────────
+// ── Live (Circle W3S developer-controlled) ────────────────────────────────
 
 pub struct CircleProvider<'a> {
     pub http: &'a Client,
@@ -66,148 +49,24 @@ impl<'a> CircleProvider<'a> {
     fn auth_header(&self) -> String {
         format!("Bearer {}", self.config.circle_api_key)
     }
-}
 
-#[async_trait]
-impl WalletProvider for CircleProvider<'_> {
-    async fn ensure_user(&self, user_id: Uuid) -> crate::error::Result<()> {
-        #[derive(Serialize)]
-        struct Body<'a> {
-            #[serde(rename = "userId")]
-            user_id: &'a str,
+    fn require_dev_wallet_config(&self) -> crate::error::Result<()> {
+        if self.config.circle_wallet_set_id.trim().is_empty() {
+            return Err(AppError::ServiceUnavailable(
+                "circle developer wallet set is not configured".into(),
+            ));
         }
-        let id_str = user_id.to_string();
-        let resp = self
-            .http
-            .post(self.endpoint("/w3s/users"))
-            .header("Authorization", self.auth_header())
-            .json(&Body { user_id: &id_str })
-            .send()
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("circle network: {e}")))?;
-
-        let status = resp.status();
-        if status.is_success() {
-            return Ok(());
+        if self.config.circle_entity_secret.trim().is_empty() {
+            return Err(AppError::ServiceUnavailable(
+                "circle entity secret is not configured".into(),
+            ));
         }
-        // Circle returns 409 when the user already exists. Decode the
-        // structured `code` field for any 4xx so a wording change in
-        // Circle's `message` field doesn't silently break idempotency.
-        // 155101 = "Entity (User) already exists" — treat as success.
-        if status == StatusCode::CONFLICT {
-            return Ok(());
-        }
-        let body = resp.text().await.unwrap_or_default();
-        if status.is_client_error() {
-            #[derive(serde::Deserialize)]
-            struct CircleError {
-                code: Option<i64>,
-            }
-            if let Ok(parsed) = serde_json::from_str::<CircleError>(&body) {
-                if parsed.code == Some(155101) {
-                    return Ok(());
-                }
-            }
-        }
-        Err(AppError::Internal(anyhow::anyhow!(
-            "circle ensure_user {status}: {}",
-            body.chars().take(200).collect::<String>()
-        )))
-    }
-
-    async fn issue_user_token(
-        &self,
-        user_id: Uuid,
-        with_initialize_challenge: bool,
-    ) -> crate::error::Result<UserTokenBundle> {
-        #[derive(Serialize)]
-        struct TokenReq<'a> {
-            #[serde(rename = "userId")]
-            user_id: &'a str,
-        }
-        #[derive(Deserialize)]
-        struct TokenEnvelope {
-            data: TokenData,
-        }
-        #[derive(Deserialize)]
-        struct TokenData {
-            #[serde(rename = "userToken")]
-            user_token: String,
-            #[serde(rename = "encryptionKey")]
-            encryption_key: String,
-        }
-
-        let id_str = user_id.to_string();
-        let token_envelope: TokenEnvelope = self
-            .http
-            .post(self.endpoint("/w3s/users/token"))
-            .header("Authorization", self.auth_header())
-            .json(&TokenReq { user_id: &id_str })
-            .send()
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("circle network: {e}")))?
-            .error_for_status()
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("circle token: {e}")))?
-            .json()
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("circle token decode: {e}")))?;
-
-        let mut challenge_id = None;
-        if with_initialize_challenge {
-            #[derive(Serialize)]
-            struct InitReq<'a> {
-                #[serde(rename = "idempotencyKey")]
-                idempotency_key: String,
-                blockchains: &'a [&'a str],
-                #[serde(rename = "accountType")]
-                account_type: &'a str,
-            }
-            #[derive(Deserialize)]
-            struct InitEnvelope {
-                data: InitData,
-            }
-            #[derive(Deserialize)]
-            struct InitData {
-                #[serde(rename = "challengeId")]
-                challenge_id: String,
-            }
-
-            let init_envelope: InitEnvelope = self
-                .http
-                .post(self.endpoint("/w3s/user/initialize"))
-                .header("Authorization", self.auth_header())
-                .header("X-User-Token", &token_envelope.data.user_token)
-                .json(&InitReq {
-                    idempotency_key: Uuid::new_v4().to_string(),
-                    blockchains: &[ARC_BLOCKCHAIN, BASE_BLOCKCHAIN],
-                    // SCA is required — Circle Paymaster gas abstraction
-                    // and CCTP V2 Hook execution need a smart contract
-                    // account. EOA wallets can't sponsor gas, can't run
-                    // hooks, and Circle doesn't migrate them later.
-                    account_type: "SCA",
-                })
-                .send()
-                .await
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("circle network: {e}")))?
-                .error_for_status()
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("circle initialize: {e}")))?
-                .json()
-                .await
-                .map_err(|e| {
-                    AppError::Internal(anyhow::anyhow!("circle initialize decode: {e}"))
-                })?;
-            challenge_id = Some(init_envelope.data.challenge_id);
-        }
-
-        Ok(UserTokenBundle {
-            user_token: token_envelope.data.user_token,
-            encryption_key: token_envelope.data.encryption_key,
-            app_id: self.config.circle_app_id.clone(),
-            challenge_id,
-        })
+        Ok(())
     }
 
     async fn fetch_user_wallets(&self, user_id: Uuid) -> crate::error::Result<Option<WalletInfo>> {
+        self.require_dev_wallet_config()?;
+
         #[derive(Deserialize)]
         struct WalletsEnvelope {
             data: WalletsData,
@@ -216,19 +75,19 @@ impl WalletProvider for CircleProvider<'_> {
         struct WalletsData {
             wallets: Vec<CircleWallet>,
         }
-        #[derive(Deserialize)]
-        struct CircleWallet {
-            id: String,
-            address: String,
-            blockchain: String,
-        }
 
         let url = self.endpoint("/w3s/wallets");
+        let ref_id = user_ref_id(user_id);
         let envelope: WalletsEnvelope = self
             .http
             .get(&url)
-            .query(&[("userId", user_id.to_string())])
+            .query(&[
+                ("walletSetId", self.config.circle_wallet_set_id.as_str()),
+                ("refId", ref_id.as_str()),
+                ("pageSize", "50"),
+            ])
             .header("Authorization", self.auth_header())
+            .header("X-Request-Id", Uuid::new_v4().to_string())
             .send()
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("circle network: {e}")))?
@@ -242,15 +101,133 @@ impl WalletProvider for CircleProvider<'_> {
             .data
             .wallets
             .into_iter()
+            .filter(|w| w.state.as_deref().is_none_or(|state| state == "LIVE"))
             .map(|w| (w.id, w.address, w.blockchain))
             .collect();
         Ok(materialize_wallet(&rows))
     }
+
+    async fn create_user_wallets(&self, user_id: Uuid) -> crate::error::Result<Option<WalletInfo>> {
+        self.require_dev_wallet_config()?;
+
+        #[derive(Serialize)]
+        struct CreateWalletReq {
+            #[serde(rename = "idempotencyKey")]
+            idempotency_key: String,
+            blockchains: [&'static str; 2],
+            #[serde(rename = "entitySecretCiphertext")]
+            entity_secret_ciphertext: String,
+            #[serde(rename = "walletSetId")]
+            wallet_set_id: String,
+            #[serde(rename = "accountType")]
+            account_type: &'static str,
+            count: u8,
+            metadata: [WalletMetadata; 1],
+        }
+        #[derive(Serialize)]
+        struct WalletMetadata {
+            name: String,
+            #[serde(rename = "refId")]
+            ref_id: String,
+        }
+        #[derive(Deserialize)]
+        struct WalletsEnvelope {
+            data: WalletsData,
+        }
+        #[derive(Deserialize)]
+        struct WalletsData {
+            wallets: Vec<CircleWallet>,
+        }
+
+        let ref_id = user_ref_id(user_id);
+        let body = CreateWalletReq {
+            idempotency_key: user_id.to_string(),
+            blockchains: [ARC_BLOCKCHAIN, BASE_BLOCKCHAIN],
+            entity_secret_ciphertext: self.entity_secret_ciphertext().await?,
+            wallet_set_id: self.config.circle_wallet_set_id.clone(),
+            account_type: "SCA",
+            count: 1,
+            metadata: [WalletMetadata {
+                name: format!("Aegis account {}", &ref_id[..8]),
+                ref_id,
+            }],
+        };
+
+        let envelope: WalletsEnvelope = self
+            .http
+            .post(self.endpoint("/w3s/developer/wallets"))
+            .header("Authorization", self.auth_header())
+            .header("X-Request-Id", Uuid::new_v4().to_string())
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("circle network: {e}")))?
+            .error_for_status()
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("circle create_wallets: {e}")))?
+            .json()
+            .await
+            .map_err(|e| {
+                AppError::Internal(anyhow::anyhow!("circle create_wallets decode: {e}"))
+            })?;
+
+        let rows: Vec<(String, String, String)> = envelope
+            .data
+            .wallets
+            .into_iter()
+            .map(|w| (w.id, w.address, w.blockchain))
+            .collect();
+        Ok(materialize_wallet(&rows))
+    }
+
+    async fn entity_secret_ciphertext(&self) -> crate::error::Result<String> {
+        #[derive(Deserialize)]
+        struct PublicKeyEnvelope {
+            data: PublicKeyData,
+        }
+        #[derive(Deserialize)]
+        struct PublicKeyData {
+            #[serde(rename = "publicKey")]
+            public_key: String,
+        }
+
+        let envelope: PublicKeyEnvelope = self
+            .http
+            .get(self.endpoint("/w3s/config/entity/publicKey"))
+            .header("Authorization", self.auth_header())
+            .header("X-Request-Id", Uuid::new_v4().to_string())
+            .send()
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("circle network: {e}")))?
+            .error_for_status()
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("circle public_key: {e}")))?
+            .json()
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("circle public_key decode: {e}")))?;
+
+        encrypt_entity_secret(&self.config.circle_entity_secret, &envelope.data.public_key)
+    }
+}
+
+#[async_trait]
+impl WalletProvider for CircleProvider<'_> {
+    async fn provision_wallet(&self, user_id: Uuid) -> crate::error::Result<Option<WalletInfo>> {
+        if let Some(existing) = self.fetch_user_wallets(user_id).await? {
+            return Ok(Some(existing));
+        }
+        self.create_user_wallets(user_id).await
+    }
+}
+
+#[derive(Deserialize)]
+struct CircleWallet {
+    id: String,
+    address: String,
+    blockchain: String,
+    state: Option<String>,
 }
 
 /// Pair Circle's per-chain wallet rows into one `WalletInfo`. Returns `None`
-/// until both ARC and BASE rows are present, so the browser keeps polling
-/// `/auth/wallet/status` while Circle is still provisioning.
+/// until both ARC and BASE rows are present.
 fn materialize_wallet(rows: &[(String, String, String)]) -> Option<WalletInfo> {
     let mut arc = None;
     let mut base = None;
@@ -276,6 +253,42 @@ fn materialize_wallet(rows: &[(String, String, String)]) -> Option<WalletInfo> {
     })
 }
 
+fn user_ref_id(user_id: Uuid) -> String {
+    user_id.to_string()
+}
+
+fn encrypt_entity_secret(
+    entity_secret_hex: &str,
+    public_key: &str,
+) -> crate::error::Result<String> {
+    let entity_secret_hex = entity_secret_hex.trim().trim_start_matches("0x");
+    let entity_secret = hex::decode(entity_secret_hex).map_err(|e| {
+        AppError::ServiceUnavailable(format!("circle entity secret must be hex encoded: {e}"))
+    })?;
+    if entity_secret.len() != 32 {
+        return Err(AppError::ServiceUnavailable(
+            "circle entity secret must decode to 32 bytes".into(),
+        ));
+    }
+
+    let public_key = normalize_public_key_pem(public_key);
+    let public_key = RsaPublicKey::from_public_key_pem(&public_key)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("circle public_key parse: {e}")))?;
+    let encrypted = public_key
+        .encrypt(&mut OsRng, Oaep::new::<Sha256>(), &entity_secret)
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("circle entity secret encrypt: {e}")))?;
+    Ok(BASE64_STANDARD.encode(encrypted))
+}
+
+fn normalize_public_key_pem(public_key: &str) -> String {
+    let trimmed = public_key.trim().replace("\\n", "\n");
+    if trimmed.contains("BEGIN PUBLIC KEY") {
+        trimmed
+    } else {
+        format!("-----BEGIN PUBLIC KEY-----\n{trimmed}\n-----END PUBLIC KEY-----")
+    }
+}
+
 // ── Mock (offline dev) ─────────────────────────────────────────────────────
 
 pub struct MockProvider;
@@ -288,24 +301,7 @@ impl Default for MockProvider {
 
 #[async_trait]
 impl WalletProvider for MockProvider {
-    async fn ensure_user(&self, _user_id: Uuid) -> crate::error::Result<()> {
-        Ok(())
-    }
-
-    async fn issue_user_token(
-        &self,
-        user_id: Uuid,
-        _with_initialize_challenge: bool,
-    ) -> crate::error::Result<UserTokenBundle> {
-        Ok(UserTokenBundle {
-            user_token: format!("mock-token-{user_id}"),
-            encryption_key: format!("mock-key-{user_id}"),
-            app_id: "mock-app-id".into(),
-            challenge_id: None,
-        })
-    }
-
-    async fn fetch_user_wallets(&self, user_id: Uuid) -> crate::error::Result<Option<WalletInfo>> {
+    async fn provision_wallet(&self, user_id: Uuid) -> crate::error::Result<Option<WalletInfo>> {
         let seed = stable_hash(&user_id.to_string());
         Ok(Some(WalletInfo {
             wallet_id: format!("mock_wallet_{seed:016x}"),
@@ -329,29 +325,10 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn mock_issue_token_deterministic_per_user() {
+    async fn mock_provision_wallet_returns_addresses() {
         let p = MockProvider;
         let id = Uuid::new_v4();
-        let a = p.issue_user_token(id, true).await.unwrap();
-        let b = p.issue_user_token(id, true).await.unwrap();
-        assert_eq!(a.user_token, b.user_token);
-        assert_eq!(a.encryption_key, b.encryption_key);
-        assert!(a.challenge_id.is_none()); // mock skips SDK ceremony
-    }
-
-    #[tokio::test]
-    async fn mock_issue_token_skips_challenge_when_not_requested() {
-        let p = MockProvider;
-        let id = Uuid::new_v4();
-        let bundle = p.issue_user_token(id, false).await.unwrap();
-        assert!(bundle.challenge_id.is_none());
-    }
-
-    #[tokio::test]
-    async fn mock_fetch_user_wallets_returns_addresses() {
-        let p = MockProvider;
-        let id = Uuid::new_v4();
-        let w = p.fetch_user_wallets(id).await.unwrap().unwrap();
+        let w = p.provision_wallet(id).await.unwrap().unwrap();
         assert!(w.wallet_id.starts_with("mock_wallet_"));
         assert!(w.arc_address.starts_with("0xARC"));
         assert!(w.base_address.starts_with("0xBASE"));
@@ -378,5 +355,12 @@ mod tests {
         let rows: Vec<(String, String, String)> =
             vec![("circle-w-1".into(), "0xARC1".into(), ARC_BLOCKCHAIN.into())];
         assert!(materialize_wallet(&rows).is_none());
+    }
+
+    #[test]
+    fn normalizes_public_key_body_to_pem() {
+        let pem = normalize_public_key_pem("abc");
+        assert!(pem.starts_with("-----BEGIN PUBLIC KEY-----"));
+        assert!(pem.ends_with("-----END PUBLIC KEY-----"));
     }
 }

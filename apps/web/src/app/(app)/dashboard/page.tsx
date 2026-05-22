@@ -40,14 +40,14 @@ export default function DashboardIndex() {
           </h1>
           <p className="mt-2 text-xs font-mono text-text-lo leading-relaxed">
             Aegis is checking your wallet session and loading portfolios. If
-            this does not move after a few seconds, sign in again with the same
+            this does not move after a few seconds, continue again with the same
             email.
           </p>
           <Link
             href="/login"
             className="mt-4 inline-flex px-3 py-1.5 border-2 border-accent-agent bg-accent-agent text-black text-xs font-semibold"
           >
-            Sign in
+            Continue
           </Link>
         </div>
       </div>

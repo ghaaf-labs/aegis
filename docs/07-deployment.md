@@ -235,11 +235,12 @@ alloy = { version = "0.5", features = ["full"] }
 docker compose -f infra/docker/docker-compose.prod.yml up -d
 curl https://${AEGIS_DOMAIN}/api/health
 
-# 2. Create a passkey wallet, fund 100 USDC.
-#    (run from the browser at /signup)
+# 2. Continue with email, then fund 100 USDC.
+#    (run from the browser at /login)
 
 # 3. Open a portfolio, force a regime flip.
-curl -X POST -H "Authorization: Bearer $TOKEN" \
+curl -X POST -H "X-Aegis-Request: 1" \
+  -H "Cookie: __Host-aegis_session=$SESSION_ID" \
   https://${AEGIS_DOMAIN}/api/agent/analyze \
   -d '{"portfolioId":"…", "triggeredBy":"regime_flip"}'
 

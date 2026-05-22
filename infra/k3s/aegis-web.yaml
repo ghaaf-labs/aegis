@@ -23,6 +23,8 @@ spec:
               name: http
           # The Next.js build bakes NEXT_PUBLIC_* into the bundle, so these
           # must be set at *build* time, not here. See infra/docker/Dockerfile.web.
+          env:
+            - { name: SESSION_COOKIE_NAME, value: "__Host-aegis_session" }
           readinessProbe:
             httpGet: { path: /, port: 3000 }
             initialDelaySeconds: 10

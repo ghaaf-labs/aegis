@@ -26,7 +26,7 @@ const HELP_ITEMS = [
     href: "/transactions",
     icon: ShieldAlert,
     title: "Why is approval blocked?",
-    body: "Transactions keeps stale, mock, failed, and completed plans visible without letting old plans execute.",
+    body: "Transactions keeps stale, failed, historical, and completed plans visible without letting old plans execute.",
     cta: "Open approval history",
   },
   {
@@ -132,7 +132,7 @@ export default function HelpPage() {
           </p>
           <Link
             href="/policy"
-            className="mt-3 inline-flex items-center gap-2 border border-accent-agent/40 bg-accent-agent/10 px-3 py-2 text-xs font-mono text-accent-agent hover:border-accent-agent"
+            className="mt-3 inline-flex min-h-10 items-center gap-2 border border-accent-agent/40 bg-accent-agent/10 px-3 py-2 text-xs font-mono text-accent-agent hover:border-accent-agent"
           >
             Open policy
             <ArrowRight className="h-3 w-3" />

@@ -17,11 +17,14 @@ import {
   ListChecks,
   SquareTerminal,
   LockKeyhole,
+  Download,
+  Loader2,
+  Trash2,
 } from "lucide-react";
 import { PRICING_UI_ENABLED } from "@/lib/flags";
 import { DigestOptIn } from "@/components/settings/digest-opt-in";
 import { DiaryVisibilityToggle } from "@/components/settings/diary-visibility-toggle";
-import { portfolioApi, walletApi } from "@/lib/api";
+import { accountApi, portfolioApi, walletApi } from "@/lib/api";
 import { useApiQuery } from "@/lib/use-api-query";
 import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
 
@@ -37,6 +40,7 @@ interface SectionLink {
 export default function SettingsIndex() {
   const portfolio = useActivePortfolio();
   const wallet = usePortfolioStore((s) => s.wallet);
+  const resetSession = usePortfolioStore((s) => s.resetSession);
   const portfolioId = portfolio?.id ?? "";
 
   const diaryQuery = useApiQuery(
@@ -50,17 +54,26 @@ export default function SettingsIndex() {
   const diaryPublic = localDiaryPublic ?? diaryQuery.data?.diaryPublic ?? false;
 
   const [storedEmail, setStoredEmail] = useState("");
+  const [exportStatus, setExportStatus] = useState<
+    "idle" | "sending" | "sent" | "error"
+  >("idle");
+  const [exportMessage, setExportMessage] = useState("");
+  const [deleteConfirming, setDeleteConfirming] = useState(false);
+  const [deleteStatus, setDeleteStatus] = useState<
+    "idle" | "closing" | "error"
+  >("idle");
+  const [deleteMessage, setDeleteMessage] = useState("");
   useEffect(() => {
     let cancelled = false;
     const remembered = localStorage.getItem("aegis_email") ?? "";
     setStoredEmail(remembered);
     if (remembered) return;
     walletApi
-      .me()
-      .then((user) => {
+      .session()
+      .then((session) => {
         if (cancelled) return;
-        localStorage.setItem("aegis_email", user.email);
-        setStoredEmail(user.email);
+        localStorage.setItem("aegis_email", session.user.email);
+        setStoredEmail(session.user.email);
       })
       .catch(() => {
         if (!cancelled) setStoredEmail("");
@@ -69,6 +82,39 @@ export default function SettingsIndex() {
       cancelled = true;
     };
   }, []);
+
+  const requestExport = async () => {
+    setExportStatus("sending");
+    setExportMessage("");
+    try {
+      const response = await accountApi.exportData();
+      setExportStatus("sent");
+      setExportMessage(`Export queued. Check ${response.deliveryEmail}.`);
+    } catch (e) {
+      setExportStatus("error");
+      setExportMessage(friendlyAccountError(e));
+    }
+  };
+
+  const closeAccount = async () => {
+    if (!deleteConfirming) {
+      setDeleteConfirming(true);
+      setDeleteMessage("Click Close account again to confirm.");
+      return;
+    }
+    setDeleteStatus("closing");
+    setDeleteMessage("");
+    try {
+      await accountApi.deleteAccount();
+      resetSession();
+      localStorage.removeItem("aegis_email");
+      window.location.replace("/login?signedOut=1");
+    } catch (e) {
+      setDeleteStatus("error");
+      setDeleteMessage(friendlyAccountError(e));
+      setDeleteConfirming(false);
+    }
+  };
 
   const sections: SectionLink[] = [
     {
@@ -147,13 +193,12 @@ export default function SettingsIndex() {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <p className="text-[10px] uppercase tracking-widest text-warn">
-                Wallet setup required
+                Account setup required
               </p>
               <p className="mt-2 max-w-2xl text-xs leading-relaxed text-text-lo">
-                This browser may have an app session, but Aegis has not received
-                real Arc + Base Circle wallet addresses yet. Portfolio, tax,
-                billing, peg, and agent controls stay locked until wallet setup
-                finishes.
+                This browser may have an app session, but account setup is not
+                ready yet. Portfolio, tax, billing, peg, and agent controls stay
+                locked until setup finishes.
               </p>
             </div>
             <Link
@@ -165,6 +210,85 @@ export default function SettingsIndex() {
           </div>
         </section>
       )}
+
+      <section>
+        <h2 className="text-xs uppercase tracking-wider text-text-mut font-mono mb-3">
+          Account
+        </h2>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div className="rounded-sharp border-brutal border-border-default bg-bg p-4">
+            <div className="flex items-start gap-3">
+              <Download className="mt-0.5 h-4 w-4 shrink-0 text-accent-agent" />
+              <div className="min-w-0 flex-1">
+                <p className="font-mono text-sm font-semibold text-text-hi">
+                  Export data
+                </p>
+                <p className="mt-1 font-mono text-[11px] leading-relaxed text-text-lo">
+                  Receive a JSON archive by email.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void requestExport()}
+                  disabled={exportStatus === "sending"}
+                  className="mt-3 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-sharp border-brutal border-black bg-accent-agent px-4 font-mono text-sm font-semibold text-black shadow-brutal-sm hover:shadow-brutal disabled:opacity-50"
+                >
+                  {exportStatus === "sending" ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Download className="h-4 w-4" />
+                  )}
+                  Export
+                </button>
+                {exportMessage && (
+                  <p
+                    className={`mt-2 font-mono text-[11px] leading-relaxed ${
+                      exportStatus === "error" ? "text-risk" : "text-text-lo"
+                    }`}
+                  >
+                    {exportMessage}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-sharp border-brutal border-risk/45 bg-risk/5 p-4">
+            <div className="flex items-start gap-3">
+              <Trash2 className="mt-0.5 h-4 w-4 shrink-0 text-risk" />
+              <div className="min-w-0 flex-1">
+                <p className="font-mono text-sm font-semibold text-text-hi">
+                  Close account
+                </p>
+                <p className="mt-1 font-mono text-[11px] leading-relaxed text-text-lo">
+                  Available only after wallet balances are empty.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void closeAccount()}
+                  disabled={deleteStatus === "closing"}
+                  className="mt-3 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-sharp border-brutal border-risk bg-risk px-4 font-mono text-sm font-semibold text-black shadow-brutal-sm hover:shadow-brutal disabled:opacity-50"
+                >
+                  {deleteStatus === "closing" ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-4 w-4" />
+                  )}
+                  Close account
+                </button>
+                {deleteMessage && (
+                  <p
+                    className={`mt-2 font-mono text-[11px] leading-relaxed ${
+                      deleteStatus === "error" ? "text-risk" : "text-text-lo"
+                    }`}
+                  >
+                    {deleteMessage}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
 
       <section>
         <h2 className="text-xs uppercase tracking-wider text-text-mut font-mono mb-3">
@@ -181,7 +305,7 @@ export default function SettingsIndex() {
                   href={locked ? "/wallets" : s.href}
                   title={
                     locked
-                      ? `${s.title} unlocks after Circle returns Arc + Base wallet addresses`
+                      ? `${s.title} unlocks after account setup finishes`
                       : s.title
                   }
                   className={`group flex items-start gap-3 rounded-sharp border-brutal bg-bg p-4 transition-colors ${
@@ -201,7 +325,7 @@ export default function SettingsIndex() {
                     </p>
                     <p className="text-[11px] text-text-lo font-mono mt-0.5 leading-relaxed">
                       {locked
-                        ? "Finish wallet setup first. This page uses wallet-backed data or actions."
+                        ? "Finish account setup first. This page uses wallet-backed data or actions."
                         : s.description}
                     </p>
                   </div>
@@ -241,4 +365,21 @@ export default function SettingsIndex() {
       )}
     </div>
   );
+}
+
+function friendlyAccountError(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  if (message.includes("funds_present")) {
+    return "Move your funds out before closing your account.";
+  }
+  if (message.includes("export email is not configured")) {
+    return "Aegis could not prepare the export email. Try again later.";
+  }
+  if (message.includes("balance cannot be verified")) {
+    return "Aegis could not verify balances. Try again later.";
+  }
+  if (message.includes("401") || message.includes("unauthorized")) {
+    return "Your session expired. Enter your email to continue.";
+  }
+  return "Something went wrong. Try again.";
 }

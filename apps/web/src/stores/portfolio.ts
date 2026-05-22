@@ -58,7 +58,7 @@ interface PortfolioState {
   pegAlerts: PegAlert[];
   /** Global scheduled-agent pause timestamp. Null means scheduled triggers run. */
   agentPausedAt: string | null;
-  /** True after `/auth/me` or wallet login confirms an active session. */
+  /** True after `/auth/session` confirms an active session. */
   sessionActive: boolean;
 
   setPortfolios: (p: Portfolio[]) => void;

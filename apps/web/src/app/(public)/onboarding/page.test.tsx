@@ -19,8 +19,7 @@ vi.mock("@/components/onboarding/goal-wizard", () => ({
 
 vi.mock("@/lib/api", () => ({
   walletApi: {
-    me: vi.fn(),
-    status: vi.fn(),
+    session: vi.fn(),
     logout: vi.fn(),
   },
 }));
@@ -40,12 +39,14 @@ afterEach(() => {
 
 describe("<OnboardingPage /> auth boundary", () => {
   it("shows the verified session and logout before rendering portfolio setup", async () => {
-    vi.mocked(walletApi.me).mockResolvedValue({
-      id: "user-1",
-      email: "user@example.com",
-      riskTolerance: "moderate",
-    });
-    vi.mocked(walletApi.status).mockResolvedValue({
+    vi.mocked(walletApi.session).mockResolvedValue({
+      user: {
+        id: "user-1",
+        email: "user@example.com",
+        riskTolerance: "moderate",
+        accountStatus: "active",
+      },
+      accountStatus: "active",
       wallet: {
         walletId: "wallet-live",
         arcAddress: "0x1111111111111111111111111111111111111111",
@@ -58,7 +59,7 @@ describe("<OnboardingPage /> auth boundary", () => {
     const { container, root } = render(<OnboardingPage />);
     await flushEffects();
 
-    expect(container.textContent).toContain("SESSION VERIFIED");
+    expect(container.textContent).toContain("Create your portfolio");
     expect(container.textContent).toContain("user@example.com");
     expect(
       container.querySelector('[data-testid="goal-wizard"]'),
@@ -76,20 +77,53 @@ describe("<OnboardingPage /> auth boundary", () => {
     act(() => root.unmount());
   });
 
-  it("blocks portfolio setup when the session has no real wallet yet", async () => {
-    vi.mocked(walletApi.me).mockResolvedValue({
-      id: "user-1",
-      email: "pending@example.com",
-      riskTolerance: "moderate",
+  it("blocks portfolio setup while the account is still finishing", async () => {
+    vi.mocked(walletApi.session).mockResolvedValueOnce({
+      user: {
+        id: "user-1",
+        email: "pending@example.com",
+        riskTolerance: "moderate",
+        accountStatus: "pending_wallet",
+      },
+      accountStatus: "pending_wallet",
+      wallet: null,
     });
-    vi.mocked(walletApi.status).mockResolvedValue({ wallet: null });
+    vi.mocked(walletApi.session).mockResolvedValueOnce({
+      user: {
+        id: "user-1",
+        email: "pending@example.com",
+        riskTolerance: "moderate",
+        accountStatus: "active",
+      },
+      accountStatus: "active",
+      wallet: {
+        walletId: "wallet-live",
+        arcAddress: "0x1111111111111111111111111111111111111111",
+        baseAddress: "0x2222222222222222222222222222222222222222",
+        createdAt: new Date().toISOString(),
+      },
+    });
 
     const { container, root } = render(<OnboardingPage />);
     await flushEffects();
 
-    expect(container.textContent).toContain("Finish wallet setup first");
+    expect(container.textContent).toContain("Setting up your account");
     expect(container.textContent).toContain("pending@example.com");
+    expect(container.textContent).not.toContain("Circle");
+    expect(container.textContent).not.toContain("Arc + Base");
     expect(container.querySelector('[data-testid="goal-wizard"]')).toBeNull();
+    expect(container.textContent).not.toContain("Try again");
+
+    const retry = buttonByText(container, "Check again");
+    await act(async () => {
+      retry.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(walletApi.session).toHaveBeenCalledTimes(2);
+    expect(
+      container.querySelector('[data-testid="goal-wizard"]'),
+    ).not.toBeNull();
 
     act(() => root.unmount());
   });

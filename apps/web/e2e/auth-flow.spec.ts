@@ -3,6 +3,7 @@ import {
   API_BASE,
   createVerifiedAccount,
   requireDevCodes,
+  sessionCookieHeader,
 } from "./helpers/auth";
 
 test.beforeEach(async () => {
@@ -17,7 +18,8 @@ async function seedPortfolio(token: string) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
+      "X-Aegis-Request": "1",
+      Cookie: sessionCookieHeader(token),
     },
     body: JSON.stringify({
       name: "Auth Flow Portfolio",
@@ -47,34 +49,39 @@ test("AUTH1 — login restores an existing user and reaches dashboard", async ({
 
   await page.goto("/login");
   await page.locator('[data-testid="wallet-auth-email"]').fill(email);
+  const startResponse = page.waitForResponse(
+    (res) =>
+      res.url().endsWith("/auth/email/start") &&
+      res.request().method() === "POST",
+  );
   await page.locator('[data-testid="wallet-auth-submit"]').click();
-  const devCodeText = await page.getByText(/Mock dev code:/i).textContent();
-  const code = devCodeText?.match(/\b\d{6}\b/)?.[0];
+  const code = ((await (await startResponse).json()) as { devCode?: string })
+    .devCode;
   expect(code).toBeTruthy();
   await page.locator('[data-testid="wallet-auth-code"]').fill(code!);
   await page.locator('[data-testid="wallet-auth-submit"]').click();
   await expect(page).toHaveURL(/\/dashboard/, { timeout: 15_000 });
 });
 
-test("AUTH2 — signup with an existing wallet refuses silent session restore", async ({
+test("AUTH2 — canonical login route restores an existing user through the same flow", async ({
   page,
 }) => {
   const email = `existing-${Date.now()}-${Math.random().toString(16).slice(2)}@aegis.local`;
   const { token } = await createVerifiedAccount(email);
   await seedPortfolio(token);
 
-  await page.goto("/signup");
+  await page.goto("/login");
   await page.locator('[data-testid="wallet-auth-email"]').fill(email);
+  const startResponse = page.waitForResponse(
+    (res) =>
+      res.url().endsWith("/auth/email/start") &&
+      res.request().method() === "POST",
+  );
   await page.locator('[data-testid="wallet-auth-submit"]').click();
-  const devCodeText = await page.getByText(/Mock dev code:/i).textContent();
-  const code = devCodeText?.match(/\b\d{6}\b/)?.[0];
+  const code = ((await (await startResponse).json()) as { devCode?: string })
+    .devCode;
   expect(code).toBeTruthy();
   await page.locator('[data-testid="wallet-auth-code"]').fill(code!);
   await page.locator('[data-testid="wallet-auth-submit"]').click();
-  await expect(
-    page.getByText(/This email already has a wallet/i),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: /Sign in with this email/i }),
-  ).toBeVisible();
+  await expect(page).toHaveURL(/\/dashboard/, { timeout: 15_000 });
 });

@@ -9,15 +9,14 @@ import {
   strategiesApi,
   walletApi,
   type StrategyPublic,
-  type WalletAuthReadinessResponse,
 } from "@/lib/api";
 import { useApiQuery } from "@/lib/use-api-query";
 import { usePortfolioStore } from "@/stores/portfolio";
 
 // SM-3 / SM-4 — single /strategies route handles both authed and public
-// visitors. Authed users get an "Adopt" button; public visitors get a
-// "Sign up to adopt" CTA. Auth check deferred to after hydration to avoid
-// a "Sign up" flash for logged-in users.
+// visitors. Authed users get an "Adopt" button; public visitors continue with
+// email. Auth check deferred to after hydration to avoid a public CTA flash for
+// logged-in users.
 
 export default function StrategiesPage() {
   const router = useRouter();
@@ -28,21 +27,14 @@ export default function StrategiesPage() {
   const [adopting, setAdopting] = useState<string | null>(null);
   const [adoptError, setAdoptError] = useState<string | null>(null);
   const [authed, setAuthed] = useState(false);
-  const [authReadiness, setAuthReadiness] =
-    useState<WalletAuthReadinessResponse | null>(null);
   const hasPortfolio = usePortfolioStore((s) => s.portfolios.length > 0);
   const setSessionActive = usePortfolioStore((s) => s.setSessionActive);
   const addPortfolio = usePortfolioStore((s) => s.addPortfolio);
 
-  const authLocked =
-    !!authReadiness &&
-    !authReadiness.emailDeliveryConfigured &&
-    !authReadiness.devCodesEnabled;
-
   useEffect(() => {
     let alive = true;
     walletApi
-      .me()
+      .session()
       .then(() => {
         if (!alive) return;
         setAuthed(true);
@@ -57,21 +49,6 @@ export default function StrategiesPage() {
       alive = false;
     };
   }, [setSessionActive]);
-
-  useEffect(() => {
-    let alive = true;
-    walletApi
-      .readiness()
-      .then((readiness) => {
-        if (alive) setAuthReadiness(readiness);
-      })
-      .catch(() => {
-        if (alive) setAuthReadiness(null);
-      });
-    return () => {
-      alive = false;
-    };
-  }, []);
 
   const onAdopt = async (id: string) => {
     setAdopting(id);
@@ -125,7 +102,7 @@ export default function StrategiesPage() {
               Want a completely custom target instead?{" "}
               <Link
                 href="/onboarding"
-                className="text-accent-agent hover:underline"
+                className="inline-flex min-h-9 items-center text-accent-agent hover:underline"
               >
                 Open the build-from-scratch wizard
               </Link>
@@ -147,7 +124,7 @@ export default function StrategiesPage() {
             Curated allocations are added regularly. You can always{" "}
             <Link
               href="/onboarding"
-              className="text-accent-pnl hover:underline"
+              className="inline-flex min-h-9 items-center text-accent-pnl hover:underline"
             >
               build a custom portfolio
             </Link>{" "}
@@ -182,16 +159,10 @@ export default function StrategiesPage() {
               <StrategyCard
                 key={s.id}
                 strategy={s}
-                actionLabel={
-                  authLocked ? "Open signup status" : "Sign up to adopt"
-                }
-                actionHref={authHref("/signup", "/strategies")}
-                actionTone={authLocked ? "agent" : "pnl"}
-                disabledReason={
-                  authLocked
-                    ? "Real signup is waiting on email delivery. You can inspect the signup status, but Aegis will not create a wallet from email alone."
-                    : "Creates a wallet first, then returns here so you can adopt a strategy."
-                }
+                actionLabel="Continue"
+                actionHref={authHref("/login", "/strategies")}
+                actionTone="agent"
+                disabledReason="Use one email code. Aegis signs you in or creates the account, then returns here."
               />
             ),
           )}
@@ -200,25 +171,12 @@ export default function StrategiesPage() {
 
       {!authed && (
         <footer className="text-xs text-text-mut font-mono">
-          {authLocked
-            ? "Real auth is currently locked because verification email delivery is not configured. "
-            : "Already have an account? "}
+          Ready to adopt a strategy?{" "}
           <Link
-            href={authLocked ? authHref("/login", "/dashboard") : "/dashboard"}
-            className="text-accent-agent hover:underline"
+            href={authHref("/login", "/strategies")}
+            className="inline-flex min-h-9 items-center rounded-sharp text-accent-agent hover:underline"
           >
-            {authLocked ? "Open sign-in status" : "Open dashboard"}
-          </Link>
-          . {authLocked ? "New user? " : "Want to adopt one? "}
-          <Link
-            href={authHref("/signup", "/strategies")}
-            className={
-              authLocked
-                ? "text-accent-agent hover:underline"
-                : "text-accent-pnl hover:underline"
-            }
-          >
-            {authLocked ? "Open signup status" : "Create a wallet"}
+            Continue with email
           </Link>
           .
         </footer>
@@ -227,7 +185,7 @@ export default function StrategiesPage() {
   );
 }
 
-function authHref(path: "/login" | "/signup", next: string) {
+function authHref(path: "/login", next: string) {
   const params = new URLSearchParams({ next });
   return `${path}?${params.toString()}`;
 }

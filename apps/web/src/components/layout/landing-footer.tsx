@@ -32,7 +32,7 @@ export function LandingFooter() {
               <Link
                 key={link.href}
                 href={link.href}
-                className="block text-xs font-mono text-text-mut hover:text-text-hi transition-colors"
+                className="flex min-h-9 items-center text-xs font-mono text-text-mut hover:text-text-hi transition-colors"
               >
                 {link.label}
               </Link>
@@ -50,7 +50,7 @@ export function LandingFooter() {
               <Link
                 key={link.href}
                 href={link.href}
-                className="block text-xs font-mono text-text-mut hover:text-text-hi transition-colors"
+                className="flex min-h-9 items-center text-xs font-mono text-text-mut hover:text-text-hi transition-colors"
               >
                 {link.label}
               </Link>
@@ -61,14 +61,13 @@ export function LandingFooter() {
               Get started
             </p>
             {[
-              { href: "/signup", label: "Create wallet" },
-              { href: "/login", label: "Sign in" },
+              { href: "/login", label: "Continue" },
               { href: "/onboarding", label: "Build portfolio" },
             ].map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
-                className="block text-xs font-mono text-text-mut hover:text-text-hi transition-colors"
+                className="flex min-h-9 items-center text-xs font-mono text-text-mut hover:text-text-hi transition-colors"
               >
                 {link.label}
               </Link>

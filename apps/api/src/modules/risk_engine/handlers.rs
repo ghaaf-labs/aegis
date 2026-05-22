@@ -11,7 +11,7 @@
 //! **F-PEG-4 — Peg-defense CRUD** (A6):
 //! - `GET/POST/PATCH/DELETE /peg/rules[/:id]` — user-scoped rules.
 //! - `POST /peg/rules/:id/pause` and `/unpause`.
-//! - Every route is scoped to the authenticated user — a JWT for user A
+//! - Every route is scoped to the authenticated user — session A
 //!   can never read or mutate user B's rule. The `PEG_DEFENSE_ENABLED`
 //!   flag is enforced at the handler level so a production build with
 //!   the flag off returns 404 across the whole namespace without

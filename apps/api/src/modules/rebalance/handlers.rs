@@ -1,7 +1,7 @@
 //! HTTP handlers for rebalance plan / execute / poll / history.
 //!
 //! Every route is scoped to the authenticated user — ownership of the
-//! portfolio is enforced on each lookup so a JWT for user A can never read
+//! portfolio is enforced on each lookup so session A can never read
 //! or execute a rebalance belonging to user B.
 
 use std::collections::HashMap;
@@ -1092,7 +1092,7 @@ async fn ensure_rebalance_wallet_ready(state: &AppState, user_id: Uuid) -> Resul
         return Ok(());
     }
     Err(AppError::Conflict(
-        "Complete real Circle wallet setup before building a rebalance plan. This account still has no real Arc + Base wallet ready for execution."
+        "Complete account setup before building a rebalance plan. This account still has no real Arc + Base wallet ready for execution."
             .into(),
     ))
 }

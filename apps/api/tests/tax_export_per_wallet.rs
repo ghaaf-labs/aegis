@@ -13,19 +13,31 @@
 //! refactor accidentally aggregates across legs (e.g. summing
 //! `amount_usdc` into a single row), this test fails.
 //!
-//! The test uses `#[sqlx::test]` which spins up a fresh database off
-//! `TEST_DATABASE_URL` (or `DATABASE_URL`) and runs every migration in
-//! `./migrations/` automatically. With neither env set, sqlx-test
-//! short-circuits and the test reports as ignored — same pattern as
-//! A10's existing in-module test.
-
 use aegis_api::modules::tax::export::{export_portfolio, TaxLineKind};
 use chrono::TimeZone;
-use sqlx::PgPool;
+use sqlx::{postgres::PgPoolOptions, PgPool};
+use std::path::Path;
 use uuid::Uuid;
 
-#[sqlx::test(migrations = "../../apps/api/migrations")]
-async fn export_emits_separate_rows_per_chain_wallet(pool: PgPool) -> sqlx::Result<()> {
+#[tokio::test]
+async fn export_emits_separate_rows_per_chain_wallet() -> sqlx::Result<()> {
+    let Ok(db_url) = std::env::var("TEST_DATABASE_URL").or_else(|_| std::env::var("DATABASE_URL"))
+    else {
+        eprintln!("DATABASE_URL not set; skipping per-wallet tax export integration test");
+        return Ok(());
+    };
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect(&db_url)
+        .await?;
+    sqlx::migrate::Migrator::new(Path::new("./migrations"))
+        .await?
+        .run(&pool)
+        .await?;
+    export_emits_separate_rows_per_chain_wallet_inner(pool).await
+}
+
+async fn export_emits_separate_rows_per_chain_wallet_inner(pool: PgPool) -> sqlx::Result<()> {
     // ── Seed: one user with BOTH chain wallets populated ──────────────────
     let user_id = Uuid::new_v4();
     let arc_addr = "0xf22C6d6047eC75c21f5845CEA7F83D740e78aa24"; // sample

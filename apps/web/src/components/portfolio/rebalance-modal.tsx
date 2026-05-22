@@ -97,7 +97,7 @@ export function RebalanceModal({ open, onClose }: Props) {
       : !active
         ? "Select a portfolio before building a review."
         : !wallet
-          ? "Finish Arc + Base wallet setup before Aegis can read balances or route rebalance legs."
+          ? "Finish account setup before Aegis can read balances or route rebalance legs."
           : gatewayBalanceStatus === "error"
             ? "Circle Gateway did not return a confirmed balance. Aegis will not build a rebalance from stale or unknown cash."
             : gatewayBalanceStatus === "idle" ||
@@ -426,7 +426,7 @@ function blockedPlanMessage(
   if (gatewayBalanceStatus === "idle" || gatewayBalanceStatus === "loading") {
     return "Circle Gateway is still confirming wallet cash. Wait for the balance check before building a rebalance review.";
   }
-  return "Finish wallet setup before building a rebalance review.";
+  return "Finish account setup before building a rebalance review.";
 }
 
 function isNoPlanError(message: string | null) {
@@ -436,10 +436,7 @@ function isNoPlanError(message: string | null) {
 }
 
 function isWalletSetupError(message: string | null) {
-  return (
-    message?.toLowerCase().includes("complete real circle wallet setup") ??
-    false
-  );
+  return message?.toLowerCase().includes("complete account setup") ?? false;
 }
 
 function BlockedPlanPanel({
@@ -485,9 +482,9 @@ function BlockedPlanPanel({
             Review plan locked
           </p>
           <p className="mt-1 text-[11px] leading-relaxed text-text-lo">
-            Aegis needs a portfolio, a completed Arc + Base wallet, and a
-            confirmed Circle Gateway balance before it can calculate rebalance
-            legs. Unknown wallet cash is not treated as zero.
+            Aegis needs a portfolio, a completed account, and a confirmed Circle
+            Gateway balance before it can calculate rebalance legs. Unknown
+            wallet cash is not treated as zero.
           </p>
         </div>
       </div>
@@ -525,7 +522,7 @@ function BlockedPlanPanel({
           href="/wallets"
           className="mt-3 inline-flex min-h-8 items-center justify-center border border-warn/40 px-2 py-1 text-[11px] font-semibold text-warn hover:bg-warn/10"
         >
-          Open wallet setup
+          Check account setup
         </Link>
       )}
       {hasWallet && gatewayBalanceStatus === "error" && (
@@ -575,7 +572,7 @@ function PlanErrorMessage({ message }: { message: string }) {
           href="/wallets"
           className="mt-2 inline-flex border border-warn/40 px-2 py-1 text-[11px] text-warn hover:bg-warn/10"
         >
-          Open wallet setup
+          Check account setup
         </Link>
       )}
     </div>
@@ -587,7 +584,7 @@ function activityCopy(elapsedSeconds: number) {
     return "Reading positions, wallet cash, target weights, and recent decisions.";
   }
   if (elapsedSeconds < 20) {
-    return "Waiting on the real-mode model gateway. This can take longer than local demo mode.";
+    return "Waiting on the model gateway. Real market and wallet checks can take a little longer.";
   }
   return "Still waiting on the backend. You can close this modal; no funds move from analysis alone.";
 }

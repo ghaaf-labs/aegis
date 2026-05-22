@@ -147,7 +147,7 @@ export default function PortfolioPage() {
               href="/wallets"
               className="inline-flex min-h-10 items-center justify-center rounded-sharp border border-warn/40 px-3 font-mono text-xs font-semibold text-warn hover:bg-warn/10"
             >
-              Finish wallet setup
+              Check account setup
             </Link>
           )}
           {gatewayBalanceStatus === "error" && (
@@ -188,8 +188,8 @@ function rebalanceReadinessCopy(
 ) {
   if (!hasWallet) {
     return {
-      title: "Rebalance is locked until wallet setup finishes",
-      copy: "Aegis needs real Arc + Base Circle wallet addresses before it can route, estimate, or approve rebalance legs. This prevents a plan from being built against a placeholder account.",
+      title: "Rebalance is locked until account setup finishes",
+      copy: "Aegis needs real Arc + Base wallet addresses before it can route, estimate, or approve rebalance legs. This prevents a plan from being built against a placeholder account.",
     };
   }
   if (gatewayBalanceStatus === "error") {

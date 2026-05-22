@@ -149,15 +149,15 @@ export default function ExploreIndex() {
             Ready for a real wallet-backed portfolio?
           </p>
           <p className="mt-1 text-xs font-mono text-text-lo">
-            Signup requires email verification, Circle W3S setup, and an
-            explicit approval screen before deployment.
+            Continue with email, finish account setup, then approve any
+            deployment before money moves.
           </p>
         </div>
         <Link
-          href="/signup"
+          href="/login?next=%2Fdashboard"
           className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 px-4 py-2 bg-accent-pnl text-black font-mono font-semibold rounded-sharp border-brutal border-black shadow-brutal-sm hover:shadow-brutal"
         >
-          Sign up to build your own
+          Continue
           <ArrowRight className="h-4 w-4" />
         </Link>
       </div>

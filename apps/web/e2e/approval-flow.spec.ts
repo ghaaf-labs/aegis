@@ -2,9 +2,9 @@ import { test, expect } from "@playwright/test";
 
 // FE-E2E-1 — end-to-end happy path through the approval modal in
 // mocked-mode (EXECUTION_MOCK=true, MOCK_CIRCLE=true). Walks: explore
-// demo → sign-up CTA visible → policy + constitution links resolve.
+// demo → continue CTA visible → policy + constitution links resolve.
 //
-// The full signup → analyze → approve flow requires a seeded test user
+// The full continue → analyze → approve flow requires a seeded test user
 // against a real backend; that's the realm of the integration smoke
 // described in plan §N0.10. This spec covers the surface that doesn't
 // need a live API.

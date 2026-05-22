@@ -9,7 +9,7 @@ export function LandingHeader() {
   return (
     <header className="sticky top-0 z-50 border-b border-border-default bg-bg/95 backdrop-blur-sm">
       <nav className="flex items-center justify-between px-6 py-4 max-w-7xl mx-auto">
-        <Link href="/" className="flex items-center gap-2 group">
+        <Link href="/" className="flex min-h-9 items-center gap-2 group">
           <div className="w-8 h-8 rounded-sharp bg-accent-agent flex items-center justify-center border-brutal border-black shrink-0">
             <Shield className="w-4 h-4 text-black" />
           </div>
@@ -44,12 +44,12 @@ export function LandingHeader() {
           >
             Leaderboard
           </Link>
-          <Link href="/signup">
+          <Link href="/login" className="inline-flex">
             <BrutalButton variant="pnl">Get started</BrutalButton>
           </Link>
         </div>
         <div className="md:hidden">
-          <Link href="/signup">
+          <Link href="/login" className="inline-flex">
             <BrutalButton variant="pnl">Get started</BrutalButton>
           </Link>
         </div>

@@ -25,7 +25,7 @@
 //!   3. rebalance_fees.refunded_at is non-NULL.
 //!   4. Calling it twice is idempotent (status stays 'refunded').
 
-use std::net::SocketAddr;
+use std::{net::SocketAddr, path::Path as FsPath};
 
 use axum::{
     extract::{Path, State},
@@ -57,7 +57,9 @@ async fn refund_endpoint_marks_fee_refunded() {
         .await
         .expect("connect to TEST_DATABASE_URL");
 
-    sqlx::migrate!("./migrations")
+    sqlx::migrate::Migrator::new(FsPath::new("./migrations"))
+        .await
+        .expect("load migrations")
         .run(&pool)
         .await
         .expect("run migrations");

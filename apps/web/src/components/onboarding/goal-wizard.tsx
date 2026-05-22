@@ -8,7 +8,6 @@ import {
   BrutalCardBody,
   BrutalCardHeader,
   BrutalButton,
-  BrutalPill,
 } from "@aegis/ui";
 import type { GoalHorizon, RiskTolerance, AssetSymbol } from "@/types";
 import { portfolioApi, analyticsApi } from "@/lib/api";
@@ -191,17 +190,23 @@ export function GoalWizard() {
   return (
     <BrutalCard
       data-testid={`goal-wizard-step-${state.step}`}
-      className="max-w-xl mx-auto"
+      shadow={false}
+      className="mx-auto w-full max-w-lg"
     >
-      <BrutalCardHeader>
-        <div className="flex items-center gap-3">
-          <BrutalPill tone="agent">STEP {state.step} / 4</BrutalPill>
-          <span className="text-sm text-text-default font-semibold">
+      <BrutalCardHeader className="block space-y-1">
+        <div className="flex items-center justify-between gap-3">
+          <span className="font-mono text-sm font-semibold text-text-hi">
             {stepTitle(state.step)}
           </span>
+          <span className="shrink-0 font-mono text-[10px] uppercase tracking-widest text-text-mut">
+            {state.step} / 4
+          </span>
         </div>
+        <p className="font-mono text-[11px] leading-relaxed text-text-mut">
+          {stepHint(state.step)}
+        </p>
       </BrutalCardHeader>
-      <BrutalCardBody>
+      <BrutalCardBody className="p-4 sm:p-5">
         <div
           className="mb-4 grid grid-cols-4 gap-2"
           aria-label="Portfolio setup progress"
@@ -239,9 +244,10 @@ export function GoalWizard() {
           </div>
         )}
 
-        <div className="mt-6 flex items-center justify-between gap-3">
+        <div className="mt-6 grid grid-cols-2 gap-2">
           <BrutalButton
             variant="ghost"
+            className="min-h-11"
             disabled={state.step === 1 || state.submitting}
             onClick={() => go(-1)}
           >
@@ -249,6 +255,7 @@ export function GoalWizard() {
           </BrutalButton>
           <BrutalButton
             variant={state.step === 4 ? "pnl" : "agent"}
+            className="min-h-11"
             disabled={!canNext || state.submitting}
             onClick={() => go(1)}
           >
@@ -270,6 +277,15 @@ function stepTitle(step: 1 | 2 | 3 | 4): string {
     2: "Investment horizon",
     3: "Risk tolerance",
     4: "Target allocation",
+  }[step];
+}
+
+function stepHint(step: 1 | 2 | 3 | 4): string {
+  return {
+    1: "Give this target a name.",
+    2: "Choose how long this money can stay invested.",
+    3: "Pick the risk level the agent should respect.",
+    4: "Set the target mix. You can change it later.",
   }[step];
 }
 
@@ -307,7 +323,7 @@ function NameStep({ state, setState }: StepProps) {
         value={state.name}
         onChange={(e) => setState((s) => ({ ...s, name: e.target.value }))}
         aria-describedby="portfolio-name-help"
-        className="w-full px-3 py-2 bg-bg border-brutal border-border-default focus:border-border-hi rounded-sharp font-mono text-sm text-text-hi outline-none"
+        className="min-h-11 w-full rounded-sharp border-brutal border-border-default bg-bg px-3 py-2 font-mono text-base text-text-hi outline-none focus:border-border-hi sm:text-sm"
         placeholder="Retirement"
         maxLength={48}
       />
@@ -335,7 +351,7 @@ function HorizonStep({ state, setState }: StepProps) {
           key={h.value}
           aria-pressed={state.horizon === h.value}
           onClick={() => setState((s) => ({ ...s, horizon: h.value }))}
-          className={`w-full text-left px-3 py-2 border-brutal rounded-sharp font-mono text-sm transition-[box-shadow] ${
+          className={`min-h-12 w-full rounded-sharp border-brutal px-3 py-2 text-left font-mono text-sm transition-[box-shadow] ${
             state.horizon === h.value
               ? "border-accent-agent bg-accent-agent/10 text-text-hi shadow-brutal-sm"
               : "border-border-default text-text-default hover:border-border-hi"
@@ -374,7 +390,7 @@ function RiskStep({ state, setState }: StepProps) {
           key={r.value}
           aria-pressed={state.risk === r.value}
           onClick={() => setState((s) => ({ ...s, risk: r.value }))}
-          className={`w-full text-left px-3 py-2 border-brutal rounded-sharp font-mono text-sm transition-[box-shadow] ${
+          className={`min-h-12 w-full rounded-sharp border-brutal px-3 py-2 text-left font-mono text-sm transition-[box-shadow] ${
             state.risk === r.value
               ? "border-accent-agent bg-accent-agent/10 text-text-hi shadow-brutal-sm"
               : "border-border-default text-text-default hover:border-border-hi"
@@ -414,7 +430,7 @@ function AllocationStep({
               type="button"
               key={preset.label}
               onClick={() => setAllocation(preset.allocation)}
-              className="min-h-[74px] border border-border-default bg-bg px-3 py-2 text-left font-mono hover:border-accent-agent hover:bg-accent-agent/5"
+              className="min-h-[74px] rounded-sharp border border-border-default bg-bg px-3 py-2 text-left font-mono hover:border-accent-agent hover:bg-accent-agent/5"
             >
               <span className="block text-xs font-semibold text-text-hi">
                 {preset.label}
@@ -452,7 +468,7 @@ function AllocationStep({
           <button
             type="button"
             onClick={() => setAllocation(normalizeAllocation(state.allocation))}
-            className="inline-flex min-h-8 items-center gap-1 border border-border-default bg-bg px-2 text-[11px] text-text-lo hover:border-accent-agent hover:text-accent-agent"
+            className="inline-flex min-h-8 items-center gap-1 rounded-sharp border border-border-default bg-bg px-2 text-[11px] text-text-lo hover:border-accent-agent hover:text-accent-agent"
           >
             <SlidersHorizontal className="h-3 w-3" />
             Normalize
@@ -460,7 +476,7 @@ function AllocationStep({
           <button
             type="button"
             onClick={() => setAllocation(DEFAULT_ALLOC)}
-            className="inline-flex min-h-8 items-center gap-1 border border-border-default bg-bg px-2 text-[11px] text-text-lo hover:border-border-hi hover:text-text-hi"
+            className="inline-flex min-h-8 items-center gap-1 rounded-sharp border border-border-default bg-bg px-2 text-[11px] text-text-lo hover:border-border-hi hover:text-text-hi"
           >
             <RotateCcw className="h-3 w-3" />
             Reset
@@ -468,39 +484,41 @@ function AllocationStep({
         </div>
       </div>
 
-      {ASSETS.map((a) => (
-        <div key={a.symbol} className="grid grid-cols-[1fr_auto] gap-3">
-          <label htmlFor={`alloc-${a.symbol}`} className="min-w-0 font-mono">
-            <span className="block text-sm text-text-hi">{a.symbol}</span>
-            <span className="block text-xs text-text-lo">{a.label}</span>
-          </label>
-          <div className="flex items-center gap-2">
-            <input
-              id={`alloc-${a.symbol}`}
-              aria-label={`${a.symbol} target allocation`}
-              type="number"
-              min={0}
-              max={100}
-              step={5}
-              value={state.allocation[a.symbol] ?? 0}
-              onChange={(e) =>
-                setState((s) => ({
-                  ...s,
-                  allocation: {
-                    ...s.allocation,
-                    [a.symbol]: Math.max(
-                      0,
-                      Math.min(100, Number(e.target.value) || 0),
-                    ),
-                  },
-                }))
-              }
-              className="w-20 px-2 py-1 bg-bg border-brutal border-border-default focus:border-border-hi rounded-sharp font-mono text-sm text-text-hi text-right tabular-nums outline-none"
-            />
-            <span className="text-text-mut text-xs">%</span>
+      <div className="space-y-3">
+        {ASSETS.map((a) => (
+          <div key={a.symbol} className="grid grid-cols-[1fr_auto] gap-3">
+            <label htmlFor={`alloc-${a.symbol}`} className="min-w-0 font-mono">
+              <span className="block text-sm text-text-hi">{a.symbol}</span>
+              <span className="block text-xs text-text-lo">{a.label}</span>
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                id={`alloc-${a.symbol}`}
+                aria-label={`${a.symbol} target allocation`}
+                type="number"
+                min={0}
+                max={100}
+                step={5}
+                value={state.allocation[a.symbol] ?? 0}
+                onChange={(e) =>
+                  setState((s) => ({
+                    ...s,
+                    allocation: {
+                      ...s.allocation,
+                      [a.symbol]: Math.max(
+                        0,
+                        Math.min(100, Number(e.target.value) || 0),
+                      ),
+                    },
+                  }))
+                }
+                className="min-h-10 w-20 rounded-sharp border-brutal border-border-default bg-bg px-2 py-1 text-right font-mono text-sm tabular-nums text-text-hi outline-none focus:border-border-hi"
+              />
+              <span className="text-text-mut text-xs">%</span>
+            </div>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
 
       <div className="pt-3 border-t border-border-default">
         <label
@@ -519,7 +537,7 @@ function AllocationStep({
           onChange={(e) =>
             setState((s) => ({ ...s, monthlyContribution: e.target.value }))
           }
-          className="w-32 px-2 py-1 bg-bg border-brutal border-border-default focus:border-border-hi rounded-sharp font-mono text-sm text-text-hi text-right tabular-nums outline-none"
+          className="min-h-10 w-32 rounded-sharp border-brutal border-border-default bg-bg px-2 py-1 text-right font-mono text-sm tabular-nums text-text-hi outline-none focus:border-border-hi"
           placeholder="0"
         />
         <p className="mt-2 text-[11px] text-text-mut font-mono leading-relaxed">

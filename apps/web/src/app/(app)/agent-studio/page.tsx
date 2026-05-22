@@ -221,9 +221,9 @@ function manualAnalysisBlockCopy(
   }
   if (!hasWallet) {
     return {
-      copy: "Finish Circle wallet setup first. The strategist should not reason about deployable cash without real Arc + Base wallet addresses.",
+      copy: "Finish account setup first. The strategist should not reason about deployable cash without real Arc + Base wallet addresses.",
       href: "/wallets",
-      cta: "Open wallet setup",
+      cta: "Check account setup",
     };
   }
   if (gatewayBalanceStatus === "error") {

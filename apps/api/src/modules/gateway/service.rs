@@ -85,9 +85,18 @@ pub async fn fetch_balance_for_user(
     user_id: Uuid,
 ) -> crate::error::Result<GatewayBalance> {
     if !config.circle_mock {
-        let user_has_provisioned_wallet = user_has_provisioned_wallet(db, user_id).await?;
+        let wallet_state = user_wallet_state(db, user_id).await?;
+        if wallet_state == WalletProvisionState::Missing {
+            return Ok(empty_balance());
+        }
+        if wallet_state == WalletProvisionState::Partial {
+            return Err(AppError::ServiceUnavailable(
+                "Circle Gateway balance is unknown until both wallet addresses are provisioned"
+                    .into(),
+            ));
+        }
         let balance = fetch_balance(http, config, user_id).await?;
-        if user_has_provisioned_wallet && circle_returned_no_wallets(&balance) {
+        if circle_returned_no_wallets(&balance) {
             return Err(AppError::ServiceUnavailable(
                 "Circle Gateway returned no wallets for this provisioned user; balance is unknown"
                     .into(),
@@ -108,17 +117,69 @@ pub async fn fetch_balance_for_user(
     Ok(balance)
 }
 
-async fn user_has_provisioned_wallet(db: &Db, user_id: Uuid) -> crate::error::Result<bool> {
-    let has_wallet = sqlx::query_scalar(
-        "SELECT COALESCE(wallet_id <> '' AND arc_address <> '' AND base_address <> '', FALSE)
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WalletProvisionState {
+    Missing,
+    Partial,
+    Provisioned,
+}
+
+async fn user_wallet_state(db: &Db, user_id: Uuid) -> crate::error::Result<WalletProvisionState> {
+    let fields = sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>)>(
+        "SELECT wallet_id, arc_address, base_address
          FROM users
          WHERE id = $1",
     )
     .bind(user_id)
     .fetch_optional(db)
     .await?
-    .unwrap_or(false);
-    Ok(has_wallet)
+    .unwrap_or((None, None, None));
+    Ok(wallet_provision_state(
+        fields.0.as_deref(),
+        fields.1.as_deref(),
+        fields.2.as_deref(),
+    ))
+}
+
+fn wallet_provision_state(
+    wallet_id: Option<&str>,
+    arc_address: Option<&str>,
+    base_address: Option<&str>,
+) -> WalletProvisionState {
+    let wallet_id = normalized_wallet_field(wallet_id);
+    let arc_address = normalized_wallet_field(arc_address);
+    let base_address = normalized_wallet_field(base_address);
+
+    if wallet_id.is_none() && arc_address.is_none() && base_address.is_none() {
+        return WalletProvisionState::Missing;
+    }
+
+    let real_wallet = wallet_id.is_some_and(|id| !id.starts_with("mock_wallet_"));
+    let real_arc = arc_address.is_some_and(|address| !address.starts_with("0xARC"));
+    let real_base = base_address.is_some_and(|address| !address.starts_with("0xBASE"));
+
+    if real_wallet && real_arc && real_base {
+        WalletProvisionState::Provisioned
+    } else if !real_wallet && !real_arc && !real_base {
+        WalletProvisionState::Missing
+    } else {
+        WalletProvisionState::Partial
+    }
+}
+
+fn normalized_wallet_field(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|v| !v.is_empty())
+}
+
+fn empty_balance() -> GatewayBalance {
+    GatewayBalance {
+        unified_usdc: 0.0,
+        unified_eurc: 0.0,
+        per_chain: HashMap::new(),
+        per_chain_eurc: HashMap::new(),
+        arc_address: None,
+        base_address: None,
+    }
 }
 
 fn circle_returned_no_wallets(balance: &GatewayBalance) -> bool {
@@ -171,11 +232,19 @@ async fn list_user_wallets(
         wallets: Vec<CircleWallet>,
     }
 
+    if config.circle_wallet_set_id.trim().is_empty() {
+        return Err(AppError::ServiceUnavailable(
+            "circle developer wallet set is not configured".into(),
+        ));
+    }
+
     let url = format!("{}/v1/w3s/wallets", config.circle_base_url);
+    let query = developer_wallet_query(config, user_id);
     let envelope: Envelope = http
         .get(&url)
-        .query(&[("userId", user_id.to_string())])
+        .query(&query)
         .header("Authorization", format!("Bearer {}", config.circle_api_key))
+        .header("X-Request-Id", Uuid::new_v4().to_string())
         .send()
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("gateway net: {e}")))?
@@ -185,6 +254,20 @@ async fn list_user_wallets(
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("gateway list_wallets decode: {e}")))?;
     Ok(envelope.data.wallets)
+}
+
+fn developer_wallet_query(config: &Config, user_id: Uuid) -> Vec<(&'static str, String)> {
+    developer_wallet_query_values(config.circle_wallet_set_id.trim(), user_id)
+}
+
+fn developer_wallet_query_values(
+    wallet_set_id: &str,
+    user_id: Uuid,
+) -> Vec<(&'static str, String)> {
+    vec![
+        ("walletSetId", wallet_set_id.to_string()),
+        ("refId", user_id.to_string()),
+    ]
 }
 
 async fn fetch_wallet_tokens(
@@ -333,5 +416,43 @@ mod tests {
             base_address: Some("0x2222222222222222222222222222222222222222".into()),
         };
         assert!(!circle_returned_no_wallets(&b));
+    }
+
+    #[test]
+    fn wallet_provision_state_treats_mock_fields_as_missing() {
+        assert_eq!(
+            wallet_provision_state(Some("mock_wallet_1"), Some("0xARCabc"), Some("0xBASEabc")),
+            WalletProvisionState::Missing
+        );
+        assert_eq!(
+            wallet_provision_state(
+                Some("circle-wallet"),
+                Some("0x1111111111111111111111111111111111111111"),
+                Some("0x2222222222222222222222222222222222222222")
+            ),
+            WalletProvisionState::Provisioned
+        );
+        assert_eq!(
+            wallet_provision_state(
+                Some("circle-wallet"),
+                Some("0x1111111111111111111111111111111111111111"),
+                None
+            ),
+            WalletProvisionState::Partial
+        );
+    }
+
+    #[test]
+    fn developer_wallet_query_uses_wallet_set_and_ref_id() {
+        let user_id = Uuid::new_v4();
+        let query = developer_wallet_query_values("11111111-1111-4111-8111-111111111111", user_id);
+
+        assert_eq!(
+            query,
+            vec![
+                ("walletSetId", "11111111-1111-4111-8111-111111111111".into()),
+                ("refId", user_id.to_string())
+            ]
+        );
     }
 }

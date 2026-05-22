@@ -16,7 +16,7 @@ import { usePortfolioStore } from "@/stores/portfolio";
  *  • `/portfolios`         — list of portfolios (no allocations)
  *  • `/portfolios/:id`     — detail with allocations, re-fetched whenever
  *                            the active portfolio changes
- *  • `/auth/wallet/status` — restores wallet info after page reload
+ *  • `/auth/session`       — restores account + wallet info after page reload
  *
  * Without this, the store initialises empty on every page load and:
  *  • the dashboard immediately redirects to /onboarding (no portfolios),
@@ -50,16 +50,16 @@ export function PortfolioLoader() {
     }
     let alive = true;
     walletApi
-      .status()
-      .then((r) => {
+      .session()
+      .then((session) => {
         if (!alive) return;
-        if (!r.wallet) {
+        if (!session.wallet) {
           setWallet(null);
           setPortfolios([]);
           setPortfoliosLoaded(true);
           return;
         }
-        setWallet(r.wallet);
+        setWallet(session.wallet);
         return portfolioApi
           .list()
           .then((portfolios) => {

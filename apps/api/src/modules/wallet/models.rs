@@ -8,6 +8,8 @@ pub struct WalletUser {
     pub email: String,
     pub risk_tolerance: String,
     pub investment_horizon_months: i32,
+    pub account_status: String,
+    pub custody_model: String,
     pub wallet_id: Option<String>,
     pub arc_address: Option<String>,
     pub base_address: Option<String>,
@@ -24,51 +26,27 @@ pub struct WalletInfo {
     pub created_at: DateTime<Utc>,
 }
 
-/// Bundle returned to the browser after `init_signup` or `init_login`.
-/// The browser uses these fields to instantiate `@circle-fin/w3s-pw-web-sdk`
-/// and complete the PIN ceremony.
-///
-/// `challenge_id` is `Some` only for new users (signup); returning users get
-/// `None` and the SDK just authenticates the fresh token.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UserTokenBundle {
-    pub user_token: String,
-    pub encryption_key: String,
-    pub app_id: String,
-    pub challenge_id: Option<String>,
-}
-
-/// Response sent after a successful wallet init or login. JWT is set only in
-/// an `httpOnly` cookie; the raw app token is intentionally not serialized to
-/// the browser because storing it in JS-visible storage makes logout
-/// unreliable.
-///
-/// `wallet` is populated immediately for returning users whose wallet is
-/// already provisioned; for fresh signups it's `None` until the browser
-/// completes the SDK challenge and `/auth/wallet/status` reports the wallet
-/// is ready. `bundle` is present only when the browser must execute a Circle
-/// challenge; returning users with an existing wallet do not need short-lived
-/// Circle credentials in the response.
+/// Response sent after a successful email-code verify. The opaque session id is
+/// set only in an `httpOnly` cookie and intentionally not serialized to the
+/// browser.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WalletAuthResponse {
     #[serde(skip_serializing)]
-    pub token: String,
+    pub session_token: String,
+    pub status: String,
     pub user: WalletUserPublic,
     pub wallet: Option<WalletInfo>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bundle: Option<UserTokenBundle>,
+    #[serde(skip_serializing)]
     pub is_new_user: bool,
 }
 
-/// Polled by the browser after the SDK completes the challenge. Returns
-/// `Some(wallet)` once Circle has provisioned the addresses, `None` while
-/// still pending.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WalletStatusResponse {
+pub struct WalletSessionResponse {
+    pub user: WalletUserPublic,
     pub wallet: Option<WalletInfo>,
+    pub account_status: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -77,16 +55,9 @@ pub struct WalletAuthCodeResponse {
     pub challenge_id: Uuid,
     pub email: String,
     pub expires_at: DateTime<Utc>,
+    pub resend_in_seconds: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dev_code: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WalletAuthReadinessResponse {
-    pub circle_mock: bool,
-    pub email_delivery_configured: bool,
-    pub dev_codes_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -95,44 +66,46 @@ pub struct WalletUserPublic {
     pub id: Uuid,
     pub email: String,
     pub risk_tolerance: String,
+    pub account_status: String,
 }
-
-// ── Request shapes ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct InitWalletRequest {
+pub struct StartEmailAuthRequest {
+    pub email: String,
+    #[serde(default)]
+    pub referrer_handle: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResendEmailAuthRequest {
+    pub challenge_id: Uuid,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifyEmailAuthRequest {
     pub email: String,
     pub challenge_id: Uuid,
     pub code: String,
-    /// Optional 8-char user handle of the referrer (matches the `handle`
-    /// column on `v_trustability_per_user`). Drives the referral payout
-    /// loop in `billing::record_referral`. Honoured only on signup.
     #[serde(default)]
     pub referrer_handle: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum WalletAuthIntent {
-    Signup,
-    Login,
-}
-
-impl WalletAuthIntent {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Signup => "signup",
-            Self::Login => "login",
-        }
-    }
+    #[serde(default)]
+    pub consent: Option<EmailAuthConsent>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RequestWalletAuthCode {
-    pub email: String,
-    pub intent: WalletAuthIntent,
-    #[serde(default)]
-    pub referrer_handle: Option<String>,
+pub struct EmailAuthConsent {
+    #[allow(dead_code)]
+    pub tos: bool,
+    #[allow(dead_code)]
+    pub privacy: bool,
+    #[allow(dead_code)]
+    pub tos_version: Option<String>,
+    #[allow(dead_code)]
+    pub privacy_version: Option<String>,
+    #[allow(dead_code)]
+    pub marketing_opt_in: Option<bool>,
 }

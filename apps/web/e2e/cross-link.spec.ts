@@ -3,7 +3,7 @@ import { test, expect } from "@playwright/test";
 // X-series — multi-page cross-link journeys. Require only the Next.js
 // dev server (no API backend).
 
-test("X1 — landing → explore → signup CTA flow", async ({ page }) => {
+test("X1 — landing → explore → continue CTA flow", async ({ page }) => {
   await page.goto("/");
   // Navigate to explore
   await page
@@ -14,23 +14,25 @@ test("X1 — landing → explore → signup CTA flow", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: /Explore demo portfolios/i }),
   ).toBeVisible();
-  // Click a signup CTA from explore
+  // Click an account CTA from explore
   await page
     .getByRole("link", {
-      name: /Sign up|Create.*(wallet|account)|Get started/i,
+      name: /Continue|Sign up|Create.*(wallet|account)|Get started/i,
     })
     .first()
     .click();
-  await expect(page).toHaveURL(/\/sign(up)?/);
+  await expect(page).toHaveURL(/\/login/);
 });
 
-test("X2 — demo detail signup CTA leads to signup page", async ({ page }) => {
+test("X2 — demo detail account CTA leads to login page", async ({ page }) => {
   await page.goto("/explore/conservative-retiree");
   await page
-    .getByRole("link", { name: /Sign up|Create.*(wallet)|Get started/i })
+    .getByRole("link", {
+      name: /Continue|Sign up|Create.*(wallet)|Get started/i,
+    })
     .first()
     .click();
-  await expect(page).toHaveURL(/\/sign(up)?/);
+  await expect(page).toHaveURL(/\/login/);
 });
 
 test("X3 — policy page links to constitution page", async ({ page }) => {
@@ -63,24 +65,23 @@ test("X4 — leaderboard row links to diary page", async ({ page }) => {
   }
 });
 
-test("X6 — signup page with ?ref= param loads without error", async ({
+test("X6 — signup alias canonicalizes to login with ?ref= preserved", async ({
   page,
 }) => {
   await page.goto("/signup?ref=testhandle");
-  await expect(page).toHaveURL(/\/signup/);
-  // Page should render without crashing — ref param is silently consumed
+  await expect(page).toHaveURL(/\/login\?ref=testhandle/);
   await expect(page.locator("main, body")).toBeVisible();
   await expect(
     page.getByText(/Create a wallet to continue/i),
   ).not.toBeVisible();
 });
 
-test("X5 — strategies guest CTA links to signup", async ({ page }) => {
+test("X5 — strategies guest CTA links to login", async ({ page }) => {
   await page.goto("/strategies");
   await expect(
     page.getByRole("heading", { name: /Strategies/i }),
   ).toBeVisible();
-  // Footer or in-page CTA should link to signup
+  // Footer or in-page CTA should link to the unified email entry.
   await expect(
     page.getByRole("link", { name: /Create a wallet/i }),
   ).toBeVisible();
@@ -88,5 +89,5 @@ test("X5 — strategies guest CTA links to signup", async ({ page }) => {
     .getByRole("link", { name: /Create a wallet/i })
     .first()
     .getAttribute("href");
-  expect(href).toMatch(/\/sign(up)?/);
+  expect(href).toMatch(/\/login/);
 });

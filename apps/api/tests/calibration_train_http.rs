@@ -17,6 +17,7 @@ use aegis_api::modules::agent::calibration_train;
 use serde_json::json;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::Row;
+use std::path::Path;
 use uuid::Uuid;
 
 #[tokio::test]
@@ -33,7 +34,9 @@ async fn trainer_persists_calibrations_row_for_regime() {
         .await
         .expect("connect to TEST_DATABASE_URL");
 
-    sqlx::migrate!("./migrations")
+    sqlx::migrate::Migrator::new(Path::new("./migrations"))
+        .await
+        .expect("load migrations")
         .run(&pool)
         .await
         .expect("run migrations");

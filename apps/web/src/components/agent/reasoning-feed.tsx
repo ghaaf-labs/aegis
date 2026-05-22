@@ -491,8 +491,8 @@ function DecisionRow({
       )}
       {legacyLocal && (
         <p className="mb-2 text-[10px] font-mono text-text-mut">
-          Historical local/demo row only. It does not describe the current
-          real-execution backend.
+          Historical test row only. It does not describe the current
+          real-execution path.
         </p>
       )}
       {outdated && (

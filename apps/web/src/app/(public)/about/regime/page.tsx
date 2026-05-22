@@ -116,11 +116,17 @@ export default async function RegimeModelCardPage() {
 
       <p className="mt-8 text-center text-xs font-mono text-text-mut">
         Want to see it on a live portfolio?{" "}
-        <Link href="/explore" className="text-accent-agent hover:underline">
+        <Link
+          href="/explore"
+          className="inline-flex min-h-9 items-center text-accent-agent hover:underline"
+        >
           Explore demo portfolios
         </Link>{" "}
         ·{" "}
-        <Link href="/signup" className="text-accent-pnl hover:underline">
+        <Link
+          href="/login"
+          className="inline-flex min-h-9 items-center text-accent-pnl hover:underline"
+        >
           Create your own
         </Link>
       </p>

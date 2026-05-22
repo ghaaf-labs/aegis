@@ -47,12 +47,20 @@ export default function PortfolioDashboardPage() {
   const unifiedEurc = usePortfolioStore((s) => s.unifiedEurc);
   const snapshot = usePortfolioStore((s) => s.marketSnapshot);
   const wallet = usePortfolioStore((s) => s.wallet);
+  const portfolios = usePortfolioStore((s) => s.portfolios);
+  const portfoliosLoaded = usePortfolioStore((s) => s.portfoliosLoaded);
   const gatewayBalanceStatus = usePortfolioStore((s) => s.gatewayBalanceStatus);
   const gatewayBalanceError = usePortfolioStore((s) => s.gatewayBalanceError);
   const activePortfolio = useActivePortfolio();
   const router = useRouter();
   const [deploying, setDeploying] = useState(false);
   const [deployError, setDeployError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!portfoliosLoaded || activePortfolio) return;
+    const fallback = portfolios[0]?.id;
+    router.replace(fallback ? `/dashboard/${fallback}` : "/onboarding");
+  }, [activePortfolio, portfolios, portfoliosLoaded, router]);
 
   const deployableUsdc = unifiedUsdc;
   const gatewayBalanceReady = gatewayBalanceStatus === "ready";
@@ -89,6 +97,23 @@ export default function PortfolioDashboardPage() {
     targetSymbols.length > 0
       ? formatAssetList(targetSymbols)
       : "the target mix";
+
+  if (!portfoliosLoaded || !activePortfolio) {
+    return (
+      <div className="flex min-h-[50vh] items-center justify-center">
+        <div className="max-w-sm border-brutal border-border-default bg-raised p-6 text-center">
+          <Loader2 className="mx-auto mb-3 h-5 w-5 animate-spin text-accent-agent" />
+          <h1 className="font-mono text-sm font-semibold text-text-hi">
+            Opening your dashboard
+          </h1>
+          <p className="mt-2 font-mono text-xs leading-relaxed text-text-lo">
+            If no portfolio exists yet, Aegis will send you back to portfolio
+            setup.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   const handleDeploy = async () => {
     if (!activePortfolio) return;

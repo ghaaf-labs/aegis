@@ -3,9 +3,8 @@ import { AuthPageShell } from "@/components/wallet/auth-page-shell";
 import { CreateWalletCard } from "@/components/wallet/create-wallet-card";
 
 export const metadata = {
-  title: "Aegis · Log in",
-  description:
-    "Log back into your Aegis wallet with an email verification code.",
+  title: "Aegis · Continue",
+  description: "Continue to Aegis with an email code.",
 };
 
 function WalletCardSkeleton() {
@@ -16,13 +15,9 @@ function WalletCardSkeleton() {
 
 export default function LoginPage() {
   return (
-    <AuthPageShell
-      mode="login"
-      title="Restore wallet access"
-      subtitle="Use the same email, verify the one-time code, and return to the existing Circle wallet and portfolios. No duplicate account is created."
-    >
+    <AuthPageShell>
       <Suspense fallback={<WalletCardSkeleton />}>
-        <CreateWalletCard loginMode />
+        <CreateWalletCard />
       </Suspense>
     </AuthPageShell>
   );

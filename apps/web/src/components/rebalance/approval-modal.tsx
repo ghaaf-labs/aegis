@@ -196,7 +196,16 @@ export function ApprovalModal({
     0,
   );
   const netTurnoverUsdc = Math.max(positionSaleUsdc, destinationUsdc);
-  const approvalBlocked = approvalSafety?.approvable === false;
+  const approvalBlocked =
+    approvalSafety?.approvable === false || isMockExecution;
+  const approvalBlockCode =
+    approvalSafety?.code ??
+    (isMockExecution ? "HISTORICAL_TEST_REVIEW" : "APPROVAL_BLOCKED");
+  const approvalBlockMessage =
+    approvalSafety?.message ??
+    (isMockExecution
+      ? "This review was created outside the real execution path. Build a fresh review before approving."
+      : "Approval is blocked for this review. Build a fresh review before any execution.");
   const changeHeadline =
     plan.totalLegs === 0
       ? "No portfolio changes needed"
@@ -285,7 +294,7 @@ export function ApprovalModal({
               {bridgedUsdc > 0 && (
                 <div className="flex items-center justify-between border border-cyan-500/20 bg-cyan-500/5 px-3 py-2 text-accent-agent">
                   <span>
-                    {isMockExecution ? "Simulate bridge" : "Bridge"}{" "}
+                    {isMockExecution ? "Bridge preview" : "Bridge"}{" "}
                     {chainDisplayName(bridgeSourceChain)} →{" "}
                     {chainDisplayName(bridgeTargetChain)}
                   </span>
@@ -297,7 +306,7 @@ export function ApprovalModal({
               {approvalBlocked
                 ? blockedAmountCopy(approvalSafety)
                 : isMockExecution
-                  ? "This updates the local demo portfolio and mock Gateway balance so you can see the state change immediately."
+                  ? "This historical test review cannot be approved for real execution. Build a fresh review before money moves."
                   : hasPositionSales
                     ? "This approval sells overweight positions, routes USDC, and buys or parks underweight targets. It is not idle-wallet deployment."
                     : "This approval uses wallet USDC for real execution after you confirm."}
@@ -309,10 +318,10 @@ export function ApprovalModal({
           {approvalBlocked && (
             <div className="mb-4 border-brutal border-warn/50 bg-warn/10 p-3 text-xs font-mono text-warn">
               <p className="text-[10px] uppercase tracking-wider">
-                Approval blocked · {approvalSafety.code}
+                Approval blocked · {approvalBlockCode}
               </p>
-              <p className="mt-1 leading-relaxed">{approvalSafety.message}</p>
-              {approvalSafety.missingCapabilities?.length ? (
+              <p className="mt-1 leading-relaxed">{approvalBlockMessage}</p>
+              {approvalSafety?.missingCapabilities?.length ? (
                 <ul className="mt-3 grid gap-2">
                   {approvalSafety.missingCapabilities.map((capability) => (
                     <li
@@ -329,10 +338,12 @@ export function ApprovalModal({
                   ))}
                 </ul>
               ) : null}
-              <BlockedRecoveryActions
-                portfolioId={portfolioId ?? null}
-                safety={approvalSafety}
-              />
+              {approvalSafety ? (
+                <BlockedRecoveryActions
+                  portfolioId={portfolioId ?? null}
+                  safety={approvalSafety}
+                />
+              ) : null}
             </div>
           )}
 
@@ -471,7 +482,7 @@ export function ApprovalModal({
           ) && (
             <div className="mb-3 inline-flex items-center gap-2 rounded border border-cyan-500/40 bg-cyan-500/10 px-3 py-1 text-[11px] font-mono text-accent-agent">
               {isMockExecution
-                ? "Local demo execution • simulates CCTP V2 + Hooks"
+                ? "Historical test route • CCTP V2 + Hooks preview"
                 : "Real on-chain execution • CCTP V2 Fast Transfer + Hooks"}
             </div>
           )}
@@ -485,7 +496,7 @@ export function ApprovalModal({
                 {plan.totalLegs === 1 ? "" : "s"} to bring your portfolio toward
                 its target.{" "}
                 {isMockExecution
-                  ? "This local demo updates mock positions and Gateway balances; no real chain transaction is sent."
+                  ? "This historical test review is shown for audit only. Build a fresh real-execution review before approving."
                   : hasCrossChainLeg
                     ? "One approval settles the plan on Arc + Base; SSE streams each leg as it confirms."
                     : `One approval executes the ${singleChainLabel(plan)} legs; SSE streams each leg as it confirms.`}
@@ -639,9 +650,7 @@ export function ApprovalModal({
                 ? "Approval blocked"
                 : submitting
                   ? "Submitting…"
-                  : isMockExecution
-                    ? "Run local execution"
-                    : "Approve & execute"}
+                  : "Approve & execute"}
             </button>
           </div>
         </footer>
@@ -688,7 +697,7 @@ function blockedAmountCopy(safety?: RebalanceApprovalSafety | null): string {
     case "BALANCE_UNAVAILABLE":
       return "Gateway balance cannot be verified right now, so real execution stays locked.";
     case "MOCK_OR_LEGACY_PLAN":
-      return "This review came from a mock or legacy planner and cannot be used for real execution.";
+      return "This review came from an older non-real planner and cannot be used for real execution.";
     default:
       return "Approval is blocked for this review. Build a fresh review before any execution.";
   }

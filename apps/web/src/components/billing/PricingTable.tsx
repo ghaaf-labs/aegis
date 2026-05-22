@@ -89,11 +89,11 @@ export interface PricingTableProps {
   currentTier?: Tier | null;
   /** Click handler for the Upgrade CTA. Receives the target tier slug.
    * When omitted (e.g. on the public /pricing page), the CTA links to
-   * /signup via an <a>. */
+   * /login via an <a>. */
   onSelect?: (tier: Tier) => void;
   /** Optional disabled state, e.g. while a Nanopayments call is in-flight. */
   busyTier?: Tier | null;
-  /** Public-page CTA overrides used when signup is unavailable or contextual. */
+  /** Public-page CTA overrides used when auth is unavailable or contextual. */
   publicActionHref?: string;
   publicActionLabel?: string | ((tier: PricingTier) => string);
   publicActionTone?: "pnl" | "agent";
@@ -105,7 +105,7 @@ export function PricingTable({
   currentTier = null,
   onSelect,
   busyTier = null,
-  publicActionHref = "/signup",
+  publicActionHref = "/login",
   publicActionLabel,
   publicActionTone = "pnl",
   publicActionHint = null,

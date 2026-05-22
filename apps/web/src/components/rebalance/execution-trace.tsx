@@ -183,7 +183,7 @@ export function ExecutionTrace({
           ) && (
             <span className="inline-flex items-center gap-1 rounded border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-mono text-accent-agent">
               {isMockExecution
-                ? "Local demo • simulated CCTP V2 + Hooks"
+                ? "Historical test route • CCTP V2 + Hooks preview"
                 : "Real on-chain • CCTP V2 + Hooks"}
             </span>
           )}
@@ -244,7 +244,7 @@ export function ExecutionTrace({
           <div className="mt-3 border border-amber-500/30 bg-amber-500/5 p-3 text-[11px] font-mono text-warn flex items-center gap-2 flex-wrap">
             <span>
               {isMockExecution
-                ? "Protocol fee (25 bps) simulated via Circle Nanopayments (x402)"
+                ? "Protocol fee preview (25 bps via Circle Nanopayments x402)"
                 : "Protocol fee (25 bps) settled via Circle Nanopayments (x402)"}
             </span>
             {settlementTx ? (

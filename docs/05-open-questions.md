@@ -101,10 +101,7 @@ Verification: live `GET /v1/w3s/{config/entity,users,wallets}` against `api.circ
 Implementation:
 
 - Flipped default `circle_base_url` to `https://api.circle.com` in `apps/api/src/config.rs` and updated `.env`.
-- Rewrote `apps/api/src/modules/wallet/provider.rs` for the W3S User-Controlled flow — `ensure_user` → `issue_user_token` → `fetch_user_wallets`. `UserTokenBundle` returned to the browser carries `userToken + encryptionKey + appId + challengeId` for `@circle-fin/w3s-pw-web-sdk` to consume.
-- Deleted the legacy OTP routes (`/auth/wallet/otp/*`) and added `GET /auth/wallet/status` for the browser to poll after the SDK completes the PIN challenge.
-- Frontend `apps/web/src/components/wallet/create-wallet-card.tsx` now dynamically imports `W3SSdk`, runs the challenge in the browser, and polls `/auth/wallet/status` until both ARC and BASE addresses are provisioned.
-- New `CIRCLE_APP_ID` env required when `MOCK_CIRCLE=false` (validated at boot).
+- Superseded 2026-05-22 by `docs/12-auth-wallet-onboarding.md`: the user-controlled SDK/PIN/challenge flow was removed from the app surface. Backend provisioning now targets Circle developer-controlled SCA wallets with `CIRCLE_WALLET_SET_ID` + `CIRCLE_ENTITY_SECRET`; no `UserTokenBundle`, `CIRCLE_APP_ID`, browser SDK, or wallet polling route remains.
 
 ## FX live with CoinGecko fallback — RESOLVED 2026-05-17
 

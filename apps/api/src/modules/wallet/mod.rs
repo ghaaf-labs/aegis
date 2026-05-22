@@ -1,25 +1,17 @@
-//! Wallet module — Circle W3S User-Controlled Wallets integration.
+//! Wallet module — email-code identity plus Circle wallet provisioning.
 //!
-//! Signup flow (5 hops):
+//! Public auth flow:
 //!
-//! 1. `POST /auth/wallet/code { email, intent }` — server sends a short-lived
-//!    verification code. Localhost dev returns `devCode` when email is disabled.
-//! 2. `POST /auth/wallet/create { email, challengeId, code }` — server creates Circle user
-//!    record, issues a `UserTokenBundle` and an initialize-challenge ID for
-//!    the PIN ceremony, sets the JWT session cookie.
-//! 3. Browser instantiates `@circle-fin/w3s-pw-web-sdk` with the bundle and
-//!    runs `sdk.execute(challengeId)` — user sets their PIN.
-//! 4. SDK signs the wallet-creation request; Circle provisions wallets on
-//!    ARC-TESTNET and BASE-SEPOLIA.
-//! 5. Browser polls `GET /auth/wallet/status` until the wallet IDs +
-//!    addresses come back; server persists them to the `users` row and
-//!    emits an SSE `wallet.created` event.
+//! 1. `POST /auth/email/start { email }` — server sends a short-lived
+//!    verification code. Localhost mock runs may return `devCode` for tests.
+//! 2. `POST /auth/email/verify { email, challengeId, code, consent }` —
+//!    server creates or restores the account, opens a session cookie, and
+//!    returns wallet readiness.
+//! 3. `GET /auth/session` is the authenticated gate and retries pending wallet
+//!    provisioning before responding.
 //!
-//! Login flow verifies the email code first, then restores the existing
-//! wallet session with `is_new_user=false` and `challenge_id=None`.
-//!
-//! `MockProvider` returns deterministic synthetic data so local dev works
-//! without hitting Circle when `MOCK_CIRCLE=true`.
+//! `MockProvider` returns deterministic synthetic data so local dev works when
+//! `MOCK_CIRCLE=true`.
 
 pub mod handlers;
 pub mod models;
@@ -28,7 +20,7 @@ pub mod service;
 pub mod sse;
 
 #[allow(unused_imports)]
-pub use models::{InitWalletRequest, UserTokenBundle, WalletInfo, WalletStatusResponse};
+pub use models::WalletInfo;
 #[allow(unused_imports)]
 pub use provider::{CircleProvider, MockProvider, WalletProvider};
 #[allow(unused_imports)]

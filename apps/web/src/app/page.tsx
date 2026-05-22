@@ -343,7 +343,7 @@ export default function LandingPage() {
           custom={4}
           className="flex items-center justify-center gap-4"
         >
-          <Link href="/signup">
+          <Link href="/login">
             <BrutalButton variant="pnl">
               Start for free
               <ArrowRight className="ml-2 w-4 h-4" />
@@ -511,10 +511,7 @@ export default function LandingPage() {
                 {mockApproved ? (
                   <span className="flex items-center gap-2 text-xs font-mono text-text-lo">
                     Demo approved — connect a wallet to run real rebalances →{" "}
-                    <Link
-                      href="/signup"
-                      className="underline text-accent-agent"
-                    >
+                    <Link href="/login" className="underline text-accent-agent">
                       Get started
                     </Link>
                   </span>
@@ -916,7 +913,7 @@ export default function LandingPage() {
             Set your risk tolerance. Connect your portfolio. Every move needs
             your sign-off.
           </p>
-          <Link href="/signup">
+          <Link href="/login">
             <BrutalButton variant="pnl">
               Get started for free
               <ArrowRight className="ml-2 w-4 h-4" />

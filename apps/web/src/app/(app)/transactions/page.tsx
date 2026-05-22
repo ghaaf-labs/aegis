@@ -137,29 +137,40 @@ export default function TransactionsPage() {
                 cta="Review portfolio"
               />
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs font-mono">
-                  <thead className="border-b border-border-default text-text-mut">
-                    <tr>
-                      <th className="px-3 py-2 font-medium">Plan</th>
-                      <th className="px-3 py-2 font-medium">Status</th>
-                      <th className="px-3 py-2 font-medium">Approval</th>
-                      <th className="px-3 py-2 font-medium">Meaning</th>
-                      <th className="px-3 py-2 font-medium text-right">
-                        Routed
-                      </th>
-                      <th className="px-3 py-2 font-medium text-right">Legs</th>
-                      <th className="px-3 py-2 font-medium">Created</th>
-                      <th className="px-3 py-2 font-medium text-right">Open</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((row) => (
-                      <HistoryRow key={row.id} row={row} />
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <>
+                <div className="space-y-3 md:hidden">
+                  {rows.map((row) => (
+                    <HistoryCard key={row.id} row={row} />
+                  ))}
+                </div>
+                <div className="hidden overflow-x-auto md:block">
+                  <table className="w-full text-left text-xs font-mono">
+                    <thead className="border-b border-border-default text-text-mut">
+                      <tr>
+                        <th className="px-3 py-2 font-medium">Plan</th>
+                        <th className="px-3 py-2 font-medium">Status</th>
+                        <th className="px-3 py-2 font-medium">Approval</th>
+                        <th className="px-3 py-2 font-medium">Meaning</th>
+                        <th className="px-3 py-2 font-medium text-right">
+                          Routed
+                        </th>
+                        <th className="px-3 py-2 font-medium text-right">
+                          Legs
+                        </th>
+                        <th className="px-3 py-2 font-medium">Created</th>
+                        <th className="px-3 py-2 font-medium text-right">
+                          Open
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((row) => (
+                        <HistoryRow key={row.id} row={row} />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
           </BrutalCardBody>
         </BrutalCard>
@@ -177,7 +188,7 @@ function HistoryRow({ row }: { row: RebalanceHistoryRow }) {
         <div className="flex flex-col gap-1">
           <span>{row.id.slice(0, 8)}...</span>
           <span className="text-[10px] uppercase tracking-widest text-text-mut">
-            {row.executionMode ?? "real"} mode
+            {executionModeLabel(row.executionMode)}
           </span>
         </div>
       </td>
@@ -233,7 +244,7 @@ function HistoryRow({ row }: { row: RebalanceHistoryRow }) {
       <td className="px-3 py-3 text-right">
         <Link
           href={next.href}
-          className={`inline-flex items-center gap-1 hover:underline ${
+          className={`inline-flex min-h-9 items-center gap-1 hover:underline ${
             next.tone === "agent"
               ? "text-accent-agent"
               : next.tone === "pnl"
@@ -247,6 +258,93 @@ function HistoryRow({ row }: { row: RebalanceHistoryRow }) {
       </td>
     </tr>
   );
+}
+
+function HistoryCard({ row }: { row: RebalanceHistoryRow }) {
+  const blocked = row.approvalSafety?.approvable === false;
+  const next = rowAction(row);
+  return (
+    <article className="border border-border-default bg-bg p-3 font-mono text-xs">
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-text-hi">
+            {row.id.slice(0, 8)}...
+          </p>
+          <p className="mt-1 text-[10px] uppercase tracking-widest text-text-mut">
+            {executionModeLabel(row.executionMode)}
+          </p>
+        </div>
+        <StatusPill status={row.status} />
+      </div>
+
+      <p className="mt-3 text-[11px] leading-relaxed text-text-lo">
+        {rowMeaning(row)}
+      </p>
+
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <MobileFact
+          label="Routed"
+          value={formatCurrency(row.totalAmountUsdc ?? 0)}
+        />
+        <MobileFact
+          label="Legs"
+          value={`${row.completedLegs}/${row.totalLegs}`}
+        />
+        <MobileFact label="Created" value={timeAgo(row.createdAt)} />
+        <div className="border border-border-default bg-surface px-3 py-2">
+          <p className="text-[10px] uppercase tracking-widest text-text-mut">
+            Approval
+          </p>
+          <div className="mt-1">
+            <ApprovalStatePill row={row} />
+          </div>
+        </div>
+      </div>
+
+      {blocked && row.approvalSafety?.message && (
+        <p className="mt-3 border border-warn/40 bg-warn/5 px-3 py-2 text-[11px] leading-relaxed text-warn">
+          {row.approvalSafety.message}
+        </p>
+      )}
+
+      {row.failureReason && (
+        <p className="mt-3 border border-risk/40 bg-risk/5 px-3 py-2 text-[11px] leading-relaxed text-risk">
+          {row.failureReason}
+        </p>
+      )}
+
+      <Link
+        href={next.href}
+        className={`mt-3 inline-flex min-h-9 w-full items-center justify-center gap-2 border px-3 text-[11px] font-semibold ${
+          next.tone === "agent"
+            ? "border-accent-agent/40 bg-accent-agent/10 text-accent-agent"
+            : next.tone === "pnl"
+              ? "border-accent-pnl/40 bg-accent-pnl/10 text-accent-pnl"
+              : "border-warn/40 bg-warn/10 text-warn"
+        }`}
+      >
+        {next.label}
+        <ArrowRight className="h-3 w-3" />
+      </Link>
+    </article>
+  );
+}
+
+function MobileFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="border border-border-default bg-surface px-3 py-2">
+      <p className="text-[10px] uppercase tracking-widest text-text-mut">
+        {label}
+      </p>
+      <p className="mt-1 tabular-nums text-text-hi">{value}</p>
+    </div>
+  );
+}
+
+function executionModeLabel(mode: string | null | undefined) {
+  if (mode === "mock") return "historical test";
+  if (mode === "real") return "real execution";
+  return "execution review";
 }
 
 function ApprovalStatePill({ row }: { row: RebalanceHistoryRow }) {
@@ -520,7 +618,7 @@ function EmptyState({
       </p>
       <Link
         href={href}
-        className="mt-3 inline-flex items-center gap-2 border border-accent-agent/40 bg-accent-agent/10 px-3 py-2 text-xs font-mono text-accent-agent hover:border-accent-agent"
+        className="mt-3 inline-flex min-h-9 items-center gap-2 border border-accent-agent/40 bg-accent-agent/10 px-3 py-2 text-xs font-mono text-accent-agent hover:border-accent-agent"
       >
         {cta}
         <ArrowRight className="h-3 w-3" />

@@ -13,7 +13,7 @@ test("strategies marketplace renders headline + at least the empty state", async
   ).toBeVisible();
 });
 
-test("strategies page has a signup CTA in the footer", async ({ page }) => {
+test("strategies page has a continue CTA in the footer", async ({ page }) => {
   await page.goto("/strategies");
   await expect(
     page.getByRole("link", { name: /Create a wallet/i }),
@@ -50,14 +50,14 @@ test("ST2 — strategy cards show name and risk when strategies exist", async ({
   }
 });
 
-// ST3 — unauthenticated visitor: adopt CTA wraps to /signup
-test("ST3 — guest adopt CTA links to signup page", async ({ page }) => {
+// ST3 — unauthenticated visitor: adopt CTA wraps to /login
+test("ST3 — guest adopt CTA links to login page", async ({ page }) => {
   await page.goto("/strategies");
   // Footer "Create a wallet" must be present for unauthenticated visitors
   const ctaLink = page.getByRole("link", { name: /Create a wallet/i }).first();
   await expect(ctaLink).toBeVisible();
   const href = await ctaLink.getAttribute("href");
-  expect(href).toMatch(/\/sign(up)?/);
+  expect(href).toMatch(/\/login/);
 });
 
 // ST4 — authenticated visitor sees Adopt buttons (not "Sign up to adopt")

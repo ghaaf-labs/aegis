@@ -6,7 +6,7 @@
 //! concept that is explicitly out of scope for the hackathon.
 //!
 //! Per-user safety: every query joins through `allocations` → `portfolios`
-//! → `users`. Callers must pass `user_id` (extracted from JWT) — the module
+//! → `users`. Callers must pass `user_id` (extracted from auth) — the module
 //! never trusts an unauthenticated portfolio_id.
 
 pub mod export;

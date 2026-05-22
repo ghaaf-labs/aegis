@@ -10,7 +10,6 @@ import {
   Loader2,
   LogIn,
   RotateCw,
-  UserPlus,
   Wallet as WalletIcon,
 } from "lucide-react";
 import Link from "next/link";
@@ -83,23 +82,23 @@ export default function WalletPage() {
   }, [setGatewayBalanceStatus, setPerChain, setUnifiedEurc, setUnifiedUsdc]);
 
   if (!wallet) {
-    const resumeHref = savedEmail
-      ? `/login?email=${encodeURIComponent(savedEmail)}`
-      : "/login";
+    const continueHref = sessionActive
+      ? "/onboarding"
+      : savedEmail
+        ? `/login?email=${encodeURIComponent(savedEmail)}`
+        : "/login";
     const checkStatus = async () => {
       setCheckingWallet(true);
       setStatusError(null);
       setStatusMessage(null);
       try {
-        const status = await walletApi.status();
-        if (status.wallet) {
-          setWallet(status.wallet);
-          setStatusMessage(
-            "Circle returned both wallet addresses. Wallet page is live.",
-          );
+        const session = await walletApi.session();
+        if (session.wallet) {
+          setWallet(session.wallet);
+          setStatusMessage("Account setup is complete. Wallets are live.");
         } else {
           setStatusMessage(
-            "Circle has not returned both Arc + Base addresses yet. Resume setup if the PIN ceremony did not finish.",
+            "Aegis is still setting up this account. Try again in a moment.",
           );
         }
       } catch (e) {
@@ -109,7 +108,7 @@ export default function WalletPage() {
       }
     };
     return (
-      <div className="mx-auto grid max-w-[1200px] gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
+      <div className="mx-auto max-w-2xl">
         <section className="border-brutal border-border-default bg-surface p-5 shadow-brutal">
           <div className="flex flex-wrap items-start justify-between gap-4 border-b border-border-default pb-4">
             <div>
@@ -119,13 +118,13 @@ export default function WalletPage() {
               <h1 className="mt-1 flex items-center gap-2 font-mono text-2xl font-semibold text-text-hi">
                 <WalletIcon className="h-5 w-5 text-accent-agent" />
                 {sessionActive
-                  ? "Finish Circle wallet setup"
-                  : "Sign in before wallet access"}
+                  ? "Account setup in progress"
+                  : "Continue before wallet access"}
               </h1>
               <p className="mt-2 max-w-2xl font-mono text-xs leading-relaxed text-text-lo">
                 {sessionActive
-                  ? "Aegis has a server-verified session, but execution stays locked until Circle returns real Arc + Base wallet addresses."
-                  : "Wallet addresses, Gateway balances, faucet claims, deployments, and rebalances require a server-verified session first."}
+                  ? "Your session is active. Balances, funding, and execution unlock as soon as setup finishes."
+                  : "Use one email code before viewing balances or funding addresses."}
               </p>
             </div>
             <span
@@ -140,11 +139,9 @@ export default function WalletPage() {
               ) : (
                 <LogIn className="h-3.5 w-3.5" />
               )}
-              {sessionActive ? "Wallet pending" : "Signed out"}
+              {sessionActive ? "Setup pending" : "Signed out"}
             </span>
           </div>
-
-          <WalletSetupSvg sessionActive={sessionActive} />
 
           <div className="mt-5 grid gap-3 md:grid-cols-3">
             <GateFact
@@ -153,8 +150,8 @@ export default function WalletPage() {
               tone={sessionActive ? "agent" : "neutral"}
             />
             <GateFact
-              label="Circle wallet"
-              value="not ready"
+              label="Account"
+              value="setting up"
               tone={sessionActive ? "warn" : "neutral"}
             />
             <GateFact label="Execution" value="blocked" tone="warn" />
@@ -173,39 +170,29 @@ export default function WalletPage() {
                 ) : (
                   <RotateCw className="h-4 w-4" />
                 )}
-                Check Circle status
+                Check account
               </button>
             ) : (
               <Link
-                href={resumeHref}
+                href={continueHref}
                 className="inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-sharp border-brutal border-black bg-accent-agent px-4 font-mono font-semibold text-black shadow-brutal-sm hover:shadow-brutal"
               >
                 <LogIn className="h-4 w-4" />
-                Sign in
+                Continue
               </Link>
             )}
             <Link
-              href={resumeHref}
+              href={continueHref}
               className="inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-sharp border border-border-default bg-bg px-4 font-mono text-sm text-text-lo hover:border-border-hi hover:text-text-hi"
             >
               {sessionActive ? (
                 <>
-                  Resume PIN setup
+                  Open setup
                   <ArrowRight className="h-4 w-4" />
                 </>
               ) : (
-                <>
-                  Restore wallet
-                  <ArrowRight className="h-4 w-4" />
-                </>
+                <>Use one email code</>
               )}
-            </Link>
-            <Link
-              href="/signup"
-              className="inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-sharp border border-border-default bg-bg px-4 font-mono text-sm text-text-lo hover:border-border-hi hover:text-text-hi"
-            >
-              <UserPlus className="h-4 w-4" />
-              Create wallet
             </Link>
           </div>
 
@@ -222,29 +209,6 @@ export default function WalletPage() {
             </p>
           )}
         </section>
-
-        <aside className="border-brutal border-border-default bg-raised p-5 font-mono">
-          <p className="text-[10px] uppercase tracking-widest text-text-mut">
-            What unlocks next
-          </p>
-          <div className="mt-4 space-y-3 text-xs">
-            <UnlockStep
-              active={sessionActive}
-              title="1. Server session"
-              body="The backend must accept the HttpOnly Aegis session cookie. Stale browser hints are ignored."
-            />
-            <UnlockStep
-              active={false}
-              title="2. Arc + Base addresses"
-              body="Circle must return both chain wallets before Gateway balances or CCTP routes can be trusted."
-            />
-            <UnlockStep
-              active={false}
-              title="3. Fund wallet cash"
-              body="USDC appears here first. Dashboard shows invested positions after a reviewed deployment confirms."
-            />
-          </div>
-        </aside>
       </div>
     );
   }
@@ -420,15 +384,15 @@ function WalletOperationalPanel({
     gatewayBalanceStatus === "idle" || gatewayBalanceStatus === "loading";
   const gatewayFailed = gatewayBalanceStatus === "error";
   return (
-    <section className="grid gap-4 border-brutal border-border-default bg-surface p-4 font-mono shadow-brutal md:grid-cols-[minmax(0,1fr)_360px]">
+    <section className="border-brutal border-border-default bg-surface p-4 font-mono shadow-brutal">
       <div>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-[10px] uppercase tracking-widest text-accent-agent">
-              Wallet operational status
+              Wallet status
             </p>
             <h2 className="mt-1 text-base font-semibold text-text-hi">
-              Address custody is ready. Cash visibility depends on Gateway.
+              Addresses are ready. Gateway confirms cash.
             </h2>
           </div>
           <button
@@ -458,152 +422,11 @@ function WalletOperationalPanel({
           />
         </div>
         <p className="mt-3 text-xs leading-relaxed text-text-lo">
-          Copy addresses and receive funds any time. Deploy, faucet prompts, and
-          rebalance execution stay locked until Gateway confirms spendable
-          USDC/EURC balances, so an outage cannot be misread as a true zero.
+          Copy addresses any time. Cash actions wait for a fresh Gateway balance
+          check, so an outage is never shown as a true zero.
         </p>
       </div>
-      <WalletOpsSvg
-        gatewayReady={gatewayReady}
-        gatewayFailed={gatewayFailed}
-        gatewayLoading={gatewayLoading}
-      />
     </section>
-  );
-}
-
-function WalletOpsSvg({
-  gatewayReady,
-  gatewayFailed,
-  gatewayLoading,
-}: {
-  gatewayReady: boolean;
-  gatewayFailed: boolean;
-  gatewayLoading: boolean;
-}) {
-  const gatewayStroke = gatewayReady
-    ? "#86efac"
-    : gatewayFailed
-      ? "#f59e0b"
-      : "#67e8f9";
-  const caption = gatewayReady
-    ? ["cash verified", "reviews can price real routes"]
-    : gatewayFailed
-      ? ["cash unknown", "retry Gateway check"]
-      : ["checking cash", "actions unlock after confirmation"];
-  return (
-    <svg
-      viewBox="0 0 360 190"
-      role="img"
-      aria-label="Wallet readiness map from wallets through Gateway to execution"
-      className="h-auto w-full border border-border-default bg-bg"
-    >
-      <defs>
-        <pattern
-          id="wallet-ops-grid"
-          width="20"
-          height="20"
-          patternUnits="userSpaceOnUse"
-        >
-          <path d="M20 0H0V20" fill="none" stroke="#242424" strokeWidth="1" />
-        </pattern>
-      </defs>
-      <rect width="360" height="190" fill="url(#wallet-ops-grid)" />
-      <path
-        d="M72 92H152M208 92H288"
-        fill="none"
-        stroke={gatewayStroke}
-        strokeDasharray="9 7"
-        strokeWidth="4"
-      >
-        {(gatewayReady || gatewayLoading) && (
-          <animate
-            attributeName="stroke-dashoffset"
-            dur={gatewayLoading ? "1.4s" : "2.4s"}
-            from="32"
-            repeatCount="indefinite"
-            to="0"
-          />
-        )}
-      </path>
-      <MiniOpsNode x={28} y={54} label="WALLETS" tone="agent" />
-      <MiniOpsNode
-        x={140}
-        y={54}
-        label={gatewayFailed ? "UNKNOWN" : "GATEWAY"}
-        tone={gatewayFailed ? "warn" : gatewayReady ? "pnl" : "agent"}
-      />
-      <MiniOpsNode
-        x={252}
-        y={54}
-        label={gatewayReady ? "UNLOCK" : "LOCKED"}
-        tone={gatewayReady ? "pnl" : "warn"}
-      />
-      <g transform="translate(96 142)">
-        <rect
-          width="168"
-          height="34"
-          fill="#111111"
-          stroke={gatewayStroke}
-          strokeWidth="1.5"
-        />
-        <rect x="10" y="9" width="14" height="14" fill={gatewayStroke}>
-          {(gatewayReady || gatewayLoading) && (
-            <animate
-              attributeName="opacity"
-              dur={gatewayLoading ? "0.8s" : "1.8s"}
-              repeatCount="indefinite"
-              values="0.35;1;0.35"
-            />
-          )}
-        </rect>
-        <text
-          x="34"
-          y="14"
-          fill={gatewayFailed ? "#f59e0b" : "#f5f5f5"}
-          fontFamily="monospace"
-          fontSize="9"
-          fontWeight="700"
-        >
-          {caption[0]}
-        </text>
-        <text x="34" y="26" fill="#a3a3a3" fontFamily="monospace" fontSize="8">
-          {caption[1]}
-        </text>
-      </g>
-    </svg>
-  );
-}
-
-function MiniOpsNode({
-  x,
-  y,
-  label,
-  tone,
-}: {
-  x: number;
-  y: number;
-  label: string;
-  tone: "agent" | "pnl" | "warn";
-}) {
-  const color =
-    tone === "agent" ? "#67e8f9" : tone === "pnl" ? "#86efac" : "#f59e0b";
-  return (
-    <g>
-      <rect x={x} y={y} width="80" height="76" fill="#111111" stroke={color} />
-      <rect x={x + 12} y={y + 12} width="56" height="16" fill={color} />
-      <text
-        x={x + 40}
-        y={y + 52}
-        fill="#f5f5f5"
-        fontFamily="monospace"
-        fontSize="11"
-        fontWeight="700"
-        textAnchor="middle"
-      >
-        {label}
-      </text>
-    </g>
   );
 }
 
@@ -645,200 +468,6 @@ function GateFact({
         {value}
       </p>
     </div>
-  );
-}
-
-function UnlockStep({
-  active,
-  title,
-  body,
-}: {
-  active: boolean;
-  title: string;
-  body: string;
-}) {
-  return (
-    <div className="grid grid-cols-[24px_1fr] gap-3 border border-border-default bg-bg p-3">
-      <span
-        className={`mt-0.5 flex h-5 w-5 items-center justify-center rounded-sharp border ${
-          active
-            ? "border-accent-agent/50 bg-accent-agent/10 text-accent-agent"
-            : "border-border-default text-text-mut"
-        }`}
-      >
-        {active ? (
-          <Check className="h-3 w-3" />
-        ) : (
-          <span className="h-1.5 w-1.5 bg-text-mut" />
-        )}
-      </span>
-      <span>
-        <span className="block font-semibold text-text-hi">{title}</span>
-        <span className="mt-1 block leading-relaxed text-text-lo">{body}</span>
-      </span>
-    </div>
-  );
-}
-
-function WalletSetupSvg({ sessionActive }: { sessionActive: boolean }) {
-  return (
-    <svg
-      viewBox="0 0 760 260"
-      role="img"
-      aria-label="Wallet setup path from session to Arc and Base wallets"
-      className="mt-5 h-auto w-full border border-border-default bg-bg"
-    >
-      <defs>
-        <pattern
-          id="wallet-setup-grid"
-          width="24"
-          height="24"
-          patternUnits="userSpaceOnUse"
-        >
-          <path d="M24 0H0V24" fill="none" stroke="#242424" strokeWidth="1" />
-        </pattern>
-        <filter
-          id="wallet-setup-glow"
-          x="-25%"
-          y="-25%"
-          width="150%"
-          height="150%"
-        >
-          <feGaussianBlur stdDeviation="3" result="blur" />
-          <feMerge>
-            <feMergeNode in="blur" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
-      </defs>
-      <rect width="760" height="260" fill="url(#wallet-setup-grid)" />
-      <path
-        d="M130 130H302M458 130H625"
-        fill="none"
-        stroke={sessionActive ? "#67e8f9" : "#525252"}
-        strokeDasharray="10 8"
-        strokeWidth="4"
-        filter={sessionActive ? "url(#wallet-setup-glow)" : undefined}
-      >
-        {sessionActive && (
-          <animate
-            attributeName="stroke-dashoffset"
-            dur="2.2s"
-            from="36"
-            repeatCount="indefinite"
-            to="0"
-          />
-        )}
-      </path>
-      <SetupNode
-        x={62}
-        y={84}
-        title="Session"
-        subtitle={sessionActive ? "server OK" : "missing"}
-        tone={sessionActive ? "agent" : "neutral"}
-      />
-      <SetupNode
-        x={302}
-        y={84}
-        title="Circle PIN"
-        subtitle="browser SDK"
-        tone={sessionActive ? "warn" : "neutral"}
-      />
-      <SetupNode x={578} y={48} title="Arc" subtitle="USDC gas" tone="pnl" />
-      <SetupNode x={578} y={148} title="Base" subtitle="CCTP" tone="pnl" />
-      <path
-        d="M458 130C510 130 512 86 578 86M458 130C510 130 512 186 578 186"
-        fill="none"
-        stroke="#86efac"
-        strokeDasharray="6 7"
-        strokeWidth="3"
-      >
-        <animate
-          attributeName="stroke-dashoffset"
-          dur="2.8s"
-          from="26"
-          repeatCount="indefinite"
-          to="0"
-        />
-      </path>
-      {!sessionActive && (
-        <g>
-          <circle cx="217" cy="130" r="22" fill="#737373" opacity="0.18" />
-          <path
-            d="M207 120L227 140M227 120L207 140"
-            stroke="#737373"
-            strokeLinecap="square"
-            strokeWidth="5"
-          />
-        </g>
-      )}
-    </svg>
-  );
-}
-
-function SetupNode({
-  x,
-  y,
-  title,
-  subtitle,
-  tone,
-}: {
-  x: number;
-  y: number;
-  title: string;
-  subtitle: string;
-  tone: "agent" | "pnl" | "warn" | "neutral";
-}) {
-  const stroke =
-    tone === "agent"
-      ? "#67e8f9"
-      : tone === "pnl"
-        ? "#86efac"
-        : tone === "warn"
-          ? "#f59e0b"
-          : "#525252";
-  const fill =
-    tone === "agent"
-      ? "#082f49"
-      : tone === "pnl"
-        ? "#052e16"
-        : tone === "warn"
-          ? "#2a1d06"
-          : "#111111";
-  return (
-    <g>
-      <rect
-        x={x}
-        y={y}
-        width="120"
-        height="92"
-        fill={fill}
-        stroke={stroke}
-        strokeWidth="3"
-      />
-      <rect x={x + 14} y={y + 14} width="92" height="14" fill={stroke} />
-      <text
-        x={x + 60}
-        y={y + 56}
-        fill="#f5f5f5"
-        fontFamily="monospace"
-        fontSize="15"
-        fontWeight="700"
-        textAnchor="middle"
-      >
-        {title}
-      </text>
-      <text
-        x={x + 60}
-        y={y + 74}
-        fill="#a3a3a3"
-        fontFamily="monospace"
-        fontSize="10"
-        textAnchor="middle"
-      >
-        {subtitle}
-      </text>
-    </g>
   );
 }
 
@@ -1020,7 +649,7 @@ function walletStatusError(error: unknown) {
   const message = raw.replace(/^\d{3}:\s*/, "");
   const lower = message.toLowerCase();
   if (lower.includes("missing token") || lower.includes("unauthorized")) {
-    return "The server session is not active anymore. Sign in and verify a fresh one-time code before checking wallet setup.";
+    return "The server session is not active anymore. Sign in and verify a fresh one-time code before checking account setup.";
   }
   if (lower.includes("failed to fetch") || lower.includes("networkerror")) {
     return "Aegis could not reach the API. Check that the backend is running, then try again.";

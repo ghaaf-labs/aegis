@@ -17,7 +17,7 @@ submission time).
 
 | Metric                                                       | Source                                                                             | Value                    |
 | ------------------------------------------------------------ | ---------------------------------------------------------------------------------- | ------------------------ |
-| Real wallets (Circle Wallets MSCAs created via /signup)      | `SELECT count(*) FROM users WHERE wallet_id IS NOT NULL`                           | `${WALLETS_CREATED}`     |
+| Real wallets (Circle Wallets MSCAs created via /login)       | `SELECT count(*) FROM users WHERE wallet_id IS NOT NULL`                           | `${WALLETS_CREATED}`     |
 | Decisions executed (non-abstain)                             | `SELECT count(*) FROM agent_decisions WHERE triggered_by != 'abstain'`             | `${DECISIONS_EXECUTED}`  |
 | Distinct portfolios                                          | `SELECT count(*) FROM portfolios`                                                  | `${PORTFOLIOS}`          |
 | Total USDC routed through executor (testnet)                 | `SELECT sum(amount_usdc) FROM rebalance_legs WHERE status = 'confirmed'`           | `${TESTNET_USDC_ROUTED}` |

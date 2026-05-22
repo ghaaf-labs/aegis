@@ -195,7 +195,7 @@ export default function RebalancePage({ params }: PageProps) {
             {approvalSafety?.approvable === false
               ? blockedReviewCopy(approvalSafety)
               : plan?.executionMode === "mock"
-                ? "The agent has built a local demo plan. Review the legs, then run the executor to update the mock portfolio and Gateway balances."
+                ? "This is a historical test review. Build a fresh real-execution review before approving."
                 : hasCrossChainLeg
                   ? "The agent has built a cross-chain plan. Review the legs, then approve to settle on Arc + Base."
                   : `The agent has built a single-chain ${singleChainLabel(plan)} plan. Review the legs, then approve to execute the non-USDC target sleeves while the USDC sleeve stays in wallet cash.`}
@@ -249,7 +249,7 @@ function blockedReviewCopy(safety: RebalanceApprovalSafety) {
     case "BALANCE_UNAVAILABLE":
       return "Aegis cannot verify Gateway balance right now, so real execution approval is locked until Circle Gateway responds.";
     case "MOCK_OR_LEGACY_PLAN":
-      return "This review was created by an older or mock planner. Build a fresh real-execution review before approving.";
+      return "This review was created outside the current real-execution path. Build a fresh review before approving.";
     default:
       return (
         safety.message ||

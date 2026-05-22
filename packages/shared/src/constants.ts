@@ -70,10 +70,10 @@ export const USYC_ADDRESS_ARC = "0x0000000000000000000000000000000000000000";
 export const API_ROUTES = {
   health: "/health",
   auth: {
-    register: "/auth/register",
-    login: "/auth/login",
-    refresh: "/auth/refresh",
-    me: "/auth/me",
+    startEmail: "/auth/email/start",
+    verifyEmail: "/auth/email/verify",
+    session: "/auth/session",
+    logout: "/auth/logout",
   },
   portfolios: {
     list: "/portfolios",

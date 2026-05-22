@@ -1,24 +1,25 @@
-//! Wallet service — orchestrates Circle W3S User-Controlled provider +
-//! persistence + JWT minting.
+//! Wallet service — orchestrates email-code auth, Circle wallet persistence,
+//! and opaque session minting.
 
-use chrono::{TimeZone, Utc};
+use chrono::Utc;
 use hmac::{Hmac, Mac};
-use jsonwebtoken::{encode, EncodingKey, Header};
 use rand::Rng;
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
 use super::models::{
-    WalletAuthCodeResponse, WalletAuthIntent, WalletAuthResponse, WalletInfo, WalletStatusResponse,
-    WalletUser, WalletUserPublic,
+    EmailAuthConsent, WalletAuthCodeResponse, WalletAuthResponse, WalletInfo,
+    WalletSessionResponse, WalletUser, WalletUserPublic,
 };
 use super::provider::WalletProvider;
 use crate::config::Config;
 use crate::db::Db;
 use crate::error::AppError;
-use crate::middleware::auth::Claims;
 use crate::modules::sse::{SseEvent, SseSender};
+
+const AUTH_CODE_EXPIRY_MINUTES: i64 = 10;
+const AUTH_CODE_RESEND_COOLDOWN_SECONDS: u64 = 30;
 
 pub struct WalletService<'a> {
     pub db: &'a Db,
@@ -50,7 +51,6 @@ impl<'a> WalletService<'a> {
     pub async fn request_auth_code(
         &self,
         email: &str,
-        intent: WalletAuthIntent,
         referrer_handle: Option<&str>,
     ) -> crate::error::Result<WalletAuthCodeIssue> {
         let normalized = normalize_email(email);
@@ -58,46 +58,36 @@ impl<'a> WalletService<'a> {
         let challenge_id = Uuid::new_v4();
         let code = format!("{:06}", rand::thread_rng().gen_range(0..1_000_000));
         let code_hash = code_hash(self.config, &normalized, challenge_id, &code);
-        let expires_at = Utc::now() + chrono::Duration::minutes(10);
+        let expires_at = Utc::now() + chrono::Duration::minutes(AUTH_CODE_EXPIRY_MINUTES);
         let referrer_handle = referrer_handle
             .map(str::trim)
             .filter(|h| !h.is_empty())
             .map(|h| h.to_ascii_lowercase());
 
-        self.validate_auth_intent(&normalized, intent).await?;
-
         let recent_10m: i64 = sqlx::query_scalar(
             "SELECT COUNT(*)
              FROM wallet_auth_codes
              WHERE email = $1
-               AND intent = $2
                AND created_at > NOW() - INTERVAL '10 minutes'",
         )
         .bind(&normalized)
-        .bind(intent.as_str())
         .fetch_one(self.db)
         .await?;
         if recent_10m >= 3 {
-            return Err(AppError::TooManyRequests(
-                "too many verification code requests".into(),
-            ));
+            return Err(AppError::TooManyRequests("rate_limited".into()));
         }
 
         let recent_hour: i64 = sqlx::query_scalar(
             "SELECT COUNT(*)
              FROM wallet_auth_codes
              WHERE email = $1
-               AND intent = $2
                AND created_at > NOW() - INTERVAL '1 hour'",
         )
         .bind(&normalized)
-        .bind(intent.as_str())
         .fetch_one(self.db)
         .await?;
         if recent_hour >= 10 {
-            return Err(AppError::TooManyRequests(
-                "too many verification code requests".into(),
-            ));
+            return Err(AppError::TooManyRequests("rate_limited".into()));
         }
 
         let mut tx = self.db.begin().await?;
@@ -105,22 +95,19 @@ impl<'a> WalletService<'a> {
             "UPDATE wallet_auth_codes
              SET consumed_at = NOW()
              WHERE email = $1
-               AND intent = $2
                AND consumed_at IS NULL",
         )
         .bind(&normalized)
-        .bind(intent.as_str())
         .execute(&mut *tx)
         .await?;
 
         sqlx::query(
             "INSERT INTO wallet_auth_codes
-                (id, email, intent, code_hash, referrer_handle, expires_at)
-             VALUES ($1, $2, $3, $4, $5, $6)",
+                (id, email, code_hash, referrer_handle, expires_at)
+             VALUES ($1, $2, $3, $4, $5)",
         )
         .bind(challenge_id)
         .bind(&normalized)
-        .bind(intent.as_str())
         .bind(&code_hash)
         .bind(referrer_handle)
         .bind(expires_at)
@@ -133,19 +120,74 @@ impl<'a> WalletService<'a> {
                 challenge_id,
                 email: normalized,
                 expires_at,
+                resend_in_seconds: AUTH_CODE_RESEND_COOLDOWN_SECONDS,
                 dev_code: None,
             },
             code,
         })
     }
 
-    async fn validate_auth_intent(
+    pub async fn resend_auth_code(
         &self,
-        email: &str,
-        intent: WalletAuthIntent,
-    ) -> crate::error::Result<()> {
-        let user = self.find_user_by_email(email).await?;
-        validate_auth_intent_for_user(intent, user.as_ref(), self.config.circle_mock)
+        challenge_id: Uuid,
+    ) -> crate::error::Result<WalletAuthCodeIssue> {
+        use sqlx::Row;
+
+        let row = sqlx::query(
+            "SELECT email, referrer_handle, created_at
+             FROM wallet_auth_codes
+             WHERE id = $1
+               AND consumed_at IS NULL
+               AND expires_at > NOW()",
+        )
+        .bind(challenge_id)
+        .fetch_optional(self.db)
+        .await?
+        .ok_or_else(|| AppError::BadRequest("code_expired".into()))?;
+
+        let email: String = row.try_get("email")?;
+        validate_email(&email)?;
+        let created_at: chrono::DateTime<Utc> = row.try_get("created_at")?;
+        let elapsed = (Utc::now() - created_at).num_seconds().max(0) as u64;
+        if elapsed < AUTH_CODE_RESEND_COOLDOWN_SECONDS {
+            return Err(AppError::TooManyRequests(format!(
+                "resend_cooldown:{}",
+                AUTH_CODE_RESEND_COOLDOWN_SECONDS - elapsed
+            )));
+        }
+
+        let code = format!("{:06}", rand::thread_rng().gen_range(0..1_000_000));
+        let code_hash = code_hash(self.config, &email, challenge_id, &code);
+        let expires_at = Utc::now() + chrono::Duration::minutes(AUTH_CODE_EXPIRY_MINUTES);
+        let referrer_handle: Option<String> = row.try_get("referrer_handle")?;
+
+        sqlx::query(
+            "UPDATE wallet_auth_codes
+             SET code_hash = $2,
+                 referrer_handle = $3,
+                 attempts = 0,
+                 expires_at = $4,
+                 created_at = NOW()
+             WHERE id = $1
+               AND consumed_at IS NULL",
+        )
+        .bind(challenge_id)
+        .bind(&code_hash)
+        .bind(referrer_handle)
+        .bind(expires_at)
+        .execute(self.db)
+        .await?;
+
+        Ok(WalletAuthCodeIssue {
+            response: WalletAuthCodeResponse {
+                challenge_id,
+                email,
+                expires_at,
+                resend_in_seconds: AUTH_CODE_RESEND_COOLDOWN_SECONDS,
+                dev_code: None,
+            },
+            code,
+        })
     }
 
     pub async fn verify_auth_code(
@@ -153,7 +195,6 @@ impl<'a> WalletService<'a> {
         email: &str,
         challenge_id: Uuid,
         code: &str,
-        intent: WalletAuthIntent,
     ) -> crate::error::Result<Option<String>> {
         use sqlx::Row;
 
@@ -161,36 +202,36 @@ impl<'a> WalletService<'a> {
         validate_email(&normalized)?;
         let trimmed_code = code.trim();
         if trimmed_code.len() != 6 || !trimmed_code.chars().all(|c| c.is_ascii_digit()) {
-            return Err(AppError::Unauthorized("invalid verification code".into()));
+            return Err(AppError::BadRequest("code_invalid".into()));
         }
 
         let row = sqlx::query(
-            "SELECT code_hash, attempts, expires_at, referrer_handle
+            "SELECT code_hash, attempts, expires_at, referrer_handle, consumed_at
              FROM wallet_auth_codes
              WHERE id = $1
-               AND email = $2
-               AND intent = $3
-               AND consumed_at IS NULL",
+               AND email = $2",
         )
         .bind(challenge_id)
         .bind(&normalized)
-        .bind(intent.as_str())
         .fetch_optional(self.db)
         .await?;
 
         let Some(row) = row else {
-            return Err(AppError::Unauthorized("verification code not found".into()));
+            return Err(AppError::BadRequest("code_invalid".into()));
         };
 
+        let consumed_at: Option<chrono::DateTime<Utc>> = row.try_get("consumed_at")?;
+        if consumed_at.is_some() {
+            return Err(AppError::BadRequest("code_used".into()));
+        }
+
         let attempts: i32 = row.try_get("attempts")?;
-        if attempts >= 5 {
-            return Err(AppError::Unauthorized(
-                "too many verification attempts".into(),
-            ));
+        if attempts >= 3 {
+            return Err(AppError::TooManyRequests("too_many_attempts".into()));
         }
         let expires_at: chrono::DateTime<Utc> = row.try_get("expires_at")?;
         if expires_at <= Utc::now() {
-            return Err(AppError::Unauthorized("verification code expired".into()));
+            return Err(AppError::BadRequest("code_expired".into()));
         }
 
         let actual_hash: String = row.try_get("code_hash")?;
@@ -201,11 +242,23 @@ impl<'a> WalletService<'a> {
             .unwrap_u8()
             != 1
         {
-            sqlx::query("UPDATE wallet_auth_codes SET attempts = attempts + 1 WHERE id = $1")
-                .bind(challenge_id)
-                .execute(self.db)
-                .await?;
-            return Err(AppError::Unauthorized("invalid verification code".into()));
+            let failed_attempts = attempts + 1;
+            sqlx::query(
+                "UPDATE wallet_auth_codes
+                 SET attempts = attempts + 1,
+                     consumed_at = CASE
+                         WHEN attempts + 1 >= 3 THEN NOW()
+                         ELSE consumed_at
+                     END
+                 WHERE id = $1",
+            )
+            .bind(challenge_id)
+            .execute(self.db)
+            .await?;
+            if failed_attempts >= 3 {
+                return Err(AppError::TooManyRequests("too_many_attempts".into()));
+            }
+            return Err(AppError::BadRequest("code_invalid".into()));
         }
 
         let consumed = sqlx::query(
@@ -217,92 +270,171 @@ impl<'a> WalletService<'a> {
         .execute(self.db)
         .await?;
         if consumed.rows_affected() != 1 {
-            return Err(AppError::Unauthorized(
-                "verification code already used".into(),
-            ));
+            return Err(AppError::BadRequest("code_used".into()));
         }
 
         Ok(row.try_get("referrer_handle")?)
     }
 
-    /// New-user signup. A user row that exists but has no wallet (W3S
-    /// ceremony was aborted before Circle returned addresses) is treated as a
-    /// fresh signup so the browser SDK gets a real challenge_id and the user
-    /// can recover instead of polling forever. Completed wallets must use
-    /// login; signup should not silently become a session restore.
-    pub async fn init_signup(&self, email: &str) -> crate::error::Result<WalletAuthResponse> {
+    pub async fn init_continue(
+        &self,
+        email: &str,
+        consent: Option<&EmailAuthConsent>,
+    ) -> crate::error::Result<WalletAuthResponse> {
+        let email = normalize_email(email);
+        validate_email(&email)?;
+        if self.email_has_deletion_request(&email).await? {
+            return Err(AppError::Forbidden("account_deletion_requested".into()));
+        }
+        let existing = self.find_user_by_email(&email).await?;
+        if existing.is_none() && !has_required_consent(consent) {
+            return Err(AppError::BadRequest("consent_required".into()));
+        }
+        if let Some(user) = existing.as_ref() {
+            if let Some(marketing_opt_in) = consent.and_then(|c| c.marketing_opt_in) {
+                self.update_marketing_opt_in(user.id, marketing_opt_in)
+                    .await?;
+            }
+        }
+        let mut response = if existing
+            .as_ref()
+            .is_some_and(|user| user_has_wallet(user, self.config.circle_mock))
+        {
+            self.init_login(&email).await?
+        } else {
+            self.init_signup_with_consent(&email, consent).await?
+        };
+
+        if response.wallet.is_none() {
+            if let Ok(wallet) = self.refresh_wallet(response.user.id).await {
+                response.wallet = wallet;
+                response.status = auth_response_status(&response.wallet);
+                response.user.account_status = account_status_for_wallet(&response.wallet);
+            }
+        }
+
+        Ok(response)
+    }
+
+    async fn init_signup_with_consent(
+        &self,
+        email: &str,
+        consent: Option<&EmailAuthConsent>,
+    ) -> crate::error::Result<WalletAuthResponse> {
         let email = normalize_email(email);
         validate_email(&email)?;
 
-        let (user, was_inserted) = self.upsert_user_record(&email).await?;
+        let (mut user, was_inserted) = self.upsert_user_record(&email, consent).await?;
         let has_wallet = user_has_wallet(&user, self.config.circle_mock);
-        if !was_inserted && has_wallet {
-            return Err(AppError::Conflict(
-                "wallet already exists for this email; sign in instead".into(),
-            ));
+        if !has_wallet {
+            self.set_account_status(user.id, "pending_wallet").await?;
+            user.account_status = "pending_wallet".into();
         }
-        let needs_challenge = was_inserted || !has_wallet;
-        self.provider.ensure_user(user.id).await?;
-        let bundle = self
-            .provider
-            .issue_user_token(user.id, needs_challenge)
-            .await?;
-        let token = mint_token(&user, self.config, self.db).await?;
-        let wallet = wallet_from_user(&user, self.config.circle_mock);
+        let wallet = if has_wallet {
+            wallet_from_user(&user, self.config.circle_mock)
+        } else {
+            match self.refresh_wallet(user.id).await {
+                Ok(wallet) => wallet,
+                Err(e) => {
+                    tracing::warn!(error=%e, user_id = %user.id, "wallet provisioning failed");
+                    self.set_account_status(user.id, "pending_wallet").await?;
+                    None
+                }
+            }
+        };
+        if wallet.is_some() {
+            user = self.find_user_by_id(user.id).await?.unwrap_or(user);
+        }
+        let session_token = mint_session_token(&user, self.config, self.db).await?;
 
         Ok(WalletAuthResponse {
-            token,
+            session_token,
+            status: auth_response_status(&wallet),
             user: public(&user),
             wallet,
-            bundle: Some(bundle),
             is_new_user: was_inserted,
         })
     }
 
-    /// Returning-user signin. Provisioned wallets skip the initialize
-    /// challenge. Users who abandoned signup before wallet creation get a
-    /// fresh challenge here so login can recover the account instead of
-    /// polling forever.
-    pub async fn init_login(&self, email: &str) -> crate::error::Result<WalletAuthResponse> {
+    async fn init_login(&self, email: &str) -> crate::error::Result<WalletAuthResponse> {
         let email = normalize_email(email);
         validate_email(&email)?;
-        let user = self
+        let mut user = self
             .find_user_by_email(&email)
             .await?
             .ok_or_else(|| AppError::Unauthorized("no account for this email".into()))?;
         let has_wallet = user_has_wallet(&user, self.config.circle_mock);
-        let bundle = if has_wallet {
-            None
-        } else {
-            self.provider.ensure_user(user.id).await?;
-            Some(self.provider.issue_user_token(user.id, true).await?)
-        };
-        let token = mint_token(&user, self.config, self.db).await?;
-        let wallet = wallet_from_user(&user, self.config.circle_mock);
+        let mut wallet = wallet_from_user(&user, self.config.circle_mock);
+        if !has_wallet {
+            self.set_account_status(user.id, "pending_wallet").await?;
+            user.account_status = "pending_wallet".into();
+            wallet = match self.refresh_wallet(user.id).await {
+                Ok(wallet) => wallet,
+                Err(e) => {
+                    tracing::warn!(error=%e, user_id = %user.id, "wallet provisioning failed");
+                    None
+                }
+            };
+            if wallet.is_some() {
+                user = self.find_user_by_id(user.id).await?.unwrap_or(user);
+            }
+        }
+        let session_token = mint_session_token(&user, self.config, self.db).await?;
 
         Ok(WalletAuthResponse {
-            token,
+            session_token,
+            status: auth_response_status(&wallet),
             user: public(&user),
             wallet,
-            bundle,
             is_new_user: false,
         })
     }
 
-    /// Polled by the browser after the SDK completes its PIN ceremony. Fetches
-    /// the wallet from Circle and writes it back to the users row the first
-    /// time it appears. Returns the wallet info (or `None` while pending).
-    pub async fn fetch_wallet_status(
-        &self,
-        user_id: Uuid,
-    ) -> crate::error::Result<WalletStatusResponse> {
-        if let Some(existing) = self.find_user_by_id(user_id).await? {
-            if let Some(w) = wallet_from_user(&existing, self.config.circle_mock) {
-                return Ok(WalletStatusResponse { wallet: Some(w) });
+    pub async fn session(&self, user_id: Uuid) -> crate::error::Result<WalletSessionResponse> {
+        let user = self
+            .find_user_by_id(user_id)
+            .await?
+            .ok_or_else(|| AppError::Unauthorized("unknown user".into()))?;
+        let mut wallet = wallet_from_user(&user, self.config.circle_mock);
+        if wallet.is_none() || user.account_status == "pending_wallet" {
+            match self.refresh_wallet(user_id).await {
+                Ok(next_wallet) => {
+                    wallet = next_wallet;
+                }
+                Err(e) => {
+                    tracing::warn!(error=%e, user_id=%user_id, "wallet provisioning retry failed");
+                    self.set_account_status(user_id, "pending_wallet").await?;
+                    wallet = None;
+                }
             }
         }
-        let Some(info) = self.provider.fetch_user_wallets(user_id).await? else {
-            return Ok(WalletStatusResponse { wallet: None });
+
+        let mut user = self.find_user_by_id(user_id).await?.unwrap_or(user);
+        let account_status = account_status_for_wallet(&wallet);
+        if user.account_status != account_status {
+            self.set_account_status(user_id, &account_status).await?;
+            user.account_status = account_status.clone();
+        }
+
+        Ok(WalletSessionResponse {
+            user: public(&user),
+            wallet,
+            account_status,
+        })
+    }
+
+    async fn refresh_wallet(&self, user_id: Uuid) -> crate::error::Result<Option<WalletInfo>> {
+        if let Some(existing) = self.find_user_by_id(user_id).await? {
+            if let Some(w) = wallet_from_user(&existing, self.config.circle_mock) {
+                if existing.account_status != "active" {
+                    self.set_account_status(user_id, "active").await?;
+                }
+                return Ok(Some(w));
+            }
+        }
+        let Some(info) = self.provider.provision_wallet(user_id).await? else {
+            self.set_account_status(user_id, "pending_wallet").await?;
+            return Ok(None);
         };
         // Only the writer that actually persisted the wallet emits SSE —
         // concurrent status polls used to fire `wallet.created` twice,
@@ -319,7 +451,7 @@ impl<'a> WalletService<'a> {
                     created_at: info.created_at,
                 }));
         }
-        Ok(WalletStatusResponse { wallet: Some(info) })
+        Ok(Some(info))
     }
 
     // ── DB helpers ────────────────────────────────────────────────────────
@@ -327,8 +459,12 @@ impl<'a> WalletService<'a> {
     async fn find_user_by_email(&self, email: &str) -> crate::error::Result<Option<WalletUser>> {
         let user = sqlx::query_as::<_, WalletUser>(
             "SELECT id, email, risk_tolerance, investment_horizon_months,
+                    account_status, custody_model,
                     wallet_id, arc_address, base_address, created_at
-             FROM users WHERE email = $1",
+             FROM users
+             WHERE email = $1
+               AND deletion_requested_at IS NULL
+               AND anonymized_at IS NULL",
         )
         .bind(email)
         .fetch_optional(self.db)
@@ -336,9 +472,25 @@ impl<'a> WalletService<'a> {
         Ok(user)
     }
 
+    async fn email_has_deletion_request(&self, email: &str) -> crate::error::Result<bool> {
+        let has_deletion_request = sqlx::query_scalar(
+            "SELECT EXISTS (
+                SELECT 1
+                FROM users
+                WHERE email = $1
+                  AND (deletion_requested_at IS NOT NULL OR anonymized_at IS NOT NULL)
+             )",
+        )
+        .bind(email)
+        .fetch_one(self.db)
+        .await?;
+        Ok(has_deletion_request)
+    }
+
     async fn find_user_by_id(&self, id: Uuid) -> crate::error::Result<Option<WalletUser>> {
         let user = sqlx::query_as::<_, WalletUser>(
             "SELECT id, email, risk_tolerance, investment_horizon_months,
+                    account_status, custody_model,
                     wallet_id, arc_address, base_address, created_at
              FROM users WHERE id = $1",
         )
@@ -358,19 +510,41 @@ impl<'a> WalletService<'a> {
     /// distinguishes the INSERT row (xmax = 0) from the UPDATE-on-conflict
     /// row (xmax != 0) so we still know whether this caller's INSERT or
     /// another's won.
-    async fn upsert_user_record(&self, email: &str) -> crate::error::Result<(WalletUser, bool)> {
+    async fn upsert_user_record(
+        &self,
+        email: &str,
+        consent: Option<&EmailAuthConsent>,
+    ) -> crate::error::Result<(WalletUser, bool)> {
         use sqlx::Row;
+        let tos_version = consent.and_then(|c| c.tos_version.as_deref());
+        let privacy_version = consent.and_then(|c| c.privacy_version.as_deref());
+        let consented = has_required_consent(consent);
+        let marketing_opt_in = consent.and_then(|c| c.marketing_opt_in);
         let row = sqlx::query(
-            r#"INSERT INTO users (id, email)
-               VALUES ($1, $2)
+            r#"INSERT INTO users (
+                    id, email, account_status, custody_model,
+                    tos_version, privacy_version, consented_at, marketing_opt_in
+               )
+               VALUES (
+                    $1, $2, 'pending_wallet', 'circle_developer',
+                    $3, $4,
+                    CASE WHEN $5 THEN NOW() ELSE NULL END,
+                    COALESCE($6, FALSE)
+               )
                ON CONFLICT (email) DO UPDATE
-                 SET email = EXCLUDED.email
+                 SET email = EXCLUDED.email,
+                     marketing_opt_in = COALESCE($6, users.marketing_opt_in)
                RETURNING id, email, risk_tolerance, investment_horizon_months,
+                         account_status, custody_model,
                          wallet_id, arc_address, base_address, created_at,
                          (xmax = 0) AS was_inserted"#,
         )
         .bind(Uuid::new_v4())
         .bind(email)
+        .bind(tos_version)
+        .bind(privacy_version)
+        .bind(consented)
+        .bind(marketing_opt_in)
         .fetch_one(self.db)
         .await?;
         let was_inserted: bool = row.try_get("was_inserted")?;
@@ -379,6 +553,8 @@ impl<'a> WalletService<'a> {
             email: row.try_get("email")?,
             risk_tolerance: row.try_get("risk_tolerance")?,
             investment_horizon_months: row.try_get("investment_horizon_months")?,
+            account_status: row.try_get("account_status")?,
+            custody_model: row.try_get("custody_model")?,
             wallet_id: row.try_get("wallet_id")?,
             arc_address: row.try_get("arc_address")?,
             base_address: row.try_get("base_address")?,
@@ -398,7 +574,10 @@ impl<'a> WalletService<'a> {
             "UPDATE users
                 SET wallet_id    = $2,
                     arc_address  = $3,
-                    base_address = $4
+                    base_address = $4,
+                    wallet_set_id = NULLIF($5, ''),
+                    custody_model = 'circle_developer',
+                    account_status = 'active'
               WHERE id = $1
                 AND (
                   wallet_id IS NULL
@@ -411,9 +590,32 @@ impl<'a> WalletService<'a> {
         .bind(&info.wallet_id)
         .bind(&info.arc_address)
         .bind(&info.base_address)
+        .bind(&self.config.circle_wallet_set_id)
         .execute(self.db)
         .await?;
         Ok(result.rows_affected() > 0)
+    }
+
+    async fn set_account_status(&self, user_id: Uuid, status: &str) -> crate::error::Result<()> {
+        sqlx::query("UPDATE users SET account_status = $2 WHERE id = $1")
+            .bind(user_id)
+            .bind(status)
+            .execute(self.db)
+            .await?;
+        Ok(())
+    }
+
+    async fn update_marketing_opt_in(
+        &self,
+        user_id: Uuid,
+        marketing_opt_in: bool,
+    ) -> crate::error::Result<()> {
+        sqlx::query("UPDATE users SET marketing_opt_in = $2 WHERE id = $1")
+            .bind(user_id)
+            .bind(marketing_opt_in)
+            .execute(self.db)
+            .await?;
+        Ok(())
     }
 }
 
@@ -433,22 +635,6 @@ fn user_has_wallet(u: &WalletUser, allow_mock_wallet: bool) -> bool {
     wallet_from_user(u, allow_mock_wallet).is_some()
 }
 
-fn validate_auth_intent_for_user(
-    intent: WalletAuthIntent,
-    user: Option<&WalletUser>,
-    allow_mock_wallet: bool,
-) -> crate::error::Result<()> {
-    match (intent, user) {
-        (WalletAuthIntent::Login, None) => {
-            Err(AppError::Unauthorized("no account for this email".into()))
-        }
-        (WalletAuthIntent::Signup, Some(user)) if user_has_wallet(user, allow_mock_wallet) => Err(
-            AppError::Conflict("wallet already exists for this email; sign in instead".into()),
-        ),
-        _ => Ok(()),
-    }
-}
-
 fn is_mock_wallet_fields(u: &WalletUser) -> bool {
     u.wallet_id
         .as_deref()
@@ -466,41 +652,68 @@ fn public(u: &WalletUser) -> WalletUserPublic {
         id: u.id,
         email: u.email.clone(),
         risk_tolerance: u.risk_tolerance.clone(),
+        account_status: u.account_status.clone(),
     }
 }
 
-async fn mint_token(user: &WalletUser, cfg: &Config, db: &Db) -> crate::error::Result<String> {
-    let now = Utc::now().timestamp() as usize;
+fn auth_response_status(wallet: &Option<WalletInfo>) -> String {
+    if wallet.is_some() {
+        "active".into()
+    } else {
+        "provisioning".into()
+    }
+}
+
+fn account_status_for_wallet(wallet: &Option<WalletInfo>) -> String {
+    if wallet.is_some() {
+        "active".into()
+    } else {
+        "pending_wallet".into()
+    }
+}
+
+fn has_required_consent(consent: Option<&EmailAuthConsent>) -> bool {
+    consent.is_some_and(|c| {
+        c.tos
+            && c.privacy
+            && non_empty_opt(c.tos_version.as_deref())
+            && non_empty_opt(c.privacy_version.as_deref())
+    })
+}
+
+fn non_empty_opt(value: Option<&str>) -> bool {
+    value.is_some_and(|v| !v.trim().is_empty())
+}
+
+async fn mint_session_token(
+    user: &WalletUser,
+    cfg: &Config,
+    db: &Db,
+) -> crate::error::Result<String> {
     let session_id = Uuid::new_v4();
-    let exp = now + (cfg.jwt_expiry_hours as usize * 3600);
-    let claims = Claims {
-        sub: user.id,
-        email: user.email.clone(),
-        jti: session_id,
-        wallet_id: user.wallet_id.clone(),
-        iat: now,
-        exp,
-    };
+    let expires_at = Utc::now() + chrono::Duration::hours(cfg.jwt_expiry_hours as i64);
+
+    sqlx::query(
+        "UPDATE auth_sessions
+         SET revoked_at = COALESCE(revoked_at, NOW())
+         WHERE user_id = $1
+           AND revoked_at IS NULL",
+    )
+    .bind(user.id)
+    .execute(db)
+    .await?;
+
     sqlx::query(
         "INSERT INTO auth_sessions (id, user_id, expires_at)
          VALUES ($1, $2, $3)",
     )
     .bind(session_id)
     .bind(user.id)
-    .bind(
-        Utc.timestamp_opt(exp as i64, 0)
-            .single()
-            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("invalid session expiry")))?,
-    )
+    .bind(expires_at)
     .execute(db)
     .await?;
 
-    encode(
-        &Header::default(),
-        &claims,
-        &EncodingKey::from_secret(cfg.jwt_secret.as_bytes()),
-    )
-    .map_err(|e| AppError::Internal(anyhow::anyhow!(e)))
+    Ok(session_id.to_string())
 }
 
 fn validate_email(email: &str) -> crate::error::Result<()> {
@@ -550,40 +763,60 @@ mod tests {
     }
 
     #[test]
-    fn wallet_auth_response_does_not_serialize_app_jwt() {
+    fn consent_requires_terms_privacy_and_versions() {
+        assert!(!has_required_consent(None));
+
+        let mut consent = EmailAuthConsent {
+            tos: true,
+            privacy: true,
+            tos_version: Some("2026-05".into()),
+            privacy_version: Some("2026-05".into()),
+            marketing_opt_in: Some(false),
+        };
+        assert!(has_required_consent(Some(&consent)));
+
+        consent.tos_version = Some(" ".into());
+        assert!(!has_required_consent(Some(&consent)));
+
+        consent.tos_version = Some("2026-05".into());
+        consent.privacy = false;
+        assert!(!has_required_consent(Some(&consent)));
+    }
+
+    #[test]
+    fn wallet_auth_response_does_not_serialize_session_token() {
         let user_id = Uuid::new_v4();
         let response = WalletAuthResponse {
-            token: "app.jwt.must.stay.cookie-only".into(),
+            session_token: "opaque-session-id".into(),
+            status: "provisioning".into(),
             user: WalletUserPublic {
                 id: user_id,
                 email: "user@example.com".into(),
                 risk_tolerance: "moderate".into(),
+                account_status: "pending_wallet".into(),
             },
             wallet: None,
-            bundle: Some(crate::modules::wallet::models::UserTokenBundle {
-                user_token: "circle-user-token".into(),
-                encryption_key: "circle-encryption-key".into(),
-                app_id: "circle-app".into(),
-                challenge_id: None,
-            }),
             is_new_user: false,
         };
 
         let json = serde_json::to_value(response).unwrap();
-        assert!(json.get("token").is_none());
+        assert!(json.get("sessionToken").is_none());
+        assert!(json.get("isNewUser").is_none());
         assert_eq!(json["user"]["id"], user_id.to_string());
-        assert_eq!(json["bundle"]["userToken"], "circle-user-token");
+        assert!(json.get("bundle").is_none());
     }
 
     #[test]
-    fn wallet_auth_response_omits_circle_bundle_for_returning_wallet() {
+    fn wallet_auth_response_serializes_active_wallet() {
         let user_id = Uuid::new_v4();
         let response = WalletAuthResponse {
-            token: "app.jwt.must.stay.cookie-only".into(),
+            session_token: "opaque-session-id".into(),
+            status: "active".into(),
             user: WalletUserPublic {
                 id: user_id,
                 email: "returning@example.com".into(),
                 risk_tolerance: "moderate".into(),
+                account_status: "active".into(),
             },
             wallet: Some(WalletInfo {
                 wallet_id: "wallet-live".into(),
@@ -591,14 +824,28 @@ mod tests {
                 base_address: "0x2222222222222222222222222222222222222222".into(),
                 created_at: Utc::now(),
             }),
-            bundle: None,
             is_new_user: false,
         };
 
         let json = serde_json::to_value(response).unwrap();
-        assert!(json.get("token").is_none());
+        assert!(json.get("sessionToken").is_none());
+        assert!(json.get("isNewUser").is_none());
         assert!(json.get("bundle").is_none());
         assert_eq!(json["wallet"]["walletId"], "wallet-live");
+    }
+
+    #[test]
+    fn auth_code_response_serializes_resend_cooldown() {
+        let response = WalletAuthCodeResponse {
+            challenge_id: Uuid::new_v4(),
+            email: "user@example.com".into(),
+            expires_at: Utc::now(),
+            resend_in_seconds: AUTH_CODE_RESEND_COOLDOWN_SECONDS,
+            dev_code: None,
+        };
+
+        let json = serde_json::to_value(response).unwrap();
+        assert_eq!(json["resendInSeconds"], AUTH_CODE_RESEND_COOLDOWN_SECONDS);
     }
 
     #[test]
@@ -608,6 +855,8 @@ mod tests {
             email: "legacy@example.com".into(),
             risk_tolerance: "moderate".into(),
             investment_horizon_months: 12,
+            account_status: "active".into(),
+            custody_model: "circle_developer".into(),
             wallet_id: Some("mock_wallet_deadbeef".into()),
             arc_address: Some("0xARC0000000000000000000000000000000000000000".into()),
             base_address: Some("0xBASE0000000000000000000000000000000000000000".into()),
@@ -617,68 +866,5 @@ mod tests {
         assert!(wallet_from_user(&user, true).is_some());
         assert!(wallet_from_user(&user, false).is_none());
         assert!(!user_has_wallet(&user, false));
-    }
-
-    #[test]
-    fn auth_code_intent_validation_rejects_wrong_entry_points() {
-        let live_wallet = WalletUser {
-            id: Uuid::new_v4(),
-            email: "live@example.com".into(),
-            risk_tolerance: "moderate".into(),
-            investment_horizon_months: 12,
-            wallet_id: Some("wallet-live".into()),
-            arc_address: Some("0x1111111111111111111111111111111111111111".into()),
-            base_address: Some("0x2222222222222222222222222222222222222222".into()),
-            created_at: Utc::now(),
-        };
-        let abandoned_signup = WalletUser {
-            wallet_id: None,
-            arc_address: None,
-            base_address: None,
-            ..live_wallet.clone()
-        };
-
-        assert!(validate_auth_intent_for_user(WalletAuthIntent::Login, None, false).is_err());
-        assert!(
-            validate_auth_intent_for_user(WalletAuthIntent::Signup, Some(&live_wallet), false)
-                .is_err()
-        );
-        assert!(
-            validate_auth_intent_for_user(WalletAuthIntent::Login, Some(&live_wallet), false)
-                .is_ok()
-        );
-        assert!(validate_auth_intent_for_user(
-            WalletAuthIntent::Signup,
-            Some(&abandoned_signup),
-            false
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn real_signup_can_recover_legacy_mock_wallet_rows() {
-        let legacy_mock_wallet = WalletUser {
-            id: Uuid::new_v4(),
-            email: "legacy@example.com".into(),
-            risk_tolerance: "moderate".into(),
-            investment_horizon_months: 12,
-            wallet_id: Some("mock_wallet_deadbeef".into()),
-            arc_address: Some("0xARC0000000000000000000000000000000000000000".into()),
-            base_address: Some("0xBASE0000000000000000000000000000000000000000".into()),
-            created_at: Utc::now(),
-        };
-
-        assert!(validate_auth_intent_for_user(
-            WalletAuthIntent::Signup,
-            Some(&legacy_mock_wallet),
-            false
-        )
-        .is_ok());
-        assert!(validate_auth_intent_for_user(
-            WalletAuthIntent::Signup,
-            Some(&legacy_mock_wallet),
-            true
-        )
-        .is_err());
     }
 }

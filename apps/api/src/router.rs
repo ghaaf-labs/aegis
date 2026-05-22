@@ -7,10 +7,12 @@ use axum::{
 use std::sync::Arc;
 use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
 
+use crate::error::normalize_error_response;
 use crate::middleware::auth::require_auth;
+use crate::middleware::csrf::require_request_header;
 use crate::modules::{
-    agent, ai, analytics, backtest, billing, diary, digest, faucet, fx, gateway, market_data,
-    observability, paymaster, portfolio, prices, rebalance, risk_engine, scheduler,
+    account, agent, ai, analytics, backtest, billing, diary, digest, faucet, fx, gateway,
+    market_data, observability, paymaster, portfolio, prices, rebalance, risk_engine, scheduler,
     sse::{self, SseSender},
     strategies, tax, treasury, trustability, wallet,
 };
@@ -81,8 +83,9 @@ pub async fn build(db: Db, config: Config) -> Router {
     let cors = build_cors(&config);
 
     let authed = Router::new()
-        .route("/auth/me", get(wallet::handlers::me))
-        .route("/auth/wallet/status", get(wallet::handlers::status))
+        .route("/auth/session", get(wallet::handlers::session))
+        .route("/account/export", get(account::handlers::export))
+        .route("/account/delete", post(account::handlers::delete))
         .route("/faucet/usdc", post(faucet::handlers::claim_usdc))
         .route("/gateway/balance", get(gateway::handlers::balance))
         .route("/analytics/event", post(analytics::handlers::track))
@@ -214,15 +217,11 @@ pub async fn build(db: Db, config: Config) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/metrics", get(observability::handlers::metrics))
-        // Wallet auth — public (cookies + token set on success).
-        .route("/auth/wallet/readiness", get(wallet::handlers::readiness))
-        .route("/auth/wallet/code", post(wallet::handlers::request_code))
+        // Unified email auth — public; success sets the session cookie.
+        .route("/auth/email/start", post(wallet::handlers::email_start))
+        .route("/auth/email/resend", post(wallet::handlers::email_resend))
+        .route("/auth/email/verify", post(wallet::handlers::email_verify))
         .route("/auth/logout", post(wallet::handlers::logout))
-        // W3S User-Controlled flow: `create` issues Circle challenge
-        // credentials only when the browser SDK must complete PIN setup;
-        // `status` is then polled (authed) until wallet addresses arrive.
-        .route("/auth/wallet/create", post(wallet::handlers::create))
-        .route("/auth/wallet/login", post(wallet::handlers::login))
         // Market data — public.
         .route("/market/snapshot", get(market_data::handlers::snapshot))
         .route("/market/prices", get(market_data::handlers::prices))
@@ -275,6 +274,8 @@ pub async fn build(db: Db, config: Config) -> Router {
             get(tax::handlers::export_via_share),
         )
         .merge(authed)
+        .layer(axum::middleware::from_fn(require_request_header))
+        .layer(axum::middleware::from_fn(normalize_error_response))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .layer(CompressionLayer::new())
@@ -288,12 +289,13 @@ fn build_cors(config: &Config) -> CorsLayer {
             Method::GET,
             Method::POST,
             Method::PUT,
+            Method::PATCH,
             Method::DELETE,
             Method::OPTIONS,
         ])
         .allow_headers([
             axum::http::header::CONTENT_TYPE,
-            axum::http::header::AUTHORIZATION,
+            axum::http::HeaderName::from_static("x-aegis-request"),
         ]);
 
     let origins: Vec<HeaderValue> = config

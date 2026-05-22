@@ -4,7 +4,7 @@ export const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 export const WEB_BASE =
   process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
-const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME ?? "aegis_jwt";
+const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME ?? "aegis_session";
 
 const TEST_JWT =
   process.env.PLAYWRIGHT_TEST_JWT ??
@@ -57,33 +57,46 @@ export function storageStateForToken(token: string) {
   };
 }
 
+export function sessionCookieHeader(token: string) {
+  return `${SESSION_COOKIE_NAME}=${token}`;
+}
+
 export async function createVerifiedAccount(
   email: string,
 ): Promise<VerifiedAccount> {
-  return completeWalletAuth(email, "signup");
+  return completeWalletAuth(email);
 }
 
 export async function loginVerifiedAccount(
   email: string,
 ): Promise<VerifiedAccount> {
-  return completeWalletAuth(email, "login");
+  return completeWalletAuth(email);
 }
 
 export async function requireDevCodes() {
-  const readiness = await fetch(`${API_BASE}/auth/wallet/readiness`);
-  if (!readiness.ok) return false;
-  const body = (await readiness.json()) as { devCodesEnabled: boolean };
-  return body.devCodesEnabled;
+  const res = await fetch(`${API_BASE}/auth/email/start`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Aegis-Request": "1",
+    },
+    body: JSON.stringify({
+      email: `probe-${Date.now()}-${Math.random().toString(16).slice(2)}@aegis.local`,
+    }),
+  });
+  if (!res.ok) return false;
+  const body = (await res.json()) as { devCode?: string };
+  return Boolean(body.devCode);
 }
 
-async function completeWalletAuth(
-  email: string,
-  intent: "signup" | "login",
-): Promise<VerifiedAccount> {
-  const codeRes = await fetch(`${API_BASE}/auth/wallet/code`, {
+async function completeWalletAuth(email: string): Promise<VerifiedAccount> {
+  const codeRes = await fetch(`${API_BASE}/auth/email/start`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, intent }),
+    headers: {
+      "Content-Type": "application/json",
+      "X-Aegis-Request": "1",
+    },
+    body: JSON.stringify({ email }),
   });
   if (!codeRes.ok) {
     throw new Error(
@@ -99,21 +112,28 @@ async function completeWalletAuth(
     throw new Error("e2e auth requires MOCK_CIRCLE dev verification codes");
   }
 
-  const finishRes = await fetch(
-    `${API_BASE}/auth/wallet/${intent === "signup" ? "create" : "login"}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email: challenge.email,
-        challengeId: challenge.challengeId,
-        code: challenge.devCode,
-      }),
+  const finishRes = await fetch(`${API_BASE}/auth/email/verify`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Aegis-Request": "1",
     },
-  );
+    body: JSON.stringify({
+      email: challenge.email,
+      challengeId: challenge.challengeId,
+      code: challenge.devCode,
+      consent: {
+        tos: true,
+        privacy: true,
+        tosVersion: "2026-05",
+        privacyVersion: "2026-05",
+        marketingOptIn: false,
+      },
+    }),
+  });
   if (!finishRes.ok) {
     throw new Error(
-      `auth ${intent} failed: ${finishRes.status} ${await finishRes.text()}`,
+      `auth verify failed: ${finishRes.status} ${await finishRes.text()}`,
     );
   }
   return {

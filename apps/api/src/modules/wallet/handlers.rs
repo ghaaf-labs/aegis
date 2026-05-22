@@ -3,19 +3,19 @@ use axum::response::IntoResponse;
 use axum::{extract::State, Extension, Json};
 
 use super::models::{
-    InitWalletRequest, RequestWalletAuthCode, WalletAuthCodeResponse, WalletAuthIntent,
-    WalletAuthReadinessResponse, WalletAuthResponse, WalletStatusResponse, WalletUserPublic,
+    ResendEmailAuthRequest, StartEmailAuthRequest, VerifyEmailAuthRequest, WalletAuthCodeResponse,
+    WalletAuthResponse, WalletSessionResponse,
 };
 use super::provider::{CircleProvider, MockProvider};
 use super::service::WalletService;
 use crate::config::Config;
-use crate::middleware::auth::{decode_claims, Claims};
+use crate::middleware::auth::{claims_from_session, Claims};
 use crate::router::AppState;
 
-/// Build the `Set-Cookie` header for the JWT. HttpOnly, Lax, optionally
+/// Build the `Set-Cookie` header for the opaque session id. HttpOnly, Lax, optionally
 /// Secure (env-driven). Browsers send this on every same-site request, so
 /// `fetch(..., { credentials: "include" })` and `EventSource(..., { withCredentials })`
-/// both authenticate without exposing the token to JS.
+/// both authenticate without exposing the session to JS.
 fn session_cookie(config: &Config, token: &str) -> HeaderValue {
     let secure = if config.session_cookie_secure {
         "; Secure"
@@ -36,133 +36,176 @@ fn auth_response(
     resp: WalletAuthResponse,
 ) -> impl IntoResponse {
     let mut headers = HeaderMap::new();
-    headers.insert(header::SET_COOKIE, session_cookie(config, &resp.token));
+    headers.insert(
+        header::SET_COOKIE,
+        session_cookie(config, &resp.session_token),
+    );
     (status, headers, Json(resp))
 }
 
-/// First step for signup/login. Sends a short-lived verification code to the
-/// email address. Fully mocked local wallet runs may return `devCode`; real
-/// Circle mode must use real email delivery so auth proof is not shown in the
-/// same browser that is trying to sign in.
-pub async fn request_code(
-    State(state): State<AppState>,
-    Json(body): Json<RequestWalletAuthCode>,
+async fn issue_code(
+    state: &AppState,
+    email: &str,
+    referrer_handle: Option<&str>,
 ) -> crate::error::Result<Json<WalletAuthCodeResponse>> {
-    let has_email_delivery = !state.config.resend_api_key.trim().is_empty();
-    let can_return_dev_code = mock_dev_auth_codes_allowed(&state.config);
-    if !has_email_delivery && !can_return_dev_code {
-        return Err(crate::error::AppError::ServiceUnavailable(
-            "wallet auth email is disabled; set RESEND_API_KEY for real Circle login or set MOCK_CIRCLE=true for local dev codes"
-                .into(),
-        ));
-    }
-
     let p = MockProvider;
     let svc = WalletService::new(&state.db, &p, &state.config, &state.sse);
-    let issue = svc
-        .request_auth_code(&body.email, body.intent, body.referrer_handle.as_deref())
-        .await?;
+    let issue = svc.request_auth_code(email, referrer_handle).await?;
+    deliver_code_issue(state, issue).await
+}
+
+async fn resend_code(
+    state: &AppState,
+    challenge_id: uuid::Uuid,
+) -> crate::error::Result<Json<WalletAuthCodeResponse>> {
+    let p = MockProvider;
+    let svc = WalletService::new(&state.db, &p, &state.config, &state.sse);
+    let issue = svc.resend_auth_code(challenge_id).await?;
+    deliver_code_issue(state, issue).await
+}
+
+async fn deliver_code_issue(
+    state: &AppState,
+    issue: super::service::WalletAuthCodeIssue,
+) -> crate::error::Result<Json<WalletAuthCodeResponse>> {
     let mut response = issue.response;
-    if can_return_dev_code {
-        response.dev_code = Some(issue.code);
-    } else {
-        send_auth_code_email(&state, &response.email, body.intent, &issue.code).await?;
+
+    match code_delivery_mode(&state.config) {
+        CodeDeliveryMode::DevCode => {
+            response.dev_code = Some(issue.code);
+        }
+        CodeDeliveryMode::Email => {
+            if let Err(e) = send_auth_code_email(state, &response.email, &issue.code).await {
+                tracing::error!(error=%e, "wallet auth email delivery failed after code issuance");
+            }
+        }
+        CodeDeliveryMode::Unavailable => {
+            tracing::error!(
+                email_domain = sender_domain(&response.email).as_deref().unwrap_or("unknown"),
+                "wallet auth email delivery is not configured; code challenge was issued but no email was sent"
+            );
+        }
     }
+
     Ok(Json(response))
 }
 
-/// Public readiness probe for the wallet auth form. It exposes only coarse
-/// capability state so the UI can fail closed before asking the user to wait
-/// for an email that this backend cannot send.
-pub async fn readiness(
+/// Unified email auth start. The response is identical for known and unknown
+/// emails so the entry screen does not need separate signup/login branches.
+pub async fn email_start(
     State(state): State<AppState>,
-) -> crate::error::Result<Json<WalletAuthReadinessResponse>> {
-    Ok(Json(WalletAuthReadinessResponse {
-        circle_mock: state.config.circle_mock,
-        email_delivery_configured: !state.config.resend_api_key.trim().is_empty(),
-        dev_codes_enabled: mock_dev_auth_codes_allowed(&state.config),
-    }))
+    Json(body): Json<StartEmailAuthRequest>,
+) -> crate::error::Result<Json<WalletAuthCodeResponse>> {
+    issue_code(&state, &body.email, body.referrer_handle.as_deref()).await
 }
 
-/// Signup — body: `{ email, referrerHandle? }`. Returns the W3S
-/// `UserTokenBundle` the browser SDK needs to complete the PIN ceremony, plus
-/// a JWT session cookie bound to the new user. Wallet addresses arrive
-/// asynchronously via polling `GET /auth/wallet/status`.
-pub async fn create(
+/// Challenge-scoped resend. Keeps the same challenge id, rotates the code,
+/// and enforces the cooldown from the original send/resend timestamp.
+pub async fn email_resend(
     State(state): State<AppState>,
-    Json(body): Json<InitWalletRequest>,
+    Json(body): Json<ResendEmailAuthRequest>,
+) -> crate::error::Result<Json<WalletAuthCodeResponse>> {
+    resend_code(&state, body.challenge_id).await
+}
+
+/// Unified email auth verification. After the code is valid, the server
+/// decides whether to restore an existing account or create/resume setup.
+pub async fn email_verify(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<VerifyEmailAuthRequest>,
 ) -> crate::error::Result<axum::response::Response> {
     let verifier = MockProvider;
     let verifier_svc = WalletService::new(&state.db, &verifier, &state.config, &state.sse);
-    let referrer_from_code = verifier_svc
-        .verify_auth_code(
-            &body.email,
-            body.challenge_id,
-            &body.code,
-            WalletAuthIntent::Signup,
-        )
-        .await?;
+    let referrer_from_code = match verifier_svc
+        .verify_auth_code(&body.email, body.challenge_id, &body.code)
+        .await
+    {
+        Ok(referrer) => referrer,
+        Err(crate::error::AppError::BadRequest(message)) if message == "code_used" => {
+            if let Some(resp) = idempotent_verify_response(&state, &headers, &body.email).await? {
+                return Ok(auth_response(&state.config, StatusCode::OK, resp).into_response());
+            }
+            return Err(crate::error::AppError::BadRequest("code_used".into()));
+        }
+        Err(e) => return Err(e),
+    };
+
     let resp = if state.config.circle_mock {
         let p = MockProvider;
         let svc = WalletService::new(&state.db, &p, &state.config, &state.sse);
-        svc.init_signup(&body.email).await?
+        svc.init_continue(&body.email, body.consent.as_ref())
+            .await?
     } else {
         let p = CircleProvider::new(&state.http, &state.config);
         let svc = WalletService::new(&state.db, &p, &state.config, &state.sse);
-        svc.init_signup(&body.email).await?
+        svc.init_continue(&body.email, body.consent.as_ref())
+            .await?
     };
     let referrer = body
         .referrer_handle
         .as_deref()
         .or(referrer_from_code.as_deref());
     maybe_credit_referral(&state, referrer, &resp).await;
-    Ok(auth_response(&state.config, StatusCode::CREATED, resp).into_response())
-}
-
-/// Login — body: `{ email }`. Returning users with a provisioned wallet get a
-/// refreshed JWT cookie and wallet info. Circle credentials are returned only
-/// for abandoned wallet setup that still needs a browser challenge.
-pub async fn login(
-    State(state): State<AppState>,
-    Json(body): Json<InitWalletRequest>,
-) -> crate::error::Result<axum::response::Response> {
-    let verifier = MockProvider;
-    let verifier_svc = WalletService::new(&state.db, &verifier, &state.config, &state.sse);
-    verifier_svc
-        .verify_auth_code(
-            &body.email,
-            body.challenge_id,
-            &body.code,
-            WalletAuthIntent::Login,
-        )
-        .await?;
-    let resp = if state.config.circle_mock {
-        let p = MockProvider;
-        let svc = WalletService::new(&state.db, &p, &state.config, &state.sse);
-        svc.init_login(&body.email).await?
-    } else {
-        let p = CircleProvider::new(&state.http, &state.config);
-        let svc = WalletService::new(&state.db, &p, &state.config, &state.sse);
-        svc.init_login(&body.email).await?
-    };
     Ok(auth_response(&state.config, StatusCode::OK, resp).into_response())
 }
 
-/// Polled by the browser after the SDK completes the challenge. Returns the
-/// wallet info once Circle has provisioned both chains, otherwise
-/// `{ wallet: null }` so the browser keeps polling.
-pub async fn status(
-    State(state): State<AppState>,
-    Extension(claims): Extension<Claims>,
-) -> crate::error::Result<Json<WalletStatusResponse>> {
-    let resp = if state.config.circle_mock {
+async fn idempotent_verify_response(
+    state: &AppState,
+    headers: &HeaderMap,
+    email: &str,
+) -> crate::error::Result<Option<WalletAuthResponse>> {
+    let Some(token) = token_from_headers(headers, &state.config.session_cookie_name) else {
+        return Ok(None);
+    };
+    let Ok(session_id) = uuid::Uuid::parse_str(&token) else {
+        return Ok(None);
+    };
+    let claims = match claims_from_session(state, session_id).await {
+        Ok(claims) => claims,
+        Err(crate::error::AppError::Unauthorized(_)) => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    if !claims.email.eq_ignore_ascii_case(email.trim()) {
+        return Ok(None);
+    }
+
+    let session = if state.config.circle_mock {
         let p = MockProvider;
         let svc = WalletService::new(&state.db, &p, &state.config, &state.sse);
-        svc.fetch_wallet_status(claims.sub).await?
+        svc.session(claims.sub).await?
     } else {
         let p = CircleProvider::new(&state.http, &state.config);
         let svc = WalletService::new(&state.db, &p, &state.config, &state.sse);
-        svc.fetch_wallet_status(claims.sub).await?
+        svc.session(claims.sub).await?
+    };
+    let status = if session.wallet.is_some() {
+        "active"
+    } else {
+        "provisioning"
+    };
+
+    Ok(Some(WalletAuthResponse {
+        session_token: token,
+        status: status.into(),
+        user: session.user,
+        wallet: session.wallet,
+        is_new_user: false,
+    }))
+}
+
+pub async fn session(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+) -> crate::error::Result<Json<WalletSessionResponse>> {
+    let resp = if state.config.circle_mock {
+        let p = MockProvider;
+        let svc = WalletService::new(&state.db, &p, &state.config, &state.sse);
+        svc.session(claims.sub).await?
+    } else {
+        let p = CircleProvider::new(&state.http, &state.config);
+        let svc = WalletService::new(&state.db, &p, &state.config, &state.sse);
+        svc.session(claims.sub).await?
     };
     Ok(Json(resp))
 }
@@ -192,40 +235,20 @@ async fn maybe_credit_referral(
     }
 }
 
-pub async fn me(
-    State(state): State<AppState>,
-    Extension(claims): Extension<Claims>,
-) -> crate::error::Result<Json<WalletUserPublic>> {
-    let user = sqlx::query_as::<_, super::models::WalletUser>(
-        "SELECT id, email, risk_tolerance, investment_horizon_months,
-                wallet_id, arc_address, base_address, created_at
-         FROM users WHERE id = $1",
-    )
-    .bind(claims.sub)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| crate::error::AppError::Unauthorized("unknown user".into()))?;
-    Ok(Json(WalletUserPublic {
-        id: user.id,
-        email: user.email,
-        risk_tolerance: user.risk_tolerance,
-    }))
-}
-
 /// Clears the session cookie.
 pub async fn logout(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> crate::error::Result<axum::response::Response> {
     if let Some(token) = token_from_headers(&headers, &state.config.session_cookie_name) {
-        if let Ok(claims) = decode_claims(&state, &token) {
+        if let Ok(session_id) = uuid::Uuid::parse_str(&token) {
             sqlx::query(
                 "UPDATE auth_sessions
                  SET revoked_at = COALESCE(revoked_at, NOW())
-                 WHERE user_id = $1
+                 WHERE id = $1
                    AND revoked_at IS NULL",
             )
-            .bind(claims.sub)
+            .bind(session_id)
             .execute(&state.db)
             .await?;
         }
@@ -249,14 +272,6 @@ pub async fn logout(
 }
 
 fn token_from_headers(headers: &HeaderMap, cookie_name: &str) -> Option<String> {
-    if let Some(bearer) = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-    {
-        return Some(bearer.to_string());
-    }
-
     let cookie_header = headers.get(header::COOKIE).and_then(|v| v.to_str().ok())?;
     for piece in cookie_header.split(';') {
         let trimmed = piece.trim();
@@ -267,23 +282,14 @@ fn token_from_headers(headers: &HeaderMap, cookie_name: &str) -> Option<String> 
     None
 }
 
-async fn send_auth_code_email(
-    state: &AppState,
-    email: &str,
-    intent: WalletAuthIntent,
-    code: &str,
-) -> crate::error::Result<()> {
-    let action = match intent {
-        WalletAuthIntent::Signup => "create your Aegis wallet",
-        WalletAuthIntent::Login => "restore your Aegis wallet session",
-    };
+async fn send_auth_code_email(state: &AppState, email: &str, code: &str) -> anyhow::Result<()> {
     let payload = serde_json::json!({
         "from": state.config.digest_from,
         "to": [email],
         "subject": "Aegis verification code",
         "html": format!(
-            "<p>Your Aegis code is <strong>{}</strong>.</p><p>Use it within 10 minutes to {}. If you did not request this, you can ignore this email.</p>",
-            code, action
+            "<p>Your Aegis code is <strong>{}</strong>.</p><p>Use it within 10 minutes to continue. If you did not request this, you can ignore this email.</p>",
+            code
         ),
     });
     let resp = state
@@ -292,25 +298,85 @@ async fn send_auth_code_email(
         .bearer_auth(&state.config.resend_api_key)
         .json(&payload)
         .send()
-        .await
-        .map_err(|e| crate::error::AppError::Internal(anyhow::anyhow!("resend net: {e}")))?;
+        .await?;
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
-        return Err(crate::error::AppError::Internal(anyhow::anyhow!(
-            "resend status {status}: {text}"
-        )));
+        tracing::error!(
+            status = %status,
+            response = %text,
+            "wallet auth email provider rejected the message"
+        );
+        anyhow::bail!("wallet auth email provider rejected the message with {status}");
     }
     Ok(())
 }
 
-fn mock_dev_auth_codes_allowed(config: &Config) -> bool {
-    dev_codes_allowed_for(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodeDeliveryMode {
+    DevCode,
+    Email,
+    Unavailable,
+}
+
+fn code_delivery_mode(config: &Config) -> CodeDeliveryMode {
+    code_delivery_mode_for(
         config.circle_mock,
         &config.public_base_url,
         &config.api_base_url,
         &config.cors_allow_origin,
+        &config.resend_api_key,
+        &config.digest_from,
     )
+}
+
+fn code_delivery_mode_for(
+    circle_mock: bool,
+    public_base_url: &str,
+    api_base_url: &str,
+    cors_allow_origin: &str,
+    resend_api_key: &str,
+    digest_from: &str,
+) -> CodeDeliveryMode {
+    if dev_codes_allowed_for(
+        circle_mock,
+        public_base_url,
+        api_base_url,
+        cors_allow_origin,
+    ) {
+        return CodeDeliveryMode::DevCode;
+    }
+    if wallet_auth_email_delivery_configured_for(resend_api_key, digest_from) {
+        return CodeDeliveryMode::Email;
+    }
+    CodeDeliveryMode::Unavailable
+}
+
+fn wallet_auth_email_delivery_configured_for(resend_api_key: &str, digest_from: &str) -> bool {
+    !resend_api_key.trim().is_empty()
+        && sender_domain(digest_from).is_some_and(|domain| !is_local_sender_domain(&domain))
+}
+
+fn sender_domain(from: &str) -> Option<String> {
+    let trimmed = from.trim().trim_matches(['"', '\'']);
+    let address = trimmed
+        .rsplit_once('<')
+        .and_then(|(_, rest)| rest.split_once('>').map(|(email, _)| email))
+        .unwrap_or(trimmed)
+        .trim()
+        .trim_matches(['"', '\'']);
+    let (_, domain) = address.rsplit_once('@')?;
+    let domain = domain.trim().trim_end_matches('.').to_ascii_lowercase();
+    (!domain.is_empty()).then_some(domain)
+}
+
+fn is_local_sender_domain(domain: &str) -> bool {
+    matches!(domain, "localhost" | "local")
+        || domain.ends_with(".local")
+        || domain.ends_with(".localhost")
+        || domain.ends_with(".invalid")
+        || domain.ends_with(".example")
+        || domain.ends_with(".test")
 }
 
 fn dev_codes_allowed_for(
@@ -330,6 +396,8 @@ fn dev_codes_allowed_for(
 
 #[cfg(test)]
 mod tests {
+    use super::CodeDeliveryMode;
+
     #[test]
     fn dev_codes_require_mock_circle_and_local_origin() {
         assert!(super::dev_codes_allowed_for(
@@ -350,5 +418,53 @@ mod tests {
             "https://api.aegis.example",
             "https://app.aegis.example",
         ));
+    }
+
+    #[test]
+    fn sender_domain_rejects_local_sender_addresses() {
+        assert_eq!(
+            super::sender_domain("Aegis <auth@aegis.local>").as_deref(),
+            Some("aegis.local"),
+        );
+        assert!(super::is_local_sender_domain("aegis.local"));
+        assert!(super::is_local_sender_domain("mail.localhost"));
+        assert!(!super::is_local_sender_domain("aegis.finance"));
+    }
+
+    #[test]
+    fn delivery_mode_prefers_dev_code_only_for_local_mock_runs() {
+        assert_eq!(
+            super::code_delivery_mode_for(
+                true,
+                "http://localhost:3000",
+                "http://localhost:8080",
+                "http://localhost:3000",
+                "",
+                "Aegis <auth@aegis.local>",
+            ),
+            CodeDeliveryMode::DevCode
+        );
+        assert_eq!(
+            super::code_delivery_mode_for(
+                false,
+                "http://localhost:3000",
+                "http://localhost:8080",
+                "http://localhost:3000",
+                "resend-key",
+                "Aegis <auth@aegis.finance>",
+            ),
+            CodeDeliveryMode::Email
+        );
+        assert_eq!(
+            super::code_delivery_mode_for(
+                false,
+                "http://localhost:3000",
+                "http://localhost:8080",
+                "http://localhost:3000",
+                "",
+                "Aegis <auth@aegis.local>",
+            ),
+            CodeDeliveryMode::Unavailable
+        );
     }
 }

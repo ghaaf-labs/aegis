@@ -167,7 +167,7 @@ export default function TaxSettingsPage() {
               <select
                 value={portfolioId}
                 onChange={(e) => setPortfolioId(e.target.value)}
-                className="mt-1 block w-full bg-surface border-brutal border-border-default rounded-sharp px-2 py-1 text-sm text-text-default"
+                className="mt-1 block min-h-9 w-full rounded-sharp border-brutal border-border-default bg-surface px-2 py-1 text-sm text-text-default"
               >
                 {!mounted ? (
                   <option value="">Loading…</option>
@@ -187,7 +187,7 @@ export default function TaxSettingsPage() {
               <select
                 value={year}
                 onChange={(e) => setYear(Number(e.target.value))}
-                className="mt-1 block w-full bg-surface border-brutal border-border-default rounded-sharp px-2 py-1 text-sm text-text-default"
+                className="mt-1 block min-h-9 w-full rounded-sharp border-brutal border-border-default bg-surface px-2 py-1 text-sm text-text-default"
               >
                 {years.map((y) => (
                   <option key={y} value={y}>
@@ -252,7 +252,7 @@ export default function TaxSettingsPage() {
 
           {mockExcluded !== null && mockExcluded > 0 ? (
             <p className="text-xs font-mono text-text-lo">
-              {mockExcluded} mock entries excluded · only real settled moves
+              {mockExcluded} non-real entries excluded · only settled moves
               appear in the export.
             </p>
           ) : null}
@@ -292,8 +292,8 @@ export default function TaxSettingsPage() {
               </p>
               <p>
                 The export only includes settled rows with transaction
-                references; mock or unfinished execution rows are excluded and
-                reported after download.
+                references; non-real or unfinished execution rows are excluded
+                and reported after download.
               </p>
               <div className="flex gap-2 justify-end pt-2">
                 <BrutalButton

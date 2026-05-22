@@ -3,92 +3,113 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use jsonwebtoken::{decode, DecodingKey, Validation};
-use serde::{Deserialize, Serialize};
+use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::{error::AppError, router::AppState};
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone)]
 pub struct Claims {
     pub sub: Uuid,
     pub email: String,
     pub jti: Uuid,
-    /// Set once the user has a Circle Wallet (Sprint 2+).
-    #[serde(default)]
+    /// Set once the user has a Circle Wallet.
     pub wallet_id: Option<String>,
     pub exp: usize,
     pub iat: usize,
 }
 
-/// Auth middleware. Looks for the JWT in this order:
+/// Auth middleware. Looks for the opaque session id only in the HttpOnly cookie
+/// named per `Config::session_cookie_name`.
 ///
-/// 1. `Authorization: Bearer …` header (API clients, fetch).
-/// 2. HttpOnly cookie named per `Config::session_cookie_name` (default
-///    `aegis_jwt`) — set by the wallet handlers on successful login.
-///
-/// First match wins. Missing token → 401.
+/// The cookie value is not a portable JWT. It is only a random session id backed
+/// by `auth_sessions`, so logout/re-login can revoke it immediately.
 pub async fn require_auth(
     State(state): State<AppState>,
     mut req: Request,
     next: Next,
 ) -> Result<Response, AppError> {
-    let token = extract_token(&req, &state.config.session_cookie_name)
-        .ok_or_else(|| AppError::Unauthorized("missing token".into()))?;
+    let token = extract_session_token(&req, &state.config.session_cookie_name)
+        .ok_or_else(|| AppError::Unauthorized("missing session".into()))?;
+    let session_id = parse_session_id(&token)?;
 
-    let claims = decode_claims(&state, &token)?;
-    ensure_session_active(&state, &claims).await?;
+    let claims = claims_from_session(&state, session_id).await?;
 
     req.extensions_mut().insert(claims);
     Ok(next.run(req).await)
 }
 
-pub fn decode_claims(state: &AppState, token: &str) -> Result<Claims, AppError> {
-    Ok(decode::<Claims>(
-        token,
-        &DecodingKey::from_secret(state.config.jwt_secret.as_bytes()),
-        &Validation::default(),
-    )
-    .map_err(|e| AppError::Unauthorized(e.to_string()))?
-    .claims)
-}
+pub async fn claims_from_session(state: &AppState, session_id: Uuid) -> Result<Claims, AppError> {
+    let idle_cutoff =
+        Utc::now() - chrono::Duration::minutes(state.config.session_idle_timeout_minutes as i64);
 
-async fn ensure_session_active(state: &AppState, claims: &Claims) -> Result<(), AppError> {
-    let active: bool = sqlx::query_scalar(
-        "SELECT EXISTS(
-            SELECT 1
-            FROM auth_sessions
-            WHERE id = $1
-              AND user_id = $2
-              AND revoked_at IS NULL
-              AND expires_at > NOW()
-        )",
+    sqlx::query(
+        "UPDATE auth_sessions
+         SET revoked_at = COALESCE(revoked_at, NOW())
+         WHERE id = $1
+           AND revoked_at IS NULL
+           AND (expires_at <= NOW() OR last_seen_at <= $2)",
     )
-    .bind(claims.jti)
-    .bind(claims.sub)
-    .fetch_one(&state.db)
+    .bind(session_id)
+    .bind(idle_cutoff)
+    .execute(&state.db)
     .await?;
 
-    if !active {
+    let row = sqlx::query_as::<_, SessionClaimsRow>(
+        "SELECT s.id AS session_id,
+                s.user_id,
+                s.expires_at,
+                s.created_at,
+                u.email,
+                u.wallet_id
+         FROM auth_sessions s
+         JOIN users u ON u.id = s.user_id
+         WHERE s.id = $1
+           AND s.revoked_at IS NULL
+           AND s.expires_at > NOW()
+           AND s.last_seen_at > $2
+           AND u.deletion_requested_at IS NULL
+           AND u.anonymized_at IS NULL",
+    )
+    .bind(session_id)
+    .bind(idle_cutoff)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let Some(row) = row else {
         return Err(AppError::Unauthorized("session expired or revoked".into()));
-    }
+    };
 
     sqlx::query("UPDATE auth_sessions SET last_seen_at = NOW() WHERE id = $1")
-        .bind(claims.jti)
+        .bind(row.session_id)
         .execute(&state.db)
         .await?;
-    Ok(())
+
+    Ok(Claims {
+        sub: row.user_id,
+        email: row.email,
+        jti: row.session_id,
+        wallet_id: row.wallet_id,
+        exp: row.expires_at.timestamp().max(0) as usize,
+        iat: row.created_at.timestamp().max(0) as usize,
+    })
 }
 
-pub fn extract_token(req: &Request, cookie_name: &str) -> Option<String> {
-    if let Some(bearer) = req
-        .headers()
-        .get("Authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-    {
-        return Some(bearer.to_string());
-    }
+#[derive(sqlx::FromRow)]
+struct SessionClaimsRow {
+    session_id: Uuid,
+    user_id: Uuid,
+    expires_at: DateTime<Utc>,
+    created_at: DateTime<Utc>,
+    email: String,
+    wallet_id: Option<String>,
+}
+
+fn parse_session_id(token: &str) -> Result<Uuid, AppError> {
+    Uuid::parse_str(token).map_err(|_| AppError::Unauthorized("invalid session".into()))
+}
+
+pub fn extract_session_token(req: &Request, cookie_name: &str) -> Option<String> {
     let cookie_header = req.headers().get("Cookie").and_then(|v| v.to_str().ok())?;
     for piece in cookie_header.split(';') {
         let trimmed = piece.trim();
@@ -114,23 +135,28 @@ mod tests {
     }
 
     #[test]
-    fn extract_token_prefers_authorization_header() {
-        let r = req_with(&[
-            ("Authorization", "Bearer abc.def"),
-            ("Cookie", "aegis_jwt=xxx"),
-        ]);
-        assert_eq!(extract_token(&r, "aegis_jwt"), Some("abc.def".into()));
+    fn extract_session_token_ignores_authorization_header() {
+        let id = Uuid::new_v4().to_string();
+        let r = req_with(&[("Authorization", &format!("Bearer {id}"))]);
+        assert_eq!(extract_session_token(&r, "aegis_session"), None);
     }
 
     #[test]
-    fn extract_token_falls_back_to_cookie() {
-        let r = req_with(&[("Cookie", "other=foo; aegis_jwt=eyJabc; trailing=bar")]);
-        assert_eq!(extract_token(&r, "aegis_jwt"), Some("eyJabc".into()));
+    fn extract_session_token_reads_cookie() {
+        let id = Uuid::new_v4().to_string();
+        let cookie = format!("other=foo; aegis_session={id}; trailing=bar");
+        let r = req_with(&[("Cookie", &cookie)]);
+        assert_eq!(extract_session_token(&r, "aegis_session"), Some(id));
     }
 
     #[test]
-    fn extract_token_missing_returns_none() {
+    fn extract_session_token_missing_returns_none() {
         let r = req_with(&[]);
-        assert!(extract_token(&r, "aegis_jwt").is_none());
+        assert!(extract_session_token(&r, "aegis_session").is_none());
+    }
+
+    #[test]
+    fn parse_session_id_rejects_non_uuid_tokens() {
+        assert!(parse_session_id("not.jwt.or.uuid").is_err());
     }
 }

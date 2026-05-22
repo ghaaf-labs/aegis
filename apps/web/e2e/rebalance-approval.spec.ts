@@ -4,6 +4,7 @@ import {
   authCookie,
   createVerifiedAccount,
   requireDevCodes,
+  sessionCookieHeader,
 } from "./helpers/auth";
 
 // R-series — rebalance approval modal + execution trace. Requires the Rust
@@ -27,7 +28,8 @@ async function seedPlan(): Promise<{ planId: string; jwt: string }> {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${jwt}`,
+      "X-Aegis-Request": "1",
+      Cookie: sessionCookieHeader(jwt),
     },
     body: JSON.stringify({
       name: "E2E Rebalance Test",
@@ -54,7 +56,13 @@ async function seedPlan(): Promise<{ planId: string; jwt: string }> {
 
   const planRes = await fetch(
     `${API_BASE}/portfolios/${pf.id}/rebalance/plan`,
-    { method: "POST", headers: { Authorization: `Bearer ${jwt}` } },
+    {
+      method: "POST",
+      headers: {
+        "X-Aegis-Request": "1",
+        Cookie: sessionCookieHeader(jwt),
+      },
+    },
   );
   if (!planRes.ok)
     throw new Error(

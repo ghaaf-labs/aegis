@@ -19,6 +19,35 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  async redirects() {
+    return [
+      {
+        source: "/signup/:path*",
+        destination: "/login",
+        permanent: false,
+      },
+      {
+        source: "/sign-up/:path*",
+        destination: "/login",
+        permanent: false,
+      },
+      {
+        source: "/signin/:path*",
+        destination: "/login",
+        permanent: false,
+      },
+      {
+        source: "/sign-in/:path*",
+        destination: "/login",
+        permanent: false,
+      },
+      {
+        source: "/register/:path*",
+        destination: "/login",
+        permanent: false,
+      },
+    ];
+  },
   async rewrites() {
     return [
       {

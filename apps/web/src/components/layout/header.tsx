@@ -7,12 +7,10 @@ import {
   Bell,
   Check,
   ChevronDown,
-  CircleAlert,
   Layers,
   LogIn,
   LogOut,
   Plus,
-  UserPlus,
   Wifi,
   WifiOff,
   Wallet as WalletIcon,
@@ -20,11 +18,8 @@ import {
 import { BrutalButton, BrutalPill } from "@aegis/ui";
 import type { Portfolio } from "@/types";
 import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
-import {
-  gatewayApi,
-  walletApi,
-  type WalletAuthReadinessResponse,
-} from "@/lib/api";
+import { gatewayApi, walletApi } from "@/lib/api";
+import { safeNextPath } from "@/lib/auth-routing";
 
 export function Header() {
   const router = useRouter();
@@ -50,9 +45,6 @@ export function Header() {
   const [userOpen, setUserOpen] = useState(false);
   const [portfolioOpen, setPortfolioOpen] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
-  const [authReadiness, setAuthReadiness] =
-    useState<WalletAuthReadinessResponse | null>(null);
-  const [authReadinessChecked, setAuthReadinessChecked] = useState(false);
   const portfolioRef = useRef<HTMLDivElement>(null);
   const notifRef = useRef<HTMLDivElement>(null);
   const userRef = useRef<HTMLDivElement>(null);
@@ -68,27 +60,8 @@ export function Header() {
     }
     resetSession();
     setUserOpen(false);
-    router.replace(logoutRedirect());
+    window.location.replace(logoutRedirect());
   };
-
-  useEffect(() => {
-    if (sessionActive) return;
-    let alive = true;
-    walletApi
-      .readiness()
-      .then((readiness) => {
-        if (alive) setAuthReadiness(readiness);
-      })
-      .catch(() => {
-        if (alive) setAuthReadiness(null);
-      })
-      .finally(() => {
-        if (alive) setAuthReadinessChecked(true);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [sessionActive]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -147,13 +120,6 @@ export function Header() {
     setPerChain,
     setGatewayBalanceStatus,
   ]);
-
-  const authLocked =
-    (authReadinessChecked && !authReadiness) ||
-    (!!authReadiness &&
-      !authReadiness.emailDeliveryConfigured &&
-      !authReadiness.devCodesEnabled);
-  const authReadinessFailed = authReadinessChecked && !authReadiness;
 
   return (
     <header className="flex items-center justify-between px-6 h-16 border-b-brutal border-border-default bg-surface shrink-0">
@@ -282,7 +248,7 @@ export function Header() {
             className="inline-flex min-h-[36px] items-center justify-center gap-2 rounded-sharp border border-warn/40 bg-warn/5 px-3 text-[10px] font-mono uppercase tracking-widest text-warn transition-colors hover:bg-warn/10"
           >
             <WalletIcon className="h-3.5 w-3.5" />
-            Finish wallet setup
+            Account setup
           </Link>
         ) : null}
         {sessionActive ? (
@@ -338,25 +304,12 @@ export function Header() {
           </div>
         ) : (
           <div className="hidden items-center gap-2 sm:flex">
-            {authLocked && (
-              <span className="inline-flex min-h-[36px] items-center gap-2 rounded-sharp border border-warn/40 bg-warn/5 px-3 text-[10px] font-mono uppercase tracking-widest text-warn">
-                <CircleAlert className="h-3.5 w-3.5" />
-                {authReadinessFailed ? "Auth check failed" : "Auth locked"}
-              </span>
-            )}
             <Link
               href={authHref("/login", pathname)}
-              className="inline-flex min-h-[36px] items-center justify-center gap-2 rounded-sharp border border-border-default bg-bg px-3 text-xs font-mono text-text-lo transition-colors hover:border-accent-agent/50 hover:bg-accent-agent/5 hover:text-accent-agent"
-            >
-              <LogIn className="h-3.5 w-3.5" />
-              {authLocked ? "Sign-in status" : "Sign in"}
-            </Link>
-            <Link
-              href={authHref("/signup", pathname)}
               className="inline-flex min-h-[36px] items-center justify-center gap-2 rounded-sharp border border-black bg-accent-agent px-3 text-xs font-mono font-semibold text-black shadow-brutal-sm transition-shadow hover:shadow-brutal"
             >
-              <UserPlus className="h-3.5 w-3.5" />
-              {authLocked ? "Signup status" : "Create wallet"}
+              <LogIn className="h-3.5 w-3.5" />
+              Continue
             </Link>
           </div>
         )}
@@ -442,26 +395,20 @@ function logoutRedirect() {
 function logoutFailureMessage(error: unknown) {
   const message = (error as Error).message.toLowerCase();
   if (message.includes("still accepts")) {
-    return "Logout was rejected because the server still accepts this browser session. Aegis will keep the current session visible instead of pretending you signed out.";
+    return "Sign out did not finish. Try again.";
   }
   if (message.includes("verification failed")) {
-    return "Aegis cleared the cookie response, but could not verify sign-out with the API. The current session is still treated as active.";
+    return "Aegis could not confirm sign out. Try again.";
   }
-  return "Logout did not reach the API. Your server session may still be active.";
+  return "Aegis could not sign out. Check the connection and try again.";
 }
 
-function authHref(path: "/login" | "/signup", next: string) {
+function authHref(path: "/login", next: string) {
   const params = new URLSearchParams();
   const safeNext = safeNextPath(next);
   if (safeNext) params.set("next", safeNext);
   const query = params.toString();
   return query ? `${path}?${query}` : path;
-}
-
-function safeNextPath(path: string | null | undefined) {
-  if (!path || !path.startsWith("/") || path.startsWith("//")) return null;
-  if (path.startsWith("/login") || path.startsWith("/signup")) return null;
-  return path;
 }
 
 function portfolioSubtitle(

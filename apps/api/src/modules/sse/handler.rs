@@ -16,7 +16,7 @@ use crate::router::AppState;
 ///
 /// **Authentication required.** Public events (price.tick, regime.flip) reach
 /// every authenticated subscriber; user-scoped events (agent.decision,
-/// wallet.created, gateway.balance) are filtered to the subscriber whose JWT
+/// wallet.created, gateway.balance) are filtered to the subscriber whose session
 /// `sub` matches `audience_user_id()`. Slow clients drop frames rather than
 /// back-pressuring publishers.
 pub async fn handler(

@@ -66,14 +66,14 @@ export function DigestOptIn({ defaultEmail = "" }: Props) {
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@example.com"
             autoComplete="email"
-            className="w-full px-3 py-2 bg-bg border-brutal border-border-default focus:border-border-hi rounded-sharp font-mono text-sm text-text-hi outline-none"
+            className="min-h-10 w-full rounded-sharp border-brutal border-border-default bg-bg px-3 py-2 font-mono text-sm text-text-hi outline-none focus:border-border-hi"
           />
           <div className="flex items-center justify-between gap-2">
             <button
               type="button"
               onClick={() => void handle()}
               disabled={!canSubscribe || busy}
-              className="px-3 py-1.5 text-xs font-semibold border-2 border-accent-agent bg-accent-agent text-black hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="inline-flex min-h-9 items-center justify-center border-2 border-accent-agent bg-accent-agent px-3 text-xs font-semibold text-black hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {busy ? "Subscribing…" : "Subscribe"}
             </button>

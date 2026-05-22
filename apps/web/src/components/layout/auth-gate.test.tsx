@@ -5,15 +5,19 @@ import { AuthGate } from "./auth-gate";
 import { walletApi } from "@/lib/api";
 import { usePortfolioStore } from "@/stores/portfolio";
 
+const routerReplace = vi.fn();
+let mockPathname = "/wallet";
+
 vi.mock("next/navigation", () => ({
-  usePathname: () => "/wallet",
+  usePathname: () => mockPathname,
+  useRouter: () => ({
+    replace: routerReplace,
+  }),
 }));
 
 vi.mock("@/lib/api", () => ({
   walletApi: {
-    readiness: vi.fn(),
-    me: vi.fn(),
-    status: vi.fn(),
+    session: vi.fn(),
   },
 }));
 
@@ -26,23 +30,22 @@ beforeAll(() => {
 afterEach(() => {
   document.body.innerHTML = "";
   vi.clearAllMocks();
+  routerReplace.mockClear();
+  mockPathname = "/wallet";
   usePortfolioStore.getState().resetSession();
   window.localStorage.clear();
 });
 
 describe("<AuthGate />", () => {
   it("hides protected content immediately when logout clears session state", async () => {
-    vi.mocked(walletApi.readiness).mockResolvedValue({
-      circleMock: false,
-      emailDeliveryConfigured: false,
-      devCodesEnabled: false,
-    });
-    vi.mocked(walletApi.me).mockResolvedValue({
-      id: "user-1",
-      email: "user@example.com",
-      riskTolerance: "moderate",
-    });
-    vi.mocked(walletApi.status).mockResolvedValue({
+    vi.mocked(walletApi.session).mockResolvedValue({
+      user: {
+        id: "user-1",
+        email: "user@example.com",
+        riskTolerance: "moderate",
+        accountStatus: "active",
+      },
+      accountStatus: "active",
       wallet: {
         walletId: "wallet-1",
         arcAddress: "0x1111111111111111111111111111111111111111",
@@ -66,9 +69,46 @@ describe("<AuthGate />", () => {
     await flushEffects();
 
     expect(container.textContent).not.toContain("wallet data");
-    expect(container.textContent).toContain(
-      "Login is waiting on email delivery",
+    expect(container.textContent).not.toContain("Continue with email");
+    expect(routerReplace).toHaveBeenCalledWith("/login?next=%2Fwallet");
+
+    act(() => root.unmount());
+  });
+
+  it("sends a wallet-ready user with no portfolio back to onboarding on product routes", async () => {
+    mockPathname = "/dashboard";
+    vi.mocked(walletApi.session).mockResolvedValue({
+      user: {
+        id: "user-2",
+        email: "new@example.com",
+        riskTolerance: "moderate",
+        accountStatus: "active",
+      },
+      accountStatus: "active",
+      wallet: {
+        walletId: "wallet-2",
+        arcAddress: "0x1111111111111111111111111111111111111111",
+        baseAddress: "0x2222222222222222222222222222222222222222",
+        createdAt: new Date().toISOString(),
+      },
+    });
+
+    const { root, container } = render(
+      <AuthGate>
+        <div data-testid="protected-child">dashboard data</div>
+      </AuthGate>,
     );
+    await flushEffects();
+
+    expect(container.textContent).not.toContain("dashboard data");
+
+    act(() => {
+      usePortfolioStore.getState().setPortfolios([]);
+    });
+    await flushEffects();
+
+    expect(routerReplace).toHaveBeenCalledWith("/onboarding");
+    expect(container.textContent).not.toContain("dashboard data");
 
     act(() => root.unmount());
   });

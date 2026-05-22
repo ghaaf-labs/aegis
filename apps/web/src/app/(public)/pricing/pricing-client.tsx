@@ -2,14 +2,14 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { CircleAlert, Shield } from "lucide-react";
+import { Shield } from "lucide-react";
 import {
   DEFAULT_PRICING_TIERS,
   PricingTable,
 } from "@/components/billing/PricingTable";
 import { UpgradeModal } from "@/components/billing/UpgradeModal";
 import { useBillingStore } from "@/stores/billing";
-import { walletApi, type WalletAuthReadinessResponse } from "@/lib/api";
+import { walletApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { usePortfolioStore } from "@/stores/portfolio";
 import type { Tier } from "@/types";
@@ -21,14 +21,12 @@ export function PricingPageClient() {
   const portfolios = usePortfolioStore((s) => s.portfolios);
 
   const [authed, setAuthed] = useState(false);
-  const [authReadiness, setAuthReadiness] =
-    useState<WalletAuthReadinessResponse | null>(null);
   const [pendingTier, setPendingTier] = useState<Tier | null>(null);
 
   useEffect(() => {
     let alive = true;
     walletApi
-      .me()
+      .session()
       .then(() => {
         if (!alive) return;
         setAuthed(true);
@@ -42,21 +40,6 @@ export function PricingPageClient() {
     };
   }, [fetchBilling]);
 
-  useEffect(() => {
-    let alive = true;
-    walletApi
-      .readiness()
-      .then((readiness) => {
-        if (alive) setAuthReadiness(readiness);
-      })
-      .catch(() => {
-        if (alive) setAuthReadiness(null);
-      });
-    return () => {
-      alive = false;
-    };
-  }, []);
-
   const aumUsd = useMemo(
     () => portfolios.reduce((sum, p) => sum + (p.totalValueUsd ?? 0), 0),
     [portfolios],
@@ -64,28 +47,33 @@ export function PricingPageClient() {
 
   const effectiveTiers = tiers.length > 0 ? tiers : DEFAULT_PRICING_TIERS;
   const currentTier: Tier = subscription?.tier ?? "free";
-  const authLocked =
-    !!authReadiness &&
-    !authReadiness.emailDeliveryConfigured &&
-    !authReadiness.devCodesEnabled;
-  const signupHref = authLocked ? "/signup?next=%2Fpricing" : "/signup";
-  const signupLabel = authLocked ? "Open signup status" : "Get started — free";
-  const signupTone = authLocked ? "agent" : "pnl";
+  const signupHref = "/login?next=%2Fpricing";
+  const signupLabel = "Continue";
+  const signupTone = "agent";
 
   return (
     <div className="min-h-screen bg-[#030712] text-text-hi">
-      <nav className="flex items-center justify-between px-6 py-5 max-w-7xl mx-auto border-b border-white/5">
-        <Link href="/" className="flex items-center gap-2">
+      <nav className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 border-b border-white/5 px-4 py-4 sm:px-6 sm:py-5">
+        <Link
+          href="/"
+          className="flex min-h-10 items-center gap-2 rounded-sharp"
+        >
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center">
             <Shield className="w-4 h-4 text-text-hi" />
           </div>
           <span className="font-bold text-lg tracking-tight">Aegis</span>
         </Link>
-        <div className="flex items-center gap-3 text-sm">
-          <Link href="/pricing" className="text-text-hi font-medium">
+        <div className="flex flex-wrap items-center justify-end gap-2 text-sm">
+          <Link
+            href="/pricing"
+            className="inline-flex min-h-9 items-center rounded-sharp px-2 font-medium text-text-hi"
+          >
             Pricing
           </Link>
-          <Link href="/explore" className="text-text-lo hover:text-text-hi">
+          <Link
+            href="/explore"
+            className="inline-flex min-h-9 items-center rounded-sharp px-2 text-text-lo hover:text-text-hi"
+          >
             Demo
           </Link>
           <Link
@@ -107,38 +95,14 @@ export function PricingPageClient() {
         </p>
       </section>
 
-      {authLocked && (
-        <section className="max-w-6xl mx-auto px-6 pb-8">
-          <div className="grid gap-3 border-2 border-warn/40 bg-warn/5 p-4 font-mono md:grid-cols-[auto_1fr] md:items-start">
-            <div className="flex h-9 w-9 items-center justify-center rounded-sharp border-brutal border-black bg-warn">
-              <CircleAlert className="h-4 w-4 text-black" />
-            </div>
-            <div>
-              <p className="text-[10px] uppercase tracking-widest text-warn">
-                Real signup locked
-              </p>
-              <p className="mt-1 text-xs leading-relaxed text-text-lo">
-                Pricing is visible, but this backend cannot send one-time
-                verification codes yet. Aegis will not create a wallet or start
-                paid billing from a remembered email alone.
-              </p>
-            </div>
-          </div>
-        </section>
-      )}
-
       <section className="max-w-6xl mx-auto px-6 pb-16">
         <PricingTable
           tiers={effectiveTiers}
           currentTier={authed ? currentTier : null}
           publicActionHref={signupHref}
-          publicActionLabel={authLocked ? "Open signup status" : undefined}
+          publicActionLabel="Continue"
           publicActionTone={signupTone}
-          publicActionHint={
-            authLocked
-              ? "Signup is waiting on email delivery. You can inspect the status, but no wallet or subscription is created."
-              : null
-          }
+          publicActionHint={null}
           onSelect={
             authed
               ? (tier) => {
@@ -185,7 +149,7 @@ export function PricingPageClient() {
 
 function pricingLinkButtonClass(tone: "pnl" | "agent", className?: string) {
   return cn(
-    "inline-flex items-center justify-center gap-2 px-3 py-2 text-sm font-semibold",
+    "inline-flex min-h-10 items-center justify-center gap-2 px-3 py-2 text-sm font-semibold",
     "border-brutal border-black rounded-sharp text-black",
     tone === "agent" ? "bg-accent-agent" : "bg-accent-pnl",
     "transition-[box-shadow,transform] duration-100 hover:shadow-brutal-sm active:translate-y-px",

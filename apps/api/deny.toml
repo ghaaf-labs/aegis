@@ -9,13 +9,12 @@ version = 2
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
-# RUSTSEC-2023-0071 (rsa Marvin Attack) — pulled in transitively via
-# sqlx-mysql, which is a non-optional dep of sqlx-macros-core 0.8.6 (so
-# `default-features = false` alone cannot eliminate it from Cargo.lock).
-# We do not enable the `mysql` feature on sqlx, so sqlx-mysql + rsa are
-# present in the lockfile but never compiled into the binary or executed
-# at runtime. Re-evaluate when sqlx ships a release that fixes the
-# unconditional macros-core dep on every backend.
+# RUSTSEC-2023-0071 (rsa Marvin Attack). Circle developer-controlled wallets
+# require RSA-OAEP(SHA-256) public-key encryption for the entity-secret
+# ciphertext. Aegis never stores an RSA private key or performs RSA decrypt,
+# so the Marvin private-key timing sidechannel is not reachable in this use.
+# Re-evaluate when the rsa crate ships a fixed release or Circle documents a
+# non-RSA envelope for entity-secret ciphertext.
 ignore = ["RUSTSEC-2023-0071"]
 
 [bans]

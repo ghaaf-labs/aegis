@@ -90,7 +90,7 @@ typos                                     # requires `cargo install typos-cli`
 
 # Dependency hygiene (requires cargo-audit, cargo-deny, cargo-machete installed)
 cd apps/api
-cargo audit
+cargo audit --ignore RUSTSEC-2023-0071
 cargo deny check
 cargo machete
 

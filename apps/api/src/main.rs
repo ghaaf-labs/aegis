@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, path::Path};
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -38,7 +38,10 @@ async fn main() -> anyhow::Result<()> {
 
     let db = db::connect(&cfg.database_url).await?;
 
-    sqlx::migrate!("./migrations").run(&db).await?;
+    sqlx::migrate::Migrator::new(Path::new("./migrations"))
+        .await?
+        .run(&db)
+        .await?;
 
     if cfg.aum_stream_enabled {
         aegis_api::modules::billing::aum_stream::spawn(

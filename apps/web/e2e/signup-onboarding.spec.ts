@@ -5,22 +5,22 @@ import {
   requireDevCodes,
 } from "./helpers/auth";
 
-// S-series — signup form surface + goal wizard. Requires the Rust API
+// S-series — email auth surface + goal wizard. Requires the Rust API
 // with MOCK_CIRCLE=true. These tests use a fresh (unauthenticated) browser
-// context — no storageState — so they can exercise the sign-up flow.
+// context — no storageState — so they can exercise the continue flow.
 
 test.beforeEach(() => {
   if (!process.env.PLAYWRIGHT_API_ENABLED) test.skip();
 });
 
-test("S1 — signup page renders email input and submit button", async ({
+test("S1 — login page renders email input and submit button", async ({
   page,
 }) => {
-  await page.goto("/signup");
+  await page.goto("/login");
   await expect(page.locator('input[type="email"]')).toBeVisible();
   await expect(
     page.getByRole("button", {
-      name: /Create wallet|Continue|Sign up|Signup email unavailable/i,
+      name: /Continue/i,
     }),
   ).toBeVisible();
 });

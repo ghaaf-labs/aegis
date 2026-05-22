@@ -78,7 +78,7 @@ pub async fn by_wallet(
          WHERE LOWER(u.arc_address) = $1 OR LOWER(u.base_address) = $1
          ORDER BY d.created_at DESC LIMIT 50"
     );
-    let rows: Vec<Row> = sqlx::query_as(&sql)
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
         .bind(&wallet)
         .fetch_all(&state.db)
         .await?;
@@ -90,7 +90,7 @@ pub async fn by_decision(
     Path(decision_id): Path<Uuid>,
 ) -> Result<Json<DiaryEntry>> {
     let sql = format!("{ROW_SELECT} WHERE d.id = $1");
-    let row: Option<Row> = sqlx::query_as(&sql)
+    let row: Option<Row> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
         .bind(decision_id)
         .fetch_optional(&state.db)
         .await?;

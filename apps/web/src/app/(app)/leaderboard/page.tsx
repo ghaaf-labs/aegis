@@ -85,7 +85,7 @@ export default async function LeaderboardPage() {
 
 function TableHeader() {
   return (
-    <div className="grid grid-cols-[40px_1fr_80px_80px_80px_100px] gap-3 px-4 py-3 border-b border-border-default text-[10px] font-mono uppercase tracking-wider text-text-lo bg-raised">
+    <div className="hidden md:grid md:grid-cols-[40px_minmax(0,1fr)_80px_80px_80px_100px] gap-3 px-4 py-3 border-b border-border-default text-[10px] font-mono uppercase tracking-wider text-text-lo bg-raised">
       <span>#</span>
       <span>Handle</span>
       <span className="text-right">Δ vs cf</span>
@@ -107,55 +107,123 @@ function Row({ entry, rank }: { entry: LeaderboardEntry; rank: number }) {
   const labelTone = LABEL_TONE[entry.label];
 
   return (
-    <li className="grid grid-cols-[40px_1fr_80px_80px_80px_100px] gap-3 items-center px-4 py-3 border-b border-border-default last:border-0 font-mono text-xs hover:bg-white/2 transition-colors">
-      <span className="text-text-mut">{rank.toString().padStart(2, "0")}</span>
-      <Link
-        href={`/diary/${entry.handle}`}
-        className="text-text-hi hover:text-accent-agent transition-colors inline-flex items-center gap-2"
-      >
-        <span>
-          <span className="opacity-70">0x</span>
-          {entry.handle}
-        </span>
-        {entry.recentModelSlug && <ModelBadge model={entry.recentModelSlug} />}
-        {entry.recentCriticVerdict && (
+    <li className="border-b border-border-default px-4 py-4 font-mono text-xs transition-colors last:border-0 hover:bg-white/2 md:grid md:grid-cols-[40px_minmax(0,1fr)_80px_80px_80px_100px] md:items-center md:gap-3 md:py-3">
+      <div className="space-y-3 md:hidden">
+        <div className="flex min-w-0 items-start gap-3">
           <span
-            className={`text-[9px] px-1 py-0.5 font-mono border ${
-              entry.recentCriticVerdict.verdict === "revised" ||
-              entry.recentCriticVerdict.demandsRevision
-                ? "border-risk/40 text-risk"
-                : "border-accent-agent/40 text-accent-agent"
-            }`}
+            aria-label={`Rank ${rank}`}
+            className="mt-0.5 shrink-0 text-text-mut"
           >
-            {entry.recentCriticVerdict.verdict ??
-              (entry.recentCriticVerdict.demandsRevision
-                ? "revised"
-                : "approved")}
+            {rank.toString().padStart(2, "0")}
           </span>
-        )}
-        {entry.distinctModels > 1 && (
-          <span className="ml-1 text-[10px] text-accent-agent/70">
-            {entry.distinctModels} models
-          </span>
-        )}
-      </Link>
-      <span className={`text-right tabular-nums ${deltaTone}`}>
+          <LeaderboardIdentity entry={entry} />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <MobileMetric
+            label="Delta"
+            value={`${deltaSign}${entry.trustabilityDelta.toFixed(2)}%`}
+            className={deltaTone}
+          />
+          <MobileMetric
+            label="7d avg"
+            value={`${entry.avg7dReturn >= 0 ? "+" : ""}${entry.avg7dReturn.toFixed(
+              2,
+            )}%`}
+          />
+          <MobileMetric
+            label="Decisions"
+            value={entry.decisionsExecuted.toString()}
+          />
+          <div className="border border-border-default bg-bg px-3 py-2">
+            <p className="text-[10px] uppercase tracking-widest text-text-mut">
+              Tier
+            </p>
+            <span
+              className={`mt-1 inline-flex max-w-full items-center border px-1.5 py-0.5 text-[10px] uppercase tracking-wider ${labelTone}`}
+            >
+              {entry.label}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <span className="hidden text-text-mut md:block">
+        {rank.toString().padStart(2, "0")}
+      </span>
+      <div className="hidden min-w-0 md:block">
+        <LeaderboardIdentity entry={entry} />
+      </div>
+      <span className={`hidden text-right tabular-nums md:block ${deltaTone}`}>
         {deltaSign}
         {entry.trustabilityDelta.toFixed(2)}%
       </span>
-      <span className="text-right tabular-nums text-text-default">
+      <span className="hidden text-right tabular-nums text-text-default md:block">
         {entry.avg7dReturn >= 0 ? "+" : ""}
         {entry.avg7dReturn.toFixed(2)}%
       </span>
-      <span className="text-right tabular-nums text-text-lo">
+      <span className="hidden text-right tabular-nums text-text-lo md:block">
         {entry.decisionsExecuted}
       </span>
       <span
-        className={`text-right text-[10px] uppercase tracking-wider border px-1.5 py-0.5 ${labelTone}`}
+        className={`hidden text-right text-[10px] uppercase tracking-wider border px-1.5 py-0.5 md:block ${labelTone}`}
       >
         {entry.label}
       </span>
     </li>
+  );
+}
+
+function LeaderboardIdentity({ entry }: { entry: LeaderboardEntry }) {
+  return (
+    <Link
+      href={`/diary/${entry.handle}`}
+      className="flex min-h-9 min-w-0 flex-wrap items-center gap-2 text-text-hi transition-colors hover:text-accent-agent md:min-h-0"
+    >
+      <span className="min-w-0 truncate">
+        <span className="opacity-70">0x</span>
+        {entry.handle}
+      </span>
+      {entry.recentModelSlug && <ModelBadge model={entry.recentModelSlug} />}
+      {entry.recentCriticVerdict && (
+        <span
+          className={`text-[9px] px-1 py-0.5 font-mono border ${
+            entry.recentCriticVerdict.verdict === "revised" ||
+            entry.recentCriticVerdict.demandsRevision
+              ? "border-risk/40 text-risk"
+              : "border-accent-agent/40 text-accent-agent"
+          }`}
+        >
+          {entry.recentCriticVerdict.verdict ??
+            (entry.recentCriticVerdict.demandsRevision
+              ? "revised"
+              : "approved")}
+        </span>
+      )}
+      {entry.distinctModels > 1 && (
+        <span className="text-[10px] text-accent-agent/70">
+          {entry.distinctModels} models
+        </span>
+      )}
+    </Link>
+  );
+}
+
+function MobileMetric({
+  label,
+  value,
+  className = "text-text-default",
+}: {
+  label: string;
+  value: string;
+  className?: string;
+}) {
+  return (
+    <div className="border border-border-default bg-bg px-3 py-2">
+      <p className="text-[10px] uppercase tracking-widest text-text-mut">
+        {label}
+      </p>
+      <p className={`mt-1 tabular-nums ${className}`}>{value}</p>
+    </div>
   );
 }
 

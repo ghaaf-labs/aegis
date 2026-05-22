@@ -6,6 +6,7 @@ import {
   createVerifiedAccount,
   loginVerifiedAccount,
   requireDevCodes,
+  sessionCookieHeader,
   storageStateForToken,
 } from "./helpers/auth";
 
@@ -69,7 +70,8 @@ async function seedPortfolio(token: string): Promise<void> {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
+      "X-Aegis-Request": "1",
+      Cookie: sessionCookieHeader(token),
     },
     body: JSON.stringify({
       name: "E2E Test Portfolio",

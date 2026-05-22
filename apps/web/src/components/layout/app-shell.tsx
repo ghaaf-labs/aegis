@@ -7,6 +7,7 @@ import { CircleAlert, Menu, Wallet, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { ErrorBoundary } from "@/components/error-boundary";
+import { safeNextPath } from "@/lib/auth-routing";
 import { usePortfolioStore } from "@/stores/portfolio";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -17,15 +18,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const walletPending = sessionActive && !wallet;
   const mobileAction = walletPending
     ? {
-        href: "/wallets",
-        label: "Finish wallet",
+        href: "/onboarding",
+        label: "Finish account",
         tone: "warn" as const,
       }
     : sessionActive
       ? null
       : {
           href: authHref("/login", pathname),
-          label: "Sign in",
+          label: "Continue",
           tone: "agent" as const,
         };
 
@@ -135,16 +136,10 @@ function titleCase(value: string) {
     .join(" ");
 }
 
-function authHref(path: "/login" | "/signup", next: string) {
+function authHref(path: "/login", next: string) {
   const params = new URLSearchParams();
   const safeNext = safeNextPath(next);
   if (safeNext) params.set("next", safeNext);
   const query = params.toString();
   return query ? `${path}?${query}` : path;
-}
-
-function safeNextPath(path: string | null | undefined) {
-  if (!path || !path.startsWith("/") || path.startsWith("//")) return null;
-  if (path.startsWith("/login") || path.startsWith("/signup")) return null;
-  return path;
 }

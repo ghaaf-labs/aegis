@@ -395,6 +395,8 @@ fn csv_escape(s: &str) -> String {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use sqlx::postgres::PgPoolOptions;
+    use std::path::Path;
     use std::str::FromStr;
 
     fn dec(s: &str) -> Decimal {
@@ -552,13 +554,23 @@ mod tests {
     // Seeded portfolio + 3 rebalances + 1 USDC→EURC swap; asserts CSV
     // row count, FX gain/loss row, and the mock-exclusion count.
     //
-    // Uses `sqlx::test`, which spins up a fresh per-test database off the
-    // `DATABASE_URL` set in CI (or your local docker-compose Postgres) and
-    // runs the migrations in `./migrations/` automatically. The test is
-    // skipped at compile time when sqlx-cli isn't on the path — Cargo
-    // doesn't gate the test, but the connection just fails fast.
-    #[sqlx::test(migrations = "./migrations")]
-    async fn export_walks_legs_and_excludes_mocks(pool: sqlx::PgPool) -> sqlx::Result<()> {
+    #[tokio::test]
+    async fn export_walks_legs_and_excludes_mocks() -> sqlx::Result<()> {
+        let Ok(db_url) =
+            std::env::var("TEST_DATABASE_URL").or_else(|_| std::env::var("DATABASE_URL"))
+        else {
+            eprintln!("DATABASE_URL not set; skipping tax export integration test");
+            return Ok(());
+        };
+        let pool = PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&db_url)
+            .await?;
+        sqlx::migrate::Migrator::new(Path::new("./migrations"))
+            .await?
+            .run(&pool)
+            .await?;
+
         let user_id = Uuid::new_v4();
         let portfolio_id = Uuid::new_v4();
         let alloc_id = Uuid::new_v4();

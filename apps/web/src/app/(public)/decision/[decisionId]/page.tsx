@@ -188,7 +188,7 @@ export default async function DecisionPage({ params }: RouteParams) {
             Explore the agent
           </Link>{" "}
           ·{" "}
-          <Link href="/signup" className="text-accent-pnl hover:underline">
+          <Link href="/login" className="text-accent-pnl hover:underline">
             Create your own
           </Link>
         </p>

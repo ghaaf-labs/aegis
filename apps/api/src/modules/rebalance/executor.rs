@@ -361,29 +361,35 @@ async fn dispatch(
             // recipient embedded in the hook payload. The minted USDC
             // arrives at the destination-chain RebalanceExecutor, which
             // then forwards it here.
-            let recipient_col = match dest {
-                ChainKey::Arc => "arc_address",
-                ChainKey::Base => "base_address",
-            };
             let recipient = if state.config.execution_mock || state.config.circle_mock {
                 "0x0000000000000000000000000000000000000000".to_string()
             } else {
-                sqlx::query_scalar::<_, Option<String>>(&format!(
-                    "SELECT u.{recipient_col}
-                     FROM users u
-                     JOIN portfolios p ON p.user_id = u.id
-                     JOIN rebalances r ON r.portfolio_id = p.id
-                     WHERE r.id = $1"
-                ))
-                .bind(rebalance_id)
-                .fetch_one(&state.db)
-                .await
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("recipient lookup: {e}")))?
-                .unwrap_or_default()
+                let sql = match dest {
+                    ChainKey::Arc => {
+                        "SELECT u.arc_address
+                         FROM users u
+                         JOIN portfolios p ON p.user_id = u.id
+                         JOIN rebalances r ON r.portfolio_id = p.id
+                         WHERE r.id = $1"
+                    }
+                    ChainKey::Base => {
+                        "SELECT u.base_address
+                         FROM users u
+                         JOIN portfolios p ON p.user_id = u.id
+                         JOIN rebalances r ON r.portfolio_id = p.id
+                         WHERE r.id = $1"
+                    }
+                };
+                sqlx::query_scalar::<_, Option<String>>(sql)
+                    .bind(rebalance_id)
+                    .fetch_one(&state.db)
+                    .await
+                    .map_err(|e| AppError::Internal(anyhow::anyhow!("recipient lookup: {e}")))?
+                    .unwrap_or_default()
             };
             if recipient.is_empty() {
                 return Err(AppError::Internal(anyhow::anyhow!(
-                    "user.{recipient_col} is empty; cannot route mint without a destination address"
+                    "destination wallet address is empty; cannot route mint"
                 )));
             }
             // The planner doesn't yet resolve dest_symbol (e.g. "BTC") to a

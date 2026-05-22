@@ -73,7 +73,7 @@ services:
       API_BASE_URL: https://${AEGIS_DOMAIN}/api
       # CORS + cookies
       CORS_ALLOW_ORIGIN: https://${AEGIS_DOMAIN}
-      SESSION_COOKIE_NAME: aegis_jwt
+      SESSION_COOKIE_NAME: __Host-aegis_session
       SESSION_COOKIE_SECURE: "true"
     expose:
       - "8080"
@@ -87,6 +87,8 @@ services:
         NEXT_PUBLIC_SSE_URL: https://${AEGIS_DOMAIN}/api/sse
         NEXT_PUBLIC_APP_URL: https://${AEGIS_DOMAIN}
     restart: unless-stopped
+    environment:
+      SESSION_COOKIE_NAME: __Host-aegis_session
     expose:
       - "3000"
 
