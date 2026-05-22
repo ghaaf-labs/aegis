@@ -21,8 +21,12 @@ const ACTIONS: Array<{
   disabled?: boolean;
 }> = [
   { kind: "alert", label: "Alert only" },
-  { kind: "propose_rebalance", label: "Propose rebalance" },
-  { kind: "auto_execute", label: "Auto-execute (locked)", disabled: true },
+  { kind: "propose_rebalance", label: "Prepare review" },
+  {
+    kind: "auto_execute",
+    label: "Move automatically (locked)",
+    disabled: true,
+  },
 ];
 
 interface DraftRule {
@@ -180,7 +184,7 @@ export function PegRuleEditor() {
 
       <BrutalCard>
         <BrutalCardHeader>
-          <h3 className="text-sm font-semibold">New peg-defense rule</h3>
+          <h3 className="text-sm font-semibold">New stablecoin guardrail</h3>
         </BrutalCardHeader>
         <BrutalCardBody>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -211,7 +215,7 @@ export function PegRuleEditor() {
 
             <label className="flex flex-col gap-1 text-xs">
               <span className="font-semibold uppercase tracking-wider">
-                Fire when price &le;
+                Alert below
               </span>
               <input
                 type="number"
@@ -228,8 +232,8 @@ export function PegRuleEditor() {
                 }
               />
               <span className="text-[11px] text-text-mut font-mono">
-                Use a sub-$1 depeg trigger. Values above 1.0000 would alert
-                while the asset is healthy, so they are blocked.
+                Pick the price where this asset no longer feels safe. Values
+                above 1.0000 are blocked.
               </span>
               {!thresholdValid ? (
                 <span className="text-[11px] text-risk font-mono">
@@ -240,7 +244,7 @@ export function PegRuleEditor() {
 
             <label className="flex flex-col gap-1 text-xs">
               <span className="font-semibold uppercase tracking-wider">
-                Window (seconds)
+                Wait time (seconds)
               </span>
               <input
                 type="number"
@@ -259,7 +263,7 @@ export function PegRuleEditor() {
 
             <label className="flex flex-col gap-1 text-xs">
               <span className="font-semibold uppercase tracking-wider">
-                Defensive target
+                Safer asset
               </span>
               <select
                 className="bg-raised border-brutal border-border-default rounded-sharp px-2 py-1"
@@ -287,7 +291,7 @@ export function PegRuleEditor() {
 
             <fieldset className="md:col-span-2 flex flex-col gap-2 text-xs">
               <legend className="font-semibold uppercase tracking-wider mb-1">
-                Action when fired
+                What should Aegis do?
               </legend>
               <div className="flex flex-wrap gap-3">
                 {ACTIONS.map((a) => (
@@ -314,8 +318,8 @@ export function PegRuleEditor() {
                 ))}
               </div>
               <p className="text-[11px] text-text-mut font-mono">
-                Auto-execute is not enabled yet. Use Propose rebalance to draft
-                the defensive plan for approval.
+                Automatic moves are locked. Choose Prepare review when you want
+                Aegis to draft a plan for approval.
               </p>
             </fieldset>
           </div>
@@ -325,9 +329,9 @@ export function PegRuleEditor() {
               variant="agent"
               onClick={onCreate}
               disabled={!canCreate}
-              aria-label="Create peg-defense rule"
+              aria-label="Create stablecoin guardrail"
             >
-              {submitting ? "Creating…" : "Create rule"}
+              {submitting ? "Creating…" : "Create guardrail"}
             </BrutalButton>
           </div>
           {error ? (
@@ -340,14 +344,14 @@ export function PegRuleEditor() {
 
       <BrutalCard>
         <BrutalCardHeader>
-          <h3 className="text-sm font-semibold">Active rules</h3>
+          <h3 className="text-sm font-semibold">Active guardrails</h3>
         </BrutalCardHeader>
         <BrutalCardBody>
           {loading ? (
             <p className="text-xs text-text-mut">Loading…</p>
           ) : rules.length === 0 ? (
             <p className="text-xs text-text-mut">
-              No peg rules yet. Add one above.
+              No guardrails yet. Add one above.
             </p>
           ) : (
             <ul className="flex flex-col divide-y divide-border-default">

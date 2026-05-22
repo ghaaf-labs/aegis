@@ -57,10 +57,8 @@ export default function AgentSettingsPage() {
           Agent control
         </h1>
         <p className="text-sm text-text-lo mt-1">
-          One-toggle pause for every scheduled agent trigger — drift watcher,
-          regime monitor, peg defense, scheduler tick. Manual rebalances and
-          ad-hoc analyses are unaffected so you can still hand-drive when
-          paused.
+          Pause automatic checks without blocking manual reviews or fresh
+          recommendations.
         </p>
       </div>
 
@@ -92,7 +90,7 @@ export default function AgentSettingsPage() {
           <div className="pt-4 border-t border-border-default text-xs text-text-lo space-y-1">
             <p>
               Pausing is a soft stop. In-flight rebalances complete; only new
-              scheduled triggers are gated.
+              automatic checks are held.
             </p>
             <p>
               See{" "}

@@ -203,7 +203,7 @@ export default function SettingsIndex() {
       href: "/settings/agent",
       icon: Shield,
       title: "Agent",
-      description: "Pause / resume the agent, view trigger thresholds",
+      description: "Pause automatic checks and review agent controls",
     },
     {
       href: "/agent-logs",
@@ -221,7 +221,7 @@ export default function SettingsIndex() {
       href: "/settings/peg",
       icon: AlertTriangle,
       title: "Peg defense",
-      description: "Stablecoin peg-monitor rules + thresholds",
+      description: "Stablecoin guardrails and alerts",
     },
     {
       href: "/tax-center",

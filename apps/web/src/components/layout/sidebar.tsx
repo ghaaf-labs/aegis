@@ -111,7 +111,7 @@ const BASE_NAV_SECTIONS: NavSection[] = [
         href: "/settings/peg",
         icon: Shield,
         label: "Peg defense",
-        description: "stablecoin triggers",
+        description: "stablecoin guardrails",
       },
     ],
   },

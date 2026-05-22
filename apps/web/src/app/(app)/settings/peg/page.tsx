@@ -12,9 +12,8 @@ export default function PegSettingsPage() {
           Peg defense
         </h1>
         <p className="text-sm text-text-lo mt-1">
-          Watch USDC, EURC, and USYC. When a peg slips, the monitor either
-          alerts you or drafts a defensive rebalance for approval. Auto-execute
-          remains locked until the Pro execution gate is live.
+          Watch USDC, EURC, and USYC. If a stablecoin trades below your comfort
+          level, Aegis can alert you or prepare a defensive review for approval.
         </p>
       </div>
       <PegRuleEditor />
