@@ -47,8 +47,8 @@ export function PricingPageClient() {
 
   const effectiveTiers = tiers.length > 0 ? tiers : DEFAULT_PRICING_TIERS;
   const currentTier: Tier = subscription?.tier ?? "free";
-  const signupHref = "/login?next=%2Fpricing";
-  const signupLabel = "Continue";
+  const signupHref = "/login?next=%2Fsettings%2Fbilling";
+  const signupLabel = "Sign in";
   const signupTone = "agent";
 
   return (
@@ -100,9 +100,11 @@ export function PricingPageClient() {
           tiers={effectiveTiers}
           currentTier={authed ? currentTier : null}
           publicActionHref={signupHref}
-          publicActionLabel="Continue"
+          publicActionLabel={(tier) =>
+            tier.tier === "free" ? "Start free" : `Choose ${tier.name}`
+          }
           publicActionTone={signupTone}
-          publicActionHint={null}
+          publicActionHint="One email code. Manage the plan after sign-in."
           onSelect={
             authed
               ? (tier) => {
