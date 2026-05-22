@@ -1,0 +1,25 @@
+[package]
+name = "sqlx"
+version = "0.9.0-aegis.1"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[dependencies]
+sqlx-core = { version = "=0.9.0", default-features = false, features = [
+  "_rt-tokio",
+  "_tls-rustls-ring-webpki",
+  "uuid",
+  "chrono",
+  "json",
+  "migrate",
+  "rust_decimal",
+] }
+sqlx-postgres = { version = "=0.9.0", default-features = false, features = [
+  "uuid",
+  "chrono",
+  "json",
+  "migrate",
+  "rust_decimal",
+] }
+sqlx-pg-macros = { version = "0.1.0", path = "../sqlx-pg-macros" }

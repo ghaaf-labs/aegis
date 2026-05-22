@@ -33,6 +33,11 @@ pub struct WalletAuthCodeIssue {
     pub code: String,
 }
 
+struct AuthCodeCheck {
+    code_hash: String,
+    referrer_handle: Option<String>,
+}
+
 impl<'a> WalletService<'a> {
     pub fn new(
         db: &'a Db,
@@ -195,11 +200,31 @@ impl<'a> WalletService<'a> {
         email: &str,
         challenge_id: Uuid,
         code: &str,
+        consent: Option<&EmailAuthConsent>,
     ) -> crate::error::Result<Option<String>> {
+        let normalized = normalize_email(email);
+        let checked = self
+            .check_auth_code(&normalized, challenge_id, code)
+            .await?;
+
+        if self.find_user_by_email(&normalized).await?.is_none() && !has_required_consent(consent) {
+            return Err(AppError::BadRequest("consent_required".into()));
+        }
+
+        self.consume_auth_code(challenge_id, &checked.code_hash)
+            .await?;
+        Ok(checked.referrer_handle)
+    }
+
+    async fn check_auth_code(
+        &self,
+        normalized: &str,
+        challenge_id: Uuid,
+        code: &str,
+    ) -> crate::error::Result<AuthCodeCheck> {
         use sqlx::Row;
 
-        let normalized = normalize_email(email);
-        validate_email(&normalized)?;
+        validate_email(normalized)?;
         let trimmed_code = code.trim();
         if trimmed_code.len() != 6 || !trimmed_code.chars().all(|c| c.is_ascii_digit()) {
             return Err(AppError::BadRequest("code_invalid".into()));
@@ -212,7 +237,7 @@ impl<'a> WalletService<'a> {
                AND email = $2",
         )
         .bind(challenge_id)
-        .bind(&normalized)
+        .bind(normalized)
         .fetch_optional(self.db)
         .await?;
 
@@ -235,7 +260,7 @@ impl<'a> WalletService<'a> {
         }
 
         let actual_hash: String = row.try_get("code_hash")?;
-        let expected_hash = code_hash(self.config, &normalized, challenge_id, trimmed_code);
+        let expected_hash = code_hash(self.config, normalized, challenge_id, trimmed_code);
         if actual_hash
             .as_bytes()
             .ct_eq(expected_hash.as_bytes())
@@ -261,19 +286,33 @@ impl<'a> WalletService<'a> {
             return Err(AppError::BadRequest("code_invalid".into()));
         }
 
+        Ok(AuthCodeCheck {
+            code_hash: expected_hash,
+            referrer_handle: row.try_get("referrer_handle")?,
+        })
+    }
+
+    async fn consume_auth_code(
+        &self,
+        challenge_id: Uuid,
+        code_hash: &str,
+    ) -> crate::error::Result<()> {
         let consumed = sqlx::query(
             "UPDATE wallet_auth_codes
              SET consumed_at = NOW()
-             WHERE id = $1 AND consumed_at IS NULL",
+             WHERE id = $1
+               AND code_hash = $2
+               AND consumed_at IS NULL",
         )
         .bind(challenge_id)
+        .bind(code_hash)
         .execute(self.db)
         .await?;
         if consumed.rows_affected() != 1 {
             return Err(AppError::BadRequest("code_used".into()));
         }
 
-        Ok(row.try_get("referrer_handle")?)
+        Ok(())
     }
 
     pub async fn init_continue(

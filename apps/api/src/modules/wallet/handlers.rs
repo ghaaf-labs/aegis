@@ -118,7 +118,12 @@ pub async fn email_verify(
     let verifier = MockProvider;
     let verifier_svc = WalletService::new(&state.db, &verifier, &state.config, &state.sse);
     let referrer_from_code = match verifier_svc
-        .verify_auth_code(&body.email, body.challenge_id, &body.code)
+        .verify_auth_code(
+            &body.email,
+            body.challenge_id,
+            &body.code,
+            body.consent.as_ref(),
+        )
         .await
     {
         Ok(referrer) => referrer,
