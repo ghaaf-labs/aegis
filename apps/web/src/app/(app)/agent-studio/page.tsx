@@ -78,15 +78,15 @@ export default function AgentStudioPage() {
     <div className="mx-auto max-w-[1400px] space-y-6">
       <div>
         <p className="text-[10px] font-mono uppercase tracking-widest text-accent-agent">
-          Manual controls
+          Agent controls
         </p>
         <h1 className="mt-1 flex items-center gap-2 text-2xl font-mono font-semibold tracking-tight text-text-hi">
           <Bot className="h-5 w-5 text-accent-agent" />
           Agent Studio
         </h1>
         <p className="mt-1 max-w-2xl text-sm text-text-lo">
-          Run a manual analysis, pause scheduled triggers, and jump to the
-          target-plan surfaces the agent reads before proposing a move.
+          Ask for a fresh recommendation, pause automatic checks, or review the
+          account details the agent uses before suggesting a move.
         </p>
       </div>
 
@@ -100,8 +100,8 @@ export default function AgentStudioPage() {
           </BrutalCardHeader>
           <BrutalCardBody className="space-y-4">
             <p className="text-sm leading-relaxed text-text-lo">
-              Pausing stops scheduled drift, regime, peg, and heartbeat
-              triggers. Manual analysis and review flows remain available.
+              Pausing stops automatic checks. You can still ask for a
+              recommendation or review a plan whenever you want.
             </p>
             <BrutalButton
               type="button"
@@ -122,15 +122,14 @@ export default function AgentStudioPage() {
         <BrutalCard>
           <BrutalCardHeader>
             <span className="text-sm font-mono text-text-hi">
-              Manual analysis
+              Fresh recommendation
             </span>
-            <BrutalPill tone="agent">OpenRouter</BrutalPill>
+            <BrutalPill tone="agent">No trades</BrutalPill>
           </BrutalCardHeader>
           <BrutalCardBody className="space-y-4">
             <p className="text-sm leading-relaxed text-text-lo">
-              Runs the strategist + critic loop against the current target,
-              wallet cash, market snapshot, and recent decisions. It does not
-              execute trades.
+              Reviews your target mix, wallet cash, market data, and recent
+              decisions. It only writes a recommendation; nothing moves.
             </p>
             {analysisBlocked && (
               <div className="border border-warn/40 bg-warn/5 px-3 py-2 font-mono">
@@ -138,7 +137,7 @@ export default function AgentStudioPage() {
                   <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warn" />
                   <div>
                     <p className="text-[10px] uppercase tracking-widest text-warn">
-                      Analysis input locked
+                      Recommendation locked
                     </p>
                     <p className="mt-1 text-[11px] leading-relaxed text-text-lo">
                       {analysisBlock.copy}
@@ -163,10 +162,10 @@ export default function AgentStudioPage() {
             >
               <Sparkles className="h-4 w-4" />
               {analyzing
-                ? "Analyzing..."
+                ? "Checking..."
                 : analysisBlocked
-                  ? "Analysis locked"
-                  : "Run analysis"}
+                  ? "Recommendation locked"
+                  : "Get recommendation"}
             </BrutalButton>
           </BrutalCardBody>
         </BrutalCard>
@@ -175,7 +174,7 @@ export default function AgentStudioPage() {
       <BrutalCard>
         <BrutalCardHeader>
           <span className="text-sm font-mono text-text-hi">
-            Inputs the agent reads
+            Review before asking
           </span>
         </BrutalCardHeader>
         <BrutalCardBody className="grid gap-3 md:grid-cols-3">
@@ -192,7 +191,7 @@ export default function AgentStudioPage() {
           <StudioLink
             href="/settings/peg"
             title="Peg defense"
-            body="Tune stablecoin thresholds and alert rules."
+            body="Set stablecoin guardrails and alert rules."
           />
         </BrutalCardBody>
       </BrutalCard>
@@ -221,7 +220,7 @@ function manualAnalysisBlockCopy(
   }
   if (!hasWallet) {
     return {
-      copy: "Finish account setup first. The strategist should not reason about deployable cash until your wallet is ready.",
+      copy: "Finish account setup first. The agent needs a ready wallet before it can reason about deployable cash.",
       href: "/wallets",
       cta: "Check account setup",
     };
@@ -230,13 +229,13 @@ function manualAnalysisBlockCopy(
     return {
       copy:
         gatewayBalanceError ??
-        "The balance check did not return wallet cash. Manual analysis is locked so advice cannot treat unknown wallet cash as zero.",
+        "The balance check did not return wallet cash. Recommendations stay locked so unknown cash is not treated as zero.",
       href: "/wallets",
       cta: "Open wallet status",
     };
   }
   return {
-    copy: "Aegis is still checking wallet cash. Manual analysis unlocks after balances are confirmed.",
+    copy: "Aegis is still checking wallet cash. Recommendations unlock after balances are confirmed.",
     href: "/wallets",
     cta: "Check wallet status",
   };

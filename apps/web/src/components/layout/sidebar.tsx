@@ -105,7 +105,7 @@ const BASE_NAV_SECTIONS: NavSection[] = [
         href: "/agent-studio",
         icon: Bot,
         label: "Agent Studio",
-        description: "manual analysis runs",
+        description: "ask for advice",
       },
       {
         href: "/settings/peg",
