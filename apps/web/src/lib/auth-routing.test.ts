@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   buildLoginRedirectUrl,
-  isLegacyAuthPath,
   isProtectedAppPath,
   safeNextPath,
 } from "./auth-routing";
@@ -19,27 +18,16 @@ describe("auth route protection", () => {
     expect(isProtectedAppPath("/help")).toBe(false);
     expect(isProtectedAppPath("/strategies")).toBe(false);
     expect(isProtectedAppPath("/login")).toBe(false);
-    expect(isProtectedAppPath("/signup")).toBe(false);
-    expect(isProtectedAppPath("/register")).toBe(false);
   });
 
-  it("treats non-canonical auth paths as legacy aliases", () => {
-    expect(isLegacyAuthPath("/signup")).toBe(true);
-    expect(isLegacyAuthPath("/signup/referral")).toBe(true);
-    expect(isLegacyAuthPath("/sign-up")).toBe(true);
-    expect(isLegacyAuthPath("/signin")).toBe(true);
-    expect(isLegacyAuthPath("/sign-in")).toBe(true);
-    expect(isLegacyAuthPath("/register")).toBe(true);
-    expect(isLegacyAuthPath("/login")).toBe(false);
+  it("does not treat login as protected app path", () => {
+    expect(isProtectedAppPath("/login")).toBe(false);
   });
 
   it("does not accept external or recursive next destinations", () => {
     expect(safeNextPath("https://evil.example")).toBeNull();
     expect(safeNextPath("//evil.example/path")).toBeNull();
     expect(safeNextPath("/login?next=/dashboard")).toBeNull();
-    expect(safeNextPath("/signup")).toBeNull();
-    expect(safeNextPath("/register?next=/dashboard")).toBeNull();
-    expect(safeNextPath("/sign-in")).toBeNull();
     expect(safeNextPath("/dashboard?tab=agent")).toBe("/dashboard?tab=agent");
   });
 

@@ -2,23 +2,16 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { AuthGate } from "./auth-gate";
-import { walletApi } from "@/lib/api";
 import { usePortfolioStore } from "@/stores/portfolio";
 
 const routerReplace = vi.fn();
-let mockPathname = "/wallet";
+let mockPathname = "/wallets";
 
 vi.mock("next/navigation", () => ({
   usePathname: () => mockPathname,
   useRouter: () => ({
     replace: routerReplace,
   }),
-}));
-
-vi.mock("@/lib/api", () => ({
-  walletApi: {
-    session: vi.fn(),
-  },
 }));
 
 beforeAll(() => {
@@ -31,28 +24,15 @@ afterEach(() => {
   document.body.innerHTML = "";
   vi.clearAllMocks();
   routerReplace.mockClear();
-  mockPathname = "/wallet";
+  mockPathname = "/wallets";
   usePortfolioStore.getState().resetSession();
+  usePortfolioStore.getState().setSessionResolved(false);
   window.localStorage.clear();
 });
 
 describe("<AuthGate />", () => {
   it("hides protected content immediately when logout clears session state", async () => {
-    vi.mocked(walletApi.session).mockResolvedValue({
-      user: {
-        id: "user-1",
-        email: "user@example.com",
-        riskTolerance: "moderate",
-        accountStatus: "active",
-      },
-      accountStatus: "active",
-      wallet: {
-        walletId: "wallet-1",
-        arcAddress: "0x1111111111111111111111111111111111111111",
-        baseAddress: "0x2222222222222222222222222222222222222222",
-        createdAt: new Date().toISOString(),
-      },
-    });
+    seedReadySession();
 
     const { root, container } = render(
       <AuthGate>
@@ -70,28 +50,14 @@ describe("<AuthGate />", () => {
 
     expect(container.textContent).not.toContain("wallet data");
     expect(container.textContent).not.toContain("Continue with email");
-    expect(routerReplace).toHaveBeenCalledWith("/login?next=%2Fwallet");
+    expect(routerReplace).toHaveBeenCalledWith("/login?next=%2Fwallets");
 
     act(() => root.unmount());
   });
 
   it("sends a wallet-ready user with no portfolio back to onboarding on product routes", async () => {
     mockPathname = "/dashboard";
-    vi.mocked(walletApi.session).mockResolvedValue({
-      user: {
-        id: "user-2",
-        email: "new@example.com",
-        riskTolerance: "moderate",
-        accountStatus: "active",
-      },
-      accountStatus: "active",
-      wallet: {
-        walletId: "wallet-2",
-        arcAddress: "0x1111111111111111111111111111111111111111",
-        baseAddress: "0x2222222222222222222222222222222222222222",
-        createdAt: new Date().toISOString(),
-      },
-    });
+    seedReadySession();
 
     const { root, container } = render(
       <AuthGate>
@@ -112,7 +78,61 @@ describe("<AuthGate />", () => {
 
     act(() => root.unmount());
   });
+
+  it("lets a half-finished account open wallet recovery surfaces", async () => {
+    seedPendingWalletSession();
+
+    const { root, container } = render(
+      <AuthGate>
+        <div data-testid="protected-child">wallet recovery</div>
+      </AuthGate>,
+    );
+    await flushEffects();
+
+    expect(container.textContent).toContain("wallet recovery");
+    expect(routerReplace).not.toHaveBeenCalled();
+
+    act(() => root.unmount());
+  });
+
+  it("keeps a half-finished account out of product routes", async () => {
+    mockPathname = "/dashboard";
+    seedPendingWalletSession();
+
+    const { root, container } = render(
+      <AuthGate>
+        <div data-testid="protected-child">dashboard data</div>
+      </AuthGate>,
+    );
+    await flushEffects();
+
+    expect(container.textContent).not.toContain("dashboard data");
+    expect(routerReplace).toHaveBeenCalledWith("/onboarding");
+
+    act(() => root.unmount());
+  });
 });
+
+function seedReadySession() {
+  act(() => {
+    usePortfolioStore.getState().setSessionResolved(true);
+    usePortfolioStore.getState().setSessionActive(true);
+    usePortfolioStore.getState().setWallet({
+      walletId: "wallet-1",
+      arcAddress: "0x1111111111111111111111111111111111111111",
+      baseAddress: "0x2222222222222222222222222222222222222222",
+      createdAt: new Date().toISOString(),
+    });
+  });
+}
+
+function seedPendingWalletSession() {
+  act(() => {
+    usePortfolioStore.getState().setSessionResolved(true);
+    usePortfolioStore.getState().setSessionActive(true);
+    usePortfolioStore.getState().setWallet(null);
+  });
+}
 
 function render(element: React.ReactElement): {
   container: HTMLDivElement;

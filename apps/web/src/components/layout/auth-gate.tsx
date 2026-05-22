@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { walletApi } from "@/lib/api";
 import { safeNextPath } from "@/lib/auth-routing";
 import { usePortfolioStore } from "@/stores/portfolio";
 
@@ -36,40 +35,33 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [authState, setAuthState] = useState<AuthState>({ kind: "checking" });
-  const setWallet = usePortfolioStore((s) => s.setWallet);
-  const setSessionActive = usePortfolioStore((s) => s.setSessionActive);
+  const sessionResolved = usePortfolioStore((s) => s.sessionResolved);
   const sessionActive = usePortfolioStore((s) => s.sessionActive);
+  const wallet = usePortfolioStore((s) => s.wallet);
   const portfoliosLoaded = usePortfolioStore((s) => s.portfoliosLoaded);
   const portfolioCount = usePortfolioStore((s) => s.portfolios.length);
-  const resetSession = usePortfolioStore((s) => s.resetSession);
 
   useEffect(() => {
-    let cancelled = false;
-    setAuthState({ kind: "checking" });
-    walletApi
-      .session()
-      .then((session) => {
-        if (cancelled) return;
-        localStorage.setItem("aegis_email", session.user.email);
-        setSessionActive(true);
-        if (session.wallet) {
-          setWallet(session.wallet);
-          setAuthState({ kind: "ready" });
-        } else {
-          setWallet(null);
-          setAuthState({ kind: "wallet_pending", email: session.user.email });
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          resetSession();
-          setAuthState({ kind: "signed_out" });
-        }
+    if (!sessionResolved) {
+      setAuthState({ kind: "checking" });
+      return;
+    }
+
+    if (!sessionActive) {
+      setAuthState({ kind: "signed_out" });
+      return;
+    }
+
+    if (!wallet) {
+      setAuthState({
+        kind: "wallet_pending",
+        email: localStorage.getItem("aegis_email") ?? "",
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [pathname, resetSession, setSessionActive, setWallet]);
+      return;
+    }
+
+    setAuthState({ kind: "ready" });
+  }, [sessionActive, sessionResolved, wallet]);
 
   useEffect(() => {
     if (isPublic(pathname) || authState.kind === "checking") return;

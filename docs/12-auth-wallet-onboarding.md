@@ -66,17 +66,24 @@ front-load the Phase-2 non-custodial signer (§4.3) before launch.**
 
 > **Must-verify before build:** Circle developer-controlled wallets support
 > **ARC-TESTNET + BASE-SEPOLIA** as **SCA** with Paymaster/Gas-Station gas
-> abstraction. SCA is mandatory (Paymaster + CCTP V2 Hooks need it —
-> [`provider.rs:183`](../apps/api/src/modules/wallet/provider.rs)).
+> abstraction. SCA is mandatory for Paymaster + CCTP V2 Hooks; the provider
+> provisions `accountType: SCA` ([`wallet/provider.rs`](../apps/api/src/modules/wallet/provider.rs)).
 
 ---
 
-## 2. Why the current flow fails (evidence)
+## 2. Why the prior flow failed (evidence + status)
 
-Root causes: (a) wallet provisioning is an **interactive, async, failure-prone
-browser ceremony** (because wallets are **user-controlled** —
-[`provider.rs:1`](../apps/api/src/modules/wallet/provider.rs)); (b) the UI
-**exposes internal state** (session-vs-wallet, Circle, Arc/Base, PIN, readiness,
+> **Status (reconciled with code):** the backend cutover has landed — migrations
+> `0025`–`0031`, the unified `/auth/email/{start,resend,verify}` + `/auth/session`
+>
+> - `/account/{export,delete}` routes, and a **developer-controlled** `provider.rs`.
+>   The old user-controlled provider and `/auth/wallet/{create,login,readiness,status}`
+>   are gone. The web app already shows the unified "Continue with email" entry; the
+>   remaining work is the §12.3 copy/jargon cleanup. This section is kept as motivation.
+
+Root causes (pre-cutover): (a) wallet provisioning was an **interactive, async,
+failure-prone browser ceremony** (wallets were **user-controlled**); (b) the UI
+**exposed internal state** (session-vs-wallet, Circle, Arc/Base, PIN, readiness,
 new-vs-returning) as user copy.
 
 Observed live (isolated mock instance):
@@ -189,18 +196,18 @@ The client **never** branches on new-vs-returning.
 
 ### 5.4 The ten scenarios → behavior
 
-| #   | Scenario                             | Behavior                                                          |
-| --- | ------------------------------------ | ----------------------------------------------------------------- |
-| 1   | new email, no user                   | T1 → app                                                          |
-| 2   | email verified, wallet not created   | `pending_wallet`; T3 self-heals                                   |
-| 3   | user exists, wallet incomplete       | T3 idempotent re-provision; never a dead-end                      |
-| 4   | user exists, wallet ready            | T2 → app                                                          |
-| 5   | previous challenge expired           | code expired → "we'll send a new one"; account untouched          |
-| 6   | wants a different email              | "Use a different email" → resets to Continue                      |
-| 7   | logout then login                    | T4 then T1/T2; fresh session                                      |
-| 8   | returning user on the "signup" entry | identical; server signs in                                        |
-| 9   | new user on the "login" entry        | identical; server creates                                         |
-| 10  | provider failure at provisioning     | `pending_wallet` + "Finishing…" + retry; app degraded until ready |
+| #   | Scenario                             | Behavior                                                                      |
+| --- | ------------------------------------ | ----------------------------------------------------------------------------- |
+| 1   | new email, no user                   | T1 → app                                                                      |
+| 2   | email verified, wallet not created   | `pending_wallet`; T3 self-heals                                               |
+| 3   | user exists, wallet incomplete       | T3 idempotent re-provision; never a dead-end                                  |
+| 4   | user exists, wallet ready            | T2 → app                                                                      |
+| 5   | previous challenge expired           | code expired → user re-enters email for a fresh code (§13); account untouched |
+| 6   | wants a different email              | "Use a different email" → resets to Continue                                  |
+| 7   | logout then login                    | T4 then T1/T2; fresh session                                                  |
+| 8   | returning user on the "signup" entry | identical; server signs in                                                    |
+| 9   | new user on the "login" entry        | identical; server creates                                                     |
+| 10  | provider failure at provisioning     | `pending_wallet` + "Finishing…" + retry; app degraded until ready             |
 
 ---
 
@@ -311,7 +318,27 @@ Verify the code; create-or-restore; provision wallet; open a session.
       "riskTolerance": "moderate",
       "accountStatus": "active"
     },
-    "wallet": { "arcAddress": "0x…", "baseAddress": "0x…" }
+    "wallet": {
+      "walletId": "uuid",
+      "arcAddress": "0x…",
+      "baseAddress": "0x…",
+      "networks": [
+        {
+          "blockchain": "ARC-TESTNET",
+          "walletId": "uuid",
+          "address": "0x…",
+          "accountType": "SCA",
+          "state": "LIVE"
+        },
+        {
+          "blockchain": "BASE-SEPOLIA",
+          "walletId": "uuid",
+          "address": "0x…",
+          "accountType": "SCA",
+          "state": "LIVE"
+        }
+      ]
+    }
   } // null if provisioning
   ```
 - Behavior: constant-time HMAC compare; single-use (consume atomically); on
@@ -344,11 +371,13 @@ Verify the code; create-or-restore; provision wallet; open a session.
 - 204; revoke the active `auth_sessions` row; clear cookie (Max-Age=0). Always
   succeeds from the client's perspective — no "retry logout" state.
 
-### 7.7 `GET /account/export` _(GDPR Art. 15/20)_
+### 7.7 `POST /account/export` _(GDPR Art. 15/20)_
 
-- Auth: cookie. → 202 `{ "status":"queued", "deliveryEmail":"a@b.com" }`
+- Auth: cookie. CSRF: required. → 202
+  `{ "status":"queued", "deliveryEmail":"a@b.com", "expiresAt":"ISO-8601" }`
 - Generates a machine-readable archive (§11.3); delivered as a signed, expiring
-  link by email. Rate-limited (e.g. 1/day).
+  link by email. Rate-limited on successful deliveries (e.g. 1/day), so a mail
+  provider failure does not consume the user's retry quota.
 
 ### 7.8 `POST /account/delete` _(GDPR Art. 17)_
 
@@ -373,14 +402,25 @@ Verify the code; create-or-restore; provision wallet; open a session.
 - Create a **wallet set** once; persist its id (`users.wallet_set_id` references
   the active set, or a singleton config). Entity secret registered with Circle;
   recovery file stored offline (§10.7).
+- Local setup command: `cargo run --bin circle_wallet_setup -- check|list|create`
+  from `apps/api/`. `create --write-env-local` writes only
+  `CIRCLE_WALLET_SET_ID`; the entity secret must already be generated and
+  registered in Circle.
+- Entity-secret registration: run
+  `cargo run --bin circle_wallet_setup -- entity-ciphertext --generate --write-env-local`,
+  paste the printed ciphertext into Circle's registration form, then save
+  Circle's recovery file offline. The raw entity secret stays in `.env.local`
+  and is never printed.
 
 ### 8.2 Per-user provisioning (inside `verify` / `session` self-heal)
 
 1. Ensure Circle user/account scaffolding for `users.id` (idempotent).
 2. `create_wallet(user_id)` → **SCA** on **ARC-TESTNET + BASE-SEPOLIA**, signed
    with entity-secret ciphertext (single-use, replay-safe).
-3. Read back both chain addresses; persist `wallet_id`, `arc_address`,
-   `base_address`; set `account_status = active`.
+3. Read back both chain addresses; **upsert one `user_wallet_networks` row per
+   chain** (source of truth, §9.2); set `account_status = active`. Legacy
+   `users.arc_address`/`base_address` are projection-only and were nulled for
+   pre-cutover rows by migration `0028`.
 
 ### 8.3 Idempotency & retry
 
@@ -423,7 +463,30 @@ Verify the code; create-or-restore; provision wallet; open a session.
 
 (unchanged, nullable: `wallet_id`, `arc_address`, `base_address`.)
 
-### 9.2 Existing tables (kept)
+### 9.2 `user_wallet_networks`
+
+Circle represents a developer-controlled account wallet as one row per
+blockchain, even when EVM networks share the same SCA address. Aegis persists
+those rows as network routes under one user wallet so more chains and tokens can
+be added without adding columns to `users`.
+
+| Column             | Type | Notes                                 |
+| ------------------ | ---- | ------------------------------------- |
+| `user_id`          | UUID | references `users(id)`                |
+| `blockchain`       | TEXT | Circle chain code, e.g. `ARC-TESTNET` |
+| `circle_wallet_id` | TEXT | Circle per-network wallet id          |
+| `address`          | TEXT | network address                       |
+| `account_type`     | TEXT | `SCA` for Phase 1                     |
+| `wallet_set_id`    | TEXT | configured developer wallet set       |
+| `state`            | TEXT | Circle state, usually `LIVE`          |
+
+Primary key: `(user_id, blockchain)`. Auth/session readiness, Gateway,
+billing, tax, execution, diary, account export, and deletion guards read this
+route table as the wallet source of truth. The legacy `users.arc_address` and
+`users.base_address` columns remain only as a temporary compatibility projection
+for older rows until a final column-drop migration.
+
+### 9.3 Existing tables (kept)
 
 - `wallet_auth_codes` — 6-digit, HMAC-hashed, `expires_at`, `attempts`,
   single-use `consumed_at`. **Drop `intent` from the contract** (column nullable
@@ -431,7 +494,7 @@ Verify the code; create-or-restore; provision wallet; open a session.
 - `auth_sessions` — `id` (jti), `user_id`, `expires_at`, `revoked_at`,
   `created_at`, `last_seen_at`. Drives revocation + session rotation.
 
-### 9.3 Migration SQL (`0025_unified_auth.sql`)
+### 9.4 Migration SQL (`0025_unified_auth.sql`)
 
 ```sql
 ALTER TABLE users
@@ -453,6 +516,14 @@ CREATE INDEX users_deletion_pending_idx ON users (deletion_requested_at)
 ```
 
 `0026_drop_auth_code_intent.sql` (post-cutover): `ALTER TABLE wallet_auth_codes DROP COLUMN intent;`
+
+**Shipped migration set (as built, reconciled with code):** `0025_unified_auth`
+(columns above + an `account_status='pending_wallet'` backfill),
+`0026_drop_auth_code_intent`, `0027_auth_rate_limits` (per-IP throttle table,
+hashed bucket ids — §10.4), `0028_clear_legacy_wallet_rows` (null pre-cutover
+wallet rows so `/auth/session` self-heals — §8.3), `0029_user_wallet_networks`
+(the §9.2 routes table + backfill), `0031_account_export_jobs` (queued export
+rows behind `POST /account/export` — §7.7/§11.3).
 
 ---
 
@@ -542,9 +613,14 @@ kept offline; documented blast radius; rotation runbook.
 
 ### 11.3 Data export (Art. 15/20)
 
-- `GET /account/export` → queued archive (JSON), emailed signed link.
-- Contents: profile, consent history, portfolios, allocations, agent decisions,
-  rebalance events, tax lots, referrals. Excludes secrets/other users' data.
+- `POST /account/export` → queued archive row (JSON), emailed signed expiring
+  backend download link. The email must never attach the archive directly.
+- Rate limiting is based on delivered export links, not attempted requests; a
+  failed mail-provider call must be retryable after the provider is fixed.
+- Contents: profile, consent history, the account wallet network routes,
+  portfolios, allocations, agent decisions, rebalance events, tax lots, referrals.
+  Excludes secrets/other users' data and never reads legacy wallet columns as the
+  source of truth.
 
 ### 11.4 Erasure (Art. 17) — procedure
 
@@ -631,8 +707,8 @@ Each screen: default / loading / error states (copy in §12.3, §13).
 | ------------------- | ------------------------- | ---------------------------------- | --------------------------------------------------------------------- |
 | `invalid_email`     | 400                       | bad email format                   | Enter a valid email address.                                          |
 | `code_invalid`      | 400                       | wrong code                         | That code didn't match. Check it or request a new one.                |
-| `code_expired`      | 400                       | code > 10 min                      | That code expired. We'll send a new one.                              |
-| `code_used`         | 400                       | already consumed                   | That code was already used. Request a new one.                        |
+| `code_expired`      | 400                       | code > 10 min                      | That code expired. Enter your email to get a new one.                 |
+| `code_used`         | 400                       | already consumed                   | That code was already used. Enter your email to get a new one.        |
 | `too_many_attempts` | 429                       | >3 wrong                           | Too many tries. Request a new code.                                   |
 | `consent_required`  | 400                       | new user, ToS/Privacy not accepted | Please accept the Terms and Privacy Policy to continue.               |
 | `rate_limited`      | 429                       | code requests exceeded             | Too many requests. Try again shortly.                                 |
@@ -683,41 +759,43 @@ Single cutover on one branch (no dual-path shim — repo convention). Order:
 6. **Rollback:** revert branch; `0025` is additive (safe to keep); only the
    `intent` drop needs the `0026` follow-up.
 
-**Cutover checklist:** entity secret provisioned + recovery file stored; Arc/Base
-dev-controlled SCA confirmed; CORS/CSRF/cookie config set per env; rate limits
-configured; consent doc versions published; export/delete tested; legal sign-off
-on custodial posture (§11.6).
+**Cutover checklist:** entity secret provisioned + recovery file stored; wallet
+set created via `circle_wallet_setup`; Arc/Base dev-controlled SCA confirmed;
+CORS/CSRF/cookie config set per env (`SESSION_COOKIE_SECURE=true` with a
+`__Host-` cookie name in production); rate limits configured; consent doc
+versions published; export/delete tested; legal sign-off on custodial posture
+(§11.6).
 
 ---
 
 ## 16. Test plan
 
-| Area              | Case                                         | Type        | Expected                                                     |
-| ----------------- | -------------------------------------------- | ----------- | ------------------------------------------------------------ |
-| Signup            | unknown email → code → verify                | e2e         | user created, wallet `active`, app opens                     |
-| Login             | known email → code → verify                  | e2e         | session restored, no second wallet                           |
-| Unified entry     | new email on `/login`; existing on `/signup` | e2e         | identical happy path, no error                               |
-| Logout            | logout → 204                                 | integration | cookie cleared, session revoked, `session`→401               |
-| Refresh           | reload with valid cookie                     | e2e         | `session` returns user+wallet, no re-auth                    |
-| Half-complete     | kill after verify, before wallet             | integration | `pending_wallet`; next `session` → `active`                  |
-| Idempotent verify | same code twice / double-click               | integration | one user, one wallet, second no-ops                          |
-| Expired code      | wait >10 min                                 | integration | `code_expired`, auto-resend offered                          |
-| Wrong code        | 3 bad attempts                               | integration | code invalidated, `too_many_attempts`                        |
-| Resend cooldown   | resend <30s                                  | integration | `resend_cooldown`                                            |
-| Rate limit        | exceed per-email/per-IP                      | integration | `rate_limited` + `Retry-After`                               |
-| Provider fail     | force Circle 5xx                             | integration | `provisioning`, retry heals, no crash                        |
-| Session expiry    | revoke/expire mid-use                        | integration | `401` → "session expired" → Continue                         |
-| Enumeration       | known vs unknown email on `start`            | security    | identical status + body + ~timing                            |
-| CSRF              | state-changing request w/o header            | security    | `403 csrf_failed`                                            |
-| Fixation          | session id before vs after verify            | security    | id rotates                                                   |
-| Consent           | new signup                                   | integration | tos/privacy required, versions stored, marketing default off |
-| Re-consent        | bump version                                 | integration | returning user re-prompted                                   |
-| Export            | `GET /account/export`                        | integration | archive queued; rate-limited                                 |
-| Erasure guard     | delete with balance                          | integration | `funds_present`                                              |
-| Erasure           | delete empty account                         | integration | sessions revoked, PII scrubbed, tax/AML retained anonymized  |
-| Marketing         | opt-in unticked then toggled                 | integration | digest only after explicit opt-in                            |
-| Mobile UX         | iOS/Android OTP autofill, paste, viewport    | e2e         | autofill works, no zoom/jank                                 |
-| Copy audit        | scan all auth screens                        | manual      | no banned strings (§12.3)                                    |
+| Area              | Case                                         | Type        | Expected                                                          |
+| ----------------- | -------------------------------------------- | ----------- | ----------------------------------------------------------------- |
+| Signup            | unknown email → code → verify                | e2e         | user created, wallet `active`, app opens                          |
+| Login             | known email → code → verify                  | e2e         | session restored, no second wallet                                |
+| Unified entry     | new email on `/login`; existing on `/signup` | e2e         | identical happy path, no error                                    |
+| Logout            | logout → 204                                 | integration | cookie cleared, session revoked, `session`→401                    |
+| Refresh           | reload with valid cookie                     | e2e         | `session` returns user+wallet, no re-auth                         |
+| Half-complete     | kill after verify, before wallet             | integration | `pending_wallet`; next `session` → `active`                       |
+| Idempotent verify | same code twice / double-click               | integration | one user, one wallet, second no-ops                               |
+| Expired code      | wait >10 min                                 | integration | `code_expired`, user is sent back to email entry for a fresh code |
+| Wrong code        | 3 bad attempts                               | integration | code invalidated, `too_many_attempts`                             |
+| Resend cooldown   | resend <30s                                  | integration | `resend_cooldown`                                                 |
+| Rate limit        | exceed per-email/per-IP                      | integration | `rate_limited` + `Retry-After`                                    |
+| Provider fail     | force Circle 5xx                             | integration | `provisioning`, retry heals, no crash                             |
+| Session expiry    | revoke/expire mid-use                        | integration | `401` → "session expired" → Continue                              |
+| Enumeration       | known vs unknown email on `start`            | security    | identical status + body + ~timing                                 |
+| CSRF              | state-changing request w/o header            | security    | `403 csrf_failed`                                                 |
+| Fixation          | session id before vs after verify            | security    | id rotates                                                        |
+| Consent           | new signup                                   | integration | tos/privacy required, versions stored, marketing default off      |
+| Re-consent        | bump version                                 | integration | returning user re-prompted                                        |
+| Export            | `POST /account/export`                       | integration | archive queued; rate-limited; missing CSRF rejected               |
+| Erasure guard     | delete with balance                          | integration | `funds_present`                                                   |
+| Erasure           | delete empty account                         | integration | sessions revoked, PII scrubbed, tax/AML retained anonymized       |
+| Marketing         | opt-in unticked then toggled                 | integration | digest only after explicit opt-in                                 |
+| Mobile UX         | iOS/Android OTP autofill, paste, viewport    | e2e         | autofill works, no zoom/jank                                      |
+| Copy audit        | scan all auth screens                        | manual      | no banned strings (§12.3)                                         |
 
 ---
 

@@ -238,8 +238,8 @@ export function ExecutionTrace({
       {status === "completed" && decisionId && (
         <>
           <div className="mt-3 border border-cyan-500/30 bg-cyan-500/5 p-3 text-[12px] font-mono text-accent-agent">
-            Dashboard updated: invested positions and remaining Gateway balance
-            were refreshed after execution.
+            Dashboard updated: invested positions and remaining wallet cash were
+            refreshed after execution.
           </div>
           <div className="mt-3 border border-amber-500/30 bg-amber-500/5 p-3 text-[11px] font-mono text-warn flex items-center gap-2 flex-wrap">
             <span>

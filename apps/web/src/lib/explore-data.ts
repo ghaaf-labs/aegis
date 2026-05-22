@@ -114,9 +114,9 @@ export const DEMO_BUNDLES: Record<string, DemoBundle> = {
       ),
     ],
   },
-  "treasury-dao": {
-    portfolio: p("treasury-dao", "Treasury (DAO)", 2_400_000, -1.4, {
-      name: "Treasury (DAO)",
+  "operating-reserve": {
+    portfolio: p("operating-reserve", "Operating Reserve", 2_400_000, -1.4, {
+      name: "Operating Reserve",
       horizon: "3y",
       riskTolerance: "moderate",
       targetAllocation: { BTC: 25, ETH: 15, USYC: 40, EURC: 20 },
@@ -127,8 +127,8 @@ export const DEMO_BUNDLES: Record<string, DemoBundle> = {
     decisions: [
       d(
         "demo-decision-td-1",
-        "treasury-dao",
-        "Neutral regime with correlation ticking up; treasuries earning 5.1% on USYC is hard to beat at this risk level. Add EURC sleeve to diversify funding-currency exposure (DAO operates in EUR for ~30% of its costs).",
+        "operating-reserve",
+        "Neutral regime with correlation ticking up; cash earning 5.1% on USYC is hard to beat at this risk level. Add an EURC sleeve to diversify operating-currency exposure.",
         "neutral",
         0.81,
         "anthropic/claude-opus-4-7",

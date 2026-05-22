@@ -7,6 +7,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use crate::error::{AppError, Result};
+use crate::modules::wallet_routes;
 use crate::router::AppState;
 
 /// Public diary entry — exposed only for portfolios with `diary_public=true`.
@@ -51,7 +52,7 @@ struct Row {
 
 const ROW_SELECT: &str = "SELECT d.id              AS decision_id,
                                 d.portfolio_id    AS portfolio_id,
-                                COALESCE(u.arc_address, u.base_address, '') AS wallet_address,
+                                COALESCE(arc_route.address, base_route.address, '') AS wallet_address,
                                 d.regime          AS regime,
                                 d.model_slug      AS model_slug,
                                 d.confidence      AS confidence,
@@ -63,6 +64,12 @@ const ROW_SELECT: &str = "SELECT d.id              AS decision_id,
                          FROM agent_decisions d
                          JOIN portfolios p ON p.id = d.portfolio_id AND p.diary_public = TRUE
                          JOIN users u      ON u.id = p.user_id
+                         LEFT JOIN user_wallet_networks arc_route
+                           ON arc_route.user_id = p.user_id
+                          AND arc_route.blockchain = 'ARC-TESTNET'
+                         LEFT JOIN user_wallet_networks base_route
+                           ON base_route.user_id = p.user_id
+                          AND base_route.blockchain = 'BASE-SEPOLIA'
                          LEFT JOIN agent_memory m ON m.decision_id = d.id";
 
 pub async fn by_wallet(
@@ -70,16 +77,16 @@ pub async fn by_wallet(
     Path(wallet): Path<String>,
 ) -> Result<Json<Vec<DiaryEntry>>> {
     let wallet = wallet.to_lowercase();
-    // Match either of the user's two MSCAs (arc + base). The old
-    // COALESCE-first form would fail to find users-by-base when arc_address
-    // was also populated.
+    let Some(user_id) = wallet_routes::user_id_for_address(&state.db, &wallet).await? else {
+        return Ok(Json(vec![]));
+    };
     let sql = format!(
         "{ROW_SELECT}
-         WHERE LOWER(u.arc_address) = $1 OR LOWER(u.base_address) = $1
+         WHERE p.user_id = $1
          ORDER BY d.created_at DESC LIMIT 50"
     );
     let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
-        .bind(&wallet)
+        .bind(user_id)
         .fetch_all(&state.db)
         .await?;
     Ok(Json(rows.into_iter().map(row_to_entry).collect()))

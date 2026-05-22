@@ -60,8 +60,8 @@ const BASE_NAV_SECTIONS: NavSection[] = [
       {
         href: "/wallets",
         icon: Wallet,
-        label: "Wallets",
-        description: "Arc + Base balances",
+        label: "Wallet",
+        description: "One account, all networks",
         match: ["/wallet"],
       },
       {
@@ -205,6 +205,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
   const wallet = usePortfolioStore((s) => s.wallet);
   const resetSession = usePortfolioStore((s) => s.resetSession);
   const sessionActive = usePortfolioStore((s) => s.sessionActive);
+  const sessionResolved = usePortfolioStore((s) => s.sessionResolved);
   const agentPausedAt = usePortfolioStore((s) => s.agentPausedAt);
   const setAgentPausedAt = usePortfolioStore((s) => s.setAgentPausedAt);
   const agentPaused = agentPausedAt !== null;
@@ -299,10 +300,12 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
                 const publicNav = isPublicNavItem(item);
                 const recoveryNav = isWalletRecoveryNavItem(item);
                 const locked =
-                  !publicNav && (!sessionActive || (!wallet && !recoveryNav));
+                  sessionResolved &&
+                  !publicNav &&
+                  (!sessionActive || (!wallet && !recoveryNav));
                 const href = locked
                   ? walletPending
-                    ? "/wallet"
+                    ? "/wallets"
                     : authHref("/login", item.href)
                   : item.href;
                 return (
@@ -388,7 +391,13 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
 
       {/* Agent status indicator */}
       <div className="px-4 py-4 border-t border-border-default">
-        {!sessionActive ? (
+        {!sessionResolved ? (
+          <div className="flex items-center gap-2 rounded-sharp border border-border-default bg-bg px-3 py-2">
+            <span className="font-mono text-xs uppercase tracking-widest text-text-mut">
+              Checking session…
+            </span>
+          </div>
+        ) : !sessionActive ? (
           <div className="space-y-3">
             <div className="flex items-center gap-2 rounded-sharp border border-border-default bg-bg px-3 py-2">
               <span className="h-1.5 w-1.5 shrink-0 rounded-sharp bg-text-mut" />

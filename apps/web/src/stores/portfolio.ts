@@ -36,7 +36,7 @@ interface PortfolioState {
   isRebalancing: boolean;
   selectedDecisionId: string | null;
   sseConnected: boolean;
-  /** Wallet info from Circle Wallets create / login. */
+  /** Wallet info returned after email verification and account restore. */
   wallet: WalletInfo | null;
   unifiedUsdc: number;
   /** Sum of EURC across every chain the user holds a wallet on. */
@@ -45,7 +45,7 @@ interface PortfolioState {
   perChainUsdc: Record<string, number>;
   /** EURC per chain — same key set as perChainUsdc. */
   perChainEurc: Record<string, number>;
-  /** Whether the latest Circle Gateway balance fetch is known-good. */
+  /** Whether the latest wallet cash balance fetch is known-good. */
   gatewayBalanceStatus: "idle" | "loading" | "ready" | "error";
   gatewayBalanceError: string | null;
   /** Most-recent strategist tool invocations (capped at 20). */
@@ -60,6 +60,8 @@ interface PortfolioState {
   agentPausedAt: string | null;
   /** True after `/auth/session` confirms an active session. */
   sessionActive: boolean;
+  /** True once the initial `/auth/session` probe has settled this page load. */
+  sessionResolved: boolean;
 
   setPortfolios: (p: Portfolio[]) => void;
   setPortfoliosLoaded: (v: boolean) => void;
@@ -94,6 +96,7 @@ interface PortfolioState {
   pushPegAlert: (a: PegAlert) => void;
   setAgentPausedAt: (pausedAt: string | null) => void;
   setSessionActive: (active: boolean) => void;
+  setSessionResolved: (resolved: boolean) => void;
   resetSession: () => void;
 }
 
@@ -133,6 +136,7 @@ export const usePortfolioStore = create<PortfolioState>()(
       pegAlerts: [],
       agentPausedAt: null,
       sessionActive: false,
+      sessionResolved: false,
 
       setPortfolios: (portfolios) =>
         set((state) => {
@@ -163,6 +167,7 @@ export const usePortfolioStore = create<PortfolioState>()(
               ...state.portfolios.filter((p) => p.id !== portfolio.id),
               portfolio,
             ],
+            portfoliosLoaded: true,
             activePortfolioId: portfolio.id,
           };
         }),
@@ -194,7 +199,7 @@ export const usePortfolioStore = create<PortfolioState>()(
           gatewayBalanceStatus,
           gatewayBalanceError:
             gatewayBalanceStatus === "error"
-              ? (gatewayBalanceError ?? "Gateway balance unavailable")
+              ? (gatewayBalanceError ?? "Wallet balance unavailable")
               : null,
         }),
       setWallet: (wallet) => set({ wallet }),
@@ -222,6 +227,7 @@ export const usePortfolioStore = create<PortfolioState>()(
         })),
       setAgentPausedAt: (agentPausedAt) => set({ agentPausedAt }),
       setSessionActive: (sessionActive) => set({ sessionActive }),
+      setSessionResolved: (sessionResolved) => set({ sessionResolved }),
       resetSession: () => {
         saveStoredActivePortfolioId(null);
         set({

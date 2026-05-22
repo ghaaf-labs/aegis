@@ -19,6 +19,7 @@ export default function OnboardingPage() {
   const router = useRouter();
   const resetSession = usePortfolioStore((s) => s.resetSession);
   const setSessionActive = usePortfolioStore((s) => s.setSessionActive);
+  const setSessionResolved = usePortfolioStore((s) => s.setSessionResolved);
   const setWallet = usePortfolioStore((s) => s.setWallet);
   const [authState, setAuthState] = useState<OnboardingAuthState>({
     kind: "checking",
@@ -31,6 +32,7 @@ export default function OnboardingPage() {
   const applySession = useCallback(
     (session: WalletSessionResponse) => {
       setSessionActive(true);
+      setSessionResolved(true);
       setSetupError(null);
       localStorage.setItem("aegis_email", session.user.email);
       if (session.wallet) {
@@ -41,7 +43,7 @@ export default function OnboardingPage() {
         setAuthState({ kind: "wallet_pending", email: session.user.email });
       }
     },
-    [setSessionActive, setWallet],
+    [setSessionActive, setSessionResolved, setWallet],
   );
 
   useEffect(() => {
@@ -55,13 +57,14 @@ export default function OnboardingPage() {
       .catch(() => {
         if (!cancelled) {
           resetSession();
+          setSessionResolved(true);
           setAuthState({ kind: "signed_out" });
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [applySession, resetSession]);
+  }, [applySession, resetSession, setSessionResolved]);
 
   const refreshAccount = async () => {
     setRefreshingAccount(true);
@@ -71,6 +74,7 @@ export default function OnboardingPage() {
       applySession(session);
     } catch {
       resetSession();
+      setSessionResolved(true);
       setAuthState({ kind: "signed_out" });
       setSetupError("Aegis could not check setup. Try again.");
     } finally {
@@ -130,7 +134,7 @@ export default function OnboardingPage() {
           <>
             <div className="mb-3 flex min-w-0 items-center justify-between gap-3 border border-border-default bg-surface px-3 py-2 font-mono">
               <span className="min-w-0 truncate text-[11px] text-text-mut">
-                {authState.email}
+                {formatSignedInEmail(authState.email)}
               </span>
               <button
                 type="button"
@@ -268,6 +272,15 @@ function OnboardingAccountPending({
       )}
     </div>
   );
+}
+
+function formatSignedInEmail(email: string) {
+  const at = email.indexOf("@");
+  if (at <= 0) return email;
+  const local = email.slice(0, at);
+  const domain = email.slice(at + 1);
+  if (local.length <= 20) return email;
+  return `${local.slice(0, 8)}…@${domain}`;
 }
 
 function logoutFailureMessage(error: unknown) {

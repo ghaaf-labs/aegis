@@ -14,21 +14,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
   const sessionActive = usePortfolioStore((s) => s.sessionActive);
+  const sessionResolved = usePortfolioStore((s) => s.sessionResolved);
   const wallet = usePortfolioStore((s) => s.wallet);
   const walletPending = sessionActive && !wallet;
-  const mobileAction = walletPending
-    ? {
-        href: "/onboarding",
-        label: "Finish account",
-        tone: "warn" as const,
-      }
-    : sessionActive
-      ? null
-      : {
-          href: authHref("/login", pathname),
-          label: "Continue",
-          tone: "agent" as const,
-        };
+  const mobileAction = !sessionResolved
+    ? null
+    : walletPending
+      ? {
+          href: "/onboarding",
+          label: "Finish account",
+          tone: "warn" as const,
+        }
+      : sessionActive
+        ? null
+        : {
+            href: authHref("/login", pathname),
+            label: "Continue",
+            tone: "agent" as const,
+          };
 
   // Close the drawer on every route change so a mobile user doesn't have to
   // dismiss it manually after each tap.

@@ -2,16 +2,14 @@ use std::{net::SocketAddr, path::Path};
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use aegis_api::{config, db, router};
+use aegis_api::{config, db, env, router};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // .env.local wins (gitignored personal overrides — real-exec keys etc.);
-    // .env fills the remaining defaults (committed hermetic baseline).
-    // Real env vars from shell / k8s secret / CI still beat both because
-    // dotenvy never overrides an already-set variable.
-    dotenvy::from_filename(".env.local").ok();
-    dotenvy::dotenv().ok();
+    // Workspace-root .env.local wins (gitignored real-exec overrides);
+    // workspace-root .env fills remaining committed defaults. Shell env
+    // still beats both because dotenvy never overrides existing variables.
+    env::load_env();
 
     tracing_subscriber::registry()
         .with(
@@ -58,7 +56,11 @@ async fn main() -> anyhow::Result<()> {
 
     info!("🛡️  Aegis API listening on http://{addr}");
 
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }

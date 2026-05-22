@@ -177,12 +177,12 @@ fn bad_request_detail(message: &str) -> ErrorDetail {
         },
         "code_expired" => ErrorDetail {
             code: "code_expired",
-            message: "That code expired. Request a new one.",
+            message: "That code expired. Enter your email to get a new one.",
             retry_after: None,
         },
         "code_used" => ErrorDetail {
             code: "code_used",
-            message: "That code was already used. Request a new one.",
+            message: "That code was already used. Enter your email to get a new one.",
             retry_after: None,
         },
         "consent_required" => ErrorDetail {
@@ -204,6 +204,15 @@ fn bad_request_detail(message: &str) -> ErrorDetail {
 }
 
 fn too_many_requests_detail(message: &str) -> ErrorDetail {
+    if let Some(seconds) = message.strip_prefix("rate_limited:") {
+        let retry_after = seconds.parse().ok();
+        return ErrorDetail {
+            code: "rate_limited",
+            message: "Too many requests. Try again shortly.",
+            retry_after,
+        };
+    }
+
     if let Some(seconds) = message.strip_prefix("resend_cooldown:") {
         let retry_after = seconds.parse().ok();
         return ErrorDetail {

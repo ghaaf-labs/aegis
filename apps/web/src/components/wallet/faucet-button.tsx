@@ -21,7 +21,7 @@ export function FaucetButton() {
         amountUsdc: r.amountUsdc,
         chain: r.chain,
       });
-      // In real mode the backend hands back the public Circle faucet URL —
+      // In real mode the backend hands back the public faucet URL —
       // pop it open in a new tab so the user can finish the claim there.
       if (r.claimUrl && typeof window !== "undefined") {
         window.open(r.claimUrl, "_blank", "noopener,noreferrer");
@@ -41,8 +41,8 @@ export function FaucetButton() {
   };
 
   if (result) {
-    // Real mode: show the address + a "Open Circle faucet" link so the user
-    // can paste and complete the claim.
+    // Real mode: show the address + a faucet link so the user can paste and
+    // complete the claim.
     if (result.claimUrl) {
       return (
         <div className="flex flex-col gap-2">
@@ -54,7 +54,7 @@ export function FaucetButton() {
               className="inline-flex items-center gap-1 text-xs font-mono text-accent-agent hover:underline"
             >
               <ExternalLink className="w-3 h-3" />
-              Open Circle Faucet
+              Open test faucet
             </a>
             <button
               type="button"
@@ -71,8 +71,8 @@ export function FaucetButton() {
             </button>
           </div>
           <p className="text-[11px] text-text-mut font-mono">
-            Paste the address above into Circle&apos;s faucet, select Arc
-            Sepolia, and claim. Balance refreshes within ~30s.
+            Paste the address above into the faucet, select the available test
+            network, and claim. Balance refreshes within ~30s.
           </p>
         </div>
       );
@@ -96,9 +96,9 @@ export function FaucetButton() {
         disabled={submitting}
       >
         <Coins className="w-3.5 h-3.5" />
-        {submitting ? "Claiming…" : "Get testnet USDC"}
+        {submitting ? "Claiming…" : "Get test USDC"}
       </BrutalButton>
-      <ProvenanceLine source="Circle Faucet · Arc Sepolia · 100 USDC/24h" />
+      <ProvenanceLine source="test faucet · 100 USDC/day" />
       {error && <span className="text-xs text-risk font-mono">{error}</span>}
     </div>
   );

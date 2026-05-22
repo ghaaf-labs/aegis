@@ -64,9 +64,11 @@ test("D7 — sidebar nav items are all present", async ({ page }) => {
 });
 
 test("D8 — wallet page shows per-chain balance rows", async ({ page }) => {
-  await page.goto("/wallet");
-  await expect(page.getByText(/Arc Testnet/i)).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByText(/Base Sepolia/i)).toBeVisible();
+  await page.goto("/wallets");
+  await expect(page.getByText(/Primary route/i)).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(page.getByText(/Secondary route/i)).toBeVisible();
 });
 
 test("D9 — idle cash card is visible on dashboard", async ({ page }) => {

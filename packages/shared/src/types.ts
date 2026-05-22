@@ -100,7 +100,16 @@ export interface WalletInfo {
   walletId: string;
   arcAddress: string;
   baseAddress: string;
+  networks?: WalletNetwork[];
   createdAt: string;
+}
+
+export interface WalletNetwork {
+  blockchain: string;
+  walletId: string;
+  address: string;
+  accountType: string;
+  state: string;
 }
 
 // ── Agent decisions ────────────────────────────────────────────────────────

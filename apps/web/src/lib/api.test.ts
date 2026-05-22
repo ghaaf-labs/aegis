@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { walletApi } from "./api";
+import { accountApi, walletApi } from "./api";
 
 describe("walletApi.logout", () => {
   afterEach(() => {
@@ -56,5 +56,46 @@ describe("walletApi.logout", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(window.localStorage.getItem("aegis_email")).toBeNull();
+  });
+});
+
+describe("accountApi.exportData", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("uses POST with the CSRF header because export queues an email", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          status: "queued",
+          deliveryEmail: "user@example.com",
+          expiresAt: "2026-05-23T12:00:00Z",
+        }),
+        {
+          status: 202,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(accountApi.exportData()).resolves.toMatchObject({
+      status: "queued",
+      deliveryEmail: "user@example.com",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:8080/account/export",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Aegis-Request": "1",
+        },
+        credentials: "include",
+        body: undefined,
+      },
+    );
   });
 });

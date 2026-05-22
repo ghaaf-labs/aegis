@@ -450,7 +450,7 @@ function rowMeaning(row: RebalanceHistoryRow) {
     return "Wallet cash or holdings changed after this review was built. Rebuild before approving.";
   }
   if (row.approvalSafety?.code === "BALANCE_UNAVAILABLE") {
-    return "Gateway balance could not be verified. Open the blocked review for the leg audit, then check Wallets before rebuilding.";
+    return "Wallet cash could not be verified. Open the blocked review for the leg audit, then check Wallets before rebuilding.";
   }
   if (row.approvalSafety?.code === "EXECUTION_UNAVAILABLE") {
     return "The review has executable legs, but this API build lacks one or more real adapters. Open the block details before changing targets.";

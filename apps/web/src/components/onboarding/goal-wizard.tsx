@@ -22,6 +22,7 @@ interface WizardState {
   monthlyContribution: string;
   submitting: boolean;
   error: string | null;
+  attemptedAdvance: boolean;
 }
 
 const STORAGE_KEY = "aegis.goal-wizard.draft";
@@ -73,7 +74,20 @@ export function GoalWizard() {
     if (typeof window !== "undefined") {
       try {
         const raw = window.sessionStorage.getItem(STORAGE_KEY);
-        if (raw) return { ...JSON.parse(raw), submitting: false, error: null };
+        if (raw) {
+          const parsed = JSON.parse(raw) as Partial<WizardState>;
+          return {
+            step: parsed.step ?? 1,
+            name: parsed.name ?? "",
+            horizon: parsed.horizon ?? "5y",
+            risk: parsed.risk ?? "moderate",
+            allocation: parsed.allocation ?? DEFAULT_ALLOC,
+            monthlyContribution: parsed.monthlyContribution ?? "",
+            submitting: false,
+            error: null,
+            attemptedAdvance: false,
+          };
+        }
       } catch {
         /* ignore */
       }
@@ -87,6 +101,7 @@ export function GoalWizard() {
       monthlyContribution: "",
       submitting: false,
       error: null,
+      attemptedAdvance: false,
     };
   });
 
@@ -177,12 +192,17 @@ export function GoalWizard() {
   };
 
   const go = (delta: 1 | -1) => {
+    if (delta === 1 && !canNext) {
+      setState((s) => ({ ...s, attemptedAdvance: true }));
+      return;
+    }
     if (delta === 1 && state.step === 4 && canNext) {
       void submit();
       return;
     }
     setState((s) => ({
       ...s,
+      attemptedAdvance: false,
       step: Math.max(1, Math.min(4, s.step + delta)) as WizardState["step"],
     }));
   };
@@ -235,14 +255,16 @@ export function GoalWizard() {
         {state.error && (
           <div className="mt-4 text-xs text-risk font-mono">{state.error}</div>
         )}
-        {!canNext && disabledReason && (
-          <div
-            data-testid="goal-wizard-next-hint"
-            className="mt-4 border border-warn/40 bg-warn/5 px-3 py-2 text-xs text-warn font-mono"
-          >
-            {disabledReason}
-          </div>
-        )}
+        {!canNext &&
+          shouldShowNextHint(state, totalAlloc) &&
+          disabledReason && (
+            <div
+              data-testid="goal-wizard-next-hint"
+              className="mt-4 border border-warn/40 bg-warn/5 px-3 py-2 text-xs text-warn font-mono"
+            >
+              {disabledReason}
+            </div>
+          )}
 
         <div className="mt-6 grid grid-cols-2 gap-2">
           <BrutalButton
@@ -256,7 +278,7 @@ export function GoalWizard() {
           <BrutalButton
             variant={state.step === 4 ? "pnl" : "agent"}
             className="min-h-11"
-            disabled={!canNext || state.submitting}
+            disabled={state.submitting}
             onClick={() => go(1)}
           >
             {state.submitting
@@ -291,7 +313,9 @@ function stepHint(step: 1 | 2 | 3 | 4): string {
 
 function nextDisabledReason(state: WizardState, totalAlloc: number) {
   if (state.step === 1 && state.name.trim().length < 2) {
-    return "Add a portfolio name with at least 2 characters.";
+    return state.name.trim().length === 0
+      ? "Enter a portfolio name to continue."
+      : "Use at least 2 characters.";
   }
   if (state.step === 4 && Math.abs(totalAlloc - 100) >= 0.5) {
     const diff = Math.abs(100 - totalAlloc).toFixed(0);
@@ -300,6 +324,15 @@ function nextDisabledReason(state: WizardState, totalAlloc: number) {
       : `Remove ${diff}% allocation, or use Normalize to finish.`;
   }
   return null;
+}
+
+function shouldShowNextHint(state: WizardState, totalAlloc: number) {
+  const reason = nextDisabledReason(state, totalAlloc);
+  if (!reason) return false;
+  if (state.step === 1) {
+    return state.attemptedAdvance || state.name.trim().length > 0;
+  }
+  return state.attemptedAdvance || state.step === 4;
 }
 
 interface StepProps {
@@ -324,7 +357,7 @@ function NameStep({ state, setState }: StepProps) {
         onChange={(e) => setState((s) => ({ ...s, name: e.target.value }))}
         aria-describedby="portfolio-name-help"
         className="min-h-11 w-full rounded-sharp border-brutal border-border-default bg-bg px-3 py-2 font-mono text-base text-text-hi outline-none focus:border-border-hi sm:text-sm"
-        placeholder="Retirement"
+        placeholder="e.g. Retirement"
         maxLength={48}
       />
       <p id="portfolio-name-help" className="text-xs text-text-mut font-mono">

@@ -45,7 +45,7 @@ export function PortfolioSummaryCard() {
   const isPositive = portfolio.totalPnlUsd >= 0;
   const TrendIcon = isPositive ? TrendingUp : TrendingDown;
 
-  // "Total Value" is the sum of invested positions + idle Gateway cash —
+  // "Total Value" is the sum of invested positions + idle wallet cash —
   // otherwise a freshly funded user sees $0 across the board and concludes
   // the platform is broken. Prefer the live EURC price off the market
   // snapshot when available; fall back to a stable ~1.085 mid otherwise.
@@ -99,7 +99,7 @@ export function PortfolioSummaryCard() {
           </div>
         ) : (
           <p className="text-[11px] font-mono text-text-mut">
-            Awaiting first deploy — PnL starts ticking after legs confirm.
+            No investment yet. PnL appears after your first approved move.
           </p>
         )}
 
@@ -109,7 +109,7 @@ export function PortfolioSummaryCard() {
             <div className="mt-4 grid grid-cols-2 gap-2 text-[11px] font-mono">
               <div className="p-2 rounded-sharp bg-raised border border-border-default">
                 <p className="text-text-mut uppercase tracking-wider text-[9px] mb-0.5">
-                  Arc wallet
+                  Arc balance
                 </p>
                 <p className="text-text-hi tabular-nums">
                   {formatCurrency(arcTotal, { compact: true })}
@@ -117,7 +117,7 @@ export function PortfolioSummaryCard() {
               </div>
               <div className="p-2 rounded-sharp bg-raised border border-border-default">
                 <p className="text-text-mut uppercase tracking-wider text-[9px] mb-0.5">
-                  Base wallet
+                  Base balance
                 </p>
                 <p className="text-text-hi tabular-nums">
                   {formatCurrency(baseTotal, { compact: true })}
@@ -127,7 +127,7 @@ export function PortfolioSummaryCard() {
                 href="/wallets"
                 className="col-span-2 flex items-center justify-between px-2 py-1.5 rounded-sharp text-[10px] text-accent-pnl/80 hover:text-accent-pnl hover:bg-accent-pnl/5 transition-colors"
               >
-                <span>Wallet addresses + per-token breakdown</span>
+                <span>Wallet address + per-token breakdown</span>
                 <ArrowRight className="w-3 h-3" />
               </Link>
             </div>
@@ -171,7 +171,7 @@ export function PortfolioSummaryCard() {
               <>
                 <p className="text-sm font-semibold text-text-mut">—</p>
                 <p className="text-[10px] text-text-mut mt-0.5">
-                  computed after first deploy
+                  available after first approved move
                 </p>
               </>
             )}
@@ -181,12 +181,12 @@ export function PortfolioSummaryCard() {
             <ProvenanceLine
               source={
                 walletBalanceUnavailable
-                  ? "confirmed positions · Gateway balance check failed"
+                  ? "confirmed positions · wallet balance check failed"
                   : walletBalanceLoading
-                    ? "confirmed positions · Gateway balance warming up"
+                    ? "confirmed positions · wallet balance warming up"
                     : positionMetrics.usingLivePrices
-                      ? "Gateway unified balance + live position marks"
-                      : "Gateway unified balance + confirmed positions"
+                      ? "wallet cash + live position marks"
+                      : "wallet cash + confirmed positions"
               }
               freshness={walletBalanceUnavailable ? "needs retry" : "live"}
               className={walletBalanceUnavailable ? "text-warn" : undefined}

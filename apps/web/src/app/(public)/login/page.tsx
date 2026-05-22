@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { AuthPageShell } from "@/components/wallet/auth-page-shell";
-import { CreateWalletCard } from "@/components/wallet/create-wallet-card";
+import { EmailAuthCard } from "@/components/wallet/email-auth-card";
 
 export const metadata = {
   title: "Aegis · Continue",
@@ -17,7 +17,7 @@ export default function LoginPage() {
   return (
     <AuthPageShell>
       <Suspense fallback={<WalletCardSkeleton />}>
-        <CreateWalletCard />
+        <EmailAuthCard />
       </Suspense>
     </AuthPageShell>
   );

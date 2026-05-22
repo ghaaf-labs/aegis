@@ -4,14 +4,14 @@
 
 ## 1. File precedence
 
-Both `apps/api/src/main.rs` and `apps/api/src/bin/regime_backtest.rs` call:
+API binaries call `aegis_api::env::load_env()`, which walks upward to the
+workspace root (the directory containing `pnpm-workspace.yaml`) and then loads:
 
-```rust
-dotenvy::from_filename(".env.local").ok();
-dotenvy::dotenv().ok();
-```
+1. `<workspace>/.env.local`
+2. `<workspace>/.env`
 
-Because dotenvy's `dotenv*` family never overrides an already-set variable, the effective precedence is:
+Because dotenvy's `from_path` never overrides an already-set variable, the
+effective precedence is:
 
 ```
 shell env  >  .env.local  >  .env  >  built-in default
@@ -33,8 +33,31 @@ The contract is pinned by `apps/api/tests/env_local_precedence.rs` (three tests:
 | Model slugs (with single-quoted tilde prefix)                                   | `.env`                    | `MODEL_CRITIC='~openai/gpt-mini-latest'`                                                                       |
 | **Secrets** (any value that, if leaked, opens the account)                      | `.env.local` only         | `JWT_SECRET`, `DIGEST_SECRET`, `CIRCLE_API_KEY`, `OPENROUTER_API_KEY`, `CHAIN_PRIVATE_KEY_*`, `RESEND_API_KEY` |
 | **Real-exec overrides** that flip the hermetic defaults                         | `.env.local` only         | `EXECUTION_MOCK=false`, `MOCK_CIRCLE=false`, `BILLING_V2_ENABLED=true`                                         |
+| **Real Circle wallet binding**                                                  | `.env.local` only         | `CIRCLE_ENTITY_SECRET`, `CIRCLE_WALLET_SET_ID`                                                                 |
 
-A fresh clone (`git clone … && cp .env.example .env && cargo run`) MUST boot cleanly without touching `.env.local`. If a contributor needs real execution they create `.env.local` on top.
+A fresh clone (`git clone … && cp .env.example .env && cargo run --bin aegis-api`
+from `apps/api/`) MUST boot cleanly without touching `.env.local`. If a
+contributor needs real execution they create workspace-root `.env.local` on top.
+
+When `MOCK_CIRCLE=false`, the API intentionally fails fast unless all three
+developer-controlled wallet values are present: `CIRCLE_API_KEY`,
+`CIRCLE_ENTITY_SECRET`, and `CIRCLE_WALLET_SET_ID`. Use the API-side setup tool
+to check or create the wallet set without printing secrets:
+
+```bash
+cd apps/api
+cargo run --bin circle_wallet_setup -- check
+cargo run --bin circle_wallet_setup -- entity-ciphertext --generate --write-env-local
+cargo run --bin circle_wallet_setup -- list
+cargo run --bin circle_wallet_setup -- create --name Aegis --write-env-local
+```
+
+Paste the `entity-ciphertext` output into Circle's **Entity Secret Ciphertext**
+registration field. The command saves the raw 32-byte `CIRCLE_ENTITY_SECRET` to
+`.env.local` and does not print it. After Circle accepts the ciphertext, store
+Circle's recovery file somewhere offline. `create` writes only
+`CIRCLE_WALLET_SET_ID` to `.env.local`; it never logs the API key or entity
+secret.
 
 ## 3. The four pitfalls we hit live
 
@@ -120,7 +143,7 @@ grep -qxF '.env.bak' .gitignore
 stat -f '%Sp' .env       # → -rw-------
 stat -f '%Sp' .env.local # → -rw------- (if present)
 
-# Clean-shell smoke: dotenvy loads both files, validate() passes
+# Clean-shell smoke: dotenvy loads workspace-root files, validate() passes
 env -i HOME=$HOME PATH=$PATH ./apps/api/target/debug/aegis-api &
 sleep 3 && curl -sS http://127.0.0.1:8080/health  # → {"status":"ok",…}
 kill %1

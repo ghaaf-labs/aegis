@@ -1,22 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { StrategyCard } from "@/components/strategies/strategy-card";
-import {
-  portfolioApi,
-  strategiesApi,
-  walletApi,
-  type StrategyPublic,
-} from "@/lib/api";
+import { portfolioApi, strategiesApi, type StrategyPublic } from "@/lib/api";
+import { safeNextPath } from "@/lib/auth-routing";
 import { useApiQuery } from "@/lib/use-api-query";
 import { usePortfolioStore } from "@/stores/portfolio";
 
 // SM-3 / SM-4 — single /strategies route handles both authed and public
 // visitors. Authed users get an "Adopt" button; public visitors continue with
-// email. Auth check deferred to after hydration to avoid a public CTA flash for
-// logged-in users.
+// email. Session state comes from SessionBootstrap so the public CTA never
+// flashes for signed-in users.
 
 export default function StrategiesPage() {
   const router = useRouter();
@@ -26,29 +22,11 @@ export default function StrategiesPage() {
   );
   const [adopting, setAdopting] = useState<string | null>(null);
   const [adoptError, setAdoptError] = useState<string | null>(null);
-  const [authed, setAuthed] = useState(false);
+  const sessionResolved = usePortfolioStore((s) => s.sessionResolved);
+  const sessionActive = usePortfolioStore((s) => s.sessionActive);
   const hasPortfolio = usePortfolioStore((s) => s.portfolios.length > 0);
-  const setSessionActive = usePortfolioStore((s) => s.setSessionActive);
   const addPortfolio = usePortfolioStore((s) => s.addPortfolio);
-
-  useEffect(() => {
-    let alive = true;
-    walletApi
-      .session()
-      .then(() => {
-        if (!alive) return;
-        setAuthed(true);
-        setSessionActive(true);
-      })
-      .catch(() => {
-        if (!alive) return;
-        setAuthed(false);
-        setSessionActive(false);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [setSessionActive]);
+  const authed = sessionResolved && sessionActive;
 
   const onAdopt = async (id: string) => {
     setAdopting(id);
@@ -169,7 +147,7 @@ export default function StrategiesPage() {
         </section>
       )}
 
-      {!authed && (
+      {!sessionResolved ? null : !authed ? (
         <footer className="text-xs text-text-mut font-mono">
           Ready to adopt a strategy?{" "}
           <Link
@@ -180,14 +158,17 @@ export default function StrategiesPage() {
           </Link>
           .
         </footer>
-      )}
+      ) : null}
     </div>
   );
 }
 
 function authHref(path: "/login", next: string) {
-  const params = new URLSearchParams({ next });
-  return `${path}?${params.toString()}`;
+  const params = new URLSearchParams();
+  const safeNext = safeNextPath(next);
+  if (safeNext) params.set("next", safeNext);
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
 }
 
 function StrategyAdoptionSvg() {

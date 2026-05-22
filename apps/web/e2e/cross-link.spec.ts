@@ -55,7 +55,7 @@ test("X4 — leaderboard row links to diary page", async ({ page }) => {
   ).toBeVisible();
   // If the leaderboard has entries the diary links appear; if empty, just
   // verify the page is stable (no crash).
-  const diaryLink = page.locator('a[href^="/diary/"]').first();
+  const diaryLink = page.getByRole("link", { name: /^0x[a-f0-9]+/i }).first();
   const hasEntries = (await diaryLink.count()) > 0;
   if (hasEntries) {
     const href = await diaryLink.getAttribute("href");
@@ -65,29 +65,20 @@ test("X4 — leaderboard row links to diary page", async ({ page }) => {
   }
 });
 
-test("X6 — signup alias canonicalizes to login with ?ref= preserved", async ({
-  page,
-}) => {
-  await page.goto("/signup?ref=testhandle");
-  await expect(page).toHaveURL(/\/login\?ref=testhandle/);
-  await expect(page.locator("main, body")).toBeVisible();
-  await expect(
-    page.getByText(/Create a wallet to continue/i),
-  ).not.toBeVisible();
-});
-
 test("X5 — strategies guest CTA links to login", async ({ page }) => {
   await page.goto("/strategies");
   await expect(
     page.getByRole("heading", { name: /Strategies/i }),
   ).toBeVisible();
-  // Footer or in-page CTA should link to the unified email entry.
-  await expect(
-    page.getByRole("link", { name: /Create a wallet/i }),
-  ).toBeVisible();
-  const href = await page
-    .getByRole("link", { name: /Create a wallet/i })
-    .first()
-    .getAttribute("href");
+  const cta = page.getByRole("link", { name: /Continue with email/i }).first();
+  await expect(cta).toBeVisible();
+  const href = await cta.getAttribute("href");
   expect(href).toMatch(/\/login/);
+});
+
+test("X6 — /signup forwards to /login with preserved query params", async ({
+  page,
+}) => {
+  await page.goto("/signup?ref=affiliate42&next=%2Fonboarding");
+  await expect(page).toHaveURL(/\/login\?ref=affiliate42&next=%2Fonboarding/);
 });

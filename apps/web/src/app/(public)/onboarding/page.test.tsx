@@ -61,6 +61,8 @@ describe("<OnboardingPage /> auth boundary", () => {
 
     expect(container.textContent).toContain("Create your portfolio");
     expect(container.textContent).toContain("user@example.com");
+    expect(usePortfolioStore.getState().sessionActive).toBe(true);
+    expect(usePortfolioStore.getState().sessionResolved).toBe(true);
     expect(
       container.querySelector('[data-testid="goal-wizard"]'),
     ).not.toBeNull();
@@ -109,6 +111,9 @@ describe("<OnboardingPage /> auth boundary", () => {
 
     expect(container.textContent).toContain("Setting up your account");
     expect(container.textContent).toContain("pending@example.com");
+    expect(usePortfolioStore.getState().sessionActive).toBe(true);
+    expect(usePortfolioStore.getState().sessionResolved).toBe(true);
+    expect(usePortfolioStore.getState().wallet).toBe(null);
     expect(container.textContent).not.toContain("Circle");
     expect(container.textContent).not.toContain("Arc + Base");
     expect(container.querySelector('[data-testid="goal-wizard"]')).toBeNull();

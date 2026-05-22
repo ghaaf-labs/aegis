@@ -4,6 +4,7 @@
 
 pub mod config;
 pub mod db;
+pub mod env;
 pub mod error;
 pub mod middleware;
 pub mod modules;

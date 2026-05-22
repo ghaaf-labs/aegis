@@ -1,12 +1,4 @@
-const AUTH_PATHS = [
-  "/login",
-  "/signup",
-  "/sign-up",
-  "/signin",
-  "/sign-in",
-  "/register",
-];
-const LEGACY_AUTH_PREFIXES = AUTH_PATHS.filter((path) => path !== "/login");
+const AUTH_PATHS = ["/login"];
 
 const PROTECTED_APP_PREFIXES = [
   "/dashboard",
@@ -25,12 +17,6 @@ const PROTECTED_APP_PREFIXES = [
 
 export function isProtectedAppPath(pathname: string) {
   return PROTECTED_APP_PREFIXES.some(
-    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
-  );
-}
-
-export function isLegacyAuthPath(pathname: string) {
-  return LEGACY_AUTH_PREFIXES.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
   );
 }

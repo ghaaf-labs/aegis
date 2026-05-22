@@ -8,11 +8,8 @@ import { formatCurrency } from "@/lib/utils";
 import { ProvenanceLine } from "@aegis/ui";
 
 /**
- * First-class dashboard card for Circle Gateway idle cash. Replaces the
- * tiny "GATEWAY $X USDC · €Y EURC" string in the page header — that
- * string was easy to miss and hidden on mobile. Per-chain breakdown
- * (Arc vs Base) is also surfaced so the user can see where each stable
- * lives without leaving the dashboard.
+ * First-class dashboard card for idle wallet cash. Replaces the tiny header
+ * summary that was easy to miss and hidden on mobile.
  */
 export function IdleCashCard() {
   const unifiedUsdc = usePortfolioStore((s) => s.unifiedUsdc);
@@ -56,15 +53,15 @@ export function IdleCashCard() {
           {balanceUnavailable
             ? "Balance unavailable"
             : balanceLoading
-              ? "Checking Gateway..."
+              ? "Checking wallet..."
               : formatCurrency(totalUsd)}
         </p>
         <p className="text-[11px] font-mono text-text-mut mb-4">
           {balanceUnavailable ? (
             (gatewayBalanceError ??
-            "Aegis could not confirm Arc + Base Gateway balances.")
+            "Aegis could not confirm the current wallet balance.")
           ) : balanceLoading ? (
-            "Waiting for Circle Gateway before showing wallet cash."
+            "Waiting for a current wallet balance."
           ) : hasIdleCash ? (
             <>
               {formatCurrency(unifiedUsdc, { compact: true })} USDC
@@ -73,10 +70,10 @@ export function IdleCashCard() {
                   {" · "}€{unifiedEurc.toFixed(2)} EURC
                 </>
               )}{" "}
-              undeployed
+              available
             </>
           ) : (
-            "No deployable cash in Gateway right now"
+            "No wallet cash available right now"
           )}
         </p>
 
@@ -84,9 +81,8 @@ export function IdleCashCard() {
           <div className="mb-3 flex items-start gap-2 border border-warn/40 bg-warn/5 px-3 py-2 font-mono text-[11px] leading-relaxed text-warn">
             <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>
-              These are not confirmed zeros. Gateway did not return a balance,
-              so deploy and rebalance cash actions stay hidden until the check
-              succeeds.
+              These are not confirmed zeros. Cash actions stay hidden until the
+              balance check succeeds.
             </span>
           </div>
         )}
@@ -103,7 +99,7 @@ export function IdleCashCard() {
             </p>
             <p className="text-[10px] text-text-lo font-mono mt-0.5">
               {balanceUnavailable || balanceLoading ? (
-                "pending Gateway"
+                "pending check"
               ) : (
                 <>
                   {(perChainUsdc.arc ?? 0).toFixed(2)} USDC
@@ -125,7 +121,7 @@ export function IdleCashCard() {
             </p>
             <p className="text-[10px] text-text-lo font-mono mt-0.5">
               {balanceUnavailable || balanceLoading ? (
-                "pending Gateway"
+                "pending check"
               ) : (
                 <>
                   {(perChainUsdc.base ?? 0).toFixed(2)} USDC
@@ -160,8 +156,8 @@ export function IdleCashCard() {
           <ProvenanceLine
             source={
               balanceUnavailable
-                ? "Circle Gateway · balance check failed"
-                : "Circle Gateway · unified balance"
+                ? "wallet balance service · check failed"
+                : "wallet balance service · current total"
             }
             freshness={balanceUnavailable ? "needs retry" : "live"}
             className={balanceUnavailable ? "text-warn" : undefined}

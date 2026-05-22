@@ -16,6 +16,7 @@ use crate::error::{AppError, Result};
 use crate::modules::rebalance::cross_chain::{build_hook_payload, CctpClient};
 use crate::modules::rebalance::models::{ChainKey, LegKind, PlannedLeg};
 use crate::modules::sse::{RebalanceLegPayload, RebalancePlanPayload, SseEvent};
+use crate::modules::wallet_routes;
 use crate::router::AppState;
 
 /// Persist a planned set of legs as a new `rebalances` + `rebalance_legs`
@@ -291,25 +292,17 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
     crate::modules::observability::counters::record_rebalance_succeeded(plan_total);
 
     if plan_total > 0.0 {
-        // Resolve the real payer: portfolio → user → users.arc_address. In
-        // local mock mode, Circle Wallets may not have provisioned addresses,
-        // so use a deterministic placeholder instead of failing a demo plan
-        // after every leg already confirmed.
-        let payer_address = sqlx::query_scalar::<_, Option<String>>(
-            "SELECT u.arc_address
-               FROM portfolios p
-               JOIN users u ON u.id = p.user_id
-              WHERE p.id = $1",
+        let payer_address = wallet_routes::arc_address_for_portfolio(
+            &state.db,
+            portfolio_id,
+            &state.config.circle_wallet_set_id,
         )
-        .bind(portfolio_id)
-        .fetch_optional(&state.db)
         .await?
-        .flatten()
         .unwrap_or_default();
 
         if payer_address.is_empty() && !(state.config.execution_mock || state.config.circle_mock) {
             return Err(AppError::Internal(anyhow::anyhow!(
-                "cannot settle protocol fee: users.arc_address missing for portfolio {portfolio_id}"
+                "cannot settle protocol fee: Arc wallet route missing for portfolio {portfolio_id}"
             )));
         }
 
@@ -364,28 +357,15 @@ async fn dispatch(
             let recipient = if state.config.execution_mock || state.config.circle_mock {
                 "0x0000000000000000000000000000000000000000".to_string()
             } else {
-                let sql = match dest {
-                    ChainKey::Arc => {
-                        "SELECT u.arc_address
-                         FROM users u
-                         JOIN portfolios p ON p.user_id = u.id
-                         JOIN rebalances r ON r.portfolio_id = p.id
-                         WHERE r.id = $1"
-                    }
-                    ChainKey::Base => {
-                        "SELECT u.base_address
-                         FROM users u
-                         JOIN portfolios p ON p.user_id = u.id
-                         JOIN rebalances r ON r.portfolio_id = p.id
-                         WHERE r.id = $1"
-                    }
-                };
-                sqlx::query_scalar::<_, Option<String>>(sql)
-                    .bind(rebalance_id)
-                    .fetch_one(&state.db)
-                    .await
-                    .map_err(|e| AppError::Internal(anyhow::anyhow!("recipient lookup: {e}")))?
-                    .unwrap_or_default()
+                wallet_routes::address_for_user(
+                    &state.db,
+                    user_id,
+                    blockchain_for_chain(dest),
+                    &state.config.circle_wallet_set_id,
+                )
+                .await
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("recipient lookup: {e}")))?
+                .unwrap_or_default()
             };
             if recipient.is_empty() {
                 return Err(AppError::Internal(anyhow::anyhow!(
@@ -469,6 +449,13 @@ async fn dispatch(
             // real txs. Until then this hash anchors the row to a leg id.
             Ok((mock_leg_hash(kind, leg), None))
         }
+    }
+}
+
+fn blockchain_for_chain(chain: ChainKey) -> &'static str {
+    match chain {
+        ChainKey::Arc => wallet_routes::ARC_TESTNET,
+        ChainKey::Base => wallet_routes::BASE_SEPOLIA,
     }
 }
 

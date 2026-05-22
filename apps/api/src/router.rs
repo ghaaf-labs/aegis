@@ -75,6 +75,7 @@ pub async fn build(db: Db, config: Config) -> Router {
     scheduler::spawn_portfolio_scheduler(state.clone(), cancel.clone());
     scheduler::spawn_outcome_compressor(state.clone(), cancel.clone());
     digest::spawn_digest_worker(state.clone(), cancel.clone());
+    account::erasure::spawn_erasure_reconciler(state.clone(), cancel.clone());
     let _peg_monitor = risk_engine::spawn_peg_monitor(state.clone(), cancel.clone());
     agent::calibration_train::spawn(state.clone(), cancel);
 
@@ -84,7 +85,7 @@ pub async fn build(db: Db, config: Config) -> Router {
 
     let authed = Router::new()
         .route("/auth/session", get(wallet::handlers::session))
-        .route("/account/export", get(account::handlers::export))
+        .route("/account/export", post(account::handlers::export))
         .route("/account/delete", post(account::handlers::delete))
         .route("/faucet/usdc", post(faucet::handlers::claim_usdc))
         .route("/gateway/balance", get(gateway::handlers::balance))
@@ -267,6 +268,10 @@ pub async fn build(db: Db, config: Config) -> Router {
         .route(
             "/digest/unsubscribe",
             get(digest::handlers::unsubscribe_public),
+        )
+        .route(
+            "/account/export/:token/download",
+            get(account::handlers::download_export),
         )
         // A10: public tax share — token in path is the auth.
         .route(

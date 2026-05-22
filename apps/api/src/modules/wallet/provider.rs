@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use uuid::Uuid;
 
-use super::models::WalletInfo;
+use super::models::{WalletInfo, WalletNetwork};
 use crate::config::Config;
 use crate::error::AppError;
 
@@ -97,12 +97,12 @@ impl<'a> CircleProvider<'a> {
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("circle fetch_wallets decode: {e}")))?;
 
-        let rows: Vec<(String, String, String)> = envelope
+        let rows: Vec<WalletNetwork> = envelope
             .data
             .wallets
             .into_iter()
             .filter(|w| w.state.as_deref().is_none_or(|state| state == "LIVE"))
-            .map(|w| (w.id, w.address, w.blockchain))
+            .map(CircleWallet::into_network)
             .collect();
         Ok(materialize_wallet(&rows))
     }
@@ -170,11 +170,11 @@ impl<'a> CircleProvider<'a> {
                 AppError::Internal(anyhow::anyhow!("circle create_wallets decode: {e}"))
             })?;
 
-        let rows: Vec<(String, String, String)> = envelope
+        let rows: Vec<WalletNetwork> = envelope
             .data
             .wallets
             .into_iter()
-            .map(|w| (w.id, w.address, w.blockchain))
+            .map(CircleWallet::into_network)
             .collect();
         Ok(materialize_wallet(&rows))
     }
@@ -223,24 +223,39 @@ struct CircleWallet {
     id: String,
     address: String,
     blockchain: String,
+    #[serde(rename = "accountType")]
+    account_type: Option<String>,
     state: Option<String>,
 }
 
-/// Pair Circle's per-chain wallet rows into one `WalletInfo`. Returns `None`
-/// until both ARC and BASE rows are present.
-fn materialize_wallet(rows: &[(String, String, String)]) -> Option<WalletInfo> {
+impl CircleWallet {
+    fn into_network(self) -> WalletNetwork {
+        WalletNetwork {
+            blockchain: self.blockchain,
+            wallet_id: self.id,
+            address: self.address,
+            account_type: self.account_type.unwrap_or_else(|| "SCA".into()),
+            state: self.state.unwrap_or_else(|| "LIVE".into()),
+        }
+    }
+}
+
+/// Pair Circle's per-chain wallet rows into one account-level `WalletInfo`.
+/// Circle stores one wallet row per blockchain, but EVM SCA rows can share the
+/// same address. Aegis treats that as one account wallet with network routes.
+fn materialize_wallet(rows: &[WalletNetwork]) -> Option<WalletInfo> {
     let mut arc = None;
     let mut base = None;
     let mut wallet_id = None;
-    for (id, address, blockchain) in rows {
-        match blockchain.as_str() {
+    for network in rows {
+        match network.blockchain.as_str() {
             ARC_BLOCKCHAIN => {
-                wallet_id.get_or_insert_with(|| id.clone());
-                arc = Some(address.clone());
+                wallet_id.get_or_insert_with(|| network.wallet_id.clone());
+                arc = Some(network.address.clone());
             }
             BASE_BLOCKCHAIN => {
-                wallet_id.get_or_insert_with(|| id.clone());
-                base = Some(address.clone());
+                wallet_id.get_or_insert_with(|| network.wallet_id.clone());
+                base = Some(network.address.clone());
             }
             _ => {}
         }
@@ -249,6 +264,7 @@ fn materialize_wallet(rows: &[(String, String, String)]) -> Option<WalletInfo> {
         wallet_id: wallet_id?,
         arc_address: arc?,
         base_address: base?,
+        networks: rows.to_vec(),
         created_at: Utc::now(),
     })
 }
@@ -257,7 +273,7 @@ fn user_ref_id(user_id: Uuid) -> String {
     user_id.to_string()
 }
 
-fn encrypt_entity_secret(
+pub fn encrypt_entity_secret(
     entity_secret_hex: &str,
     public_key: &str,
 ) -> crate::error::Result<String> {
@@ -307,6 +323,22 @@ impl WalletProvider for MockProvider {
             wallet_id: format!("mock_wallet_{seed:016x}"),
             arc_address: format!("0xARC{seed:040x}"),
             base_address: format!("0xBASE{seed:040x}"),
+            networks: vec![
+                WalletNetwork {
+                    blockchain: ARC_BLOCKCHAIN.into(),
+                    wallet_id: format!("mock_wallet_{seed:016x}:arc"),
+                    address: format!("0xARC{seed:040x}"),
+                    account_type: "SCA".into(),
+                    state: "LIVE".into(),
+                },
+                WalletNetwork {
+                    blockchain: BASE_BLOCKCHAIN.into(),
+                    wallet_id: format!("mock_wallet_{seed:016x}:base"),
+                    address: format!("0xBASE{seed:040x}"),
+                    account_type: "SCA".into(),
+                    state: "LIVE".into(),
+                },
+            ],
             created_at: Utc::now(),
         }))
     }
@@ -337,23 +369,37 @@ mod tests {
     #[test]
     fn materialize_wallet_pairs_arc_and_base_rows() {
         let rows = vec![
-            ("circle-w-1".into(), "0xARC1".into(), ARC_BLOCKCHAIN.into()),
-            (
-                "circle-w-2".into(),
-                "0xBASE2".into(),
-                BASE_BLOCKCHAIN.into(),
-            ),
+            WalletNetwork {
+                wallet_id: "circle-w-1".into(),
+                address: "0xARC1".into(),
+                blockchain: ARC_BLOCKCHAIN.into(),
+                account_type: "SCA".into(),
+                state: "LIVE".into(),
+            },
+            WalletNetwork {
+                wallet_id: "circle-w-2".into(),
+                address: "0xBASE2".into(),
+                blockchain: BASE_BLOCKCHAIN.into(),
+                account_type: "SCA".into(),
+                state: "LIVE".into(),
+            },
         ];
         let w = materialize_wallet(&rows).unwrap();
         assert_eq!(w.arc_address, "0xARC1");
         assert_eq!(w.base_address, "0xBASE2");
         assert_eq!(w.wallet_id, "circle-w-1");
+        assert_eq!(w.networks.len(), 2);
     }
 
     #[test]
     fn materialize_wallet_returns_none_when_missing_a_chain() {
-        let rows: Vec<(String, String, String)> =
-            vec![("circle-w-1".into(), "0xARC1".into(), ARC_BLOCKCHAIN.into())];
+        let rows = vec![WalletNetwork {
+            wallet_id: "circle-w-1".into(),
+            address: "0xARC1".into(),
+            blockchain: ARC_BLOCKCHAIN.into(),
+            account_type: "SCA".into(),
+            state: "LIVE".into(),
+        }];
         assert!(materialize_wallet(&rows).is_none());
     }
 

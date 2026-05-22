@@ -12,7 +12,6 @@ import { PerformanceChart } from "@/components/dashboard/performance-chart";
 import { MarketOverview } from "@/components/dashboard/market-overview";
 import { TrustabilityCard } from "@/components/dashboard/trustability-card";
 import { IdleCashCard } from "@/components/dashboard/idle-cash-card";
-import { DashboardTopology } from "@/components/dashboard/dashboard-topology";
 import { ValueFlowCard } from "@/components/dashboard/value-flow-card";
 import { FaucetButton } from "@/components/wallet/faucet-button";
 import { BrutalButton } from "@aegis/ui";
@@ -97,6 +96,7 @@ export default function PortfolioDashboardPage() {
     targetSymbols.length > 0
       ? formatAssetList(targetSymbols)
       : "the target mix";
+  const portfolioTitle = activePortfolio?.name ?? "Portfolio overview";
 
   if (!portfoliosLoaded || !activePortfolio) {
     return (
@@ -156,25 +156,22 @@ export default function PortfolioDashboardPage() {
     >
       <motion.div
         variants={fadeUp}
-        className="relative overflow-hidden border-brutal border-border-default bg-surface p-4 md:p-5 rounded-sharp"
+        className="rounded-sharp border-brutal border-border-default bg-surface p-4 md:p-5"
       >
-        <DashboardTopology />
-        <div className="absolute inset-0 bg-bg/75" />
-        <div className="absolute inset-y-0 right-0 hidden w-1/3 bg-bg/35 md:block" />
-        <div className="relative z-10 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-2xl font-semibold text-text-hi font-mono tracking-tight">
-                {activePortfolio?.name ?? "Portfolio Overview"}
+                {portfolioTitle}
               </h1>
               <span className="border border-accent-agent/50 bg-accent-agent/10 px-2 py-1 text-[10px] font-mono uppercase text-accent-agent">
-                Portfolio command
+                Dashboard
               </span>
             </div>
             <p className="mt-2 max-w-2xl text-xs font-mono leading-relaxed text-text-lo">
-              One place for the truth: invested positions, idle Gateway cash,
-              agent decisions, and rebalance approvals. Nothing moves until you
-              review a plan.
+              See what is still cash, what is invested, and what needs your
+              approval. Aegis only moves money after you review and confirm the
+              next action.
             </p>
           </div>
           <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[520px]">
@@ -216,26 +213,25 @@ export default function PortfolioDashboardPage() {
               <CircleAlert className="mt-0.5 h-5 w-5 shrink-0 text-warn" />
               <div>
                 <p className="font-mono text-sm font-semibold text-text-hi">
-                  Gateway balance could not be confirmed
+                  Wallet balance could not be confirmed
                 </p>
                 <p className="mt-1 max-w-3xl font-mono text-xs leading-relaxed text-text-lo">
                   {gatewayBalanceError ??
-                    "Circle Gateway did not return Arc + Base balances."}{" "}
-                  The dashboard keeps deploy, faucet, and rebalance cash actions
-                  hidden so a backend outage cannot look like a real $0 wallet.
+                    "The balance check did not return a current wallet total."}{" "}
+                  Cash actions stay hidden so an outage cannot look like a real
+                  $0 wallet.
                 </p>
                 {hasReviewableDrift && (
                   <div className="mt-3 grid gap-2 border border-warn/40 bg-bg/70 p-3 font-mono text-xs md:grid-cols-[auto_1fr]">
                     <LockKeyhole className="h-4 w-4 text-warn" />
                     <div>
                       <p className="font-semibold text-text-hi">
-                        Rebalance review locked by balance check
+                        Rebalance is waiting for a wallet check
                       </p>
                       <p className="mt-1 leading-relaxed text-text-lo">
-                        Aegis sees {maxTargetDriftPct.toFixed(1)}% max target
-                        drift, but it will not build a new execution review
-                        until Gateway confirms current Arc + Base USDC. This
-                        prevents approving a plan from stale cash.
+                        Aegis sees {maxTargetDriftPct.toFixed(1)}% target drift,
+                        but it will not prepare trades until the current wallet
+                        cash is confirmed.
                       </p>
                     </div>
                   </div>
@@ -268,11 +264,11 @@ export default function PortfolioDashboardPage() {
         >
           <div>
             <p className="text-sm font-semibold text-text-hi font-mono">
-              Empty wallet — fund with testnet USDC to drive the agent
+              Empty wallet — add test USDC to start
             </p>
             <p className="text-xs text-text-lo font-mono mt-1">
-              Claims 100 USDC from Circle&apos;s Arc Sepolia faucet. Required
-              before rebalances + agent decisions move real positions.
+              Adds test USDC to this account so you can review the first
+              investment plan.
             </p>
           </div>
           <FaucetButton />
@@ -288,18 +284,18 @@ export default function PortfolioDashboardPage() {
             <div className="min-w-0">
               <p className="text-[10px] font-mono uppercase tracking-widest text-accent-agent">
                 {hasReviewableDrift
-                  ? "Target drift detected · no idle USDC"
-                  : "Portfolio is invested · no idle USDC"}
+                  ? "Target drift detected · no wallet cash"
+                  : "No wallet cash available"}
               </p>
               <h2 className="mt-1 text-lg font-mono font-semibold text-text-hi">
                 {hasReviewableDrift
-                  ? `${maxTargetDriftPct.toFixed(1)}% max target drift needs review`
-                  : `${formatCurrency(investedUsd)} is already in positions`}
+                  ? `${maxTargetDriftPct.toFixed(1)}% target drift needs review`
+                  : `${formatCurrency(investedUsd)} is already invested`}
               </h2>
               <p className="text-xs text-text-lo font-mono mt-2 max-w-3xl leading-relaxed">
                 {hasReviewableDrift
-                  ? "Your wallet has no idle USDC, but the invested positions no longer match the target. Build a review plan to sell overweight sleeves and buy underweight sleeves; no trade executes until the approval screen."
-                  : "Your Gateway wallet has no deployable USDC right now, so there is nothing for Deploy to move. Fund the wallet if you want the agent to invest new cash."}
+                  ? "Your wallet has no spare USDC, but the current mix no longer matches the target. Review a rebalance before any trade executes."
+                  : "There is no spare USDC in the wallet right now. Add funds if you want Aegis to prepare a new move."}
               </p>
               {deployError && (
                 <p className="text-xs text-risk font-mono mt-2">
@@ -348,7 +344,7 @@ export default function PortfolioDashboardPage() {
               <p className="text-[10px] font-mono uppercase tracking-widest text-accent-pnl">
                 {isFirstDeploy
                   ? "Wallet funded · investment not started"
-                  : "Wallet cash available · review needed"}
+                  : "Wallet cash available · approval needed"}
               </p>
               <h2 className="mt-1 text-lg font-mono font-semibold text-text-hi">
                 {isFirstDeploy
@@ -357,22 +353,22 @@ export default function PortfolioDashboardPage() {
               </h2>
               <p className="text-xs text-text-lo font-mono mt-2 max-w-3xl leading-relaxed">
                 {isFirstDeploy
-                  ? `Right now the USDC is safe in your Circle Gateway wallet. It has not been routed into ${targetAssetText} yet.`
-                  : `${formatCurrency(investedUsd)} is already in positions. The remaining USDC is not following the target mix yet.`}{" "}
-                Review the exact USDC deployment first; no trade executes until
-                you approve the next screen.
+                  ? `Right now the USDC is still cash in your wallet. It has not been moved into ${targetAssetText} yet.`
+                  : `${formatCurrency(investedUsd)} is already invested. The remaining USDC is still cash and not following the target mix yet.`}{" "}
+                Review the exact changes first; no trade executes until you
+                approve the next screen.
                 {usdcTargetWeight > 0 && (
                   <>
                     {" "}
-                    The {usdcTargetWeight.toFixed(0)}% USDC sleeve stays as cash
-                    reserve; no swap is needed for that part.
+                    The {usdcTargetWeight.toFixed(0)}% USDC target stays as a
+                    cash reserve.
                   </>
                 )}
                 {unifiedEurc > 0 && (
                   <>
                     {" "}
-                    Existing EURC wallet cash stays separate until an approved
-                    StableFX leg confirms it as portfolio exposure.
+                    Existing EURC wallet cash stays separate until you approve a
+                    move for it.
                   </>
                 )}
               </p>

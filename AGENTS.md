@@ -79,12 +79,12 @@ forge test
 | Format      | `prettier --write {staged_files}` | `prettier --check`                                                                             | —                                |
 | Frontend    | —                                 | `next lint` · `tsc --noEmit` · `vitest run` · `next build`                                     | `vitest run --coverage` · `knip` |
 | Backend     | —                                 | `cargo fmt --check` · `cargo clippy --all-targets -- -D warnings` · `cargo test --all-targets` | `cargo llvm-cov`                 |
-| Deps        | —                                 | `cargo-audit` · `cargo-deny check` · `cargo-machete`                                           | —                                |
+| Deps        | —                                 | `cargo-deny check` · `cargo-machete`                                                           | —                                |
 | Spelling    | —                                 | `typos` (crate-ci/typos action)                                                                | —                                |
 | Commit msg  | `commitlint --edit {1}`           | `commitlint` job on PRs                                                                        | —                                |
 | Branch name | `scripts/check-branch-name.sh`    | `branch-name` job on PRs                                                                       | —                                |
 
-Tooling stack: **Lefthook** (hooks runner) · **commitlint** · **Prettier** · **Vitest** + **@vitest/coverage-v8** · **knip** (unused TS) · **typos** (spell check) · **cargo-llvm-cov** (Rust coverage) · **cargo-audit** · **cargo-deny** (config: `apps/api/deny.toml`) · **cargo-machete** (unused deps).
+Tooling stack: **Lefthook** (hooks runner) · **commitlint** · **Prettier** · **Vitest** + **@vitest/coverage-v8** · **knip** (unused TS) · **typos** (spell check) · **cargo-llvm-cov** (Rust coverage) · **cargo-deny** (RUSTSEC + license policy; config: `apps/api/deny.toml`) · **cargo-machete** (unused deps).
 
 Bypass any local hook: `git commit --no-verify` or `git push --no-verify` — use sparingly.
 

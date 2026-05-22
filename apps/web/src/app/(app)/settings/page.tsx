@@ -89,7 +89,9 @@ export default function SettingsIndex() {
     try {
       const response = await accountApi.exportData();
       setExportStatus("sent");
-      setExportMessage(`Export queued. Check ${response.deliveryEmail}.`);
+      setExportMessage(
+        `Export queued. Check ${response.deliveryEmail} for a signed download link.`,
+      );
     } catch (e) {
       setExportStatus("error");
       setExportMessage(friendlyAccountError(e));
@@ -120,8 +122,8 @@ export default function SettingsIndex() {
     {
       href: "/wallets",
       icon: Wallet,
-      title: "Wallets",
-      description: "Per-chain USDC + EURC balances and addresses",
+      title: "Wallet",
+      description: "One account wallet with network token balances",
       requiresWallet: false,
     },
     {
@@ -224,7 +226,7 @@ export default function SettingsIndex() {
                   Export data
                 </p>
                 <p className="mt-1 font-mono text-[11px] leading-relaxed text-text-lo">
-                  Receive a JSON archive by email.
+                  Receive a signed download link by email.
                 </p>
                 <button
                   type="button"
@@ -325,7 +327,7 @@ export default function SettingsIndex() {
                     </p>
                     <p className="text-[11px] text-text-lo font-mono mt-0.5 leading-relaxed">
                       {locked
-                        ? "Finish account setup first. This page uses wallet-backed data or actions."
+                        ? "Finish account setup first. This page uses account-backed data or actions."
                         : s.description}
                     </p>
                   </div>

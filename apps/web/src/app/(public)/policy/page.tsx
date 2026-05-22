@@ -119,20 +119,22 @@ export default function PolicyPage() {
               <span className="text-accent-agent shrink-0">→</span>
               <span>
                 <span className="text-text-hi font-semibold">
-                  Withdraw at any time
+                  Move funds out before closing
                 </span>{" "}
-                — Aegis is non-custodial; your USDC sits in your own Circle
-                Wallet.
+                — Phase 1 uses an Aegis-managed Circle wallet so approved plans
+                can execute for you. Closing the account requires moving funds
+                out first.
               </span>
             </li>
             <li className="flex gap-3">
               <span className="text-accent-agent shrink-0">→</span>
               <span>
                 <span className="text-text-hi font-semibold">
-                  Delete the account
+                  Close the account
                 </span>{" "}
-                — Settings → <em>Delete account</em> drops portfolio + decisions
-                + PII. On-chain history stays on-chain.
+                — Settings → <em>Close account</em> revokes sessions and starts
+                erasure. PII is anonymized where legally allowed; required tax,
+                compliance, and on-chain records may be retained.
               </span>
             </li>
           </ul>
@@ -189,8 +191,8 @@ export default function PolicyPage() {
             {[
               "No hidden swap spreads.",
               "No charging on failed execution.",
-              "No mandatory KYC at signup.",
               "No moving money without your approval modal.",
+              "No account closure while funds remain in the wallet.",
             ].map((item) => (
               <li key={item} className="flex gap-3">
                 <span className="text-accent-pnl shrink-0">✓</span>

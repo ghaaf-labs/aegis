@@ -189,9 +189,10 @@ export default function AnalyticsPage() {
               value={snapshot ? timeAgo(snapshot.capturedAt) : "Loading"}
             />
             <p className="border-t border-border-default pt-3 text-[11px] leading-relaxed text-text-mut">
-              via market snapshot API. Price ticks stream separately over SSE;
-              aggregate market-cap fields show unavailable when the active
-              provider does not supply them.
+              Market data via CoinGecko
+              {snapshot ? ` · updated ${timeAgo(snapshot.capturedAt)}` : ""}.
+              Live prices refresh separately; some aggregate fields may show
+              unavailable when the provider does not supply them.
             </p>
           </BrutalCardBody>
         </BrutalCard>

@@ -274,9 +274,9 @@ jobs:
           path: apps/api/lcov.info
           retention-days: 14
 
-  # ── Dependency hygiene (audit + deny + machete) ──────────────────────────
+  # ── Dependency hygiene (deny + machete) ──────────────────────────────────
   audit:
-    name: API (audit + deny + machete)
+    name: API (deny + machete)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -287,10 +287,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/api
-      - name: Install cargo-audit
-        run: cargo install --locked cargo-audit
-      - name: cargo audit
-        run: cargo audit --ignore RUSTSEC-2023-0071
       - name: Install cargo-deny
         run: cargo install --locked cargo-deny
       - name: cargo deny

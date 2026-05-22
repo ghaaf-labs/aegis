@@ -13,8 +13,6 @@ pub struct Claims {
     pub sub: Uuid,
     pub email: String,
     pub jti: Uuid,
-    /// Set once the user has a Circle Wallet.
-    pub wallet_id: Option<String>,
     pub exp: usize,
     pub iat: usize,
 }
@@ -60,8 +58,7 @@ pub async fn claims_from_session(state: &AppState, session_id: Uuid) -> Result<C
                 s.user_id,
                 s.expires_at,
                 s.created_at,
-                u.email,
-                u.wallet_id
+                u.email
          FROM auth_sessions s
          JOIN users u ON u.id = s.user_id
          WHERE s.id = $1
@@ -89,7 +86,6 @@ pub async fn claims_from_session(state: &AppState, session_id: Uuid) -> Result<C
         sub: row.user_id,
         email: row.email,
         jti: row.session_id,
-        wallet_id: row.wallet_id,
         exp: row.expires_at.timestamp().max(0) as usize,
         iat: row.created_at.timestamp().max(0) as usize,
     })
@@ -102,7 +98,6 @@ struct SessionClaimsRow {
     expires_at: DateTime<Utc>,
     created_at: DateTime<Utc>,
     email: String,
-    wallet_id: Option<String>,
 }
 
 fn parse_session_id(token: &str) -> Result<Uuid, AppError> {

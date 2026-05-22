@@ -14,6 +14,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 
 use aegis_api::config::Config;
 use aegis_api::db;
+use aegis_api::env;
 use aegis_api::modules::ai::{OpenRouterClient, PromptRegistry};
 use aegis_api::modules::risk_engine::regime_backtest::{run_backtest, OpenRouterRegimeClassifier};
 
@@ -54,10 +55,7 @@ fn parse_args() -> anyhow::Result<CliArgs> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Same load order as the main binary: .env.local (personal overrides,
-    // gitignored) wins over .env (committed defaults). Shell env beats both.
-    dotenvy::from_filename(".env.local").ok();
-    dotenvy::dotenv().ok();
+    env::load_env();
 
     tracing_subscriber::registry()
         .with(

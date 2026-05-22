@@ -1,13 +1,17 @@
+use std::net::SocketAddr;
+
+use axum::extract::ConnectInfo;
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::IntoResponse;
 use axum::{extract::State, Extension, Json};
+use serde_json::json;
 
 use super::models::{
     ResendEmailAuthRequest, StartEmailAuthRequest, VerifyEmailAuthRequest, WalletAuthCodeResponse,
     WalletAuthResponse, WalletSessionResponse,
 };
 use super::provider::{CircleProvider, MockProvider};
-use super::service::WalletService;
+use super::service::{enforce_auth_ip_rate_limit, WalletService};
 use crate::config::Config;
 use crate::middleware::auth::{claims_from_session, Claims};
 use crate::router::AppState;
@@ -94,8 +98,11 @@ async fn deliver_code_issue(
 /// emails so the entry screen does not need separate signup/login branches.
 pub async fn email_start(
     State(state): State<AppState>,
+    peer: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
     Json(body): Json<StartEmailAuthRequest>,
 ) -> crate::error::Result<Json<WalletAuthCodeResponse>> {
+    enforce_public_auth_rate_limit(&state, "start", &headers, peer.as_ref()).await?;
     issue_code(&state, &body.email, body.referrer_handle.as_deref()).await
 }
 
@@ -103,8 +110,11 @@ pub async fn email_start(
 /// and enforces the cooldown from the original send/resend timestamp.
 pub async fn email_resend(
     State(state): State<AppState>,
+    peer: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
     Json(body): Json<ResendEmailAuthRequest>,
 ) -> crate::error::Result<Json<WalletAuthCodeResponse>> {
+    enforce_public_auth_rate_limit(&state, "resend", &headers, peer.as_ref()).await?;
     resend_code(&state, body.challenge_id).await
 }
 
@@ -112,9 +122,11 @@ pub async fn email_resend(
 /// decides whether to restore an existing account or create/resume setup.
 pub async fn email_verify(
     State(state): State<AppState>,
+    peer: Option<ConnectInfo<SocketAddr>>,
     headers: HeaderMap,
     Json(body): Json<VerifyEmailAuthRequest>,
 ) -> crate::error::Result<axum::response::Response> {
+    enforce_public_auth_rate_limit(&state, "verify", &headers, peer.as_ref()).await?;
     let verifier = MockProvider;
     let verifier_svc = WalletService::new(&state.db, &verifier, &state.config, &state.sse);
     let verified_code = match verifier_svc
@@ -147,6 +159,41 @@ pub async fn email_verify(
     let referrer = verified_code.referrer_handle.as_deref();
     maybe_credit_referral(&state, referrer, &resp).await;
     Ok(auth_response(&state.config, StatusCode::OK, resp).into_response())
+}
+
+async fn enforce_public_auth_rate_limit(
+    state: &AppState,
+    action: &str,
+    headers: &HeaderMap,
+    peer: Option<&ConnectInfo<SocketAddr>>,
+) -> crate::error::Result<()> {
+    let client_key = public_auth_client_key(headers, peer);
+    enforce_auth_ip_rate_limit(&state.db, action, &client_key).await
+}
+
+fn public_auth_client_key(headers: &HeaderMap, peer: Option<&ConnectInfo<SocketAddr>>) -> String {
+    if let Some(ip) = forwarded_client_ip(headers) {
+        return ip;
+    }
+    peer.map(|ConnectInfo(addr)| addr.ip().to_string())
+        .unwrap_or_else(|| "unknown".into())
+}
+
+fn forwarded_client_ip(headers: &HeaderMap) -> Option<String> {
+    let value = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|v| v.to_str().ok())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+        })?;
+    Some(value.to_string())
 }
 
 async fn idempotent_verify_response(
@@ -250,6 +297,8 @@ pub async fn logout(
             .bind(session_id)
             .execute(&state.db)
             .await?;
+            crate::modules::analytics::service::emit(&state.db, None, "auth.logout", json!({}))
+                .await;
         }
     }
 
@@ -395,6 +444,8 @@ fn dev_codes_allowed_for(
 
 #[cfg(test)]
 mod tests {
+    use axum::http::{HeaderMap, HeaderValue};
+
     use super::CodeDeliveryMode;
 
     #[test]
@@ -464,6 +515,20 @@ mod tests {
                 "Aegis <auth@aegis.local>",
             ),
             CodeDeliveryMode::Unavailable
+        );
+    }
+
+    #[test]
+    fn auth_rate_client_key_prefers_forwarded_ip() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("203.0.113.10, 10.0.0.2"),
+        );
+
+        assert_eq!(
+            super::public_auth_client_key(&headers, None),
+            "203.0.113.10"
         );
     }
 }

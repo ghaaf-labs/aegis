@@ -40,10 +40,10 @@ test("P4 — demo detail aggressive-builder renders", async ({ page }) => {
   await expect(page.getByText(/Aggressive Builder/i).first()).toBeVisible();
 });
 
-test("P5 — demo detail treasury-dao renders", async ({ page }) => {
-  await page.goto("/explore/treasury-dao");
+test("P5 — demo detail operating-reserve renders", async ({ page }) => {
+  await page.goto("/explore/operating-reserve");
   await expect(page.getByText(/DEMO PORTFOLIO/i).first()).toBeVisible();
-  await expect(page.getByText(/Treasury/i).first()).toBeVisible();
+  await expect(page.getByText(/Operating Reserve/i).first()).toBeVisible();
 });
 
 test("P6 — leaderboard renders heading or empty state", async ({ page }) => {

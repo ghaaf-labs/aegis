@@ -85,7 +85,7 @@ pub async fn fetch_balance_for_user(
     user_id: Uuid,
 ) -> crate::error::Result<GatewayBalance> {
     if !config.circle_mock {
-        let wallet_state = user_wallet_state(db, user_id).await?;
+        let wallet_state = user_wallet_state(db, user_id, config).await?;
         if wallet_state == WalletProvisionState::Missing {
             return Ok(empty_balance());
         }
@@ -124,51 +124,79 @@ enum WalletProvisionState {
     Provisioned,
 }
 
-async fn user_wallet_state(db: &Db, user_id: Uuid) -> crate::error::Result<WalletProvisionState> {
-    let fields = sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>)>(
-        "SELECT wallet_id, arc_address, base_address
-         FROM users
-         WHERE id = $1",
+async fn user_wallet_state(
+    db: &Db,
+    user_id: Uuid,
+    config: &Config,
+) -> crate::error::Result<WalletProvisionState> {
+    let routes = sqlx::query_as::<_, WalletRoute>(
+        "SELECT blockchain, circle_wallet_id, address, account_type, wallet_set_id, state
+         FROM user_wallet_networks
+         WHERE user_id = $1",
     )
     .bind(user_id)
-    .fetch_optional(db)
-    .await?
-    .unwrap_or((None, None, None));
+    .fetch_all(db)
+    .await?;
     Ok(wallet_provision_state(
-        fields.0.as_deref(),
-        fields.1.as_deref(),
-        fields.2.as_deref(),
+        &routes,
+        config.circle_wallet_set_id.trim(),
     ))
 }
 
-fn wallet_provision_state(
-    wallet_id: Option<&str>,
-    arc_address: Option<&str>,
-    base_address: Option<&str>,
-) -> WalletProvisionState {
-    let wallet_id = normalized_wallet_field(wallet_id);
-    let arc_address = normalized_wallet_field(arc_address);
-    let base_address = normalized_wallet_field(base_address);
+#[derive(Debug, sqlx::FromRow)]
+struct WalletRoute {
+    blockchain: String,
+    circle_wallet_id: String,
+    address: String,
+    account_type: String,
+    wallet_set_id: Option<String>,
+    state: String,
+}
 
-    if wallet_id.is_none() && arc_address.is_none() && base_address.is_none() {
+fn wallet_provision_state(
+    routes: &[WalletRoute],
+    expected_wallet_set_id: &str,
+) -> WalletProvisionState {
+    if routes.is_empty() {
         return WalletProvisionState::Missing;
     }
 
-    let real_wallet = wallet_id.is_some_and(|id| !id.starts_with("mock_wallet_"));
-    let real_arc = arc_address.is_some_and(|address| !address.starts_with("0xARC"));
-    let real_base = base_address.is_some_and(|address| !address.starts_with("0xBASE"));
+    let has_arc = routes
+        .iter()
+        .any(|route| route_is_ready(route, "ARC-TESTNET", expected_wallet_set_id));
+    let has_base = routes
+        .iter()
+        .any(|route| route_is_ready(route, "BASE-SEPOLIA", expected_wallet_set_id));
 
-    if real_wallet && real_arc && real_base {
+    if has_arc && has_base {
         WalletProvisionState::Provisioned
-    } else if !real_wallet && !real_arc && !real_base {
-        WalletProvisionState::Missing
     } else {
         WalletProvisionState::Partial
     }
 }
 
-fn normalized_wallet_field(value: Option<&str>) -> Option<&str> {
-    value.map(str::trim).filter(|v| !v.is_empty())
+fn route_is_ready(route: &WalletRoute, blockchain: &str, expected_wallet_set_id: &str) -> bool {
+    route.blockchain == blockchain
+        && route.account_type == "SCA"
+        && route.state == "LIVE"
+        && route
+            .wallet_set_id
+            .as_deref()
+            .is_some_and(|wallet_set_id| wallet_set_id == expected_wallet_set_id)
+        && !route.circle_wallet_id.trim().is_empty()
+        && !route.circle_wallet_id.starts_with("mock_wallet_")
+        && is_real_evm_address(&route.address)
+}
+
+fn is_real_evm_address(address: &str) -> bool {
+    let address = address.trim();
+    address.len() == 42
+        && address.starts_with("0x")
+        && address
+            .as_bytes()
+            .iter()
+            .skip(2)
+            .all(|b| b.is_ascii_hexdigit())
 }
 
 fn empty_balance() -> GatewayBalance {
@@ -419,24 +447,47 @@ mod tests {
     }
 
     #[test]
-    fn wallet_provision_state_treats_mock_fields_as_missing() {
+    fn wallet_provision_state_requires_live_arc_and_base_routes() {
         assert_eq!(
-            wallet_provision_state(Some("mock_wallet_1"), Some("0xARCabc"), Some("0xBASEabc")),
+            wallet_provision_state(&[], "wallet-set"),
             WalletProvisionState::Missing
         );
         assert_eq!(
             wallet_provision_state(
-                Some("circle-wallet"),
-                Some("0x1111111111111111111111111111111111111111"),
-                Some("0x2222222222222222222222222222222222222222")
+                &[
+                    route(
+                        "ARC-TESTNET",
+                        "circle-arc",
+                        "0x1111111111111111111111111111111111111111"
+                    ),
+                    route(
+                        "BASE-SEPOLIA",
+                        "circle-base",
+                        "0x2222222222222222222222222222222222222222"
+                    ),
+                ],
+                "wallet-set"
             ),
             WalletProvisionState::Provisioned
         );
         assert_eq!(
             wallet_provision_state(
-                Some("circle-wallet"),
-                Some("0x1111111111111111111111111111111111111111"),
-                None
+                &[route(
+                    "ARC-TESTNET",
+                    "circle-arc",
+                    "0x1111111111111111111111111111111111111111"
+                )],
+                "wallet-set"
+            ),
+            WalletProvisionState::Partial
+        );
+        assert_eq!(
+            wallet_provision_state(
+                &[
+                    route("ARC-TESTNET", "mock_wallet_1", "0xARCabc"),
+                    route("BASE-SEPOLIA", "mock_wallet_2", "0xBASEabc"),
+                ],
+                "wallet-set"
             ),
             WalletProvisionState::Partial
         );
@@ -454,5 +505,16 @@ mod tests {
                 ("refId", user_id.to_string())
             ]
         );
+    }
+
+    fn route(blockchain: &str, wallet_id: &str, address: &str) -> WalletRoute {
+        WalletRoute {
+            blockchain: blockchain.into(),
+            circle_wallet_id: wallet_id.into(),
+            address: address.into(),
+            account_type: "SCA".into(),
+            wallet_set_id: Some("wallet-set".into()),
+            state: "LIVE".into(),
+        }
     }
 }

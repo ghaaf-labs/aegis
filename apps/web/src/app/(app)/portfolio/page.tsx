@@ -74,13 +74,13 @@ export default function PortfolioPage() {
             ) : (
               <CircleAlert className="w-4 h-4 mr-2" />
             )}
-            {reviewReady ? "Review rebalance" : "Check readiness"}
+            {reviewReady ? "Review rebalance" : "Fix setup"}
           </BrutalButton>
         </div>
       </div>
 
       <section
-        aria-label="Rebalance readiness"
+        aria-label="Rebalance setup"
         className={`rounded-sharp border-brutal p-4 md:p-5 ${
           reviewReady
             ? "border-accent-agent/40 bg-accent-agent/5"
@@ -106,7 +106,7 @@ export default function PortfolioPage() {
                   reviewReady ? "text-accent-agent" : "text-warn"
                 }`}
               >
-                Rebalance readiness
+                Before review
               </p>
               <h2 className="mt-1 font-mono text-lg font-semibold text-text-hi">
                 {readiness.title}
@@ -120,11 +120,11 @@ export default function PortfolioPage() {
             <ReadinessFact label="Portfolio" value="selected" ok />
             <ReadinessFact
               label="Wallet"
-              value={wallet ? "Arc + Base ready" : "setup required"}
+              value={wallet ? "ready" : "setup required"}
               ok={!!wallet}
             />
             <ReadinessFact
-              label="Gateway"
+              label="Cash check"
               value={gatewayStatusLabel(gatewayBalanceStatus)}
               ok={gatewayBalanceStatus === "ready"}
             />
@@ -140,7 +140,7 @@ export default function PortfolioPage() {
             ) : (
               <CircleAlert className="w-4 h-4 mr-2" />
             )}
-            {reviewReady ? "Build review plan" : "Open readiness details"}
+            {reviewReady ? "Build review plan" : "Open setup details"}
           </BrutalButton>
           {!wallet && (
             <Link
@@ -188,27 +188,27 @@ function rebalanceReadinessCopy(
 ) {
   if (!hasWallet) {
     return {
-      title: "Rebalance is locked until account setup finishes",
-      copy: "Aegis needs real Arc + Base wallet addresses before it can route, estimate, or approve rebalance legs. This prevents a plan from being built against a placeholder account.",
+      title: "Finish setup before rebalance review",
+      copy: "Aegis needs a ready wallet and a current cash check before it can build a rebalance review. This prevents a plan from being built against a placeholder account.",
     };
   }
   if (gatewayBalanceStatus === "error") {
     return {
-      title: "Rebalance is locked because Gateway cash is unknown",
+      title: "Rebalance is locked because wallet cash is unknown",
       copy:
         gatewayBalanceError ??
-        "Circle Gateway did not confirm balances. Aegis will not treat an unavailable balance as $0, and it will not create rebalance legs from stale wallet cash.",
+        "The balance check did not confirm wallet cash. Aegis will not treat an unavailable balance as $0, and it will not create rebalance legs from stale wallet cash.",
     };
   }
   if (gatewayBalanceStatus === "idle" || gatewayBalanceStatus === "loading") {
     return {
-      title: "Checking Gateway before rebalance review",
-      copy: "Aegis is waiting for Circle Gateway to confirm wallet cash. The review builder unlocks only after balances are known, because idle USDC changes what should be bought or left in reserve.",
+      title: "Checking wallet cash before rebalance review",
+      copy: "Aegis is waiting for a fresh wallet cash check. The review builder unlocks only after balances are known, because idle USDC changes what should be bought or left in reserve.",
     };
   }
   return {
     title: "Ready to build a rebalance review",
-    copy: "Wallet setup and Gateway balances are confirmed. Aegis can build a deterministic review from current positions, target weights, and idle cash; execution still requires approval on the next screen.",
+    copy: "Wallet setup and cash balances are confirmed. Aegis can build a deterministic review from current positions, target weights, and idle cash; execution still requires approval on the next screen.",
   };
 }
 

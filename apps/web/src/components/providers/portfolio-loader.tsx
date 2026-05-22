@@ -143,9 +143,11 @@ export function PortfolioLoader() {
 
 function gatewayBalanceError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
-  if (message.includes("401")) return "Session expired before Gateway replied.";
-  if (message.toLowerCase().includes("gateway")) {
-    return "Circle Gateway balance check failed.";
+  if (message.includes("401")) {
+    return "Session expired before the balance check finished.";
   }
-  return "Circle Gateway balance is unavailable.";
+  if (message.toLowerCase().includes("gateway")) {
+    return "Wallet balance check failed.";
+  }
+  return "Wallet balance is unavailable.";
 }

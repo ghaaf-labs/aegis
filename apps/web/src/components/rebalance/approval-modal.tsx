@@ -198,9 +198,9 @@ export function ApprovalModal({
   const netTurnoverUsdc = Math.max(positionSaleUsdc, destinationUsdc);
   const approvalBlocked =
     approvalSafety?.approvable === false || isMockExecution;
-  const approvalBlockCode =
-    approvalSafety?.code ??
-    (isMockExecution ? "HISTORICAL_TEST_REVIEW" : "APPROVAL_BLOCKED");
+  const approvalBlockCode = isMockExecution
+    ? "HISTORICAL_TEST_REVIEW"
+    : (approvalSafety?.code ?? "APPROVAL_BLOCKED");
   const approvalBlockMessage =
     approvalSafety?.message ??
     (isMockExecution
@@ -318,7 +318,7 @@ export function ApprovalModal({
           {approvalBlocked && (
             <div className="mb-4 border-brutal border-warn/50 bg-warn/10 p-3 text-xs font-mono text-warn">
               <p className="text-[10px] uppercase tracking-wider">
-                Approval blocked · {approvalBlockCode}
+                {approvalBlockLabel(approvalBlockCode)}
               </p>
               <p className="mt-1 leading-relaxed">{approvalBlockMessage}</p>
               {approvalSafety?.missingCapabilities?.length ? (
@@ -399,11 +399,14 @@ export function ApprovalModal({
                     />
                   </div>
 
-                  {decision.reasoning && (
-                    <p className="text-text-default leading-relaxed">
-                      {decision.reasoning}
-                    </p>
-                  )}
+                  {(() => {
+                    const reasoning = displayReasoning(decision);
+                    return reasoning ? (
+                      <p className="text-text-default leading-relaxed">
+                        {reasoning}
+                      </p>
+                    ) : null;
+                  })()}
 
                   {/* F-CON-4: constitution clause IDs (veto reasons). */}
                   {clauseIds.length > 0 && (
@@ -482,8 +485,8 @@ export function ApprovalModal({
           ) && (
             <div className="mb-3 inline-flex items-center gap-2 rounded border border-cyan-500/40 bg-cyan-500/10 px-3 py-1 text-[11px] font-mono text-accent-agent">
               {isMockExecution
-                ? "Historical test route • CCTP V2 + Hooks preview"
-                : "Real on-chain execution • CCTP V2 Fast Transfer + Hooks"}
+                ? "Historical test route"
+                : "Real multi-step execution"}
             </div>
           )}
 
@@ -498,8 +501,8 @@ export function ApprovalModal({
                 {isMockExecution
                   ? "This historical test review is shown for audit only. Build a fresh real-execution review before approving."
                   : hasCrossChainLeg
-                    ? "One approval settles the plan on Arc + Base; SSE streams each leg as it confirms."
-                    : `One approval executes the ${singleChainLabel(plan)} legs; SSE streams each leg as it confirms.`}
+                    ? "One approval executes the full transfer plan; live updates show each leg as it confirms."
+                    : "One approval executes the planned route; live updates show each leg as it confirms."}
               </>
             )}
           </p>
@@ -677,13 +680,31 @@ function isCrossChainLeg(plan: RebalancePlanResponse["legs"][number]) {
   return plan.kind === "cross_chain_burn" || plan.kind === "cross_chain_mint";
 }
 
-function singleChainLabel(plan: RebalancePlanResponse) {
-  const chain = plan.legs
-    .map((leg) => leg.destChain ?? leg.srcChain)
-    .find(
-      (value): value is "arc" | "base" => value === "arc" || value === "base",
-    );
-  return chain === "base" ? "Base" : "Arc";
+function approvalBlockLabel(code: string): string {
+  switch (code) {
+    case "HISTORICAL_TEST_REVIEW":
+    case "MOCK_OR_LEGACY_PLAN":
+      return "Historical test review";
+    case "EXECUTION_UNAVAILABLE":
+      return "Execution unavailable";
+    case "SUPERSEDED":
+      return "Superseded review";
+    case "STALE_PLAN":
+      return "Stale review";
+    case "BALANCE_UNAVAILABLE":
+      return "Balance unavailable";
+    default:
+      return "Approval blocked";
+  }
+}
+
+function displayReasoning(decision: AgentDecision): string | null {
+  const reasoning = decision.reasoning?.trim();
+  if (!reasoning) return null;
+  if (/mock decision|local\/demo|demo mock mode/i.test(reasoning)) {
+    return "This review was generated in demo mode. Build a fresh review to see live strategist commentary.";
+  }
+  return reasoning;
 }
 
 function blockedAmountCopy(safety?: RebalanceApprovalSafety | null): string {
@@ -695,7 +716,7 @@ function blockedAmountCopy(safety?: RebalanceApprovalSafety | null): string {
     case "STALE_PLAN":
       return "These amounts no longer match current wallet cash or holdings. Build a fresh review before approving.";
     case "BALANCE_UNAVAILABLE":
-      return "Gateway balance cannot be verified right now, so real execution stays locked.";
+      return "Wallet cash cannot be verified right now, so real execution stays locked.";
     case "MOCK_OR_LEGACY_PLAN":
       return "This review came from an older non-real planner and cannot be used for real execution.";
     default:
@@ -752,12 +773,12 @@ function BlockedRecoveryActions({
       ? [
           {
             href: "/wallets",
-            label: "Check Wallets / Gateway",
+            label: "Check wallet cash",
             primary: true,
           },
           {
             href: dashboardHref,
-            label: "Build fresh review after Gateway recovers",
+            label: "Build fresh review after balances recover",
             primary: false,
           },
         ]

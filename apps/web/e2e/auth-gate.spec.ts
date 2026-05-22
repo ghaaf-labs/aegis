@@ -4,7 +4,13 @@ import { injectTestJwt } from "./helpers/auth";
 // A-series — auth gate behaviour. All tests pass with only the Next.js
 // dev server (no API backend required).
 
-const GATED_ROUTES = ["/dashboard", "/portfolio", "/wallet", "/settings"];
+const GATED_ROUTES = [
+  "/dashboard",
+  "/portfolio",
+  "/wallets",
+  "/settings",
+  "/wallet",
+];
 
 for (const route of GATED_ROUTES) {
   test(`A1-A4 — unauthenticated ${route} redirects to verified login`, async ({
@@ -12,12 +18,8 @@ for (const route of GATED_ROUTES) {
   }) => {
     await page.goto(route);
     await expect(page).toHaveURL(/\/login\?next=/);
-    await expect(page.getByText(/Session required/i)).toBeVisible();
-    await expect(
-      page.getByRole("button", {
-        name: /login email unavailable|send one-time login code/i,
-      }),
-    ).toBeVisible();
+    await expect(page.getByText(/Enter your email to continue/i)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Continue" })).toBeVisible();
   });
 }
 
@@ -43,5 +45,5 @@ test("A7 — fake JWT in localStorage does not bypass auth gate", async ({
   await injectTestJwt(page);
   await page.goto("/dashboard");
   await expect(page).toHaveURL(/\/login\?next=/);
-  await expect(page.getByText(/Session required/i)).toBeVisible();
+  await expect(page.getByText(/Enter your email to continue/i)).toBeVisible();
 });

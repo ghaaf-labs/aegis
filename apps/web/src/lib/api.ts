@@ -190,6 +190,7 @@ export const gatewayApi = {
 export interface AccountExportResponse {
   status: "queued";
   deliveryEmail: string;
+  expiresAt: string;
 }
 
 export interface DeleteAccountResponse {
@@ -199,7 +200,10 @@ export interface DeleteAccountResponse {
 
 export const accountApi = {
   exportData: () =>
-    request<AccountExportResponse>("/account/export", { authed: true }),
+    request<AccountExportResponse>("/account/export", {
+      method: "POST",
+      authed: true,
+    }),
   deleteAccount: () =>
     request<DeleteAccountResponse>("/account/delete", {
       method: "POST",

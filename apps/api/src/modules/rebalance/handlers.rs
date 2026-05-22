@@ -22,6 +22,7 @@ use crate::modules::rebalance::{
     models::{ChainKey, PlanInput, PlannedLeg},
     planner::plan_legs,
 };
+use crate::modules::wallet_routes;
 use crate::router::AppState;
 use serde_json::json;
 
@@ -1076,54 +1077,22 @@ async fn ensure_rebalance_wallet_ready(state: &AppState, user_id: Uuid) -> Resul
     if state.config.execution_mock || state.config.circle_mock {
         return Ok(());
     }
-    let row: Option<(Option<String>, Option<String>, Option<String>)> =
-        sqlx::query_as("SELECT wallet_id, arc_address, base_address FROM users WHERE id = $1")
-            .bind(user_id)
-            .fetch_optional(&state.db)
-            .await?;
-    let Some((wallet_id, arc_address, base_address)) = row else {
+    let user_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)")
+        .bind(user_id)
+        .fetch_one(&state.db)
+        .await?;
+    if !user_exists {
         return Err(AppError::Unauthorized("unknown user".into()));
-    };
-    if wallet_fields_real_ready(
-        wallet_id.as_deref(),
-        arc_address.as_deref(),
-        base_address.as_deref(),
-    ) {
+    }
+    if wallet_routes::user_has_arc_and_base(&state.db, user_id, &state.config.circle_wallet_set_id)
+        .await?
+    {
         return Ok(());
     }
     Err(AppError::Conflict(
         "Complete account setup before building a rebalance plan. This account still has no real Arc + Base wallet ready for execution."
             .into(),
     ))
-}
-
-fn wallet_fields_real_ready(
-    wallet_id: Option<&str>,
-    arc_address: Option<&str>,
-    base_address: Option<&str>,
-) -> bool {
-    let Some(wallet_id) = wallet_id else {
-        return false;
-    };
-    let Some(arc_address) = arc_address else {
-        return false;
-    };
-    let Some(base_address) = base_address else {
-        return false;
-    };
-    !wallet_id.trim().is_empty()
-        && !wallet_id.starts_with("mock_wallet_")
-        && is_real_evm_address(arc_address)
-        && is_real_evm_address(base_address)
-        && !arc_address.starts_with("0xARC")
-        && !base_address.starts_with("0xBASE")
-}
-
-fn is_real_evm_address(value: &str) -> bool {
-    let Some(hex) = value.strip_prefix("0x") else {
-        return false;
-    };
-    hex.len() == 40 && hex.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 #[cfg(test)]
@@ -1156,50 +1125,6 @@ mod tests {
             prices: HashMap::new(),
         };
         assert!(noop_plan_message(&on_target).contains("already within"));
-    }
-
-    #[test]
-    fn real_rebalance_wallet_gate_rejects_missing_or_mock_wallets() {
-        assert!(!wallet_fields_real_ready(
-            None,
-            Some("0xabc"),
-            Some("0xdef")
-        ));
-        assert!(!wallet_fields_real_ready(
-            Some("mock_wallet_deadbeef"),
-            Some("0xabc"),
-            Some("0xdef")
-        ));
-        assert!(!wallet_fields_real_ready(
-            Some("wallet-id"),
-            Some("abc"),
-            Some("0x2222222222222222222222222222222222222222")
-        ));
-        assert!(!wallet_fields_real_ready(
-            Some("wallet-id"),
-            Some("0x111111111111111111111111111111111111111"),
-            Some("0x2222222222222222222222222222222222222222")
-        ));
-        assert!(!wallet_fields_real_ready(
-            Some("wallet-id"),
-            Some("0x111111111111111111111111111111111111111g"),
-            Some("0x2222222222222222222222222222222222222222")
-        ));
-        assert!(!wallet_fields_real_ready(
-            Some(""),
-            Some("0x1111111111111111111111111111111111111111"),
-            Some("0x2222222222222222222222222222222222222222")
-        ));
-        assert!(!wallet_fields_real_ready(
-            Some("wallet-id"),
-            Some("0xARC0000000000000000000000000000000000000000"),
-            Some("0xdef")
-        ));
-        assert!(wallet_fields_real_ready(
-            Some("wallet-id"),
-            Some("0x1111111111111111111111111111111111111111"),
-            Some("0x2222222222222222222222222222222222222222")
-        ));
     }
 
     #[test]

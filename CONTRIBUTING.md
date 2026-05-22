@@ -63,7 +63,7 @@ CI on every PR:
 | `branch-name`  | PR head branch matches the conventional format                                                 | yes               |
 | `typos`        | `crate-ci/typos@v1` — spell-check source + docs                                                | yes               |
 | `knip`         | unused TS exports / files / deps                                                               | **no** (advisory) |
-| `audit`        | `cargo-audit` (RUSTSEC) + `cargo-deny check` + `cargo-machete` (unused deps)                   | yes               |
+| `audit`        | `cargo-deny check` (RUSTSEC + license policy) + `cargo-machete` (unused deps)                  | yes               |
 | `docker`       | API image builds (on push to `main` only)                                                      | yes               |
 
 ## Local pre-flight
@@ -88,9 +88,8 @@ cargo llvm-cov --all-targets --workspace --summary-only  # optional, requires ca
 # Spelling
 typos                                     # requires `cargo install typos-cli`
 
-# Dependency hygiene (requires cargo-audit, cargo-deny, cargo-machete installed)
+# Dependency hygiene (requires cargo-deny and cargo-machete installed)
 cd apps/api
-cargo audit --ignore RUSTSEC-2023-0071
 cargo deny check
 cargo machete
 

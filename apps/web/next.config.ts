@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  distDir: process.env.NEXT_DIST_DIR ?? ".next",
   output: "standalone",
   // The bottom-left "N" dev indicator overlapped the sidebar's
   // "AGENT ACTIVE" status pill, leaving "...ENT ACTIVE" visible during
@@ -18,35 +19,6 @@ const nextConfig: NextConfig = {
         hostname: "coin-images.coingecko.com",
       },
     ],
-  },
-  async redirects() {
-    return [
-      {
-        source: "/signup/:path*",
-        destination: "/login",
-        permanent: false,
-      },
-      {
-        source: "/sign-up/:path*",
-        destination: "/login",
-        permanent: false,
-      },
-      {
-        source: "/signin/:path*",
-        destination: "/login",
-        permanent: false,
-      },
-      {
-        source: "/sign-in/:path*",
-        destination: "/login",
-        permanent: false,
-      },
-      {
-        source: "/register/:path*",
-        destination: "/login",
-        permanent: false,
-      },
-    ];
   },
   async rewrites() {
     return [

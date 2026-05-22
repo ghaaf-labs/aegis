@@ -7,6 +7,7 @@ import {
   ArrowRight,
   CheckCircle2,
   CircleAlert,
+  KeyRound,
   Loader2,
   LogIn,
   RotateCw,
@@ -23,7 +24,7 @@ import { usePortfolioStore } from "@/stores/portfolio";
 
 type Mode = "email" | "verify" | "finishing" | "done";
 
-export function CreateWalletCard() {
+export function EmailAuthCard() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const referrerHandle = searchParams?.get("ref")?.trim().toLowerCase();
@@ -33,6 +34,7 @@ export function CreateWalletCard() {
   const redirectReason = authRedirectReason(searchParams?.get("reason"));
   const setWallet = usePortfolioStore((s) => s.setWallet);
   const setSessionActive = usePortfolioStore((s) => s.setSessionActive);
+  const setSessionResolved = usePortfolioStore((s) => s.setSessionResolved);
   const resetSession = usePortfolioStore((s) => s.resetSession);
 
   const [email, setEmail] = useState("");
@@ -42,6 +44,7 @@ export function CreateWalletCard() {
     id: string;
     email: string;
     expiresAt: string;
+    devCode?: string;
   } | null>(null);
   const [mode, setMode] = useState<Mode>("email");
   const [submitting, setSubmitting] = useState(false);
@@ -50,6 +53,7 @@ export function CreateWalletCard() {
   const [error, setError] = useState<string | null>(null);
   const [checkingAccount, setCheckingAccount] = useState(true);
   const mountedRef = useRef(true);
+  const authFlowStartedRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -78,6 +82,7 @@ export function CreateWalletCard() {
       .then((session) => {
         if (cancelled) return;
         setSessionActive(true);
+        setSessionResolved(true);
         localStorage.setItem("aegis_email", session.user.email);
         setEmail(session.user.email);
         if (session.wallet) {
@@ -92,7 +97,8 @@ export function CreateWalletCard() {
       })
       .catch(() => {
         if (!cancelled) {
-          resetSession();
+          if (!authFlowStartedRef.current) resetSession();
+          setSessionResolved(true);
         }
       })
       .finally(() => {
@@ -101,7 +107,14 @@ export function CreateWalletCard() {
     return () => {
       cancelled = true;
     };
-  }, [nextPath, resetSession, router, setSessionActive, setWallet]);
+  }, [
+    nextPath,
+    resetSession,
+    router,
+    setSessionActive,
+    setSessionResolved,
+    setWallet,
+  ]);
 
   useEffect(() => {
     if (mode !== "verify" || resendSeconds <= 0) return;
@@ -113,12 +126,13 @@ export function CreateWalletCard() {
 
   const finish = useCallback(
     async (resp: WalletAuthResponse) => {
+      setError(null);
+      setSessionActive(true);
+      setSessionResolved(true);
+      setWallet(resp.wallet);
+      localStorage.setItem("aegis_email", resp.user.email);
       if (!resp.wallet) return false;
       setMode("done");
-      setError(null);
-      setWallet(resp.wallet);
-      setSessionActive(true);
-      localStorage.setItem("aegis_email", resp.user.email);
       await analyticsApi.track("auth.continued", {
         method: "email",
         referrerHandle: referrerHandle ?? null,
@@ -126,11 +140,19 @@ export function CreateWalletCard() {
       router.replace(nextPath ?? "/dashboard");
       return true;
     },
-    [nextPath, referrerHandle, router, setSessionActive, setWallet],
+    [
+      nextPath,
+      referrerHandle,
+      router,
+      setSessionActive,
+      setSessionResolved,
+      setWallet,
+    ],
   );
 
   const checkAccountReady = useCallback(async () => {
     setSubmitting(true);
+    authFlowStartedRef.current = true;
     setError(null);
     try {
       const session = await walletApi.session();
@@ -170,6 +192,7 @@ export function CreateWalletCard() {
       return;
     }
     setSubmitting(true);
+    authFlowStartedRef.current = true;
     setError(null);
     try {
       const resp = await walletApi.startEmail(
@@ -182,6 +205,7 @@ export function CreateWalletCard() {
         id: resp.challengeId,
         email: resp.email,
         expiresAt: resp.expiresAt,
+        devCode: resp.devCode,
       });
       setResendSeconds(resp.resendInSeconds);
       setMode("verify");
@@ -210,6 +234,7 @@ export function CreateWalletCard() {
         id: resp.challengeId,
         email: resp.email,
         expiresAt: resp.expiresAt,
+        devCode: resp.devCode,
       });
       setResendSeconds(resp.resendInSeconds);
     } catch (e) {
@@ -235,6 +260,7 @@ export function CreateWalletCard() {
       return;
     }
     setSubmitting(true);
+    authFlowStartedRef.current = true;
     setError(null);
     try {
       const resp = await walletApi.verifyEmail(
@@ -302,8 +328,10 @@ export function CreateWalletCard() {
             <LogIn className="h-4 w-4 text-accent-agent" />
           ) : mode === "done" ? (
             <CheckCircle2 className="h-4 w-4 text-accent-agent" />
-          ) : (
+          ) : mode === "finishing" ? (
             <Loader2 className="h-4 w-4 animate-spin text-accent-agent" />
+          ) : (
+            <KeyRound className="h-4 w-4 text-accent-agent" />
           )}
           <span className="text-sm font-semibold text-text-hi">
             {mode === "email"
@@ -376,6 +404,14 @@ export function CreateWalletCard() {
               Sent to{" "}
               <span className="text-text-hi">{codeChallenge.email}</span>.
             </p>
+            {codeChallenge.devCode && (
+              <p className="border border-accent-agent/30 bg-accent-agent/5 px-3 py-2 font-mono text-[11px] text-text-lo">
+                Local code:{" "}
+                <span className="tracking-[0.25em] text-text-hi">
+                  {codeChallenge.devCode}
+                </span>
+              </p>
+            )}
             <label
               htmlFor={`${emailInputId}-code`}
               className="block font-mono text-xs text-text-lo"
@@ -583,16 +619,16 @@ function friendlyAuthError(error: unknown) {
     lower.includes("verification code expired") ||
     lower.includes("code_expired")
   ) {
-    return "That code expired. Request a new one.";
+    return "That code expired. Enter your email to get a new one.";
   }
   if (lower.includes("already used") || lower.includes("code_used")) {
-    return "That code was already used. Request a new one.";
+    return "That code was already used. Enter your email to get a new one.";
   }
   if (
     lower.includes("too many verification attempts") ||
     lower.includes("too_many_attempts")
   ) {
-    return "Too many tries. Request a new code.";
+    return "Too many tries. Enter your email to get a new code.";
   }
   if (
     lower.includes("too many verification code requests") ||
@@ -626,8 +662,6 @@ function isCorrectableCodeError(error: unknown) {
   return (
     lower.includes("invalid verification code") ||
     lower.includes("verification code not found") ||
-    lower.includes("code_invalid") ||
-    lower.includes("too many verification attempts") ||
-    lower.includes("too_many_attempts")
+    lower.includes("code_invalid")
   );
 }

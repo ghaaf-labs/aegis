@@ -10,9 +10,7 @@ pub struct WalletUser {
     pub investment_horizon_months: i32,
     pub account_status: String,
     pub custody_model: String,
-    pub wallet_id: Option<String>,
-    pub arc_address: Option<String>,
-    pub base_address: Option<String>,
+    pub wallet_set_id: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -23,7 +21,18 @@ pub struct WalletInfo {
     pub wallet_id: String,
     pub arc_address: String,
     pub base_address: String,
+    pub networks: Vec<WalletNetwork>,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct WalletNetwork {
+    pub blockchain: String,
+    pub wallet_id: String,
+    pub address: String,
+    pub account_type: String,
+    pub state: String,
 }
 
 /// Response sent after a successful email-code verify. The opaque session id is

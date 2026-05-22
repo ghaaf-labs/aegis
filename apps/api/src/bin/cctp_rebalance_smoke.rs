@@ -44,18 +44,7 @@ const PORTFOLIO_ID: &str = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // .env.local wins; .env fills remaining. Surface parse errors at startup
-    // — a malformed value silently zeroes every downstream CCTP/USDC address.
-    if let Err(e) = dotenvy::from_filename(".env.local") {
-        if !matches!(&e, dotenvy::Error::Io(io) if io.kind() == std::io::ErrorKind::NotFound) {
-            eprintln!("[dotenv] .env.local: {e}");
-        }
-    }
-    if let Err(e) = dotenvy::dotenv() {
-        if !matches!(&e, dotenvy::Error::Io(io) if io.kind() == std::io::ErrorKind::NotFound) {
-            eprintln!("[dotenv] .env: {e}");
-        }
-    }
+    aegis_api::env::load_env();
 
     tracing_subscriber::registry()
         .with(

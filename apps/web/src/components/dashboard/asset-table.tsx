@@ -83,10 +83,10 @@ export function AssetTable() {
       <CardHeader>
         <CardTitle>
           {hasDeployableWallet
-            ? "Target Deployment Plan"
+            ? "Planned Target Mix"
             : isUninvested
-              ? "Target Positions"
-              : "Invested Positions"}
+              ? "Target Mix"
+              : "Current Holdings"}
         </CardTitle>
       </CardHeader>
       {hasDeployableWallet && (
@@ -100,11 +100,10 @@ export function AssetTable() {
                   not invested yet.
                 </p>
                 <p className="mt-1 text-xs font-mono text-text-lo leading-relaxed">
-                  The rows below show the planned outcome for deployable USDC
-                  after approval. Non-USDC rows require execution; any USDC
-                  target stays as cash reserve and needs no swap.
+                  The rows below show where wallet cash will go after approval.
+                  Any USDC target stays as cash reserve.
                   {unifiedEurc > 0 &&
-                    " Existing EURC wallet cash is shown in Wallet until an approved StableFX leg confirms portfolio exposure."}
+                    " Existing EURC wallet cash stays in Wallet until you approve a move for it."}
                 </p>
               </div>
             </div>
@@ -112,7 +111,7 @@ export function AssetTable() {
               href={`/dashboard/${portfolio.id}`}
               className="inline-flex shrink-0 items-center justify-center gap-2 rounded-sharp border-brutal border-black bg-accent-pnl px-3 py-2 text-xs font-mono font-semibold text-black shadow-brutal-sm hover:shadow-brutal transition-[box-shadow]"
             >
-              Deploy from dashboard
+              Review from dashboard
               <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
@@ -128,9 +127,9 @@ export function AssetTable() {
               </p>
               <p className="mt-1 text-xs font-mono text-text-lo leading-relaxed">
                 {gatewayBalanceError ??
-                  "Circle Gateway did not confirm Arc + Base balances."}{" "}
-                This table is showing target or invested positions only; it will
-                not calculate a deployment outcome from stale wallet cash.
+                  "Aegis could not confirm the current wallet balance."}{" "}
+                This table shows only the saved target or current holdings until
+                the balance check succeeds.
               </p>
             </div>
           </div>
@@ -299,12 +298,12 @@ export function AssetTable() {
         <div className="px-5 py-2 text-[10px] text-text-mut font-mono border-t border-white/5">
           {hasDeployableWallet
             ? hasUsdcSleeve
-              ? "USDC target weight is kept as reserve cash; non-USDC planned values use deployable Gateway USDC × target weights"
-              : "Planned values use deployable Circle Gateway USDC × target weights"
+              ? "USDC target weight stays as cash reserve; other planned values use wallet USDC × target weights"
+              : "Planned values use wallet USDC × target weights"
             : walletCashUnavailable
-              ? "Gateway wallet cash unavailable; deployment values are hidden until Circle confirms balances"
+              ? "Wallet cash unavailable; planned values are hidden until the balance check succeeds"
               : !walletCashKnown
-                ? "Waiting for Gateway cash before calculating deployment values"
+                ? "Waiting for wallet cash before calculating planned values"
                 : isUninvested
                   ? "Targets are configured, but no confirmed position value exists yet"
                   : snapshot

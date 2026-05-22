@@ -1,49 +1,12 @@
 import Link from "next/link";
-import {
-  ArrowRight,
-  CircleHelp,
-  LifeBuoy,
-  ReceiptText,
-  ShieldAlert,
-  Wallet,
-} from "lucide-react";
+import { ArrowRight, CircleHelp } from "lucide-react";
 import {
   BrutalCard,
   BrutalCardBody,
   BrutalCardHeader,
   BrutalPill,
 } from "@aegis/ui";
-
-const HELP_ITEMS = [
-  {
-    href: "/wallets",
-    icon: Wallet,
-    title: "Why does wallet cash show $0?",
-    body: "Wallets shows idle USDC/EURC only. Invested positions live on Dashboard and Portfolio.",
-    cta: "Open wallet cash view",
-  },
-  {
-    href: "/transactions",
-    icon: ShieldAlert,
-    title: "Why is approval blocked?",
-    body: "Transactions keeps stale, failed, historical, and completed plans visible without letting old plans execute.",
-    cta: "Open approval history",
-  },
-  {
-    href: "/agent-logs",
-    icon: LifeBuoy,
-    title: "What did the agent decide?",
-    body: "Agent Logs shows the model slug, confidence, critic verdict, and recommendation summary.",
-    cta: "Open agent reasoning",
-  },
-  {
-    href: "/tax-center",
-    icon: ReceiptText,
-    title: "How do tax exports work?",
-    body: "Tax center exports settled transaction rows and signed accountant links with clear caveats.",
-    cta: "Open tax center",
-  },
-];
+import { HelpItemGrid } from "./help-item-grid";
 
 export default function HelpPage() {
   return (
@@ -66,17 +29,15 @@ export default function HelpPage() {
         <BrutalCardBody className="grid gap-5 lg:grid-cols-[1fr_420px] lg:items-center">
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-2">
-              <BrutalPill tone="agent">MAP</BrutalPill>
-              <BrutalPill tone="neutral">SIGNED-OUT SAFE</BrutalPill>
+              <BrutalPill tone="agent">Where things live</BrutalPill>
             </div>
             <h2 className="font-mono text-lg font-semibold text-text-hi">
               Values are split by state, not hidden
             </h2>
             <p className="max-w-2xl text-sm leading-relaxed text-text-lo">
-              Wallet pages show idle Circle Gateway cash. Dashboard and
-              Portfolio show invested positions. Transactions explain whether a
-              rebalance is only a draft, waiting for approval, executing, or
-              already stale.
+              Wallet pages show idle cash. Dashboard and Portfolio show invested
+              positions. Transactions explain whether a rebalance is only a
+              draft, waiting for approval, executing, or already stale.
             </p>
             <div className="grid gap-2 text-[11px] font-mono sm:grid-cols-3">
               <HelpFact label="Wallet" value="idle USDC / EURC" />
@@ -88,37 +49,7 @@ export default function HelpPage() {
         </BrutalCardBody>
       </BrutalCard>
 
-      <div className="grid gap-3 md:grid-cols-2">
-        {HELP_ITEMS.map((item) => (
-          <Link key={item.href} href={item.href} className="group">
-            <BrutalCard className="h-full group-hover:border-accent-agent/50">
-              <BrutalCardHeader>
-                <div className="flex items-center gap-2">
-                  <item.icon className="h-4 w-4 text-accent-agent" />
-                  <span className="text-sm font-mono text-text-hi">
-                    {item.title}
-                  </span>
-                </div>
-                <ArrowRight className="h-4 w-4 text-text-mut group-hover:text-accent-agent" />
-              </BrutalCardHeader>
-              <BrutalCardBody>
-                <p className="text-xs font-mono leading-relaxed text-text-lo">
-                  {item.body}
-                </p>
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-border-default pt-3">
-                  <span className="font-mono text-[10px] uppercase tracking-widest text-text-mut">
-                    Requires wallet session
-                  </span>
-                  <span className="inline-flex items-center gap-1 font-mono text-[11px] text-accent-agent">
-                    {item.cta}
-                    <ArrowRight className="h-3 w-3" />
-                  </span>
-                </div>
-              </BrutalCardBody>
-            </BrutalCard>
-          </Link>
-        ))}
-      </div>
+      <HelpItemGrid />
 
       <BrutalCard>
         <BrutalCardHeader>

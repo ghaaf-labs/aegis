@@ -406,10 +406,22 @@ impl Config {
                 );
             }
         }
-        if !self.circle_mock && self.circle_api_key.trim().is_empty() {
-            anyhow::bail!(
-                "MOCK_CIRCLE=false but CIRCLE_API_KEY is empty; set it or flip MOCK_CIRCLE=true"
-            );
+        if !self.circle_mock {
+            if self.circle_api_key.trim().is_empty() {
+                anyhow::bail!(
+                    "MOCK_CIRCLE=false but CIRCLE_API_KEY is empty; set it or flip MOCK_CIRCLE=true"
+                );
+            }
+            if self.circle_wallet_set_id.trim().is_empty() {
+                anyhow::bail!(
+                    "MOCK_CIRCLE=false but CIRCLE_WALLET_SET_ID is empty; set it or flip MOCK_CIRCLE=true"
+                );
+            }
+            if self.circle_entity_secret.trim().is_empty() {
+                anyhow::bail!(
+                    "MOCK_CIRCLE=false but CIRCLE_ENTITY_SECRET is empty; set it or flip MOCK_CIRCLE=true"
+                );
+            }
         }
         if self.session_idle_timeout_minutes == 0 {
             anyhow::bail!("SESSION_IDLE_TIMEOUT_MINUTES must be greater than 0");
@@ -455,6 +467,16 @@ impl Config {
         {
             anyhow::bail!(
                 "SESSION_COOKIE_SECURE=true requires a non-localhost CORS_ALLOW_ORIGIN; set it to your public frontend URL"
+            );
+        }
+        if self.session_cookie_secure && !self.session_cookie_name.starts_with("__Host-") {
+            anyhow::bail!(
+                "SESSION_COOKIE_SECURE=true requires SESSION_COOKIE_NAME to start with __Host-"
+            );
+        }
+        if !self.session_cookie_secure && self.session_cookie_name.starts_with("__Host-") {
+            anyhow::bail!(
+                "SESSION_COOKIE_NAME cannot start with __Host- unless SESSION_COOKIE_SECURE=true"
             );
         }
         Ok(())
@@ -618,6 +640,24 @@ mod tests {
     }
 
     #[test]
+    fn validate_rejects_real_circle_without_wallet_set() {
+        let mut cfg = test_config();
+        cfg.circle_mock = false;
+        cfg.circle_wallet_set_id = String::new();
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("CIRCLE_WALLET_SET_ID"));
+    }
+
+    #[test]
+    fn validate_rejects_real_circle_without_entity_secret() {
+        let mut cfg = test_config();
+        cfg.circle_mock = false;
+        cfg.circle_entity_secret = String::new();
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("CIRCLE_ENTITY_SECRET"));
+    }
+
+    #[test]
     fn model_for_resolves_each_route() {
         let cfg = test_config();
         assert_eq!(cfg.model_for(ModelRoute::RegimeClassify), "regime-model");
@@ -654,5 +694,27 @@ mod tests {
             "http://localhost:8080",
             "https://aegis.example"
         ));
+    }
+
+    #[test]
+    fn validate_requires_host_prefixed_name_for_secure_cookie() {
+        let mut cfg = test_config();
+        cfg.session_cookie_secure = true;
+        cfg.cors_allow_origin = "https://aegis.example".into();
+        cfg.session_cookie_name = "aegis_session".into();
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("__Host-"));
+
+        cfg.session_cookie_name = "__Host-aegis_session".into();
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_host_prefixed_cookie_without_secure_flag() {
+        let mut cfg = test_config();
+        cfg.session_cookie_secure = false;
+        cfg.session_cookie_name = "__Host-aegis_session".into();
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("SESSION_COOKIE_SECURE=true"));
     }
 }

@@ -221,7 +221,7 @@ function manualAnalysisBlockCopy(
   }
   if (!hasWallet) {
     return {
-      copy: "Finish account setup first. The strategist should not reason about deployable cash without real Arc + Base wallet addresses.",
+      copy: "Finish account setup first. The strategist should not reason about deployable cash until your wallet is ready.",
       href: "/wallets",
       cta: "Check account setup",
     };
@@ -230,13 +230,13 @@ function manualAnalysisBlockCopy(
     return {
       copy:
         gatewayBalanceError ??
-        "Circle Gateway did not return balances. Manual analysis is locked so advice cannot treat unknown wallet cash as zero.",
+        "The balance check did not return wallet cash. Manual analysis is locked so advice cannot treat unknown wallet cash as zero.",
       href: "/wallets",
       cta: "Open wallet status",
     };
   }
   return {
-    copy: "Aegis is still checking Circle Gateway balances. Manual analysis unlocks after wallet cash is confirmed.",
+    copy: "Aegis is still checking wallet cash. Manual analysis unlocks after balances are confirmed.",
     href: "/wallets",
     cta: "Check wallet status",
   };

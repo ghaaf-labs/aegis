@@ -112,7 +112,8 @@ describe("<ApprovalModal />", () => {
     expect(text).toContain("BASE SOLD");
     expect(text).toContain("positions to USDC");
     expect(text).toContain("Gross leg notional");
-    expect(text).toContain("One approval executes the Base legs");
+    expect(text).toContain("One approval executes the planned route");
+    expect(text).not.toContain("One approval executes the Base legs");
     expect(text).not.toContain("One approval executes the Arc legs");
     expect(text).not.toContain("BASE WALLET");
 

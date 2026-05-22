@@ -16,6 +16,12 @@
     "esModuleInterop": true,
     "jsx": "preserve"
   },
-  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    "next-env.d.ts",
+    ".next-qa/types/**/*.ts"
+  ],
   "exclude": ["node_modules", "e2e", "playwright.config.ts"]
 }

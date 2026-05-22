@@ -181,8 +181,8 @@ export default async function ExploreDemoPage({ params }: PageProps) {
 
       <div className="pt-2 text-center">
         <p className="text-xs text-text-mut font-mono mb-3">
-          This is a curated demo. Real portfolios use Circle Wallets, Gateway
-          unified USDC, USYC for yield, and StableFX for the EUR sleeve.
+          This is a curated demo. Real portfolios use live wallets, unified
+          balances, yield sleeves, and approved execution.
         </p>
         <Link
           href="/login"

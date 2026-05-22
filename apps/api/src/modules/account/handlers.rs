@@ -1,174 +1,38 @@
 use axum::{
-    extract::State,
+    extract::{Path, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::IntoResponse,
     Extension, Json,
 };
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chrono::{DateTime, Duration, Utc};
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::Sha256;
 use sqlx::types::Json as SqlJson;
+use sqlx::Row;
+use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
-use crate::{error::AppError, middleware::auth::Claims, modules::gateway, router::AppState};
+use crate::{
+    error::AppError,
+    middleware::auth::Claims,
+    modules::{gateway, wallet_routes},
+    router::AppState,
+};
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AccountExportResponse {
-    status: &'static str,
-    delivery_email: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct DeleteAccountRequest {
-    confirm: bool,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DeleteAccountResponse {
-    deletion_requested_at: DateTime<Utc>,
-    completes_at: DateTime<Utc>,
-}
-
-#[derive(Debug, sqlx::FromRow)]
-struct AccountUser {
-    id: Uuid,
-    email: String,
-    wallet_id: Option<String>,
-    arc_address: Option<String>,
-    base_address: Option<String>,
-    deletion_requested_at: Option<DateTime<Utc>>,
-}
-
-pub async fn export(
-    State(state): State<AppState>,
-    Extension(claims): Extension<Claims>,
-) -> crate::error::Result<impl IntoResponse> {
-    let user = account_user(&state, claims.sub).await?;
-    let archive = export_archive(&state, claims.sub).await?;
-    send_export_email(&state, &user.email, &archive).await?;
-
-    Ok((
-        StatusCode::ACCEPTED,
-        Json(AccountExportResponse {
-            status: "queued",
-            delivery_email: user.email,
-        }),
-    ))
-}
-
-pub async fn delete(
-    State(state): State<AppState>,
-    Extension(claims): Extension<Claims>,
-    Json(body): Json<DeleteAccountRequest>,
-) -> crate::error::Result<axum::response::Response> {
-    if !body.confirm {
-        return Err(AppError::BadRequest("confirm_required".into()));
-    }
-
-    let user = account_user(&state, claims.sub).await?;
-    if user.deletion_requested_at.is_none() {
-        ensure_account_can_close(&state, &user).await?;
-    }
-
-    let deletion_requested_at: DateTime<Utc> = sqlx::query_scalar(
-        "UPDATE users
-         SET deletion_requested_at = COALESCE(deletion_requested_at, NOW())
-         WHERE id = $1
-         RETURNING deletion_requested_at",
-    )
-    .bind(user.id)
-    .fetch_one(&state.db)
-    .await?;
-
-    sqlx::query(
-        "UPDATE auth_sessions
-         SET revoked_at = COALESCE(revoked_at, NOW())
-         WHERE user_id = $1
-           AND revoked_at IS NULL",
-    )
-    .bind(user.id)
-    .execute(&state.db)
-    .await?;
-
-    let mut headers = HeaderMap::new();
-    headers.insert(header::SET_COOKIE, cleared_session_cookie(&state));
-    Ok((
-        StatusCode::ACCEPTED,
-        headers,
-        Json(DeleteAccountResponse {
-            deletion_requested_at,
-            completes_at: deletion_requested_at + Duration::days(7),
-        }),
-    )
-        .into_response())
-}
-
-async fn account_user(state: &AppState, user_id: Uuid) -> crate::error::Result<AccountUser> {
-    let user = sqlx::query_as::<_, AccountUser>(
-        "SELECT id, email, wallet_id, arc_address, base_address, deletion_requested_at
-         FROM users
-         WHERE id = $1
-           AND anonymized_at IS NULL",
-    )
-    .bind(user_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| AppError::Unauthorized("unknown user".into()))?;
-    Ok(user)
-}
-
-async fn ensure_account_can_close(
-    state: &AppState,
-    user: &AccountUser,
-) -> crate::error::Result<()> {
-    if !has_real_wallet(user) {
-        return Ok(());
-    }
-    if state.config.circle_mock {
-        return Err(AppError::ServiceUnavailable(
-            "account balance cannot be verified in mock Circle mode".into(),
-        ));
-    }
-
-    let balance =
-        gateway::service::fetch_balance_for_user(&state.db, &state.http, &state.config, user.id)
-            .await?;
-    if balance_has_funds(balance.unified_usdc, balance.unified_eurc) {
-        return Err(AppError::Conflict("funds_present".into()));
-    }
-    Ok(())
-}
-
-fn has_real_wallet(user: &AccountUser) -> bool {
-    let Some(wallet_id) = non_empty(user.wallet_id.as_deref()) else {
-        return false;
-    };
-    let Some(arc) = non_empty(user.arc_address.as_deref()) else {
-        return false;
-    };
-    let Some(base) = non_empty(user.base_address.as_deref()) else {
-        return false;
-    };
-
-    !wallet_id.starts_with("mock_wallet_")
-        && !arc.starts_with("0xARC")
-        && !base.starts_with("0xBASE")
-}
-
-fn non_empty(value: Option<&str>) -> Option<&str> {
-    value.map(str::trim).filter(|s| !s.is_empty())
-}
-
-fn balance_has_funds(usdc: f64, eurc: f64) -> bool {
-    usdc.abs() > 0.000001 || eurc.abs() > 0.000001
-}
-
-async fn export_archive(state: &AppState, user_id: Uuid) -> crate::error::Result<Value> {
-    let archive: SqlJson<Value> = sqlx::query_scalar(
-        r#"
+const ACCOUNT_EXPORT_RATE_WINDOW_HOURS: i64 = 24;
+const ACCOUNT_EXPORT_TTL_HOURS: i64 = 24;
+const EXPORT_RATE_LIMIT_SQL: &str = r#"
+        SELECT delivered_at
+        FROM account_export_jobs
+        WHERE user_id = $1
+          AND delivered_at IS NOT NULL
+          AND delivered_at > $2
+        ORDER BY delivered_at ASC
+        LIMIT 1
+        "#;
+const EXPORT_ARCHIVE_SQL: &str = r#"
         SELECT jsonb_build_object(
           'exportedAt', NOW(),
           'profile', jsonb_build_object(
@@ -187,10 +51,24 @@ async fn export_archive(state: &AppState, user_id: Uuid) -> crate::error::Result
             'marketingOptIn', u.marketing_opt_in
           ),
           'wallet', jsonb_build_object(
-            'walletId', u.wallet_id,
             'walletSetId', u.wallet_set_id,
-            'arcAddress', u.arc_address,
-            'baseAddress', u.base_address
+            'networks', COALESCE((
+              SELECT jsonb_agg(jsonb_build_object(
+                'blockchain', n.blockchain,
+                'walletId', n.circle_wallet_id,
+                'address', n.address,
+                'accountType', n.account_type,
+                'state', n.state
+              ) ORDER BY n.blockchain)
+              FROM user_wallet_networks n
+              WHERE n.user_id = u.id
+                AND n.account_type = 'SCA'
+                AND n.state = 'LIVE'
+                AND (
+                  NULLIF($2, '') IS NULL
+                  OR n.wallet_set_id = NULLIF($2, '')
+                )
+            ), '[]'::jsonb)
           ),
           'portfolios', COALESCE((
             SELECT jsonb_agg(jsonb_build_object(
@@ -251,18 +129,255 @@ async fn export_archive(state: &AppState, user_id: Uuid) -> crate::error::Result
         )
         FROM users u
         WHERE u.id = $1
-        "#,
+        "#;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountExportResponse {
+    status: &'static str,
+    delivery_email: String,
+    expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeleteAccountRequest {
+    confirm: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteAccountResponse {
+    deletion_requested_at: DateTime<Utc>,
+    completes_at: DateTime<Utc>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct AccountUser {
+    id: Uuid,
+    email: String,
+    deletion_requested_at: Option<DateTime<Utc>>,
+}
+
+pub async fn export(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+) -> crate::error::Result<impl IntoResponse> {
+    let user = account_user(&state, claims.sub).await?;
+    ensure_export_rate_limit_available(&state, claims.sub).await?;
+    let archive = export_archive(&state, claims.sub).await?;
+    let job = create_export_job(&state, claims.sub, archive).await?;
+    let download_url = export_download_url(&state, job.id);
+    send_export_email(&state, &user.email, &download_url, job.expires_at).await?;
+    mark_export_delivered(&state, job.id).await?;
+    crate::modules::analytics::service::emit(
+        &state.db,
+        Some(claims.sub),
+        "account.export_requested",
+        json!({
+            "expiresAt": job.expires_at,
+        }),
     )
-    .bind(user_id)
+    .await;
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(AccountExportResponse {
+            status: "queued",
+            delivery_email: user.email,
+            expires_at: job.expires_at,
+        }),
+    ))
+}
+
+pub async fn download_export(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+) -> crate::error::Result<axum::response::Response> {
+    let job_id = verify_export_token(&state, &token)?;
+    let archive: SqlJson<Value> = sqlx::query_scalar(
+        "SELECT archive
+         FROM account_export_jobs
+         WHERE id = $1
+           AND expires_at > NOW()",
+    )
+    .bind(job_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::NotFound("account export".into()))?;
+
+    export_archive_download_response(&archive.0)
+}
+
+async fn ensure_export_rate_limit_available(
+    state: &AppState,
+    user_id: Uuid,
+) -> crate::error::Result<()> {
+    let now = Utc::now();
+    let since = now - Duration::hours(ACCOUNT_EXPORT_RATE_WINDOW_HOURS);
+    let delivered_at: Option<DateTime<Utc>> = sqlx::query_scalar(EXPORT_RATE_LIMIT_SQL)
+        .bind(user_id)
+        .bind(since)
+        .fetch_optional(&state.db)
+        .await?;
+
+    if let Some(delivered_at) = delivered_at {
+        let reset_at = delivered_at + Duration::hours(ACCOUNT_EXPORT_RATE_WINDOW_HOURS);
+        let retry_after = (reset_at - now).num_seconds().max(1);
+        return Err(AppError::TooManyRequests(format!(
+            "rate_limited:{retry_after}"
+        )));
+    }
+
+    Ok(())
+}
+
+pub async fn delete(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Json(body): Json<DeleteAccountRequest>,
+) -> crate::error::Result<axum::response::Response> {
+    if !body.confirm {
+        return Err(AppError::BadRequest("confirm_required".into()));
+    }
+
+    let user = account_user(&state, claims.sub).await?;
+    if user.deletion_requested_at.is_none() {
+        ensure_account_can_close(&state, &user).await?;
+    }
+
+    let deletion_requested_at: DateTime<Utc> = sqlx::query_scalar(
+        "UPDATE users
+         SET deletion_requested_at = COALESCE(deletion_requested_at, NOW())
+         WHERE id = $1
+         RETURNING deletion_requested_at",
+    )
+    .bind(user.id)
     .fetch_one(&state.db)
     .await?;
+
+    sqlx::query(
+        "UPDATE auth_sessions
+         SET revoked_at = COALESCE(revoked_at, NOW())
+         WHERE user_id = $1
+           AND revoked_at IS NULL",
+    )
+    .bind(user.id)
+    .execute(&state.db)
+    .await?;
+    crate::modules::analytics::service::emit(
+        &state.db,
+        Some(user.id),
+        "account.delete_requested",
+        json!({}),
+    )
+    .await;
+
+    let mut headers = HeaderMap::new();
+    headers.insert(header::SET_COOKIE, cleared_session_cookie(&state));
+    Ok((
+        StatusCode::ACCEPTED,
+        headers,
+        Json(DeleteAccountResponse {
+            deletion_requested_at,
+            completes_at: deletion_requested_at + Duration::days(7),
+        }),
+    )
+        .into_response())
+}
+
+async fn account_user(state: &AppState, user_id: Uuid) -> crate::error::Result<AccountUser> {
+    let user = sqlx::query_as::<_, AccountUser>(
+        "SELECT id, email, deletion_requested_at
+         FROM users
+         WHERE id = $1
+           AND anonymized_at IS NULL",
+    )
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| AppError::Unauthorized("unknown user".into()))?;
+    Ok(user)
+}
+
+async fn ensure_account_can_close(
+    state: &AppState,
+    user: &AccountUser,
+) -> crate::error::Result<()> {
+    if !wallet_routes::user_has_arc_and_base(&state.db, user.id, &state.config.circle_wallet_set_id)
+        .await?
+    {
+        return Ok(());
+    }
+    if state.config.circle_mock {
+        return Err(AppError::ServiceUnavailable(
+            "account balance cannot be verified in mock Circle mode".into(),
+        ));
+    }
+
+    let balance =
+        gateway::service::fetch_balance_for_user(&state.db, &state.http, &state.config, user.id)
+            .await?;
+    if balance_has_funds(balance.unified_usdc, balance.unified_eurc) {
+        return Err(AppError::Conflict("funds_present".into()));
+    }
+    Ok(())
+}
+
+fn balance_has_funds(usdc: f64, eurc: f64) -> bool {
+    usdc.abs() > 0.000001 || eurc.abs() > 0.000001
+}
+
+async fn export_archive(state: &AppState, user_id: Uuid) -> crate::error::Result<Value> {
+    let archive: SqlJson<Value> = sqlx::query_scalar(EXPORT_ARCHIVE_SQL)
+        .bind(user_id)
+        .bind(state.config.circle_wallet_set_id.trim())
+        .fetch_one(&state.db)
+        .await?;
     Ok(archive.0)
+}
+
+#[derive(Debug)]
+struct ExportJob {
+    id: Uuid,
+    expires_at: DateTime<Utc>,
+}
+
+async fn create_export_job(
+    state: &AppState,
+    user_id: Uuid,
+    archive: Value,
+) -> crate::error::Result<ExportJob> {
+    let expires_at = Utc::now() + Duration::hours(ACCOUNT_EXPORT_TTL_HOURS);
+    let row = sqlx::query(
+        "INSERT INTO account_export_jobs (user_id, archive, expires_at)
+         VALUES ($1, $2, $3)
+         RETURNING id, expires_at",
+    )
+    .bind(user_id)
+    .bind(SqlJson(archive))
+    .bind(expires_at)
+    .fetch_one(&state.db)
+    .await?;
+
+    Ok(ExportJob {
+        id: row.try_get("id")?,
+        expires_at: row.try_get("expires_at")?,
+    })
+}
+
+async fn mark_export_delivered(state: &AppState, job_id: Uuid) -> crate::error::Result<()> {
+    sqlx::query("UPDATE account_export_jobs SET delivered_at = NOW() WHERE id = $1")
+        .bind(job_id)
+        .execute(&state.db)
+        .await?;
+    Ok(())
 }
 
 async fn send_export_email(
     state: &AppState,
     email: &str,
-    archive: &Value,
+    download_url: &str,
+    expires_at: DateTime<Utc>,
 ) -> crate::error::Result<()> {
     if state.config.resend_api_key.trim().is_empty() || state.config.digest_from.trim().is_empty() {
         return Err(AppError::ServiceUnavailable(
@@ -270,17 +385,14 @@ async fn send_export_email(
         ));
     }
 
-    let archive = serde_json::to_vec_pretty(archive)?;
+    let html = format!(
+        "<p>Your Aegis data export is ready.</p><p><a href=\"{download_url}\">Download your JSON archive</a></p><p>This link expires at {expires_at} UTC. If you did not request this, contact support.</p>"
+    );
     let payload = json!({
         "from": state.config.digest_from,
         "to": [email],
         "subject": "Your Aegis data export",
-        "html": "<p>Your Aegis data export is attached as JSON.</p><p>If you did not request this, contact support.</p>",
-        "attachments": [{
-            "filename": "aegis-data-export.json",
-            "content": BASE64.encode(archive),
-            "content_type": "application/json"
-        }]
+        "html": html
     });
 
     state
@@ -295,6 +407,72 @@ async fn send_export_email(
         .map_err(|e| AppError::ServiceUnavailable(format!("account export email failed: {e}")))?;
 
     Ok(())
+}
+
+fn export_download_url(state: &AppState, job_id: Uuid) -> String {
+    export_download_url_from_parts(
+        &state.config.api_base_url,
+        &state.config.digest_secret,
+        job_id,
+    )
+}
+
+fn export_download_url_from_parts(api_base_url: &str, secret: &str, job_id: Uuid) -> String {
+    format!(
+        "{}/account/export/{}/download",
+        api_base_url.trim_end_matches('/'),
+        mint_export_token_with_secret(secret, job_id)
+    )
+}
+
+fn mint_export_token_with_secret(secret: &str, job_id: Uuid) -> String {
+    let mut mac =
+        Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key size");
+    mac.update(b"account-export:");
+    mac.update(job_id.as_bytes());
+    let tag = mac.finalize().into_bytes();
+    format!("{job_id}.{}", hex::encode(tag))
+}
+
+fn verify_export_token(state: &AppState, token: &str) -> crate::error::Result<Uuid> {
+    verify_export_token_with_secret(&state.config.digest_secret, token)
+}
+
+fn verify_export_token_with_secret(secret: &str, token: &str) -> crate::error::Result<Uuid> {
+    let (id_part, sig_part) = token
+        .split_once('.')
+        .ok_or_else(|| AppError::NotFound("account export".into()))?;
+    let job_id =
+        Uuid::parse_str(id_part).map_err(|_| AppError::NotFound("account export".into()))?;
+    let actual = hex::decode(sig_part).map_err(|_| AppError::NotFound("account export".into()))?;
+    let mut mac =
+        Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key size");
+    mac.update(b"account-export:");
+    mac.update(job_id.as_bytes());
+    let expected = mac.finalize().into_bytes();
+    if expected.as_slice().ct_eq(&actual).unwrap_u8() == 1 {
+        Ok(job_id)
+    } else {
+        Err(AppError::NotFound("account export".into()))
+    }
+}
+
+fn export_archive_download_response(
+    archive: &Value,
+) -> crate::error::Result<axum::response::Response> {
+    let body = serde_json::to_string_pretty(archive)?;
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json; charset=utf-8"),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_str("attachment; filename=\"aegis-data-export.json\"")
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("filename header: {e}")))?,
+    );
+
+    Ok((headers, body).into_response())
 }
 
 fn cleared_session_cookie(state: &AppState) -> HeaderValue {
@@ -315,25 +493,78 @@ mod tests {
     use super::*;
 
     #[test]
-    fn real_wallet_detection_rejects_missing_or_mock_fields() {
-        let mut user = AccountUser {
-            id: Uuid::new_v4(),
-            email: "a@example.com".into(),
-            wallet_id: Some("wallet-1".into()),
-            arc_address: Some("0x1111111111111111111111111111111111111111".into()),
-            base_address: Some("0x2222222222222222222222222222222222222222".into()),
-            deletion_requested_at: None,
-        };
-        assert!(has_real_wallet(&user));
-
-        user.wallet_id = Some("mock_wallet_user".into());
-        assert!(!has_real_wallet(&user));
-    }
-
-    #[test]
     fn tiny_rounding_dust_does_not_block_account_close() {
         assert!(!balance_has_funds(0.0000001, 0.0));
         assert!(balance_has_funds(0.01, 0.0));
         assert!(balance_has_funds(0.0, 0.01));
+    }
+
+    #[test]
+    fn account_export_uses_wallet_network_routes_not_legacy_user_columns() {
+        assert!(EXPORT_ARCHIVE_SQL.contains("user_wallet_networks"));
+        assert!(EXPORT_ARCHIVE_SQL.contains("'networks'"));
+        assert!(!EXPORT_ARCHIVE_SQL.contains("u.wallet_id"));
+        assert!(!EXPORT_ARCHIVE_SQL.contains("u.arc_address"));
+        assert!(!EXPORT_ARCHIVE_SQL.contains("u.base_address"));
+    }
+
+    #[test]
+    fn account_export_rate_limit_counts_only_delivered_jobs() {
+        assert!(EXPORT_RATE_LIMIT_SQL.contains("account_export_jobs"));
+        assert!(EXPORT_RATE_LIMIT_SQL.contains("delivered_at IS NOT NULL"));
+        assert!(EXPORT_RATE_LIMIT_SQL.contains("delivered_at > $2"));
+        assert!(!EXPORT_RATE_LIMIT_SQL.contains("auth_rate_limits"));
+    }
+
+    #[test]
+    fn account_export_token_is_signed_and_tamper_resistant() {
+        let job_id = Uuid::new_v4();
+        let token = mint_export_token_with_secret("secret-a", job_id);
+        assert_eq!(
+            verify_export_token_with_secret("secret-a", &token).unwrap(),
+            job_id
+        );
+
+        assert!(verify_export_token_with_secret("secret-b", &token).is_err());
+        assert!(verify_export_token_with_secret("secret-a", &token.replace('.', "-")).is_err());
+    }
+
+    #[test]
+    fn account_export_download_url_uses_signed_backend_route() {
+        let job_id = Uuid::new_v4();
+        let url = export_download_url_from_parts("https://api.aegis.local/", "secret-a", job_id);
+        let token = url
+            .strip_prefix("https://api.aegis.local/account/export/")
+            .and_then(|path| path.strip_suffix("/download"))
+            .expect("download URL should use account export route");
+
+        assert_eq!(
+            verify_export_token_with_secret("secret-a", token).unwrap(),
+            job_id
+        );
+    }
+
+    #[tokio::test]
+    async fn account_export_download_response_is_json_attachment() {
+        let response = export_archive_download_response(&json!({
+            "profile": { "email": "a@example.com" }
+        }))
+        .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/json; charset=utf-8"
+        );
+        assert_eq!(
+            response.headers().get(header::CONTENT_DISPOSITION).unwrap(),
+            "attachment; filename=\"aegis-data-export.json\""
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body = std::str::from_utf8(&body).unwrap();
+        assert!(body.contains("\"profile\""));
+        assert!(body.contains("a@example.com"));
     }
 }

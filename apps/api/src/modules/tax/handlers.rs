@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::error::{AppError, Result};
 use crate::middleware::auth::Claims;
+use crate::modules::wallet_routes;
 use crate::router::AppState;
 
 use super::export::{export_portfolio, lines_to_csv_1099da};
@@ -199,12 +200,18 @@ pub async fn summary(
     require_ownership(&state, claims.sub, q.portfolio_id).await?;
     let year = q.year.unwrap_or_else(|| Utc::now().year());
 
-    let row: (Option<String>, Option<String>) =
-        sqlx::query_as("SELECT arc_address, base_address FROM users WHERE id = $1")
-            .bind(claims.sub)
-            .fetch_one(&state.db)
-            .await?;
-    let (arc, base) = row;
+    let arc = wallet_routes::arc_address_for_user(
+        &state.db,
+        claims.sub,
+        &state.config.circle_wallet_set_id,
+    )
+    .await?;
+    let base = wallet_routes::base_address_for_user(
+        &state.db,
+        claims.sub,
+        &state.config.circle_wallet_set_id,
+    )
+    .await?;
 
     let counts: (i64, Option<DateTime<Utc>>) = sqlx::query_as(
         "SELECT COUNT(*)::BIGINT AS lots, MAX(l.acquired_at) AS last_synced

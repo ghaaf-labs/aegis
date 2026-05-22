@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { CreateWalletCard } from "./create-wallet-card";
+import { EmailAuthCard } from "./email-auth-card";
 import { walletApi } from "@/lib/api";
 import { usePortfolioStore } from "@/stores/portfolio";
 
@@ -44,11 +44,11 @@ afterEach(() => {
   window.localStorage.clear();
 });
 
-describe("<CreateWalletCard />", () => {
+describe("<EmailAuthCard />", () => {
   it("keeps the email form closed while the account check is pending", async () => {
     vi.mocked(walletApi.session).mockReturnValue(new Promise(() => {}));
 
-    const { root, container } = render(<CreateWalletCard />);
+    const { root, container } = render(<EmailAuthCard />);
     await flushEffects();
 
     expect(container.textContent).toContain("Opening Aegis");
@@ -65,7 +65,7 @@ describe("<CreateWalletCard />", () => {
     window.localStorage.setItem("aegis_email", "remembered@example.com");
     vi.mocked(walletApi.session).mockRejectedValue(new Error("missing"));
 
-    const { root, container } = render(<CreateWalletCard />);
+    const { root, container } = render(<EmailAuthCard />);
     await flushEffects();
 
     const emailInput = container.querySelector<HTMLInputElement>(
@@ -95,7 +95,7 @@ describe("<CreateWalletCard />", () => {
       },
     });
 
-    const { root, container } = render(<CreateWalletCard />);
+    const { root, container } = render(<EmailAuthCard />);
     await flushEffects();
     await flushEffects();
 
@@ -118,7 +118,7 @@ describe("<CreateWalletCard />", () => {
       resendInSeconds: 30,
     });
 
-    const { root, container } = render(<CreateWalletCard />);
+    const { root, container } = render(<EmailAuthCard />);
     await flushEffects();
 
     await click(container, '[data-testid="wallet-auth-submit"]');
@@ -131,6 +131,7 @@ describe("<CreateWalletCard />", () => {
     );
     expect(container.textContent).toContain("Enter the code we emailed you");
     expect(container.textContent).toContain("Sent to");
+    expect(container.querySelector(".animate-spin")).toBe(null);
     expect(container.textContent).not.toContain("This email is new");
     expect(container.textContent).not.toContain("Mock dev code");
 
@@ -162,7 +163,7 @@ describe("<CreateWalletCard />", () => {
       },
     });
 
-    const { root, container } = render(<CreateWalletCard />);
+    const { root, container } = render(<EmailAuthCard />);
     await flushEffects();
     await click(container, '[data-testid="wallet-auth-submit"]');
     await flushEffects();
@@ -202,17 +203,30 @@ describe("<CreateWalletCard />", () => {
       wallet: null,
     });
 
-    const { root, container } = render(<CreateWalletCard />);
+    const { root, container } = render(<EmailAuthCard />);
     await flushEffects();
     await click(container, '[data-testid="wallet-auth-submit"]');
     await flushEffects();
     await fill(container, '[data-testid="wallet-auth-code"]', "123456");
     await click(container, '[data-testid="wallet-auth-submit"]');
     await flushEffects();
+    await flushEffects();
 
     expect(container.textContent).toContain("Setting up your account");
     expect(container.textContent).toContain("This is taking longer than usual");
     expect(container.textContent).toContain("Try again");
+    expect(walletApi.verifyEmail).toHaveBeenCalledTimes(1);
+    expect({
+      sessionActive: usePortfolioStore.getState().sessionActive,
+      sessionResolved: usePortfolioStore.getState().sessionResolved,
+      wallet: usePortfolioStore.getState().wallet,
+      email: window.localStorage.getItem("aegis_email"),
+    }).toEqual({
+      sessionActive: true,
+      sessionResolved: true,
+      wallet: null,
+      email: "slow@example.com",
+    });
     expect(container.textContent).not.toContain("PIN");
     expect(container.textContent).not.toContain("Circle");
 
@@ -224,7 +238,7 @@ describe("<CreateWalletCard />", () => {
     window.localStorage.setItem("aegis_email", "stale@example.com");
     vi.mocked(walletApi.session).mockRejectedValue(new Error("missing"));
 
-    const { root, container } = render(<CreateWalletCard />);
+    const { root, container } = render(<EmailAuthCard />);
     await flushEffects();
 
     expect(window.localStorage.getItem("aegis_email")).toBe(null);
@@ -251,7 +265,7 @@ describe("<CreateWalletCard />", () => {
       resendInSeconds: 30,
     });
 
-    const { root, container } = render(<CreateWalletCard />);
+    const { root, container } = render(<EmailAuthCard />);
     await flushEffects();
     await click(container, '[data-testid="wallet-auth-submit"]');
     await flushEffects();
@@ -261,6 +275,38 @@ describe("<CreateWalletCard />", () => {
 
     expect(walletApi.resendEmail).toHaveBeenCalledWith("code-4");
     expect(walletApi.startEmail).toHaveBeenCalledTimes(1);
+
+    act(() => root.unmount());
+  });
+
+  it("returns to email entry when the current code is exhausted", async () => {
+    mockSearchParams = new URLSearchParams("email=locked@example.com");
+    vi.mocked(walletApi.session).mockRejectedValue(new Error("missing"));
+    vi.mocked(walletApi.startEmail).mockResolvedValue({
+      challengeId: "code-5",
+      email: "locked@example.com",
+      expiresAt: new Date(Date.now() + 600_000).toISOString(),
+      resendInSeconds: 30,
+    });
+    vi.mocked(walletApi.verifyEmail).mockRejectedValue(
+      new Error("429: too_many_attempts"),
+    );
+
+    const { root, container } = render(<EmailAuthCard />);
+    await flushEffects();
+    await click(container, '[data-testid="wallet-auth-submit"]');
+    await flushEffects();
+    await fill(container, '[data-testid="wallet-auth-code"]', "000000");
+    await click(container, '[data-testid="wallet-auth-submit"]');
+    await flushEffects();
+
+    expect(container.textContent).toContain("Continue with email");
+    expect(container.textContent).toContain(
+      "Too many tries. Enter your email to get a new code.",
+    );
+    expect(container.querySelector('[data-testid="wallet-auth-code"]')).toBe(
+      null,
+    );
 
     act(() => root.unmount());
   });

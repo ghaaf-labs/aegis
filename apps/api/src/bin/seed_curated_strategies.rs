@@ -14,8 +14,7 @@ use uuid::Uuid;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    dotenvy::from_filename(".env.local").ok();
-    dotenvy::dotenv().ok();
+    aegis_api::env::load_env();
     let url = env::var("DATABASE_URL")?;
     let pool = PgPool::connect(&url).await?;
 
@@ -62,7 +61,7 @@ fn curated() -> Vec<Row> {
             id: Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap(),
             name: "Conservative Treasury",
             description: "Operating-cash treasury with a yield-bearing T-Bill sleeve. \
-                Suited for DAOs and SMBs that need principal preservation but \
+                Suited for teams and small businesses that need principal preservation but \
                 want USYC's ~5% yield on idle USDC.",
             risk_band: "low",
             min_horizon_months: 12,
@@ -80,7 +79,7 @@ fn curated() -> Vec<Row> {
         },
         Row {
             id: Uuid::parse_str("33333333-3333-3333-3333-333333333333").unwrap(),
-            name: "DAO Reserve",
+            name: "Operating Reserve",
             description: "Multi-currency reserve for an internet-native organization with \
                 multi-jurisdiction operating expenses. USDC + EURC keeps payroll \
                 in either denomination; USYC carries the yield sleeve.",

@@ -99,12 +99,12 @@ export function RebalanceModal({ open, onClose }: Props) {
         : !wallet
           ? "Finish account setup before Aegis can read balances or route rebalance legs."
           : gatewayBalanceStatus === "error"
-            ? "Circle Gateway did not return a confirmed balance. Aegis will not build a rebalance from stale or unknown cash."
+            ? "The wallet cash check did not return a confirmed balance. Aegis will not build a rebalance from stale or unknown cash."
             : gatewayBalanceStatus === "idle" ||
                 gatewayBalanceStatus === "loading"
-              ? "Waiting for Circle Gateway to confirm wallet cash before building a review."
+              ? "Waiting for the wallet cash check before building a review."
               : active?.name
-                ? `Build a deterministic review for "${active.name}" from confirmed holdings, target weights, and Circle Gateway cash. Use AI commentary only when you want extra reasoning.`
+                ? `Build a deterministic review for "${active.name}" from confirmed holdings, target weights, and available wallet cash. Use AI commentary only when you want extra reasoning.`
                 : "Select a portfolio to review.";
 
   useEffect(() => {
@@ -420,11 +420,11 @@ function blockedPlanMessage(
   if (gatewayBalanceStatus === "error") {
     return (
       gatewayBalanceError ??
-      "Circle Gateway balance is unavailable. Aegis will not build a review from unknown wallet cash."
+      "Wallet cash is unavailable. Aegis will not build a review from unknown wallet cash."
     );
   }
   if (gatewayBalanceStatus === "idle" || gatewayBalanceStatus === "loading") {
-    return "Circle Gateway is still confirming wallet cash. Wait for the balance check before building a rebalance review.";
+    return "Aegis is still confirming wallet cash. Wait for the balance check before building a rebalance review.";
   }
   return "Finish account setup before building a rebalance review.";
 }
@@ -462,7 +462,7 @@ function BlockedPlanPanel({
       ok: hasWallet,
     },
     {
-      label: "Gateway",
+      label: "Cash check",
       value:
         gatewayBalanceStatus === "ready"
           ? "confirmed"
@@ -482,9 +482,9 @@ function BlockedPlanPanel({
             Review plan locked
           </p>
           <p className="mt-1 text-[11px] leading-relaxed text-text-lo">
-            Aegis needs a portfolio, a completed account, and a confirmed Circle
-            Gateway balance before it can calculate rebalance legs. Unknown
-            wallet cash is not treated as zero.
+            Aegis needs a portfolio, a completed account, and a confirmed wallet
+            cash balance before it can calculate rebalance legs. Unknown wallet
+            cash is not treated as zero.
           </p>
         </div>
       </div>
@@ -514,7 +514,7 @@ function BlockedPlanPanel({
       {gatewayBalanceStatus === "error" && (
         <p className="mt-3 border border-warn/30 bg-bg px-2 py-1.5 text-[11px] leading-relaxed text-warn">
           {gatewayBalanceError ??
-            "Circle Gateway did not return balances for this wallet."}
+            "The wallet cash check did not return balances for this wallet."}
         </p>
       )}
       {!hasWallet && (

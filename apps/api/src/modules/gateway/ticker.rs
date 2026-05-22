@@ -2,9 +2,9 @@
 //! fresh without requiring the client to keep hitting `/gateway/balance`.
 //!
 //! Closes audit item L2 from Sprint 2. The task runs for the process
-//! lifetime; each tick fetches every user with a Circle wallet from
-//! `users.wallet_id IS NOT NULL` and broadcasts a per-user `GatewayBalance`
-//! event. Slow consumers drop frames (the SSE broadcast channel is bounded
+//! lifetime; each tick fetches every user with a live SCA wallet route and
+//! broadcasts a per-user `GatewayBalance` event. Slow consumers drop frames
+//! (the SSE broadcast channel is bounded
 //! — see `sse::SSE_CHANNEL_CAPACITY`).
 
 use std::sync::Arc;
@@ -38,8 +38,13 @@ pub fn spawn_balance_ticker(db: Db, http: Client, config: Arc<Config>, sse: SseS
             }
 
             let users = match sqlx::query_as::<_, ActiveWallet>(
-                "SELECT id FROM users WHERE wallet_id IS NOT NULL",
+                "SELECT DISTINCT user_id AS id
+                 FROM user_wallet_networks
+                 WHERE account_type = 'SCA'
+                   AND state = 'LIVE'
+                   AND ($1 = '' OR wallet_set_id = $1)",
             )
+            .bind(config.circle_wallet_set_id.trim())
             .fetch_all(&db)
             .await
             {

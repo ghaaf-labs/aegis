@@ -84,6 +84,7 @@ export function Header() {
     setPortfolioOpen(false);
     router.push(`/dashboard/${id}`);
   };
+  const activePortfolioName = portfolio ? displayPortfolioName(portfolio) : "";
 
   // Fetch unified balance on first render — Gateway SSE keeps it fresh after.
   useEffect(() => {
@@ -103,10 +104,7 @@ export function Header() {
         // Best-effort hydration; SSE will overwrite this once the channel
         // opens. Surface in dev so we can spot persistent gateway outages.
         if (alive) {
-          setGatewayBalanceStatus(
-            "error",
-            "Circle Gateway balance is unavailable.",
-          );
+          setGatewayBalanceStatus("error", "Wallet balance is unavailable.");
           console.warn("gateway balance hydrate failed", err);
         }
       });
@@ -139,7 +137,7 @@ export function Header() {
                   Portfolio
                 </span>
                 <span className="block truncate text-sm font-semibold text-text-hi">
-                  {portfolio.name}
+                  {activePortfolioName}
                 </span>
               </span>
               <span className="ml-1 shrink-0 border border-border-default px-1.5 py-0.5 text-[10px] font-mono text-text-lo">
@@ -182,7 +180,7 @@ export function Header() {
                         </span>
                         <span className="min-w-0">
                           <span className="block truncate text-xs font-mono font-semibold text-text-hi">
-                            {p.name}
+                            {displayPortfolioName(p)}
                           </span>
                           <span className="block truncate text-[10px] font-mono text-text-mut">
                             {portfolioSubtitle(p)}
@@ -220,7 +218,7 @@ export function Header() {
           <div className="flex items-center gap-2 px-3 py-1.5 border-brutal border-border-default rounded-sharp bg-bg">
             <span className="text-xs text-text-lo font-mono">Portfolio</span>
             <span className="text-sm font-semibold text-text-hi">
-              {portfolio.name}
+              {activePortfolioName}
             </span>
           </div>
         ) : null}
@@ -350,7 +348,7 @@ export function Header() {
                     )}
                   </p>
                   <p className="text-[10px] font-mono text-text-mut mt-0.5">
-                    Arc + Base · Circle Gateway
+                    Wallet cash balance
                   </p>
                 </div>
                 <Link
@@ -423,6 +421,10 @@ function portfolioSubtitle(
     : 0;
   const assets = hydratedAssets || targetAssets;
   return `${risk} · ${horizon} · ${assets} assets`;
+}
+
+function displayPortfolioName(portfolio: Pick<Portfolio, "name">) {
+  return portfolio.name;
 }
 
 function formatCompactUsd(value: number) {

@@ -16,6 +16,7 @@ use crate::config::Config;
 use crate::db::Db;
 use crate::error::AppError;
 use crate::modules::sse::{SseEvent, SseSender};
+use crate::modules::wallet_routes;
 
 /// Default referral reward in USDC. Override via `REFERRAL_REWARD_USDC` env.
 pub const DEFAULT_REWARD_USDC: f64 = 0.5;
@@ -147,14 +148,10 @@ async fn settle_referral_via_nanopayments(
     if config.nanopayments_treasury_address.trim().is_empty() {
         anyhow::bail!("NANOPAYMENTS_TREASURY_ADDRESS is empty");
     }
-    let referrer_address: Option<String> =
-        sqlx::query_scalar("SELECT arc_address FROM users WHERE id = $1")
-            .bind(referrer_id)
-            .fetch_optional(db)
-            .await?
-            .flatten();
+    let referrer_address =
+        wallet_routes::arc_address_for_user(db, referrer_id, &config.circle_wallet_set_id).await?;
     let Some(pay_to) = referrer_address.filter(|s| !s.is_empty()) else {
-        anyhow::bail!("referrer {referrer_id} has no arc_address");
+        anyhow::bail!("referrer {referrer_id} has no Arc wallet route");
     };
 
     let client = reqwest::Client::new();
@@ -461,11 +458,10 @@ pub async fn settle_invoice(
     config: &Config,
     invoice_id: Uuid,
 ) -> anyhow::Result<Option<String>> {
-    let row: Option<(Uuid, Decimal, Option<String>)> = sqlx::query_as(
+    let row: Option<(Uuid, Decimal)> = sqlx::query_as(
         r#"
-        SELECT i.user_id, i.total_usdc, u.arc_address
+        SELECT i.user_id, i.total_usdc
         FROM invoices i
-        JOIN users u ON u.id = i.user_id
         WHERE i.id = $1 AND i.status IN ('open','past_due')
         "#,
     )
@@ -473,13 +469,15 @@ pub async fn settle_invoice(
     .fetch_optional(db)
     .await?;
 
-    let Some((_user_id, total, payer)) = row else {
+    let Some((user_id, total)) = row else {
         return Ok(None);
     };
 
-    let payer = payer.unwrap_or_default();
+    let payer = wallet_routes::arc_address_for_user(db, user_id, &config.circle_wallet_set_id)
+        .await?
+        .unwrap_or_default();
     if payer.is_empty() {
-        anyhow::bail!("invoice {invoice_id}: user has no arc_address; cannot settle");
+        anyhow::bail!("invoice {invoice_id}: user has no Arc wallet route; cannot settle");
     }
 
     let total_f64: f64 = total.try_into().unwrap_or(0.0);

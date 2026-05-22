@@ -197,8 +197,8 @@ export default function RebalancePage({ params }: PageProps) {
               : plan?.executionMode === "mock"
                 ? "This is a historical test review. Build a fresh real-execution review before approving."
                 : hasCrossChainLeg
-                  ? "The agent has built a cross-chain plan. Review the legs, then approve to settle on Arc + Base."
-                  : `The agent has built a single-chain ${singleChainLabel(plan)} plan. Review the legs, then approve to execute the non-USDC target sleeves while the USDC sleeve stays in wallet cash.`}
+                  ? "The agent has built a multi-step transfer plan. Review every leg, then approve once to execute it."
+                  : "The agent has built a one-network plan. Review the legs, then approve to execute the non-USDC target sleeves while the USDC sleeve stays in wallet cash."}
           </p>
         )}
 
@@ -229,15 +229,6 @@ function isCrossChainLeg(leg: { kind: string }) {
   return leg.kind === "cross_chain_burn" || leg.kind === "cross_chain_mint";
 }
 
-function singleChainLabel(plan: RebalancePlanResponse | null) {
-  const chain = plan?.legs
-    .map((leg) => leg.destChain ?? leg.srcChain)
-    .find(
-      (value): value is "arc" | "base" => value === "arc" || value === "base",
-    );
-  return chain === "base" ? "Base" : "Arc";
-}
-
 function blockedReviewCopy(safety: RebalanceApprovalSafety) {
   switch (safety.code) {
     case "EXECUTION_UNAVAILABLE":
@@ -247,7 +238,7 @@ function blockedReviewCopy(safety: RebalanceApprovalSafety) {
     case "STALE_PLAN":
       return "Wallet cash or portfolio holdings changed after this review was created. Build a fresh review so the amounts match current execution state.";
     case "BALANCE_UNAVAILABLE":
-      return "Aegis cannot verify Gateway balance right now, so real execution approval is locked until Circle Gateway responds.";
+      return "Aegis cannot verify wallet cash right now, so real execution approval is locked until the balance check succeeds.";
     case "MOCK_OR_LEGACY_PLAN":
       return "This review was created outside the current real-execution path. Build a fresh review before approving.";
     default:

@@ -23,3 +23,4 @@ pub mod tax;
 pub mod treasury;
 pub mod trustability;
 pub mod wallet;
+pub mod wallet_routes;
