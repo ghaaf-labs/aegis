@@ -78,6 +78,30 @@ describe("<EmailAuthCard />", () => {
     act(() => root.unmount());
   });
 
+  it("explains why an invalid email cannot continue", async () => {
+    vi.mocked(walletApi.session).mockRejectedValue(new Error("missing"));
+
+    const { root, container } = render(<EmailAuthCard />);
+    await flushEffects();
+    await fill(container, '[data-testid="wallet-auth-email"]', "bad-email");
+    await flushEffects();
+
+    const submit = container.querySelector<HTMLButtonElement>(
+      '[data-testid="wallet-auth-submit"]',
+    );
+    const input = container.querySelector<HTMLInputElement>(
+      '[data-testid="wallet-auth-email"]',
+    );
+    expect(container.textContent).toContain("Enter a valid email address.");
+    expect(input?.getAttribute("aria-invalid")).toBe("true");
+    expect(input?.getAttribute("aria-describedby")).toContain(
+      "wallet-auth-email-invalid",
+    );
+    expect(submit?.disabled).toBe(true);
+
+    act(() => root.unmount());
+  });
+
   it("redirects to the app when this browser is already in Aegis", async () => {
     vi.mocked(walletApi.session).mockResolvedValue({
       user: {

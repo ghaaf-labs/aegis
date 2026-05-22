@@ -293,8 +293,10 @@ export function EmailAuthCard() {
 
   const normalizedEmail = email.trim().toLowerCase();
   const emailValid = isValidEmail(normalizedEmail);
+  const emailInvalid = normalizedEmail.length > 0 && !emailValid;
   const codeValid = /^\d{6}$/.test(code.trim());
   const emailHelpId = "wallet-auth-email-help";
+  const emailInvalidId = "wallet-auth-email-invalid";
   const emailInputId = "wallet-auth-email-input";
   const errorId = "wallet-auth-error";
   const showSignedOutNotice = signedOutFromQuery && mode === "email";
@@ -381,8 +383,8 @@ export function EmailAuthCard() {
               inputMode="email"
               autoComplete="email"
               placeholder="you@example.com"
-              aria-invalid={!!normalizedEmail && !emailValid}
-              aria-describedby={`${emailHelpId}${error ? ` ${errorId}` : ""}`}
+              aria-invalid={emailInvalid}
+              aria-describedby={`${emailHelpId}${emailInvalid ? ` ${emailInvalidId}` : ""}${error ? ` ${errorId}` : ""}`}
               className="min-h-11 w-full rounded-sharp border-brutal border-border-default bg-bg px-3 py-2 font-mono text-base text-text-hi outline-none focus:border-border-hi sm:text-sm"
             />
             <p
@@ -391,6 +393,14 @@ export function EmailAuthCard() {
             >
               We&apos;ll email you a 6-digit code.
             </p>
+            {emailInvalid && (
+              <p
+                id={emailInvalidId}
+                className="mt-2 font-mono text-[11px] leading-relaxed text-warn"
+              >
+                Enter a valid email address.
+              </p>
+            )}
           </form>
         )}
 
