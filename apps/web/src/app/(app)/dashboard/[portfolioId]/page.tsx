@@ -68,10 +68,16 @@ export default function PortfolioDashboardPage() {
     activePortfolio,
     snapshot,
   );
+  const eurcUsd =
+    snapshot?.assets.find((a) => a.symbol === "EURC")?.priceUsd ?? 1.085;
   const investedUsd = positionMetrics.investedUsd;
   const hasInvestedPositions = investedUsd > 0.5;
   const hasIdleCash =
     gatewayBalanceReady && (unifiedUsdc > 0.5 || unifiedEurc > 0.5);
+  const walletCashUsd =
+    gatewayBalanceReady || gatewayBalanceStatus === "loading"
+      ? unifiedUsdc + unifiedEurc * eurcUsd
+      : 0;
   const showFaucet =
     !!wallet && gatewayBalanceReady && !hasInvestedPositions && !hasIdleCash;
   const showNoIdleCash =
@@ -97,6 +103,19 @@ export default function PortfolioDashboardPage() {
       ? formatAssetList(targetSymbols)
       : "the target mix";
   const portfolioTitle = activePortfolio?.name ?? "Portfolio overview";
+  const nextStep = gatewayBalanceUnavailable
+    ? "Retry wallet check"
+    : gatewayBalanceStatus === "idle" || gatewayBalanceStatus === "loading"
+      ? "Checking wallet"
+      : showDeploy
+        ? "Review plan"
+        : showFaucet
+          ? "Add test funds"
+          : showNoIdleCash && hasReviewableDrift
+            ? "Review rebalance"
+            : hasInvestedPositions
+              ? "Monitoring"
+              : "Set target";
 
   if (!portfoliosLoaded || !activePortfolio) {
     return (
@@ -165,7 +184,7 @@ export default function PortfolioDashboardPage() {
                 Dashboard
               </span>
               <span className="max-w-full truncate border border-border-default bg-bg px-2 py-1 text-[10px] font-mono uppercase tracking-widest text-text-mut">
-                Portfolio:{" "}
+                Portfolio name:{" "}
                 <span className="normal-case tracking-normal text-text-hi">
                   {portfolioTitle}
                 </span>
@@ -177,32 +196,34 @@ export default function PortfolioDashboardPage() {
               </h1>
             </div>
             <p className="mt-2 max-w-2xl text-xs font-mono leading-relaxed text-text-lo">
-              Wallet cash is available to invest. Invested value only changes
-              after you approve a plan and the move completes.
+              One screen for the simple state: what is already invested, what is
+              still cash in your wallet, and what needs your approval next.
             </p>
           </div>
           <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[520px]">
-            <HeaderStat label="Invested" value={formatCurrency(investedUsd)} />
             <HeaderStat
-              label="Idle USDC"
+              label="Invested value"
+              value={formatCurrency(investedUsd)}
+            />
+            <HeaderStat
+              label="Wallet cash"
               value={
                 gatewayBalanceUnavailable
                   ? "Unavailable"
-                  : formatCurrency(deployableUsdc)
+                  : gatewayBalanceStatus === "idle" ||
+                      gatewayBalanceStatus === "loading"
+                    ? "Checking"
+                    : formatCurrency(walletCashUsd)
               }
-              tone={deployableUsdc > 5 ? "pnl" : "muted"}
+              tone={gatewayBalanceReady && walletCashUsd > 5 ? "pnl" : "muted"}
             />
             <HeaderStat
-              label="EURC cash"
-              value={
-                gatewayBalanceUnavailable
-                  ? "Unavailable"
-                  : `€${unifiedEurc.toFixed(2)}`
-              }
-              tone={unifiedEurc > 0 ? "pnl" : "muted"}
+              label="Next step"
+              value={nextStep}
+              tone={showDeploy || hasReviewableDrift ? "agent" : "muted"}
             />
             <HeaderStat
-              label="Wallet"
+              label="Account"
               value={wallet ? "Connected" : "Pending"}
               tone={wallet ? "agent" : "muted"}
             />
