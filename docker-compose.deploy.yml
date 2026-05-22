@@ -25,6 +25,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgres://aegis:${POSTGRES_PASSWORD}@postgres:5432/aegis
       API_HOST: 0.0.0.0
