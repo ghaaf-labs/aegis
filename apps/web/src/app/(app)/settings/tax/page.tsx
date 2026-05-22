@@ -50,6 +50,7 @@ export default function TaxSettingsPage() {
   const [creating, setCreating] = useState(false);
   const [summary, setSummary] = useState<TaxSummary | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const selectedPortfolio = portfolios.find((p) => p.id === portfolioId);
 
   useEffect(() => {
     setMounted(true);
@@ -149,8 +150,7 @@ export default function TaxSettingsPage() {
           Tax center
         </h1>
         <p className="text-sm text-text-lo mt-1">
-          Download a tax-ready report for settled Aegis moves, or create a
-          temporary link for your accountant.
+          Download settled activity or create a temporary accountant link.
         </p>
       </div>
 
@@ -217,10 +217,7 @@ export default function TaxSettingsPage() {
                       </span>
                     </span>
                     <span className="text-text-lo">
-                      {w.lotCount} records ·{" "}
-                      {w.lastSyncedAt
-                        ? new Date(w.lastSyncedAt).toLocaleDateString()
-                        : "not synced yet"}
+                      {taxWalletStatus(w.lotCount, w.lastSyncedAt)}
                     </span>
                   </li>
                 ))}
@@ -236,9 +233,8 @@ export default function TaxSettingsPage() {
             <div className="flex items-start gap-2">
               <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-accent-agent" />
               <p>
-                The report includes settled rows Aegis can verify. Keep your
-                wallet addresses visible here so your accountant can reconcile
-                anything outside Aegis.
+                The report includes settled Aegis activity only. Use the wallet
+                list above to reconcile anything you did outside Aegis.
               </p>
             </div>
           </div>
@@ -286,9 +282,8 @@ export default function TaxSettingsPage() {
                 <span className="text-text-hi font-mono">
                   {summary?.totalLotCount ?? 0} records
                 </span>{" "}
-                across portfolio {portfolioId.slice(0, 8)}… for {year}. Wallet
-                addresses are included so your accountant can reconcile
-                activity.
+                for {selectedPortfolio?.name ?? "this portfolio"} in {year}.
+                Wallet addresses are included for reconciliation.
               </p>
               <p>
                 Only settled moves with a transaction reference are included.
@@ -392,8 +387,18 @@ export default function TaxSettingsPage() {
       </BrutalCard>
 
       {error ? (
-        <p className="text-xs font-mono text-risk">Error: {error}</p>
+        <p className="text-xs font-mono text-risk" aria-live="polite">
+          {error}
+        </p>
       ) : null}
     </div>
   );
+}
+
+function taxWalletStatus(lotCount: number, lastSyncedAt: string | null) {
+  if (lotCount === 0) return "No settled rows yet";
+  const syncDate = lastSyncedAt
+    ? new Date(lastSyncedAt).toLocaleDateString()
+    : "sync pending";
+  return `${lotCount} records · ${syncDate}`;
 }
