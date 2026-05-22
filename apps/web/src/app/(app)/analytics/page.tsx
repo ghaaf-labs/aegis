@@ -54,8 +54,8 @@ export default function AnalyticsPage() {
           Analytics
         </h1>
         <p className="mt-1 max-w-2xl text-sm text-text-lo">
-          A compact read on net worth, drift inputs, market regime, and agent
-          confidence. This separates invested value from idle wallet cash.
+          A compact read on value, wallet cash, targets, market context, and
+          decision quality.
         </p>
       </div>
 
@@ -64,7 +64,7 @@ export default function AnalyticsPage() {
           icon={CircleDollarSign}
           label="Net worth"
           value={formatCurrency(netWorth)}
-          detail={`${formatCurrency(investedUsd)} invested · ${formatCurrency(idleCashUsd)} idle cash`}
+          detail={`${formatCurrency(investedUsd)} invested · ${formatCurrency(idleCashUsd)} in wallet`}
           tone="pnl"
         />
         <MetricCard
@@ -88,14 +88,14 @@ export default function AnalyticsPage() {
             portfolio
               ? hasConfirmedCapital
                 ? (portfolio.goal?.riskTolerance ?? "Goal set")
-                : "computed after first deploy"
+                : "available after first approved move"
               : "No portfolio"
           }
           tone="agent"
         />
         <MetricCard
           icon={Brain}
-          label={hasConfirmedCapital ? "Agent confidence" : "Current guidance"}
+          label={hasConfirmedCapital ? "Decision confidence" : "Current state"}
           value={
             hasConfirmedCapital && decisions.length
               ? `${Math.round(avgConfidence * 100)}%`
@@ -104,7 +104,9 @@ export default function AnalyticsPage() {
           detail={
             hasConfirmedCapital
               ? `${decisions.length} ${decisions.length === 1 ? "decision" : "decisions"} loaded`
-              : `${decisions.length} historical ${decisions.length === 1 ? "decision" : "decisions"} in audit`
+              : decisions.length
+                ? `${decisions.length} previous ${decisions.length === 1 ? "review" : "reviews"} saved`
+                : "No approved moves yet"
           }
           tone="agent"
         />
@@ -186,7 +188,7 @@ export default function AnalyticsPage() {
             />
             <Row
               label="Snapshot"
-              value={snapshot ? timeAgo(snapshot.capturedAt) : "Loading"}
+              value={snapshot ? timeAgo(snapshot.capturedAt) : "Waiting"}
             />
             <p className="border-t border-border-default pt-3 text-[11px] leading-relaxed text-text-mut">
               Market data via CoinGecko
