@@ -87,47 +87,32 @@ export default function PortfolioPage() {
             : "border-warn/50 bg-warn/5"
         }`}
       >
-        <div className="grid gap-4 lg:grid-cols-[1fr_360px] lg:items-center">
-          <div className="flex items-start gap-3">
-            <div
-              className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-sharp border-brutal border-black ${
-                reviewReady ? "bg-accent-agent" : "bg-warn"
+        <div className="flex items-start gap-3">
+          <div
+            className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-sharp border-brutal border-black ${
+              reviewReady ? "bg-accent-agent" : "bg-warn"
+            }`}
+          >
+            {reviewReady ? (
+              <ShieldCheck className="h-4 w-4 text-black" />
+            ) : (
+              <CircleAlert className="h-4 w-4 text-black" />
+            )}
+          </div>
+          <div>
+            <p
+              className={`font-mono text-[10px] uppercase tracking-widest ${
+                reviewReady ? "text-accent-agent" : "text-warn"
               }`}
             >
-              {reviewReady ? (
-                <ShieldCheck className="h-4 w-4 text-black" />
-              ) : (
-                <CircleAlert className="h-4 w-4 text-black" />
-              )}
-            </div>
-            <div>
-              <p
-                className={`font-mono text-[10px] uppercase tracking-widest ${
-                  reviewReady ? "text-accent-agent" : "text-warn"
-                }`}
-              >
-                Before review
-              </p>
-              <h2 className="mt-1 font-mono text-lg font-semibold text-text-hi">
-                {readiness.title}
-              </h2>
-              <p className="mt-2 max-w-3xl font-mono text-xs leading-relaxed text-text-lo">
-                {readiness.copy}
-              </p>
-            </div>
-          </div>
-          <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-1">
-            <ReadinessFact label="Portfolio" value="selected" ok />
-            <ReadinessFact
-              label="Wallet"
-              value={wallet ? "ready" : "setup required"}
-              ok={!!wallet}
-            />
-            <ReadinessFact
-              label="Cash check"
-              value={gatewayStatusLabel(gatewayBalanceStatus)}
-              ok={gatewayBalanceStatus === "ready"}
-            />
+              Before review
+            </p>
+            <h2 className="mt-1 font-mono text-lg font-semibold text-text-hi">
+              {readiness.title}
+            </h2>
+            <p className="mt-2 max-w-3xl font-mono text-xs leading-relaxed text-text-lo">
+              {readiness.copy}
+            </p>
           </div>
         </div>
         <div className="mt-4 flex flex-col gap-2 sm:flex-row">
@@ -188,58 +173,26 @@ function rebalanceReadinessCopy(
 ) {
   if (!hasWallet) {
     return {
-      title: "Finish setup before rebalance review",
-      copy: "Aegis needs a ready wallet and a current cash check before it can build a rebalance review. This prevents a plan from being built against a placeholder account.",
+      title: "Finish setup before a rebalance review",
+      copy: "Aegis needs your wallet ready and a current cash check before it can build a review.",
     };
   }
   if (gatewayBalanceStatus === "error") {
     return {
-      title: "Rebalance is locked because wallet cash is unknown",
+      title: "Rebalance is paused — wallet cash is unknown",
       copy:
         gatewayBalanceError ??
-        "The balance check did not confirm wallet cash. Aegis will not treat an unavailable balance as $0, and it will not create rebalance legs from stale wallet cash.",
+        "The balance check didn't confirm your cash. Aegis won't treat an unavailable balance as $0 or plan against stale cash.",
     };
   }
   if (gatewayBalanceStatus === "idle" || gatewayBalanceStatus === "loading") {
     return {
-      title: "Checking wallet cash before rebalance review",
-      copy: "Aegis is waiting for a fresh wallet cash check. The review builder unlocks only after balances are known, because idle USDC changes what should be bought or left in reserve.",
+      title: "Checking wallet cash…",
+      copy: "Aegis is confirming your balance. The review unlocks once cash is known, since idle USDC changes what to buy or hold.",
     };
   }
   return {
     title: "Ready to build a rebalance review",
-    copy: "Wallet setup and cash balances are confirmed. Aegis can build a deterministic review from current positions, target weights, and idle cash; execution still requires approval on the next screen.",
+    copy: "Your wallet and cash are confirmed. Build a review from current positions, targets, and idle cash — you still approve before anything runs.",
   };
-}
-
-function gatewayStatusLabel(status: GatewayBalanceStatus) {
-  if (status === "ready") return "confirmed";
-  if (status === "error") return "unavailable";
-  if (status === "loading") return "checking";
-  return "waiting";
-}
-
-function ReadinessFact({
-  label,
-  value,
-  ok,
-}: {
-  label: string;
-  value: string;
-  ok: boolean;
-}) {
-  return (
-    <div
-      className={`border px-3 py-2 font-mono ${
-        ok ? "border-accent-agent/30 bg-accent-agent/5" : "border-warn/40 bg-bg"
-      }`}
-    >
-      <p className="text-[10px] uppercase tracking-widest text-text-mut">
-        {label}
-      </p>
-      <p className={`mt-1 text-xs ${ok ? "text-accent-agent" : "text-warn"}`}>
-        {value}
-      </p>
-    </div>
-  );
 }
