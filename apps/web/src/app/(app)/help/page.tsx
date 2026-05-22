@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight, CircleHelp } from "lucide-react";
 import {
@@ -7,6 +8,12 @@ import {
   BrutalPill,
 } from "@aegis/ui";
 import { HelpItemGrid } from "./help-item-grid";
+
+export const metadata: Metadata = {
+  title: "Aegis · Help",
+  description:
+    "Plain-English help for wallet cash, approvals, agent decisions, tax exports, and support.",
+};
 
 export default function HelpPage() {
   return (
@@ -62,10 +69,10 @@ export default function HelpPage() {
             dispute handling, and refund boundaries.
           </p>
           <Link
-            href="/policy"
+            href="/policy#refunds"
             className="mt-3 inline-flex min-h-10 items-center gap-2 border border-accent-agent/40 bg-accent-agent/10 px-3 py-2 text-xs font-mono text-accent-agent hover:border-accent-agent"
           >
-            Open policy
+            Open refund policy
             <ArrowRight className="h-3 w-3" />
           </Link>
         </BrutalCardBody>

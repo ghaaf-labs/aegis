@@ -56,7 +56,10 @@ export default function PolicyPage() {
         </section>
 
         {/* What we refund */}
-        <section className="border-brutal border-border-default bg-raised p-6">
+        <section
+          id="refunds"
+          className="scroll-mt-24 border-brutal border-border-default bg-raised p-6"
+        >
           <h2 className="text-base font-bold text-text-hi uppercase tracking-wider mb-4">
             What we refund
           </h2>
