@@ -75,9 +75,29 @@ export default function SettingsIndex() {
   >("idle");
   const [emailMessage, setEmailMessage] = useState("");
   const normalizedNewEmail = newEmail.trim().toLowerCase();
+  const storedEmailNormalized = storedEmail.trim().toLowerCase();
+  const newEmailValidationMessage =
+    normalizedNewEmail.length === 0
+      ? ""
+      : !isValidEmail(normalizedNewEmail)
+        ? "Enter a valid email address."
+        : normalizedNewEmail === storedEmailNormalized
+          ? "Use a different email address."
+          : "";
+  const newEmailInvalid = !!newEmailValidationMessage;
+  const newEmailHelpId = "settings-new-email-help";
+  const newEmailValidationId = "settings-new-email-validation";
+  const emailMessageId = "settings-email-message";
+  const newEmailDescription = [
+    !emailChallenge && !emailMessage && !newEmailInvalid ? newEmailHelpId : "",
+    newEmailInvalid ? newEmailValidationId : "",
+    emailMessage ? emailMessageId : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   const canRequestEmailUpdate =
     isValidEmail(normalizedNewEmail) &&
-    normalizedNewEmail !== storedEmail.trim().toLowerCase();
+    normalizedNewEmail !== storedEmailNormalized;
   const emailActionDisabled =
     emailStatus === "sending" ||
     emailStatus === "verifying" ||
@@ -319,8 +339,19 @@ export default function SettingsIndex() {
                   autoComplete="email"
                   placeholder="new@example.com"
                   aria-label="New email address"
+                  aria-invalid={newEmailInvalid}
+                  aria-describedby={newEmailDescription || undefined}
                   className="mt-3 min-h-10 w-full rounded-sharp border-brutal border-border-default bg-bg px-3 py-2 font-mono text-sm text-text-hi outline-none focus:border-border-hi"
                 />
+                {newEmailInvalid && (
+                  <p
+                    id={newEmailValidationId}
+                    role="alert"
+                    className="mt-2 font-mono text-[11px] leading-relaxed text-risk"
+                  >
+                    {newEmailValidationMessage}
+                  </p>
+                )}
                 {emailChallenge && (
                   <div className="mt-2 space-y-2">
                     <input
@@ -356,13 +387,18 @@ export default function SettingsIndex() {
                   )}
                   {emailChallenge ? "Verify email" : "Send code"}
                 </button>
-                {!emailChallenge && !emailMessage && (
-                  <p className="mt-2 font-mono text-[11px] leading-relaxed text-text-mut">
-                    Use a different valid email.
+                {!emailChallenge && !emailMessage && !newEmailInvalid && (
+                  <p
+                    id={newEmailHelpId}
+                    className="mt-2 font-mono text-[11px] leading-relaxed text-text-mut"
+                  >
+                    Use an email you can access.
                   </p>
                 )}
                 {emailMessage && (
                   <p
+                    id={emailMessageId}
+                    role={emailStatus === "error" ? "alert" : undefined}
                     aria-live="polite"
                     className={`mt-2 font-mono text-[11px] leading-relaxed ${
                       emailStatus === "error" ? "text-risk" : "text-text-lo"
