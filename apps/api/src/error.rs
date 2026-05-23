@@ -205,6 +205,14 @@ fn bad_request_detail(message: &str) -> ErrorDetail {
 }
 
 fn conflict_detail(message: &str) -> ErrorDetail {
+    if message.starts_with("No rebalance plan was created") {
+        return ErrorDetail {
+            code: "no_rebalance_plan",
+            message: "No rebalance plan was created because there is no deployable wallet cash above $5. Add wallet cash, then build a new review.",
+            retry_after: None,
+        };
+    }
+
     match message {
         "email_in_use" => ErrorDetail {
             code: "email_in_use",
@@ -389,6 +397,16 @@ mod tests {
         assert_eq!(detail.code, "faucet_daily_limit");
         assert!(detail.message.contains("test USDC"));
         assert_eq!(detail.retry_after, Some(60 * 60 * 24));
+    }
+
+    #[test]
+    fn no_rebalance_plan_conflict_is_actionable() {
+        let detail = ErrorDetail::from(&AppError::Conflict(
+            "No rebalance plan was created because this portfolio has no confirmed positions and no deployable USDC above the $5 dust threshold. Fund the wallet first, then review deployment.".into(),
+        ));
+        assert_eq!(detail.code, "no_rebalance_plan");
+        assert!(detail.message.contains("Add wallet cash"));
+        assert!(detail.message.contains("$5"));
     }
 
     #[test]
