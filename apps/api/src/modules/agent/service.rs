@@ -640,9 +640,8 @@ fn clamp_allocation(
     guardrails: Guardrails,
 ) -> std::collections::BTreeMap<String, f64> {
     use std::collections::BTreeMap;
-    let usdc_only = || -> BTreeMap<String, f64> {
-        std::iter::once(("USDC".to_string(), 100.0)).collect()
-    };
+    let usdc_only =
+        || -> BTreeMap<String, f64> { std::iter::once(("USDC".to_string(), 100.0)).collect() };
     let exec_ok = |sym: &str| {
         sym.eq_ignore_ascii_case("USDC") || executable.iter().any(|e| e.eq_ignore_ascii_case(sym))
     };
@@ -851,7 +850,10 @@ pub async fn propose_allocation(
         Err(_) => "Wallet balance: unavailable (Gateway lookup failed).".to_string(),
     };
     ctx.insert("wallet_block", gateway_block);
-    ctx.insert("route_capabilities", format_route_capabilities(&state.config));
+    ctx.insert(
+        "route_capabilities",
+        format_route_capabilities(&state.config),
+    );
     // Tax-loss harvesting (RFB #4): make the allocator aware of positions
     // sitting at an unrealized loss so it can prefer trimming them when moving
     // toward the new target. The realized harvest is surfaced for approval via

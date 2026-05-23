@@ -63,3 +63,6 @@ infra/contracts/broadcast/
 .env.bak
 *.bak
 apps/web/e2e/.auth/
+
+# Local agent worktrees (never commit)
+.claude/worktrees/

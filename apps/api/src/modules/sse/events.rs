@@ -359,7 +359,7 @@ mod contract_tests {
             counterfactual: None,
             kind: None,
             recommended_allocation: None,
-};
+        };
         let v = json(&payload);
         for key in [
             "id",
@@ -425,7 +425,7 @@ mod contract_tests {
             counterfactual: None,
             kind: None,
             recommended_allocation: None,
-});
+        });
         let agent_for_other = SseEvent::AgentDecision(AgentDecisionPayload {
             id: uuid::Uuid::nil(),
             portfolio_id: uuid::Uuid::nil(),
@@ -446,7 +446,7 @@ mod contract_tests {
             counterfactual: None,
             kind: None,
             recommended_allocation: None,
-});
+        });
         let public_event = SseEvent::PriceTick(PriceTick {
             symbol: "BTC".into(),
             price_usd: 0.0,
