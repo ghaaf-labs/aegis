@@ -143,6 +143,69 @@ pub struct Attestation {
     pub attestation: String,
 }
 
+/// CCTP V2 finality thresholds. 2000 = standard finality (~13min on Base, free).
+/// 1000 = Fast Transfer (sub-30s) but requires a non-zero `maxFee`.
+#[cfg_attr(not(any(feature = "real-cctp", test)), allow(dead_code))]
+const MIN_FINALITY_STANDARD: u32 = 2000;
+#[cfg_attr(not(any(feature = "real-cctp", test)), allow(dead_code))]
+const MIN_FINALITY_FAST: u32 = 1000;
+
+/// One row of Circle's `/v2/burn/USDC/fees/{src}/{dest}` response: the
+/// `minimumFee` (bps) charged for a burn at the given `finalityThreshold`.
+#[cfg_attr(not(any(feature = "real-cctp", test)), allow(dead_code))]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+struct CctpFeeEntry {
+    #[serde(rename = "finalityThreshold")]
+    finality_threshold: u32,
+    #[serde(rename = "minimumFee")]
+    minimum_fee: u32,
+}
+
+/// The chosen burn parameters: a finality threshold plus the fee (in bps) Circle
+/// charges at it. `fee_bps == 0` is the standard, free path.
+#[cfg_attr(not(any(feature = "real-cctp", test)), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct BurnFeeChoice {
+    finality_threshold: u32,
+    fee_bps: u32,
+}
+
+impl BurnFeeChoice {
+    #[cfg_attr(not(any(feature = "real-cctp", test)), allow(dead_code))]
+    const STANDARD: Self = Self {
+        finality_threshold: MIN_FINALITY_STANDARD,
+        fee_bps: 0,
+    };
+}
+
+/// Select the Fast Transfer threshold + its quoted fee from Circle's fee table.
+/// Falls back to the free standard path when no fast entry exists (so the
+/// working path is never broken on a fee-table change). Never hardcodes a fee.
+#[cfg_attr(not(any(feature = "real-cctp", test)), allow(dead_code))]
+fn select_burn_fee(entries: &[CctpFeeEntry]) -> BurnFeeChoice {
+    entries
+        .iter()
+        .find(|e| e.finality_threshold == MIN_FINALITY_FAST)
+        .map(|e| BurnFeeChoice {
+            finality_threshold: MIN_FINALITY_FAST,
+            fee_bps: e.minimum_fee,
+        })
+        .unwrap_or(BurnFeeChoice::STANDARD)
+}
+
+/// Compute the absolute on-chain `maxFee` (USDC, 6 decimals) from a burn
+/// `amount` and a fee in bps, rounding up so the burn never under-quotes.
+#[cfg_attr(not(any(feature = "real-cctp", test)), allow(dead_code))]
+fn max_fee_for(amount: u128, fee_bps: u32) -> u128 {
+    if fee_bps == 0 {
+        return 0;
+    }
+    amount
+        .saturating_mul(fee_bps as u128)
+        .div_ceil(10_000)
+        .max(1)
+}
+
 pub struct CctpClient<'a> {
     http: &'a reqwest::Client,
     config: &'a Config,
@@ -312,13 +375,12 @@ impl<'a> CctpClient<'a> {
         // decodes it and performs the atomic USDC -> tokenOut swap.
         let hook_data = encode_hook_payload(hook);
 
-        // CCTP V2 finality threshold: 2000 = standard finality (~13min on
-        // Base). 1000 (Fast Transfer) is sub-30s but requires a non-zero
-        // maxFee — Circle sandbox returns delayReason="insufficient_fee"
-        // when maxFee=0. Standard is free and adequate for the rebalance
-        // cadence we run.
-        const MIN_FINALITY_STANDARD: u32 = 2000;
-        let max_fee = U256::ZERO;
+        // Fast Transfer (threshold 1000) needs a non-zero maxFee fetched from
+        // Circle's fee API — a zero fee on the fast path is rejected with
+        // delayReason="insufficient_fee". Fall back to the free standard path
+        // (threshold 2000, maxFee 0) when the fee API is unavailable.
+        let fee_choice = self.resolve_burn_fee(src, dest).await;
+        let max_fee = U256::from(max_fee_for(amount, fee_choice.fee_bps));
 
         // destinationCaller = bytes32(0) means any address can call
         // MessageTransmitter.receiveMessage on the destination chain.
@@ -339,7 +401,7 @@ impl<'a> CctpClient<'a> {
                 usdc,
                 destination_caller,
                 max_fee,
-                MIN_FINALITY_STANDARD,
+                fee_choice.finality_threshold,
                 hook_data,
             )
             .send()
@@ -504,8 +566,9 @@ impl<'a> CctpClient<'a> {
         )
         .await?;
 
-        // 2) depositForBurnWithHook — identical args to the EOA path.
-        const MIN_FINALITY_STANDARD: u32 = 2000;
+        // 2) depositForBurnWithHook — identical args to the EOA path, including
+        // the Fast Transfer threshold + fetched maxFee.
+        let fee_choice = self.resolve_burn_fee(src, dest).await;
         let destination_caller = alloy::primitives::FixedBytes::<32>::ZERO;
         let burn_calldata = ICCTPV2TokenMessenger::depositForBurnWithHookCall {
             amount: U256::from(amount),
@@ -513,8 +576,8 @@ impl<'a> CctpClient<'a> {
             mintRecipient: executor_on_dest.into_word(),
             burnToken: usdc,
             destinationCaller: destination_caller,
-            maxFee: U256::ZERO,
-            minFinalityThreshold: MIN_FINALITY_STANDARD,
+            maxFee: U256::from(max_fee_for(amount, fee_choice.fee_bps)),
+            minFinalityThreshold: fee_choice.finality_threshold,
             hookData: encode_hook_payload(hook),
         }
         .abi_encode();
@@ -582,6 +645,36 @@ impl<'a> CctpClient<'a> {
             None,
         )
         .await
+    }
+
+    /// Resolve the Fast Transfer burn parameters for `src` → `dest` by querying
+    /// Circle's fee API. Returns the standard (free, slow) path on any error so
+    /// the working burn is never broken by an unreachable/changed fee endpoint.
+    #[cfg(feature = "real-cctp")]
+    async fn resolve_burn_fee(&self, src: ChainKey, dest: ChainKey) -> BurnFeeChoice {
+        let url = format!(
+            "{}/v2/burn/USDC/fees/{}/{}",
+            self.config.cctp_attestation_url,
+            src.domain_id(),
+            dest.domain_id()
+        );
+        match self.http.get(&url).send().await {
+            Ok(r) if r.status().is_success() => match r.json::<Vec<CctpFeeEntry>>().await {
+                Ok(entries) => select_burn_fee(&entries),
+                Err(e) => {
+                    tracing::warn!(error = %e, "cctp fee parse failed; using standard finality");
+                    BurnFeeChoice::STANDARD
+                }
+            },
+            Ok(r) => {
+                tracing::warn!(status = %r.status(), "cctp fee api non-200; using standard finality");
+                BurnFeeChoice::STANDARD
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "cctp fee api unreachable; using standard finality");
+                BurnFeeChoice::STANDARD
+            }
+        }
     }
 
     pub async fn wait_for_attestation(
@@ -777,6 +870,40 @@ mod tests {
         assert!(!att.attestation.is_empty());
         let mint = client.receive_message(ChainKey::Base, &att).await.unwrap();
         assert!(mint.tx_hash.starts_with("0x"));
+    }
+
+    #[test]
+    fn fee_table_selects_fast_threshold_and_uses_parsed_fee() {
+        // Sample shape of Circle's GET /v2/burn/USDC/fees/{src}/{dest} body:
+        // one row per finality threshold, fee in bps under `minimumFee`.
+        let body = r#"[
+            {"finalityThreshold": 2000, "minimumFee": 0},
+            {"finalityThreshold": 1000, "minimumFee": 1}
+        ]"#;
+        let entries: Vec<CctpFeeEntry> = serde_json::from_str(body).expect("fee body parses");
+        let choice = select_burn_fee(&entries);
+        assert_eq!(
+            choice.finality_threshold, MIN_FINALITY_FAST,
+            "fast threshold must be selected when present"
+        );
+        assert_eq!(choice.fee_bps, 1, "parsed minimumFee must drive the maxFee");
+
+        // 100 USDC (6dp) at 1bps = 0.01 USDC = 10_000 base units (rounded up).
+        let amount = 100_000_000u128;
+        assert_eq!(max_fee_for(amount, choice.fee_bps), 10_000);
+    }
+
+    #[test]
+    fn fee_table_falls_back_to_standard_when_no_fast_row() {
+        let body = r#"[{"finalityThreshold": 2000, "minimumFee": 0}]"#;
+        let entries: Vec<CctpFeeEntry> = serde_json::from_str(body).expect("fee body parses");
+        let choice = select_burn_fee(&entries);
+        assert_eq!(choice, BurnFeeChoice::STANDARD);
+        assert_eq!(
+            max_fee_for(100_000_000, choice.fee_bps),
+            0,
+            "standard path is free (maxFee 0)"
+        );
     }
 
     #[test]
