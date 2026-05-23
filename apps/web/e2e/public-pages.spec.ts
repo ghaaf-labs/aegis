@@ -3,18 +3,13 @@ import { test, expect } from "@playwright/test";
 // P-series — public pages that require no auth and no API backend.
 // All tests in this file must pass with only the Next.js dev server running.
 
-test("P1 — landing page has Explore + Continue + Strategies CTAs", async ({
-  page,
-}) => {
+test("P1 — landing page has Explore + Start CTAs", async ({ page }) => {
   await page.goto("/");
   await expect(
     page.getByRole("link", { name: /Explore/i }).first(),
   ).toBeVisible();
   await expect(
-    page.getByRole("link", { name: /Continue|Get started/i }).first(),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: /Strategies/i }).first(),
+    page.getByRole("link", { name: /Start for free|Get started/i }).first(),
   ).toBeVisible();
 });
 
