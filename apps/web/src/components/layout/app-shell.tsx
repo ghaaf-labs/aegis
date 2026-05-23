@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { CircleAlert, Menu, Wallet, X } from "lucide-react";
@@ -9,6 +9,8 @@ import { Header } from "@/components/layout/header";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { isProtectedAppPath, safeNextPath } from "@/lib/auth-routing";
 import { usePortfolioStore } from "@/stores/portfolio";
+
+const DRAWER_TITLE_ID = "mobile-nav-title";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -35,11 +37,82 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             tone: "agent" as const,
           };
 
-  // Close the drawer on every route change so a mobile user doesn't have to
-  // dismiss it manually after each tap.
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const drawerRef = useRef<HTMLDivElement>(null);
+
+  // Close drawer and restore focus on route change.
   useEffect(() => {
     setOpen(false);
   }, [pathname]);
+
+  // Escape key closes the drawer.
+  useEffect(() => {
+    if (!open) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpen(false);
+        toggleRef.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [open]);
+
+  // Focus trap: cycle focus within the drawer while open.
+  useEffect(() => {
+    if (!open || !drawerRef.current) return;
+    const drawer = drawerRef.current;
+    const focusable = drawer.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    );
+    if (focusable.length > 0) focusable[0]?.focus();
+
+    const handleTab = (e: KeyboardEvent) => {
+      if (e.key !== "Tab") return;
+      const items = Array.from(
+        drawer.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      if (items.length === 0) return;
+      const first = items[0]!;
+      const last = items[items.length - 1]!;
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", handleTab);
+    return () => document.removeEventListener("keydown", handleTab);
+  }, [open]);
+
+  // Lock body scroll while drawer is open.
+  useEffect(() => {
+    if (open) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [open]);
+
+  // Restore focus to toggle when drawer closes.
+  const prevOpen = useRef(false);
+  useEffect(() => {
+    if (prevOpen.current && !open) {
+      toggleRef.current?.focus();
+    }
+    prevOpen.current = open;
+  }, [open]);
 
   if (showAuthFrame) {
     return (
@@ -56,28 +129,43 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <Sidebar />
       </div>
 
-      {/* Mobile drawer — fixed overlay, slides in from the left. */}
+      {/* Mobile drawer — proper dialog with focus trap and Escape key.
+          Conditionally rendered so closed state is absent from the a11y tree. */}
       {open && (
-        <button
-          type="button"
-          aria-label="Close navigation"
-          className="md:hidden fixed inset-0 z-40 bg-black/60"
-          onClick={() => setOpen(false)}
-        />
-      )}
-      {open && (
-        <div className="md:hidden fixed inset-y-0 left-0 z-50 w-[min(340px,100vw)]">
-          <Sidebar onClose={() => setOpen(false)} />
-        </div>
+        <>
+          {/* Backdrop: aria-hidden so AT skips it. */}
+          <div
+            aria-hidden="true"
+            className="md:hidden fixed inset-0 z-40 bg-black/60"
+            onClick={() => setOpen(false)}
+          />
+          {/* Drawer panel as a dialog. */}
+          <div
+            ref={drawerRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={DRAWER_TITLE_ID}
+            className="md:hidden fixed inset-y-0 left-0 z-50 w-[min(340px,100vw)]"
+          >
+            {/* Visually-hidden title for the dialog. */}
+            <span id={DRAWER_TITLE_ID} className="sr-only">
+              Navigation
+            </span>
+            <Sidebar onClose={() => setOpen(false)} />
+          </div>
+        </>
       )}
 
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         <div className="flex min-h-[58px] items-center gap-2 border-b border-border-default bg-surface px-3 py-2 md:hidden">
           <button
+            ref={toggleRef}
             type="button"
+            id="mobile-nav-toggle"
             onClick={() => setOpen((v) => !v)}
             aria-label={open ? "Close navigation" : "Open navigation"}
             aria-expanded={open}
+            aria-controls="mobile-nav-dialog"
             className="inline-flex min-h-[42px] min-w-[42px] items-center justify-center rounded-sharp border-brutal border-border-default bg-raised"
           >
             {open ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
