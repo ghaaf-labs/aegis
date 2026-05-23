@@ -27,11 +27,7 @@
     },
     "packages/ui": {
       "project": ["src/**/*.{ts,tsx}"],
-      "ignoreDependencies": [
-        "@aegis/config",
-        "@radix-ui/react-slot",
-        "class-variance-authority"
-      ]
+      "ignoreDependencies": ["@aegis/config"]
     },
     "packages/config": {
       "ignoreDependencies": [
