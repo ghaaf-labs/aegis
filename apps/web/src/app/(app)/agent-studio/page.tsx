@@ -12,6 +12,10 @@ import {
 } from "@aegis/ui";
 import { agentApi, userAgentApi } from "@/lib/api";
 import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
+import {
+  deriveIdleCashUsd,
+  derivePortfolioPositionMetrics,
+} from "@/lib/portfolio-values";
 
 const RECOMMENDATION_TIMEOUT_MS = 45_000;
 
@@ -21,19 +25,33 @@ export default function AgentStudioPage() {
   const setPausedAt = usePortfolioStore((s) => s.setAgentPausedAt);
   const addDecision = usePortfolioStore((s) => s.addDecision);
   const wallet = usePortfolioStore((s) => s.wallet);
+  const unifiedUsdc = usePortfolioStore((s) => s.unifiedUsdc);
+  const unifiedEurc = usePortfolioStore((s) => s.unifiedEurc);
+  const marketSnapshot = usePortfolioStore((s) => s.marketSnapshot);
   const gatewayBalanceStatus = usePortfolioStore((s) => s.gatewayBalanceStatus);
   const gatewayBalanceError = usePortfolioStore((s) => s.gatewayBalanceError);
   const [busy, setBusy] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const idleCashUsd = deriveIdleCashUsd(
+    unifiedUsdc,
+    unifiedEurc,
+    marketSnapshot,
+  );
+  const investedUsd = derivePortfolioPositionMetrics(
+    portfolio,
+    marketSnapshot,
+  ).investedUsd;
+  const hasCapital = idleCashUsd > 0.5 || investedUsd > 0.5;
   const analysisBlocked =
-    !portfolio || !wallet || gatewayBalanceStatus !== "ready";
+    !portfolio || !wallet || gatewayBalanceStatus !== "ready" || !hasCapital;
   const analysisBlock = manualAnalysisBlockCopy(
     !!portfolio,
     !!wallet,
     gatewayBalanceStatus,
     gatewayBalanceError,
+    hasCapital,
   );
 
   useEffect(() => {
@@ -240,6 +258,7 @@ function manualAnalysisBlockCopy(
   hasWallet: boolean,
   gatewayBalanceStatus: "idle" | "loading" | "ready" | "error",
   gatewayBalanceError: string | null,
+  hasCapital: boolean,
 ) {
   if (!hasPortfolio) {
     return {
@@ -262,6 +281,13 @@ function manualAnalysisBlockCopy(
         "The balance check did not return wallet cash. Recommendations stay locked so unknown cash is not treated as zero.",
       href: "/wallets",
       cta: "Open wallet status",
+    };
+  }
+  if (gatewayBalanceStatus === "ready" && !hasCapital) {
+    return {
+      copy: "Add wallet cash or hold an invested position before asking for a recommendation.",
+      href: "/wallets",
+      cta: "Add test USDC",
     };
   }
   return {

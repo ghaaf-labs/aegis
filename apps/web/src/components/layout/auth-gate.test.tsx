@@ -31,6 +31,20 @@ afterEach(() => {
 });
 
 describe("<AuthGate />", () => {
+  it("renders protected content while the client session probe settles", async () => {
+    const { root, container } = render(
+      <AuthGate>
+        <div data-testid="protected-child">server-rendered app</div>
+      </AuthGate>,
+    );
+    await flushEffects();
+
+    expect(container.textContent).toContain("server-rendered app");
+    expect(routerReplace).not.toHaveBeenCalled();
+
+    act(() => root.unmount());
+  });
+
   it("hides protected content immediately when logout clears session state", async () => {
     seedReadySession();
 

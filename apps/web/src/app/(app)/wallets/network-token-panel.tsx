@@ -181,53 +181,47 @@ export function NetworkTokenPanel({
   }
 
   function toggleNetwork(blockchain: string) {
-    setPreferences((current) => {
-      const executable = liveBlockchains.has(blockchain);
-      const selected = new Set(
-        executable ? current.networks : (current.networkWatchlist ?? []),
-      );
-      if (selected.has(blockchain) && executable && selected.size === 1) {
-        return current;
-      }
-      if (selected.has(blockchain)) {
-        selected.delete(blockchain);
-      } else {
-        selected.add(blockchain);
-      }
-      const next = executable
+    const executable = liveBlockchains.has(blockchain);
+    const selected = new Set(
+      executable ? preferences.networks : (preferences.networkWatchlist ?? []),
+    );
+    if (selected.has(blockchain) && executable && selected.size === 1) {
+      return;
+    }
+    if (selected.has(blockchain)) {
+      selected.delete(blockchain);
+    } else {
+      selected.add(blockchain);
+    }
+    commitPreferences(
+      executable
         ? {
-            ...current,
+            ...preferences,
             networks: orderByKnown([...selected], liveNetworkIds),
           }
         : {
-            ...current,
+            ...preferences,
             networkWatchlist: orderByKnown(
               [...selected],
               futureNetworkIds(liveNetworkIds),
             ),
-          };
-      persistPreferences(next);
-      return next;
-    });
+          },
+    );
   }
 
   function toggleToken(tokenId: string) {
-    setPreferences((current) => {
-      const selected = new Set(current.tokens);
-      if (selected.has(tokenId) && selected.size === 1) {
-        return current;
-      }
-      if (selected.has(tokenId)) {
-        selected.delete(tokenId);
-      } else {
-        selected.add(tokenId);
-      }
-      const next = {
-        ...current,
-        tokens: orderByKnown([...selected], TARGET_TOKEN_IDS),
-      };
-      persistPreferences(next);
-      return next;
+    const selected = new Set(preferences.tokens);
+    if (selected.has(tokenId) && selected.size === 1) {
+      return;
+    }
+    if (selected.has(tokenId)) {
+      selected.delete(tokenId);
+    } else {
+      selected.add(tokenId);
+    }
+    commitPreferences({
+      ...preferences,
+      tokens: orderByKnown([...selected], TARGET_TOKEN_IDS),
     });
   }
 

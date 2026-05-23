@@ -32,6 +32,7 @@ export function EmailAuthCard() {
   const nextPath = safeNextPath(searchParams?.get("next"));
   const signedOutFromQuery = searchParams?.get("signedOut") === "1";
   const redirectReason = authRedirectReason(searchParams?.get("reason"));
+  const skipInitialSessionCheck = signedOutFromQuery || redirectReason !== null;
   const setWallet = usePortfolioStore((s) => s.setWallet);
   const setSessionActive = usePortfolioStore((s) => s.setSessionActive);
   const setSessionResolved = usePortfolioStore((s) => s.setSessionResolved);
@@ -50,7 +51,9 @@ export function EmailAuthCard() {
   const [resending, setResending] = useState(false);
   const [resendSeconds, setResendSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [checkingAccount, setCheckingAccount] = useState(true);
+  const [checkingAccount, setCheckingAccount] = useState(
+    !skipInitialSessionCheck,
+  );
   const mountedRef = useRef(true);
   const authFlowStartedRef = useRef(false);
   const codeInputRef = useRef<HTMLInputElement>(null);
@@ -75,6 +78,13 @@ export function EmailAuthCard() {
   }, [queryEmail, redirectReason, signedOutFromQuery]);
 
   useEffect(() => {
+    if (skipInitialSessionCheck) {
+      resetSession();
+      setSessionResolved(true);
+      setCheckingAccount(false);
+      return;
+    }
+
     let cancelled = false;
     let redirected = false;
     walletApi
@@ -114,6 +124,7 @@ export function EmailAuthCard() {
     setSessionActive,
     setSessionResolved,
     setWallet,
+    skipInitialSessionCheck,
   ]);
 
   useEffect(() => {

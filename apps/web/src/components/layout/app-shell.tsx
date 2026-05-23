@@ -7,7 +7,7 @@ import { CircleAlert, Menu, Wallet, X } from "lucide-react";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { ErrorBoundary } from "@/components/error-boundary";
-import { safeNextPath } from "@/lib/auth-routing";
+import { isProtectedAppPath, safeNextPath } from "@/lib/auth-routing";
 import { usePortfolioStore } from "@/stores/portfolio";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -17,6 +17,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const sessionResolved = usePortfolioStore((s) => s.sessionResolved);
   const wallet = usePortfolioStore((s) => s.wallet);
   const walletPending = sessionActive && !wallet;
+  const protectedAppPath = isProtectedAppPath(pathname);
+  const showAuthFrame = protectedAppPath && sessionResolved && !sessionActive;
   const mobileAction = !sessionResolved
     ? null
     : walletPending
@@ -38,6 +40,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setOpen(false);
   }, [pathname]);
+
+  if (showAuthFrame) {
+    return (
+      <AuthStateScreen
+        href={authHref("/login", pathname, "session_required")}
+      />
+    );
+  }
 
   return (
     <div className="flex h-screen bg-bg text-text-default overflow-hidden">
@@ -139,10 +149,45 @@ function titleCase(value: string) {
     .join(" ");
 }
 
-function authHref(path: "/login", next: string) {
+function AuthStateScreen({ href }: { href: string }) {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-bg px-5 py-10 text-text-default">
+      <section className="w-full max-w-[420px] border-brutal border-border-default bg-surface p-5 shadow-brutal">
+        <div className="flex items-center gap-3">
+          <span
+            aria-hidden="true"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-sharp border border-accent-agent/50 bg-accent-agent/10 text-accent-agent"
+          >
+            <CircleAlert className="h-4 w-4" />
+          </span>
+          <div className="min-w-0">
+            <p className="font-mono text-[10px] uppercase tracking-widest text-text-mut">
+              Aegis Console
+            </p>
+            <h1 className="font-mono text-lg font-semibold text-text-hi">
+              Continue with email
+            </h1>
+          </div>
+        </div>
+        <p className="mt-4 text-sm leading-6 text-text-lo">
+          Your session is not active in this browser. Sign in to open the app.
+        </p>
+        <Link
+          href={href}
+          className="mt-5 inline-flex min-h-11 w-full items-center justify-center rounded-sharp border border-black bg-accent-agent px-4 text-center font-mono text-sm font-semibold text-black shadow-brutal-sm hover:shadow-brutal"
+        >
+          Continue
+        </Link>
+      </section>
+    </main>
+  );
+}
+
+function authHref(path: "/login", next: string, reason?: string) {
   const params = new URLSearchParams();
   const safeNext = safeNextPath(next);
   if (safeNext) params.set("next", safeNext);
+  if (reason) params.set("reason", reason);
   const query = params.toString();
   return query ? `${path}?${query}` : path;
 }

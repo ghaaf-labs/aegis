@@ -108,8 +108,9 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   // Public pages always show content.
   if (isPublic(pathname)) return <>{children}</>;
 
-  // Avoid flashing the signed-out prompt until the server session check resolves.
-  if (authState.kind === "checking") return null;
+  // Hard navigations are already protected by middleware. Rendering while the
+  // client probe settles keeps SSR usable if hydration is delayed.
+  if (authState.kind === "checking") return <>{children}</>;
 
   if (authState.kind === "ready" && sessionActive) {
     if (requiresPortfolio(pathname) && portfoliosError) {
