@@ -44,7 +44,7 @@ const TRANSACTION_STATUS_PATH: &str = "/v1/w3s/transactions";
 /// CCTP attestation poll (start small, cap the wall-clock wait).
 const POLL_INTERVAL: Duration = Duration::from_secs(3);
 const POLL_TIMEOUT: Duration = Duration::from_secs(180);
-/// How many *consecutive* unparseable / transient status responses we tolerate
+/// How many *consecutive* unparsable / transient status responses we tolerate
 /// before failing the leg. Circle's status endpoint occasionally returns a
 /// truncated body or an alternate envelope shape mid-flight; a single blip must
 /// not brick an in-flight rebalance. A genuine `FAILED`/`CANCELLED` state is
@@ -128,6 +128,13 @@ pub async fn wait_for_usdc_balance(
 /// (0x-prefixed). `amount_native` is the native-token value to attach (USDC on
 /// Arc; almost always `None`/0 for our ERC-20 + bridge calls). The user's
 /// wallet is the sender and signer — non-custodial by construction.
+///
+/// `idempotency_key` MUST be deterministic and stable across resumes/retries of
+/// the *same* logical call (e.g. derived from the leg id + step). Circle dedupes
+/// on it, so a re-submit after a lost HTTP response — or a resumed walk that
+/// re-dispatches a `submitted` leg — returns the original transaction instead of
+/// broadcasting a duplicate. A random key here would let a single approve/burn/
+/// swap execute twice.
 #[allow(clippy::too_many_arguments)]
 pub async fn submit_contract_execution(
     http: &reqwest::Client,
@@ -138,6 +145,7 @@ pub async fn submit_contract_execution(
     contract_address: &str,
     call_data_hex: &str,
     amount_native: Option<u128>,
+    idempotency_key: &str,
 ) -> Result<String> {
     require_dev_wallet_config(cfg)?;
 
@@ -152,12 +160,18 @@ pub async fn submit_contract_execution(
 
     let ciphertext = entity_secret_ciphertext(http, cfg).await?;
     let body = ContractExecutionReq {
-        idempotency_key: Uuid::new_v4().to_string(),
+        idempotency_key: deterministic_idempotency_key(idempotency_key),
         wallet_id,
         contract_address: contract_address.to_string(),
         call_data: normalize_hex(call_data_hex),
         amount: amount_native.map(native_amount_string),
         entity_secret_ciphertext: ciphertext,
+        // GAS: `feeLevel` only picks the priority tier — it does not sponsor gas.
+        // The user's Circle wallet must be able to pay: on Arc gas is native USDC
+        // (which the wallet already holds), but on Base/Eth/Arb/Avax the wallet
+        // needs native gas, sponsored via Circle Gas Station policy configured on
+        // the wallet set. Without that, the first approve/burn on a non-Arc chain
+        // fails for lack of gas — a deployment prerequisite, not a code path here.
         fee_level: "MEDIUM",
     };
 
@@ -199,7 +213,7 @@ async fn poll_until_settled(
     );
     let start = std::time::Instant::now();
     // Count *consecutive* responses we couldn't read (network blip or
-    // unparseable body). Reset to zero on any successfully-decoded poll.
+    // unparsable body). Reset to zero on any successfully-decoded poll.
     let mut consecutive_decode_failures: u32 = 0;
 
     loop {
@@ -241,13 +255,13 @@ async fn poll_until_settled(
                 consecutive_decode_failures += 1;
                 if consecutive_decode_failures >= MAX_DECODE_RETRIES {
                     return Err(AppError::Internal(anyhow::anyhow!(
-                        "circle tx status body unparseable for {transaction_id} after {MAX_DECODE_RETRIES} attempts"
+                        "circle tx status body unparsable for {transaction_id} after {MAX_DECODE_RETRIES} attempts"
                     )));
                 }
                 tracing::warn!(
                     %transaction_id,
                     attempt = consecutive_decode_failures,
-                    "circle tx status body unparseable; retrying"
+                    "circle tx status body unparsable; retrying"
                 );
                 tokio::time::sleep(POLL_INTERVAL).await;
                 continue;
@@ -343,6 +357,14 @@ async fn entity_secret_ciphertext(http: &reqwest::Client, cfg: &Config) -> Resul
 
 fn auth_header(cfg: &Config) -> String {
     format!("Bearer {}", cfg.circle_api_key)
+}
+
+/// Map a caller's stable idempotency seed (e.g. `"<leg_id>:burn"`) to a
+/// deterministic UUID — the format Circle's `idempotencyKey` expects. The same
+/// seed always yields the same key, so a retried/resumed submit of the same
+/// logical call dedupes at Circle instead of broadcasting a duplicate tx.
+fn deterministic_idempotency_key(seed: &str) -> String {
+    Uuid::new_v5(&Uuid::NAMESPACE_OID, seed.as_bytes()).to_string()
 }
 
 fn require_dev_wallet_config(cfg: &Config) -> Result<()> {
@@ -441,6 +463,20 @@ mod tests {
     use crate::modules::wallet_routes::{ARC_TESTNET, BASE_SEPOLIA};
 
     #[test]
+    fn idempotency_key_is_deterministic_per_seed() {
+        // Same seed → same UUID, so a resumed/retried submit dedupes at Circle.
+        let a = deterministic_idempotency_key("leg-1:cctp-burn");
+        let b = deterministic_idempotency_key("leg-1:cctp-burn");
+        assert_eq!(a, b);
+        // Different step → different key, so approve and burn never collide.
+        assert_ne!(a, deterministic_idempotency_key("leg-1:cctp-approve"));
+        // Different leg → different key.
+        assert_ne!(a, deterministic_idempotency_key("leg-2:cctp-burn"));
+        // Circle expects a UUID-format key.
+        assert_eq!(a.len(), 36);
+    }
+
+    #[test]
     fn maps_chain_to_supported_blockchain() {
         assert_eq!(blockchain_for_chain(ChainKey::Arc), ARC_TESTNET);
         assert_eq!(blockchain_for_chain(ChainKey::Base), BASE_SEPOLIA);
@@ -533,7 +569,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_transaction_status_returns_none_for_unparseable_body() {
+    fn parse_transaction_status_returns_none_for_unparsable_body() {
         // A truncated / HTML / empty body is a transient read failure, not a
         // FAILED state — the caller retries rather than bricking the leg.
         assert!(parse_transaction_status("").is_none());

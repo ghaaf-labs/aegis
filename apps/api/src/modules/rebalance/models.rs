@@ -151,22 +151,21 @@ impl ChainKey {
         }
     }
 
-    /// Whether this chain is wired for live rebalance execution. All six funded
-    /// testnets qualify: Arc/Base/Eth run the full path (deployed
-    /// RebalanceExecutor + swap venue); Arb/Avax/OP are CCTP source/dest chains
-    /// under the two-leg baseline (plain USDC bridge to the EOA — no executor
-    /// needed; swaps settle on a venue-bearing chain). An unparsable / non-EVM
-    /// chain still fails closed (parse returns `None`). Stays in lockstep with
-    /// `wallet_routes::EXECUTION_BLOCKCHAINS`.
+    /// Whether this chain is wired for live rebalance execution. The execution
+    /// set is exactly the chains where a Circle wallet is provisioned
+    /// (`wallet_routes::SUPPORTED_WALLET_BLOCKCHAINS`): Arc/Base run the full
+    /// path (deployed RebalanceExecutor + swap venue); Eth/Arb/Avax are CCTP
+    /// source/dest chains for the plain-USDC consolidation baseline. Membership
+    /// here is necessary but not sufficient — the route registry then validates
+    /// each leg's CCTP/swap config *per chain* (`adapters::cctp::capability_for_route`
+    /// / `adapters::swap::capability_for`), so an execution chain still fails
+    /// closed if its USDC/messenger/venue/executor is unset. OP-Sepolia is
+    /// excluded: it has no provisioned wallet route, so funds can never land
+    /// there. An unparsable / non-EVM chain also fails closed (`parse` → `None`).
     pub fn is_execution(&self) -> bool {
         matches!(
             self,
-            Self::Arc
-                | Self::Base
-                | Self::EthSepolia
-                | Self::ArbSepolia
-                | Self::AvaxFuji
-                | Self::OpSepolia
+            Self::Arc | Self::Base | Self::EthSepolia | Self::ArbSepolia | Self::AvaxFuji
         )
     }
 }
@@ -255,20 +254,24 @@ mod tests {
     }
 
     #[test]
-    fn all_six_funded_testnets_are_execution_chains() {
-        // Arc/Base/Eth run the full path; Arb/Avax/OP are CCTP source/dest
-        // chains (two-leg baseline). Unparsable / non-EVM chains still fail
-        // closed via `ChainKey::parse` returning `None`.
+    fn provisioned_wallet_chains_are_execution_chains() {
+        // The execution set is exactly the provisioned wallet chains: Arc/Base
+        // run the full path; Eth/Arb/Avax are CCTP source/dest chains.
         for k in [
             ChainKey::Arc,
             ChainKey::Base,
             ChainKey::EthSepolia,
             ChainKey::ArbSepolia,
             ChainKey::AvaxFuji,
-            ChainKey::OpSepolia,
         ] {
             assert!(k.is_execution(), "{k:?} must be an execution chain");
         }
+        // OP-Sepolia has no provisioned wallet route, so it is never an
+        // execution chain (funds can't land there).
+        assert!(
+            !ChainKey::OpSepolia.is_execution(),
+            "OP-Sepolia is not provisioned, so it must not be executable"
+        );
         assert_eq!(
             ChainKey::parse("solana"),
             None,

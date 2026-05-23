@@ -64,7 +64,10 @@ pub fn capability_for(cfg: &Config, chain: ChainKey) -> AdapterCapability {
         || !tokens::is_real_addr(cfg.swap_router_for(chain))
     {
         AdapterCapability::NeedsAddress
-    } else if cfg.chain_private_key_for(chain).trim().is_empty() {
+    } else if !cfg.circle_wallet_exec && cfg.chain_private_key_for(chain).trim().is_empty() {
+        // The EOA path signs the swap on `chain`; the non-custodial path
+        // (`circle_wallet_exec`) submits it from the user's Circle wallet and
+        // needs no backend signing key.
         AdapterCapability::NeedsSigner
     } else {
         AdapterCapability::Live
@@ -631,6 +634,7 @@ async fn lb_execute(
     http: &reqwest::Client,
     db: &crate::db::Db,
     user_id: uuid::Uuid,
+    leg_id: uuid::Uuid,
     args: LbSwapArgs,
 ) -> Result<RealReceipt> {
     use alloy::network::EthereumWallet;
@@ -688,6 +692,7 @@ async fn lb_execute(
             &address_to_hex(approve_token),
             &hex::encode(approve_calldata),
             None,
+            &format!("{leg_id}:lb-approve"),
         )
         .await?;
 
@@ -723,6 +728,7 @@ async fn lb_execute(
             &address_to_hex(router),
             &hex::encode(swap_calldata),
             None,
+            &format!("{leg_id}:lb-swap"),
         )
         .await?;
         return Ok(RealReceipt {
@@ -745,11 +751,13 @@ async fn lb_execute(
 
     let approve_c = IERC20Swap::new(approve_token, &provider);
     let want = U256::from(amount_in).saturating_mul(U256::from(2u64));
-    let have = approve_c
-        .allowance(recipient, router)
-        .call()
-        .await
-        .unwrap_or(U256::ZERO);
+    let have = match approve_c.allowance(recipient, router).call().await {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::warn!(chain = chain.as_str(), error = %e, "swap(lb): allowance read failed; assuming zero");
+            U256::ZERO
+        }
+    };
     if have < want {
         approve_c
             .approve(router, want)
@@ -759,7 +767,8 @@ async fn lb_execute(
             .get_receipt()
             .await
             .map_err(|e| anyhow::anyhow!("LB approve receipt: {e}"))?;
-        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        // Confirm allowance on-chain before the swap (parity with the Circle path).
+        confirm_allowance(cfg, chain, approve_token, recipient, router, amount_in).await?;
     }
 
     let router_c = ILBRouter::new(router, &provider);
@@ -832,6 +841,7 @@ async fn real_execute(
             http,
             db,
             user_id,
+            ticket.leg_id(),
             LbSwapArgs {
                 chain,
                 dir,
@@ -863,6 +873,7 @@ async fn real_execute(
             http,
             db,
             user_id,
+            ticket.leg_id(),
             CircleSwapArgs {
                 chain,
                 router,
@@ -892,11 +903,15 @@ async fn real_execute(
     // Approve the input token to the router (with headroom) if allowance short.
     let approve_c = IERC20Swap::new(approve_token, &provider);
     let want = U256::from(amount_in).saturating_mul(U256::from(2u64));
-    let have = approve_c
-        .allowance(recipient, router)
-        .call()
-        .await
-        .unwrap_or(U256::ZERO);
+    let have = match approve_c.allowance(recipient, router).call().await {
+        Ok(a) => a,
+        Err(e) => {
+            // Don't silently treat an RPC blip as a zero allowance (it would burn
+            // gas on an unnecessary re-approve) — log and assume zero this once.
+            tracing::warn!(chain = chain.as_str(), error = %e, "swap(v3): allowance read failed; assuming zero");
+            U256::ZERO
+        }
+    };
     if have < want {
         approve_c
             .approve(router, want)
@@ -906,7 +921,10 @@ async fn real_execute(
             .get_receipt()
             .await
             .map_err(|e| anyhow::anyhow!("token approve receipt: {e}"))?;
-        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        // Confirm the allowance is on-chain-effective before submitting the swap.
+        // A stale RPC node can still read the pre-approve trie and revert the swap
+        // pre-flight even though the approve mined (parity with the Circle path).
+        confirm_allowance(cfg, chain, approve_token, recipient, router, amount_in).await?;
     }
 
     let router_c = ISwapRouter02::new(router, &provider);
@@ -982,6 +1000,7 @@ async fn circle_wallet_swap(
     http: &reqwest::Client,
     db: &crate::db::Db,
     user_id: uuid::Uuid,
+    leg_id: uuid::Uuid,
     args: CircleSwapArgs,
 ) -> Result<RealReceipt> {
     use alloy::sol_types::SolCall;
@@ -1021,6 +1040,7 @@ async fn circle_wallet_swap(
         &approve_token_str,
         &hex::encode(approve_calldata),
         None,
+        &format!("{leg_id}:swap-approve"),
     )
     .await?;
 
@@ -1074,6 +1094,7 @@ async fn circle_wallet_swap(
         &router_str,
         &hex::encode(swap_calldata),
         None,
+        &format!("{leg_id}:swap"),
     )
     .await?;
 
@@ -1109,13 +1130,24 @@ async fn confirm_allowance(
     );
     let erc20 = IERC20Swap::new(token, &provider);
     let want = U256::from(min_allowance);
-    const ATTEMPTS: u32 = 5;
+    // ~30s total at a 2s cadence — congested testnets can lag allowance-state
+    // propagation 15–30s after an approve mines, longer than a fixed sleep covers.
+    const ATTEMPTS: u32 = 15;
     for attempt in 0..ATTEMPTS {
-        let have = erc20
-            .allowance(owner, spender)
-            .call()
-            .await
-            .unwrap_or(U256::ZERO);
+        let have = match erc20.allowance(owner, spender).call().await {
+            Ok(a) => a,
+            Err(e) => {
+                // A read failure is transient (RPC blip) — log and retry rather
+                // than treating it as a real zero allowance.
+                tracing::warn!(
+                    chain = chain.as_str(),
+                    attempt,
+                    error = %e,
+                    "confirm_allowance: allowance read failed; retrying"
+                );
+                U256::ZERO
+            }
+        };
         if have >= want {
             return Ok(());
         }

@@ -75,6 +75,32 @@ fn stablefx_fails_closed_in_real_mode() {
 
 #[test]
 fn non_execution_chain_is_blocked() {
+    // A chain with no provisioned wallet route / non-EVM chain fails closed with
+    // a NonExecutionChain blocker. (ETH/Arb/Avax are now execution chains for
+    // the CCTP consolidation baseline — see `unconfigured_cctp_source_chain_is_blocked`
+    // for how an unwired-but-executable chain still fails closed per-leg.)
+    let cfg = real_config();
+    let caps = RuntimeCapabilities::from_config(&cfg);
+    for chain in ["solana", "op-sepolia"] {
+        let blockers = validate_legs(
+            &caps,
+            &cfg,
+            &[leg("cross_chain_burn", chain, "base", "USDC", "USDC")],
+        );
+        assert!(
+            has(&blockers, BlockerCode::NonExecutionChain),
+            "{chain} must be blocked as a non-execution chain"
+        );
+    }
+}
+
+#[cfg(feature = "real-cctp")]
+#[test]
+fn unconfigured_cctp_source_chain_is_blocked() {
+    // ETH-Sepolia is an execution chain, but `real_config()` only wires Arc/Base
+    // USDC + signers. A burn sourced from ETH-Sepolia must still fail closed —
+    // per-leg CCTP validation sees the missing ETH USDC/messenger and blocks it
+    // at approval rather than after the source burn has left the wallet.
     let cfg = real_config();
     let caps = RuntimeCapabilities::from_config(&cfg);
     let blockers = validate_legs(
@@ -88,7 +114,10 @@ fn non_execution_chain_is_blocked() {
             "USDC",
         )],
     );
-    assert!(has(&blockers, BlockerCode::NonExecutionChain));
+    assert!(
+        has(&blockers, BlockerCode::UsdcAddress),
+        "an unconfigured CCTP source chain must fail closed, got {blockers:?}"
+    );
 }
 
 #[cfg(not(feature = "real-cctp"))]

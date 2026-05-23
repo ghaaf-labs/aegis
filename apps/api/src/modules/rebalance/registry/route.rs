@@ -174,7 +174,7 @@ pub fn validate_legs(
         blockers.push(RouteBlocker::new(
             BlockerCode::NonExecutionChain,
             format!(
-                "Wallets are live on {}, but live rebalances execute only on Arc testnet and Base Sepolia.",
+                "Wallets are live on {}, but that chain is not wired for live rebalance execution yet.",
                 non_exec.join(", ")
             ),
         ));
@@ -220,15 +220,19 @@ pub fn validate_legs(
 
         match leg.kind {
             LegKind::CrossChainBurn => {
-                push_cctp_blocker(caps, &mut blockers);
                 // A non-USDC destination means a cross-chain hook swap: the
                 // destination RebalanceExecutor swaps the minted USDC into the
-                // target token (and refunds USDC on failure). The CCTP blocker
-                // above already requires the destination RebalanceExecutor
-                // address; the remaining requirement is that the target token
-                // has a configured destination ERC-20 the contract can swap
-                // into. Without it the contract has nothing to swap to, so fail
-                // closed here.
+                // target token (and refunds USDC on failure), so the route must
+                // also have the destination executor wired.
+                let hooked = leg
+                    .dest_symbol
+                    .as_deref()
+                    .is_some_and(|s| !s.eq_ignore_ascii_case(USDC));
+                push_cctp_blocker(cfg, leg, hooked, &mut blockers);
+                // For a hook swap the remaining requirement is that the target
+                // token has a configured destination ERC-20 the contract can
+                // swap into. Without it the contract has nothing to swap to, so
+                // fail closed here.
                 if let Some(sym) = leg
                     .dest_symbol
                     .as_deref()
@@ -252,8 +256,8 @@ pub fn validate_legs(
                     }
                 }
             }
-            LegKind::CrossChainMint => push_cctp_blocker(caps, &mut blockers),
-            LegKind::LocalSwap => push_swap_blocker(caps, cfg, leg, &mut blockers),
+            LegKind::CrossChainMint => push_cctp_blocker(cfg, leg, false, &mut blockers),
+            LegKind::LocalSwap => push_swap_blocker(cfg, leg, &mut blockers),
             LegKind::ParkUsyc | LegKind::RedeemUsyc => push_usyc_blocker(caps, &mut blockers),
             LegKind::FxStablefx => blockers.push(RouteBlocker::new(
                 BlockerCode::StablefxUnavailable,
@@ -265,8 +269,22 @@ pub fn validate_legs(
     dedup_by_code(blockers)
 }
 
-fn push_cctp_blocker(caps: &RuntimeCapabilities, out: &mut Vec<RouteBlocker>) {
-    let blocker = match caps.cctp {
+/// Validate a CCTP burn/mint leg against the *specific* chains it touches, not
+/// an Arc/Base aggregate — so a bridge from a funded-but-unwired wallet chain
+/// (e.g. ETH-Sepolia) fails closed at approval rather than after the source
+/// burn. `hooked` is true when the destination needs the executor's hook swap.
+fn push_cctp_blocker(cfg: &Config, leg: &RouteLeg, hooked: bool, out: &mut Vec<RouteBlocker>) {
+    let (Some(src), Some(dest)) = (
+        leg.src_chain.as_deref().and_then(ChainKey::parse),
+        leg.dest_chain.as_deref().and_then(ChainKey::parse),
+    ) else {
+        // A missing/unparsable chain is already reported by the
+        // NonExecutionChain checks above; nothing route-specific to add.
+        return;
+    };
+    let blocker = match crate::modules::rebalance::adapters::cctp::capability_for_route(
+        cfg, src, dest, hooked,
+    ) {
         AdapterCapability::Live => return,
         AdapterCapability::NeedsFeature => RouteBlocker::new(
             BlockerCode::RealCctpFeature,
@@ -274,11 +292,20 @@ fn push_cctp_blocker(caps: &RuntimeCapabilities, out: &mut Vec<RouteBlocker>) {
         ),
         AdapterCapability::NeedsAddress => RouteBlocker::new(
             BlockerCode::UsdcAddress,
-            "USDC token address is unset on Arc or Base; configure it before bridging.",
+            format!(
+                "CCTP rail is not fully configured for {} → {} (USDC / messenger / transmitter{}).",
+                src.as_str(),
+                dest.as_str(),
+                if hooked { " / executor" } else { "" },
+            ),
         ),
         AdapterCapability::NeedsSigner => RouteBlocker::new(
             BlockerCode::MissingSigner,
-            "Chain signer (private key) is missing for Arc or Base.",
+            format!(
+                "Chain signer (private key) is missing for {} or {}.",
+                src.as_str(),
+                dest.as_str(),
+            ),
         ),
         AdapterCapability::Disabled | AdapterCapability::Unavailable(_) => {
             RouteBlocker::new(BlockerCode::RealCctpFeature, "CCTP bridge is unavailable.")
@@ -287,34 +314,37 @@ fn push_cctp_blocker(caps: &RuntimeCapabilities, out: &mut Vec<RouteBlocker>) {
     out.push(blocker);
 }
 
-fn push_swap_blocker(
-    caps: &RuntimeCapabilities,
-    cfg: &Config,
-    leg: &RouteLeg,
-    out: &mut Vec<RouteBlocker>,
-) {
-    match caps.swap {
+fn push_swap_blocker(cfg: &Config, leg: &RouteLeg, out: &mut Vec<RouteBlocker>) {
+    // A swap is same-chain; resolve the leg's execution chain (fall back to Base,
+    // the chain whose venue is wired today, for a chain-less leg) and validate
+    // *that* chain's venue rather than the Base aggregate, so a swap on a chain
+    // with no configured router/quoter fails closed at approval.
+    let chain = swap_leg_chain(leg).unwrap_or(ChainKey::Base);
+    match crate::modules::rebalance::adapters::swap::capability_for(cfg, chain) {
         AdapterCapability::NeedsFeature => out.push(RouteBlocker::new(
             BlockerCode::RealSwapFeature,
             "Restart the API with the real-swap feature to enable on-chain swaps.",
         )),
         AdapterCapability::NeedsAddress => out.push(RouteBlocker::new(
             BlockerCode::LocalSwapAdapter,
-            "The swap venue (Uniswap V3 quoter/router on Base) is not configured.",
+            format!(
+                "The swap venue (router/quoter) is not configured on {}.",
+                chain.as_str(),
+            ),
         )),
         AdapterCapability::NeedsSigner => out.push(RouteBlocker::new(
             BlockerCode::MissingSigner,
-            "Base chain signer (private key) is missing.",
+            format!(
+                "Chain signer (private key) is missing for {}.",
+                chain.as_str()
+            ),
         )),
         AdapterCapability::Disabled | AdapterCapability::Unavailable(_) => out.push(
             RouteBlocker::new(BlockerCode::LocalSwapAdapter, "Swap route is unavailable."),
         ),
         AdapterCapability::Live => {
             // Venue is live — the specific token still needs an ERC-20 on the
-            // swap leg's chain. A swap is same-chain; resolve it from the leg
-            // and fall back to Base (the chain whose venue is wired today) so a
-            // chain-less leg keeps the prior Base-anchored behavior.
-            let chain = swap_leg_chain(leg).unwrap_or(ChainKey::Base);
+            // swap leg's chain.
             let symbol = swap_token_symbol(leg);
             let has_addr = symbol
                 .and_then(tokens::token)

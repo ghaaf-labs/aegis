@@ -216,6 +216,11 @@ pub struct CctpClient<'a> {
     /// the user's Circle developer-controlled wallet instead of the backend EOA.
     /// Optional so the offline/mock tests construct a client without a DB.
     user: Option<UserExecContext<'a>>,
+    /// The executing leg's stable id, used to derive deterministic Circle
+    /// idempotency keys (`<leg_id>:<step>`) so a resumed/retried non-custodial
+    /// submit dedupes instead of double-broadcasting. `None` outside the
+    /// per-leg executor path (only the mock/EOA paths run then).
+    leg_id: Option<uuid::Uuid>,
 }
 
 #[derive(Clone, Copy)]
@@ -234,6 +239,7 @@ impl<'a> CctpClient<'a> {
             http,
             config,
             user: None,
+            leg_id: None,
         }
     }
 
@@ -242,6 +248,24 @@ impl<'a> CctpClient<'a> {
     pub fn with_user(mut self, db: &'a crate::db::Db, user_id: uuid::Uuid) -> Self {
         self.user = Some(UserExecContext { db, user_id });
         self
+    }
+
+    /// Attach the executing leg's id so the non-custodial path can derive
+    /// deterministic Circle idempotency keys (dedup on resume/retry).
+    pub fn with_leg(mut self, leg_id: uuid::Uuid) -> Self {
+        self.leg_id = Some(leg_id);
+        self
+    }
+
+    /// Idempotency seed for one non-custodial step of this leg
+    /// (`<leg_id>:<step>`), falling back to a per-process random base when no
+    /// leg is attached (only the mock/EOA paths, which never reach Circle).
+    #[cfg(feature = "real-cctp")]
+    fn idem_seed(&self, step: &str) -> String {
+        match self.leg_id {
+            Some(id) => format!("{id}:{step}"),
+            None => format!("{}:{step}", uuid::Uuid::new_v4()),
+        }
     }
 
     /// Burn `amount_usdc` USDC on `src` and mint the same amount on `dest`
@@ -570,13 +594,6 @@ impl<'a> CctpClient<'a> {
 
         let token_messenger_str = self.config.cctp_token_messenger_for(src);
         let usdc_str = self.config.usdc_for(src);
-        let executor_on_dest = self
-            .config
-            .rebalance_executor_for(dest)
-            .parse::<Address>()
-            .map_err(|_| {
-                AppError::Internal(anyhow::anyhow!("bad RebalanceExecutor on {:?}", dest))
-            })?;
         let token_messenger: Address = token_messenger_str
             .parse()
             .map_err(|_| AppError::Internal(anyhow::anyhow!("bad CCTP TokenMessenger")))?;
@@ -600,24 +617,56 @@ impl<'a> CctpClient<'a> {
             usdc_str,
             &hex::encode(approve_calldata),
             None,
+            &self.idem_seed("cctp-approve"),
         )
         .await?;
 
-        // 2) depositForBurnWithHook — identical args to the EOA path, including
-        // the Fast Transfer threshold + fetched maxFee.
+        // 2) Burn. Mirror the EOA path's plain-vs-hooked branch: a plain USDC
+        // bridge (tokenOut == destination USDC) mints directly to the recipient
+        // via `depositForBurn` — no hook, no executor hop (so a bridge to a chain
+        // without a deployed executor isn't blocked, and funds can't strand at
+        // the executor). A hooked burn (tokenOut != USDC) routes to the
+        // destination RebalanceExecutor via `depositForBurnWithHook`.
         let fee_choice = self.resolve_burn_fee(src, dest).await;
         let destination_caller = alloy::primitives::FixedBytes::<32>::ZERO;
-        let burn_calldata = ICCTPV2TokenMessenger::depositForBurnWithHookCall {
-            amount: U256::from(amount),
-            destinationDomain: dest.domain_id(),
-            mintRecipient: executor_on_dest.into_word(),
-            burnToken: usdc,
-            destinationCaller: destination_caller,
-            maxFee: U256::from(max_fee_for(amount, fee_choice.fee_bps)),
-            minFinalityThreshold: fee_choice.finality_threshold,
-            hookData: encode_hook_payload(hook),
-        }
-        .abi_encode();
+        let max_fee = U256::from(max_fee_for(amount, fee_choice.fee_bps));
+        let plain_bridge = hook
+            .token_out
+            .eq_ignore_ascii_case(self.config.usdc_for(dest));
+        let burn_calldata = if plain_bridge {
+            let recipient = hook.recipient.parse::<Address>().map_err(|_| {
+                AppError::Internal(anyhow::anyhow!("bad mint recipient for plain bridge"))
+            })?;
+            ICCTPV2TokenMessenger::depositForBurnCall {
+                amount: U256::from(amount),
+                destinationDomain: dest.domain_id(),
+                mintRecipient: recipient.into_word(),
+                burnToken: usdc,
+                destinationCaller: destination_caller,
+                maxFee: max_fee,
+                minFinalityThreshold: fee_choice.finality_threshold,
+            }
+            .abi_encode()
+        } else {
+            let executor_on_dest = self
+                .config
+                .rebalance_executor_for(dest)
+                .parse::<Address>()
+                .map_err(|_| {
+                    AppError::Internal(anyhow::anyhow!("bad RebalanceExecutor on {:?}", dest))
+                })?;
+            ICCTPV2TokenMessenger::depositForBurnWithHookCall {
+                amount: U256::from(amount),
+                destinationDomain: dest.domain_id(),
+                mintRecipient: executor_on_dest.into_word(),
+                burnToken: usdc,
+                destinationCaller: destination_caller,
+                maxFee: max_fee,
+                minFinalityThreshold: fee_choice.finality_threshold,
+                hookData: encode_hook_payload(hook),
+            }
+            .abi_encode()
+        };
         let tx_hash = crate::modules::wallet::circle_exec::submit_contract_execution(
             self.http,
             self.config,
@@ -627,10 +676,19 @@ impl<'a> CctpClient<'a> {
             token_messenger_str,
             &hex::encode(burn_calldata),
             None,
+            &self.idem_seed("cctp-burn"),
         )
         .await?;
 
-        let message_hash = format!("0x{}", hex::encode(Sha256::digest(tx_hash.as_bytes())));
+        // Synthetic local identifier only — NOT the real on-chain CCTP message
+        // hash (Circle returns a tx hash, not decoded `MessageSent` logs). The
+        // attestation lookup keys off the burn `tx_hash`, so this value is never
+        // matched against Circle's message hashes; it just fills the receipt
+        // shape. Marked so any downstream reconciliation treats it as opaque.
+        let message_hash = format!(
+            "synthetic:0x{}",
+            hex::encode(Sha256::digest(tx_hash.as_bytes()))
+        );
         Ok(BurnReceipt {
             tx_hash,
             message_hash,
@@ -680,6 +738,7 @@ impl<'a> CctpClient<'a> {
             transmitter_str,
             &hex::encode(calldata),
             None,
+            &self.idem_seed("cctp-mint"),
         )
         .await
     }

@@ -11,21 +11,16 @@ pub const ARB_SEPOLIA: &str = "ARB-SEPOLIA";
 pub const AVAX_FUJI: &str = "AVAX-FUJI";
 pub const OP_SEPOLIA: &str = "OP-SEPOLIA";
 
+/// The chains where Aegis provisions a Circle wallet. This is the single source
+/// of truth for which chains funds can land on, and therefore exactly the set
+/// `ChainKey::is_execution()` treats as executable. OP-Sepolia is intentionally
+/// excluded — there is no provisioned wallet route for it.
 pub const SUPPORTED_WALLET_BLOCKCHAINS: [&str; 5] = [
     ARC_TESTNET,
     BASE_SEPOLIA,
     ETH_SEPOLIA,
     ARB_SEPOLIA,
     AVAX_FUJI,
-];
-
-pub const EXECUTION_BLOCKCHAINS: [&str; 6] = [
-    ARC_TESTNET,
-    BASE_SEPOLIA,
-    ETH_SEPOLIA,
-    ARB_SEPOLIA,
-    AVAX_FUJI,
-    OP_SEPOLIA,
 ];
 
 /// Canonical mapping from a `ChainKey` to its Circle wallet `blockchain` slug.

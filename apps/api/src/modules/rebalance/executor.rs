@@ -4,9 +4,15 @@
 //! `LegKind`, updates the DB on every transition, and broadcasts
 //! `rebalance.leg.update` SSE events filtered to the owning user.
 //!
-//! Failure semantics: if any leg fails, the plan halts in `failed` state.
-//! There is no mid-plan retry — manual replan is a new POST. This avoids
-//! double-spend on partial CCTP commits.
+//! Failure semantics: a leg whose funds had not yet moved fails the plan
+//! cleanly (`failed`, nothing stranded). A leg whose funds already moved (a
+//! bridge mint landed USDC, but the acquiring swap then failed or its funding
+//! never credited) is marked `stranded_asset`: the plan still ends `failed`,
+//! but the idle USDC stays visible via the Gateway unified balance and a
+//! follow-up rebalance replans only the still-needed exposure
+//! (`remaining_delta_after_strand`). Resume is idempotent — a re-walk skips
+//! already-`confirmed` legs and caps per-leg submit attempts so a persistently
+//! reverting leg can't spin forever.
 
 use chrono::Utc;
 use uuid::Uuid;
@@ -163,37 +169,52 @@ pub async fn approve_and_execute(state: AppState, rebalance_id: Uuid) -> Result<
     let user_id = user_for_portfolio(&state, portfolio_id).await?;
     let st = state.clone();
     tokio::spawn(async move {
-        if let Err(e) = walk_legs(&st, rebalance_id, user_id).await {
-            tracing::error!(?rebalance_id, error=%e, "rebalance walk failed");
-            crate::modules::observability::counters::record_rebalance_failed();
-            let reason = format!("{e}");
-            let _ = sqlx::query(
-                "UPDATE rebalances SET status = 'failed', failure_reason = $2,
-                                       completed_at = NOW()
-                 WHERE id = $1 AND status = 'executing'",
-            )
-            .bind(rebalance_id)
-            .bind(&reason)
-            .execute(&st.db)
-            .await;
+        // Run the walk in a child task so a *panic* (e.g. an unexpected `unwrap`
+        // deep in an adapter or a malformed external response) surfaces as a
+        // `JoinError` here instead of silently aborting the task and leaving the
+        // `rebalances` row stuck in `executing` forever. Both a returned `Err`
+        // and a panic fall through to the same failure cleanup below.
+        let walk = tokio::spawn({
+            let st = st.clone();
+            async move { walk_legs(&st, rebalance_id, user_id).await }
+        });
+        let failure_reason = match walk.await {
+            Ok(Ok(())) => None,
+            Ok(Err(e)) => Some(format!("{e}")),
+            Err(join_err) => Some(format!("rebalance executor panicked: {join_err}")),
+        };
+        let Some(reason) = failure_reason else {
+            return;
+        };
 
-            // If a protocol fee was recorded before the failure (e.g. partial
-            // success, or a future per-leg billing path), reverse it. No-op
-            // when the rebalance failed before fee recording.
-            if let Err(refund_err) = crate::modules::billing::service::refund_protocol_fee(
-                &st.db,
-                &st.config,
-                rebalance_id,
-                &reason,
-            )
-            .await
-            {
-                tracing::warn!(
-                    ?rebalance_id,
-                    error = %refund_err,
-                    "billing: refund_protocol_fee failed after rebalance failure"
-                );
-            }
+        tracing::error!(?rebalance_id, reason = %reason, "rebalance walk failed");
+        crate::modules::observability::counters::record_rebalance_failed();
+        let _ = sqlx::query(
+            "UPDATE rebalances SET status = 'failed', failure_reason = $2,
+                                   completed_at = NOW()
+             WHERE id = $1 AND status = 'executing'",
+        )
+        .bind(rebalance_id)
+        .bind(&reason)
+        .execute(&st.db)
+        .await;
+
+        // If a protocol fee was recorded before the failure (e.g. partial
+        // success, or a future per-leg billing path), reverse it. No-op
+        // when the rebalance failed before fee recording.
+        if let Err(refund_err) = crate::modules::billing::service::refund_protocol_fee(
+            &st.db,
+            &st.config,
+            rebalance_id,
+            &reason,
+        )
+        .await
+        {
+            tracing::warn!(
+                ?rebalance_id,
+                error = %refund_err,
+                "billing: refund_protocol_fee failed after rebalance failure"
+            );
         }
     });
     Ok(())
@@ -216,7 +237,7 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
 
     let legs: Vec<LegRow> = sqlx::query_as(
         "SELECT id, leg_index, kind, src_chain, dest_chain, src_symbol,
-                dest_symbol, amount_usdc, min_out, status
+                dest_symbol, amount_usdc, min_out, status, attempt_count
          FROM rebalance_legs
          WHERE rebalance_id = $1
          ORDER BY leg_index ASC",
@@ -242,11 +263,27 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
             continue;
         }
 
+        // Cap runaway retries: a leg that has been submitted `MAX_LEG_ATTEMPTS`
+        // times across resumes without confirming is failed rather than
+        // dispatched again, so a persistently-reverting leg can't spin forever
+        // (each resume would otherwise bump the counter and re-submit).
+        if leg.attempt_count >= MAX_LEG_ATTEMPTS {
+            let reason =
+                format!("leg exceeded {MAX_LEG_ATTEMPTS} submit attempts without confirming");
+            mark_leg_failed(state, rebalance_id, leg.id, user_id, leg, &reason).await?;
+            return Err(AppError::Internal(anyhow::anyhow!(reason)));
+        }
+
         // Post-funding confirmation (B1): if this leg spends USDC on a chain a
         // prior confirmed bridge/mint just delivered to, wait for that USDC to
-        // actually credit the destination wallet before submitting — otherwise
-        // the swap races the mint and Circle returns FAILED. Only meaningful in
-        // real non-custodial mode (funds live in the user's Circle wallet).
+        // actually credit before submitting — otherwise the swap races the mint
+        // and Circle returns FAILED. This is non-custodial-only by construction:
+        // `wait_for_usdc_balance` polls the *user's* Circle/Gateway balance,
+        // which is exactly where the non-custodial mint lands. On the EOA path
+        // the mint credits the backend EOA atomically with its receipt (no Circle
+        // indexer in the loop), and the dependent swap's own on-chain allowance
+        // confirmation guards the residual node-state lag — so removing this gate
+        // would make the EOA path wait on a balance that never moves.
         if state.config.circle_wallet_exec
             && !(state.config.execution_mock || state.config.circle_mock)
         {
@@ -262,8 +299,12 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
                 )
                 .await
                 {
+                    // The prior bridge already delivered USDC to the wallet, so
+                    // it's idle cash (visible via the Gateway balance) — mark the
+                    // dependent leg stranded so a follow-up replan re-acquires the
+                    // target, rather than failing it as if no funds moved.
                     let reason = format!("{e}");
-                    mark_leg_failed(state, rebalance_id, leg.id, user_id, leg, &reason).await?;
+                    mark_leg_stranded(state, rebalance_id, leg.id, user_id, leg, &reason).await?;
                     return Err(e);
                 }
             }
@@ -285,13 +326,13 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
                 let reason = format!("{e}");
                 if leg_strands_funds_on_failure(kind, &confirmed_so_far) {
                     // Funds already moved (e.g. a bridge mint landed USDC) but
-                    // the final action failed. Strand the asset as idle cash in
-                    // the user's wallet instead of bricking the plan; a
-                    // follow-up rebalance replans the remaining delta.
+                    // the final action failed. The idle USDC stays in the user's
+                    // wallet and is surfaced by the Gateway unified balance — the
+                    // single source of truth for wallet cash — so we only mark
+                    // the leg stranded for the follow-up replan. (Writing it as a
+                    // USDC `allocations` row would double-count it against the
+                    // Gateway balance the cash model already adds in.)
                     mark_leg_stranded(state, rebalance_id, leg.id, user_id, leg, &reason).await?;
-                    if let Err(strand_err) = record_strand_as_cash(state, portfolio_id, leg).await {
-                        tracing::warn!(leg_id=?leg.id, error=%strand_err, "recovery: strand-as-cash writeback failed");
-                    }
                 } else {
                     mark_leg_failed(state, rebalance_id, leg.id, user_id, leg, &reason).await?;
                 }
@@ -716,7 +757,16 @@ struct LegRow {
     /// rather than re-submitting them.
     #[sqlx(default)]
     status: String,
+    /// How many times this leg has been submitted (bumped before each dispatch).
+    /// Read on every walk so a persistently-reverting leg can be capped at
+    /// `MAX_LEG_ATTEMPTS` rather than re-dispatching forever across resumes.
+    #[sqlx(default)]
+    attempt_count: i32,
 }
+
+/// Maximum number of submit attempts for a single leg before it is failed.
+/// Bounds runaway retries across resumes (migration 0038's `attempt_count`).
+const MAX_LEG_ATTEMPTS: i32 = 5;
 
 fn protocol_fee_notional_from_legs(legs: &[LegRow]) -> f64 {
     legs.iter()
@@ -976,43 +1026,6 @@ async fn mark_leg_stranded(
         Some(reason),
     );
     Ok(())
-}
-
-/// Record a stranded leg's USDC as an idle cash position. The minted USDC stays
-/// in the user's wallet, so add it to the USDC allocation rather than letting it
-/// vanish from the portfolio view. Best-effort: failures log and continue (the
-/// leg is already marked stranded for the replan).
-async fn record_strand_as_cash(state: &AppState, portfolio_id: Uuid, leg: &LegRow) -> Result<()> {
-    if leg.amount_usdc <= 0.0 {
-        return Ok(());
-    }
-    let result = sqlx::query(
-        "UPDATE allocations
-            SET quantity = quantity + $2,
-                value_usd = (quantity + $2) * 1.0,
-                updated_at = NOW()
-          WHERE portfolio_id = $1 AND asset_symbol = 'USDC'",
-    )
-    .bind(portfolio_id)
-    .bind(leg.amount_usdc)
-    .execute(&state.db)
-    .await?;
-
-    if result.rows_affected() == 0 {
-        sqlx::query(
-            "INSERT INTO allocations (id, portfolio_id, asset_symbol, quantity,
-                                       target_weight, current_weight, value_usd)
-             VALUES ($1, $2, 'USDC', $3, 0, 0, $3)
-             ON CONFLICT DO NOTHING",
-        )
-        .bind(Uuid::new_v4())
-        .bind(portfolio_id)
-        .bind(leg.amount_usdc)
-        .execute(&state.db)
-        .await?;
-    }
-
-    recompute_portfolio_values(state, portfolio_id).await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1299,6 +1312,7 @@ mod tests {
             amount_usdc,
             min_out: None,
             status: "pending".into(),
+            attempt_count: 0,
         }
     }
 
@@ -1314,6 +1328,7 @@ mod tests {
             amount_usdc: 600.0,
             min_out: None,
             status: "pending".into(),
+            attempt_count: 0,
         }
     }
 
@@ -1590,6 +1605,7 @@ mod tests {
             amount_usdc: amount,
             min_out: None,
             status: "confirmed".into(),
+            attempt_count: 0,
         }
     }
 

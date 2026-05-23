@@ -42,6 +42,45 @@ pub fn capability(cfg: &Config) -> AdapterCapability {
     }
 }
 
+/// Per-route CCTP capability for one directed burn → mint pair. Unlike the
+/// Arc↔Base aggregate [`capability`], this validates the *exact* chains a leg
+/// touches so a bridge on a not-yet-wired chain (e.g. a plain USDC consolidation
+/// from a funded ETH-Sepolia wallet) fails closed at approval time rather than
+/// after the source burn has already left the wallet. CCTP V2 burns through the
+/// source `TokenMessenger` and mints through the destination `MessageTransmitter`.
+/// A `hooked` burn (non-USDC destination needing the executor's hook swap) also
+/// requires the destination `RebalanceExecutor`.
+///
+/// The EOA (custodial) path signs on both chains, so both keys are required;
+/// the non-custodial path (`circle_wallet_exec`) submits from the user's own
+/// Circle wallet, so backend signing keys are not part of its capability.
+pub fn capability_for_route(
+    cfg: &Config,
+    src: ChainKey,
+    dest: ChainKey,
+    hooked: bool,
+) -> AdapterCapability {
+    if !cfg!(feature = "real-cctp") {
+        return AdapterCapability::NeedsFeature;
+    }
+    let usdc = tokens::token(USDC).expect("USDC in registry");
+    let addrs_ok = usdc.address_for(cfg, src).is_some()
+        && usdc.address_for(cfg, dest).is_some()
+        && tokens::is_real_addr(cfg.cctp_token_messenger_for(src))
+        && tokens::is_real_addr(cfg.cctp_message_transmitter_for(dest))
+        && (!hooked || tokens::is_real_addr(cfg.rebalance_executor_for(dest)));
+    if !addrs_ok {
+        return AdapterCapability::NeedsAddress;
+    }
+    if !cfg.circle_wallet_exec
+        && (cfg.chain_private_key_for(src).trim().is_empty()
+            || cfg.chain_private_key_for(dest).trim().is_empty())
+    {
+        return AdapterCapability::NeedsSigner;
+    }
+    AdapterCapability::Live
+}
+
 /// Backend EOA address on `chain`, derived from its signing key. In the
 /// custodial execution path (`circle_wallet_exec = false`) the backend signer
 /// holds the USDC in motion and performs the destination swap, so a cross-chain
@@ -72,7 +111,9 @@ pub async fn burn(
     ticket: &ExecutionTicket,
     hook: &HookPayload,
 ) -> Result<RealReceipt> {
-    let client = CctpClient::new(http, cfg).with_user(db, user_id);
+    let client = CctpClient::new(http, cfg)
+        .with_user(db, user_id)
+        .with_leg(ticket.leg_id());
     let r = client
         .deposit_for_burn(
             ticket.src_chain(),
@@ -97,7 +138,9 @@ pub async fn mint(
     ticket: &ExecutionTicket,
     burn_tx_hash: &str,
 ) -> Result<RealReceipt> {
-    let client = CctpClient::new(http, cfg).with_user(db, user_id);
+    let client = CctpClient::new(http, cfg)
+        .with_user(db, user_id)
+        .with_leg(ticket.leg_id());
     let att = client
         .wait_for_attestation(ticket.src_chain().domain_id(), burn_tx_hash)
         .await?;
