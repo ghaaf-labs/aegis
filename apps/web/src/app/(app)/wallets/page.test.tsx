@@ -145,25 +145,21 @@ describe("<NetworkTokenPanel />", () => {
       "Avalanche Fuji",
     ];
     const expectedTokens = [
-      [
-        "USDC",
-        "Cash · Funding, bridge, and reserve route is live",
-        "Executable",
-      ],
+      ["USDC", "Cash · Funding, transfer, and reserve route is live", "Ready"],
       [
         "BTC / ETH / SOL",
-        "Market targets · Track intent until live swap routes are ready",
-        "Watch only",
+        "Market targets · Tracked for agent planning until swaps are live",
+        "Planned",
       ],
       [
         "USYC",
-        "Yield · Track intent until real yield execution is enabled",
-        "Watch only",
+        "Yield · Tracked until real yield execution is enabled",
+        "Planned",
       ],
       [
         "EURC",
-        "FX sleeve · Track intent until StableFX execution is enabled",
-        "Watch only",
+        "FX sleeve · Tracked until StableFX execution is enabled",
+        "Planned",
       ],
     ];
 
@@ -172,25 +168,18 @@ describe("<NetworkTokenPanel />", () => {
     }
     expect(text).toContain("Agent can execute now");
     expect(text).toContain("Arc testnet, Base Sepolia");
-    expect(text).toContain("No blocked token tracked");
+    expect(text).toContain("No planned token tracked");
+    expect(text).toContain("No future route tracked");
     expect(text).toContain("Saved to active portfolio");
-    expect(text).toContain("Circle-supported; Aegis route not opened yet");
-    expect(text.match(/Selected/g)).toHaveLength(2);
-    expect(text.match(/Needs route/g)).toHaveLength(3);
+    expect(text).toContain("Track for future execution");
+    expect(text).toContain("Included in executable scope");
+    expect(text).toContain("Planned");
 
     for (const tokenCopy of expectedTokens.flat()) {
       expect(text).toContain(tokenCopy);
     }
-    expect(text.match(/Watch only/g)).toHaveLength(3);
 
-    const disabledRoutes = Array.from(
-      container.querySelectorAll<HTMLButtonElement>("button:disabled"),
-    ).filter((button) =>
-      ["Ethereum Sepolia", "Arbitrum Sepolia", "Avalanche Fuji"].some((label) =>
-        button.textContent?.includes(label),
-      ),
-    );
-    expect(disabledRoutes).toHaveLength(3);
+    expect(container.querySelectorAll("button:disabled")).toHaveLength(0);
 
     await act(async () => {
       findButton(container, "Agent suggestion").click();
@@ -199,8 +188,12 @@ describe("<NetworkTokenPanel />", () => {
 
     const suggestedText = container.textContent ?? "";
     expect(suggestedText).toContain("BTC / ETH / SOL, USYC, EURC");
+    expect(suggestedText).toContain(
+      "Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji",
+    );
     expect(onPreferencesChange).toHaveBeenCalledWith({
       networks: ["ARC-TESTNET", "BASE-SEPOLIA"],
+      networkWatchlist: ["ETH-SEPOLIA", "ARB-SEPOLIA", "AVAX-FUJI"],
       tokens: ["USDC"],
       watchlist: ["BTC_ETH_SOL", "USYC", "EURC"],
     });

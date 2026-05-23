@@ -64,6 +64,8 @@ export type GoalHorizon = "1y" | "3y" | "5y" | "10y" | "20y+";
 export interface RoutePreferences {
   /** Circle chain codes the agent may use for executable plans. */
   networks: string[];
+  /** Circle chain codes the user wants next, but Aegis cannot execute yet. */
+  networkWatchlist?: string[];
   /** Asset symbols the agent may use in executable plans. */
   tokens: string[];
   /** Non-executable assets the user wants the agent to monitor for future support. */

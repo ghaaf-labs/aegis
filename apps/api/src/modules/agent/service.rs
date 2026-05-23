@@ -739,12 +739,18 @@ fn format_goal_block(goal: &serde_json::Value) -> String {
 
 fn format_route_preferences(route_preferences: &serde_json::Value) -> String {
     let networks = json_string_list(route_preferences, "networks");
+    let future_networks = json_string_list(route_preferences, "networkWatchlist");
     let tokens = json_string_list(route_preferences, "tokens");
     let watchlist = json_string_list(route_preferences, "watchlist");
     let networks = if networks.is_empty() {
         "(none)".into()
     } else {
         networks.join(", ")
+    };
+    let future_networks = if future_networks.is_empty() {
+        "(none)".into()
+    } else {
+        future_networks.join(", ")
     };
     let tokens = if tokens.is_empty() {
         "(none)".into()
@@ -756,7 +762,9 @@ fn format_route_preferences(route_preferences: &serde_json::Value) -> String {
     } else {
         watchlist.join(", ")
     };
-    format!(" · route scope: networks {networks}; executable tokens {tokens}; watch {watchlist}")
+    format!(
+        " · route scope: executable networks {networks}; planned networks {future_networks}; executable tokens {tokens}; watch {watchlist}"
+    )
 }
 
 fn json_string_list(value: &serde_json::Value, key: &str) -> Vec<String> {
@@ -1360,6 +1368,7 @@ mod tests {
                 "includeEurc": false,
                 "routePreferences": {
                     "networks": ["ARC-TESTNET", "BASE-SEPOLIA"],
+                    "networkWatchlist": ["ETH-SEPOLIA", "ARB-SEPOLIA", "AVAX-FUJI"],
                     "tokens": ["USDC"],
                     "watchlist": ["BTC_ETH_SOL", "USYC", "EURC"]
                 }
@@ -1380,6 +1389,7 @@ mod tests {
         assert!(rendered.contains("BTC"));
         assert!(rendered.contains("route scope"));
         assert!(rendered.contains("BASE-SEPOLIA"));
+        assert!(rendered.contains("AVAX-FUJI"));
         assert!(rendered.contains("BTC_ETH_SOL"));
     }
 

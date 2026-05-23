@@ -108,6 +108,7 @@ mod tests {
                 "name": "Treasury",
                 "routePreferences": {
                     "networks": ["ARC-TESTNET", "BASE-SEPOLIA"],
+                    "networkWatchlist": ["ETH-SEPOLIA"],
                     "tokens": ["USDC"],
                     "watchlist": ["USYC", "EURC"]
                 }
@@ -119,6 +120,11 @@ mod tests {
             goal.pointer("/routePreferences/tokens/0")
                 .and_then(|v| v.as_str()),
             Some("USDC")
+        );
+        assert_eq!(
+            goal.pointer("/routePreferences/networkWatchlist/0")
+                .and_then(|v| v.as_str()),
+            Some("ETH-SEPOLIA")
         );
     }
 

@@ -22,31 +22,31 @@ const NETWORKS = [
     blockchain: "ARC-TESTNET",
     label: "Arc testnet",
     state: "Live",
-    detail: "USDC cash route",
+    detail: "Execution enabled",
   },
   {
     blockchain: "BASE-SEPOLIA",
     label: "Base Sepolia",
     state: "Live",
-    detail: "USDC cash route",
+    detail: "Execution enabled",
   },
   {
     blockchain: "ETH-SEPOLIA",
     label: "Ethereum Sepolia",
     state: "Next",
-    detail: "Circle-supported; Aegis route not opened yet",
+    detail: "Track for future execution",
   },
   {
     blockchain: "ARB-SEPOLIA",
     label: "Arbitrum Sepolia",
     state: "Next",
-    detail: "Circle-supported; Aegis route not opened yet",
+    detail: "Track for future execution",
   },
   {
     blockchain: "AVAX-FUJI",
     label: "Avalanche Fuji",
     state: "Next",
-    detail: "Circle-supported; Aegis route not opened yet",
+    detail: "Track for future execution",
   },
 ] as const;
 
@@ -55,32 +55,32 @@ const TOKENS = [
     id: "USDC",
     symbol: "USDC",
     label: "Cash",
-    state: "Executable",
-    detail: "Funding, bridge, and reserve route is live",
+    state: "Ready",
+    detail: "Funding, transfer, and reserve route is live",
     mode: "execute",
   },
   {
     id: "BTC_ETH_SOL",
     symbol: "BTC / ETH / SOL",
     label: "Market targets",
-    state: "Watch only",
-    detail: "Track intent until live swap routes are ready",
+    state: "Planned",
+    detail: "Tracked for agent planning until swaps are live",
     mode: "track",
   },
   {
     id: "USYC",
     symbol: "USYC",
     label: "Yield",
-    state: "Watch only",
-    detail: "Track intent until real yield execution is enabled",
+    state: "Planned",
+    detail: "Tracked until real yield execution is enabled",
     mode: "track",
   },
   {
     id: "EURC",
     symbol: "EURC",
     label: "FX sleeve",
-    state: "Watch only",
-    detail: "Track intent until StableFX execution is enabled",
+    state: "Planned",
+    detail: "Tracked until StableFX execution is enabled",
     mode: "track",
   },
 ] as const;
@@ -135,6 +135,12 @@ export function NetworkTokenPanel({
     (token) => token.id,
     (token) => token.symbol,
   );
+  const watchedNetworkLabels = selectedLabels(
+    NETWORKS,
+    preferences.networkWatchlist ?? [],
+    (network) => network.blockchain,
+    (network) => network.label,
+  );
 
   function chooseLiveRoutes() {
     commitPreferences(defaultPreferences(liveNetworkIds));
@@ -143,29 +149,38 @@ export function NetworkTokenPanel({
   function chooseAgentSuggestion() {
     commitPreferences({
       networks: liveNetworkIds,
+      networkWatchlist: futureNetworkIds(liveNetworkIds),
       tokens: ["USDC"],
       watchlist: ["BTC_ETH_SOL", "USYC", "EURC"],
     });
   }
 
   function toggleNetwork(blockchain: string) {
-    if (!liveBlockchains.has(blockchain)) {
-      return;
-    }
     setPreferences((current) => {
-      const selected = new Set(current.networks);
+      const executable = liveBlockchains.has(blockchain);
+      const selected = new Set(
+        executable ? current.networks : (current.networkWatchlist ?? []),
+      );
+      if (selected.has(blockchain) && executable && selected.size === 1) {
+        return current;
+      }
       if (selected.has(blockchain)) {
-        if (selected.size === 1) {
-          return current;
-        }
         selected.delete(blockchain);
       } else {
         selected.add(blockchain);
       }
-      const next = {
-        ...current,
-        networks: orderByKnown([...selected], liveNetworkIds),
-      };
+      const next = executable
+        ? {
+            ...current,
+            networks: orderByKnown([...selected], liveNetworkIds),
+          }
+        : {
+            ...current,
+            networkWatchlist: orderByKnown(
+              [...selected],
+              futureNetworkIds(liveNetworkIds),
+            ),
+          };
       persistPreferences(next);
       return next;
     });
@@ -219,10 +234,9 @@ export function NetworkTokenPanel({
         <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_20rem]">
           <div className="space-y-3">
             <p className="max-w-3xl text-xs leading-relaxed text-text-lo">
-              Choose what the agent is allowed to use now. Today approvals can
-              execute USDC across Arc testnet and Base Sepolia. Other
-              Circle-supported routes are saved as intent until the wallet,
-              pricing, and executor path are live.
+              Choose what the agent can use now and what it should prepare for.
+              Ready routes can be approved today. Planned routes are tracked for
+              analysis only until execution is live.
             </p>
             <div className="flex flex-wrap gap-2">
               <button
@@ -272,7 +286,15 @@ export function NetworkTokenPanel({
                   Watching
                 </dt>
                 <dd className="text-text-lo">
-                  {watchedTokenLabels || "No blocked token tracked"}
+                  {watchedTokenLabels || "No planned token tracked"}
+                </dd>
+              </div>
+              <div className="grid gap-1">
+                <dt className="font-mono uppercase tracking-wider text-text-mut">
+                  Future routes
+                </dt>
+                <dd className="text-text-lo">
+                  {watchedNetworkLabels || "No future route tracked"}
                 </dd>
               </div>
             </dl>
@@ -291,40 +313,50 @@ export function NetworkTokenPanel({
                 const selected = preferences.networks.includes(
                   network.blockchain,
                 );
+                const tracked = (preferences.networkWatchlist ?? []).includes(
+                  network.blockchain,
+                );
                 return (
                   <button
                     type="button"
                     key={network.blockchain}
-                    disabled={!live}
                     onClick={() => toggleNetwork(network.blockchain)}
-                    aria-pressed={selected}
+                    aria-pressed={live ? selected : tracked}
                     className={`rounded-sharp border p-3 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-hi disabled:cursor-not-allowed ${
                       live
                         ? selected
                           ? "border-accent-pnl bg-accent-pnl/10"
                           : "border-accent-pnl/40 bg-accent-pnl/5 hover:bg-accent-pnl/10"
-                        : "border-border-default bg-raised opacity-75"
+                        : tracked
+                          ? "border-accent-agent/60 bg-accent-agent/5"
+                          : "border-border-default bg-raised hover:border-accent-agent/40 hover:bg-accent-agent/5"
                     }`}
                   >
-                    <div className="flex items-start justify-between gap-2">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-mono text-text-hi">
+                        <p className="text-sm font-mono leading-snug text-text-hi">
                           {network.label}
                         </p>
                         <p className="mt-1 text-[11px] leading-relaxed text-text-lo">
                           {live
                             ? selected
-                              ? "Allowed for agent execution"
+                              ? "Included in executable scope"
                               : network.detail
-                            : network.detail}
+                            : tracked
+                              ? "Tracked for future agent planning"
+                              : network.detail}
                         </p>
                       </div>
-                      <StatusPill tone={live ? "live" : "muted"}>
+                      <StatusPill
+                        tone={live ? "live" : tracked ? "agent" : "muted"}
+                      >
                         {live
                           ? selected
-                            ? "Selected"
+                            ? "Ready"
                             : network.state
-                          : "Needs route"}
+                          : tracked
+                            ? "Tracked"
+                            : "Planned"}
                       </StatusPill>
                     </div>
                   </button>
@@ -392,7 +424,7 @@ export function NetworkTokenPanel({
           <p className="min-w-0">
             Selection is an agent instruction, not a bypass. A route becomes
             executable only after the wallet network, Circle rail, pricing, and
-            executor tests are all live.{" "}
+            executor tests are all live. Planned items shape analysis only.{" "}
             <span className="font-mono uppercase tracking-wider text-text-mut">
               {persistenceLabel}
             </span>
@@ -406,6 +438,7 @@ export function NetworkTokenPanel({
 function defaultPreferences(liveNetworkIds: string[]): RoutePreferences {
   return {
     networks: liveNetworkIds,
+    networkWatchlist: [],
     tokens: liveNetworkIds.length > 0 ? ["USDC"] : [],
     watchlist: [],
   };
@@ -441,8 +474,15 @@ function sanitizePreferences(
     (preferences.networks ?? []).filter((id) => live.has(id)),
     liveNetworkIds,
   );
+  const futureNetworks = futureNetworkIds(liveNetworkIds);
   return {
     networks: networks.length > 0 ? networks : fallback.networks,
+    networkWatchlist: orderByKnown(
+      (preferences.networkWatchlist ?? []).filter((id) =>
+        futureNetworks.includes(id),
+      ),
+      futureNetworks,
+    ),
     tokens: (preferences.tokens ?? ["USDC"]).filter((id) => id === "USDC"),
     watchlist: orderByKnown(
       (preferences.watchlist ?? []).filter(
@@ -472,21 +512,30 @@ function orderByKnown(ids: string[], order: readonly string[]): string[] {
   return order.filter((id) => selected.has(id));
 }
 
+function futureNetworkIds(liveNetworkIds: string[]): string[] {
+  const live = new Set(liveNetworkIds);
+  return NETWORKS.map((network) => network.blockchain).filter(
+    (id) => !live.has(id),
+  );
+}
+
 function StatusPill({
   children,
   tone,
 }: {
   children: ReactNode;
-  tone: "live" | "warn" | "muted";
+  tone: "live" | "warn" | "muted" | "agent";
 }) {
   return (
     <span
-      className={`rounded-sharp border px-2 py-1 text-[10px] font-mono uppercase tracking-wider ${
+      className={`shrink-0 whitespace-nowrap rounded-sharp border px-2 py-1 text-[10px] font-mono uppercase tracking-wider ${
         tone === "live"
           ? "border-accent-pnl/50 bg-accent-pnl/10 text-accent-pnl"
-          : tone === "warn"
-            ? "border-warn/50 bg-warn/10 text-warn"
-            : "border-border-default bg-bg text-text-mut"
+          : tone === "agent"
+            ? "border-accent-agent/50 bg-accent-agent/10 text-accent-agent"
+            : tone === "warn"
+              ? "border-warn/50 bg-warn/10 text-warn"
+              : "border-border-default bg-bg text-text-mut"
       }`}
     >
       {children}
