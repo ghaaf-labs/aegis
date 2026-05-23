@@ -1,4 +1,5 @@
-# Deployment compose for Hetzner (aegis.devberlin.de).
+# Deployment compose for Hetzner.
+# Set APP_DOMAIN to override the default host (e.g. APP_DOMAIN=aegis.ghaaf.org).
 # nginx on the host handles TLS — no Caddy needed.
 # API on 127.0.0.1:8090, web on 127.0.0.1:3002.
 
@@ -47,11 +48,11 @@ services:
       CIRCLE_API_KEY: ${CIRCLE_API_KEY:-}
       CIRCLE_BASE_URL: https://api.circle.com
       EXECUTION_MOCK: ${EXECUTION_MOCK:-true}
-      CORS_ALLOW_ORIGIN: https://aegis.devberlin.de
-      SESSION_COOKIE_NAME: __Host-aegis_jwt
+      CORS_ALLOW_ORIGIN: https://${APP_DOMAIN:-aegis.devberlin.de}
+      SESSION_COOKIE_NAME: __Host-aegis_session
       SESSION_COOKIE_SECURE: "true"
-      PUBLIC_BASE_URL: https://aegis.devberlin.de
-      API_BASE_URL: https://aegis.devberlin.de/api
+      PUBLIC_BASE_URL: https://${APP_DOMAIN:-aegis.devberlin.de}
+      API_BASE_URL: https://${APP_DOMAIN:-aegis.devberlin.de}/api
       SCHEDULER_TICK_SECS: 300
       SCHEDULER_COOLDOWN_SECS: 1800
       DIGEST_HOUR_UTC: 13
@@ -59,15 +60,25 @@ services:
       DIGEST_FROM: ${DIGEST_FROM:-Aegis <noreply@aegis.devberlin.de>}
     ports:
       - "127.0.0.1:8090:8080"
+    sysctls:
+      # The Hetzner host resolves external hostnames (e.g. api.resend.com) to
+      # IPv6 via Tailscale DNS. Docker containers on the default bridge have no
+      # IPv6 route to the internet, so TCP connects to those AAAA addresses hang
+      # until the kernel TCP timeout fires (>>60 s), triggering the nginx 504.
+      # Disabling IPv6 in the container's network namespace forces the system
+      # resolver to return only A records, restoring sub-second connect times.
+      net.ipv6.conf.all.disable_ipv6: 1
+      net.ipv6.conf.default.disable_ipv6: 1
 
   web:
     build:
       context: .
       dockerfile: infra/docker/Dockerfile.web
       args:
-        NEXT_PUBLIC_API_URL: https://aegis.devberlin.de/api
-        NEXT_PUBLIC_SSE_URL: https://aegis.devberlin.de/api/sse
-        NEXT_PUBLIC_APP_URL: https://aegis.devberlin.de
+        NEXT_PUBLIC_API_URL: https://${APP_DOMAIN:-aegis.devberlin.de}/api
+        NEXT_PUBLIC_SSE_URL: https://${APP_DOMAIN:-aegis.devberlin.de}/api/sse
+        NEXT_PUBLIC_APP_URL: https://${APP_DOMAIN:-aegis.devberlin.de}
+        NEXT_PUBLIC_SERVER_API_URL: http://api:8080
     restart: unless-stopped
     ports:
       - "127.0.0.1:3002:3000"

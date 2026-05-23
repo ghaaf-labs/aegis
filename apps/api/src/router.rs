@@ -45,6 +45,11 @@ pub async fn build(db: Db, config: Config) -> Router {
         // "error decoding response body", not "timeout" — bake an explicit
         // ceiling so the cause surfaces in the logs.
         .timeout(std::time::Duration::from_secs(240))
+        // Fail-fast on TCP connect so a bad address (e.g. an unreachable
+        // IPv6 address when the container has no IPv6 route) surfaces as an
+        // error within seconds instead of blocking the entire request for
+        // the full kernel TCP timeout (~60-120 s).
+        .connect_timeout(std::time::Duration::from_secs(8))
         .build()
         .expect("failed to build HTTP client");
 

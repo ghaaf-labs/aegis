@@ -15,9 +15,7 @@ test("strategies marketplace renders headline + at least the empty state", async
 
 test("strategies page has a continue CTA in the footer", async ({ page }) => {
   await page.goto("/strategies");
-  await expect(
-    page.getByRole("link", { name: /Continue with email/i }),
-  ).toBeVisible();
+  await expect(page.getByRole("link", { name: /Sign in/i })).toBeVisible();
 });
 
 // ST1 — empty state shows onboarding / custom-portfolio link
@@ -53,9 +51,7 @@ test("ST2 — strategy cards show name and risk when strategies exist", async ({
 // ST3 — unauthenticated visitor: adopt CTA wraps to /login
 test("ST3 — guest adopt CTA links to login page", async ({ page }) => {
   await page.goto("/strategies");
-  const ctaLink = page
-    .getByRole("link", { name: /Continue with email/i })
-    .first();
+  const ctaLink = page.getByRole("link", { name: /Sign in/i }).first();
   await expect(ctaLink).toBeVisible();
   const href = await ctaLink.getAttribute("href");
   expect(href).toMatch(/\/login/);

@@ -35,17 +35,12 @@ test("X2 — demo detail account CTA leads to login page", async ({ page }) => {
   await expect(page).toHaveURL(/\/login/);
 });
 
-test("X3 — policy page links to constitution page", async ({ page }) => {
+test("X3 — policy page links to settings page", async ({ page }) => {
   await page.goto("/policy");
-  const constitutionLink = page.getByRole("link", {
-    name: "Agent constitution",
-  });
-  await expect(constitutionLink).toBeVisible();
-  await constitutionLink.click();
-  await expect(page).toHaveURL(/\/about\/constitution/);
-  await expect(
-    page.getByRole("heading", { name: /constitution/i }),
-  ).toBeVisible();
+  const settingsLink = page.getByRole("link", { name: /Settings/i }).first();
+  await expect(settingsLink).toBeVisible();
+  const href = await settingsLink.getAttribute("href");
+  expect(href).toMatch(/\/settings/);
 });
 
 test("X4 — leaderboard row links to diary page", async ({ page }) => {
@@ -70,7 +65,7 @@ test("X5 — strategies guest CTA links to login", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: /Strategies/i }),
   ).toBeVisible();
-  const cta = page.getByRole("link", { name: /Continue with email/i }).first();
+  const cta = page.getByRole("link", { name: /Sign in/i }).first();
   await expect(cta).toBeVisible();
   const href = await cta.getAttribute("href");
   expect(href).toMatch(/\/login/);

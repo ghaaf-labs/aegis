@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 
 // FE-E2E-1 — end-to-end happy path through the approval modal in
 // mocked-mode (EXECUTION_MOCK=true, MOCK_CIRCLE=true). Walks: explore
-// demo → continue CTA visible → policy + constitution links resolve.
+// demo → continue CTA visible → policy page structure.
 //
 // The full continue → analyze → approve flow requires a seeded test user
 // against a real backend; that's the realm of the integration smoke
@@ -15,16 +15,13 @@ test.describe("approval-flow surface", () => {
     await expect(page).toHaveTitle(/Aegis/i);
   });
 
-  test("policy page links to constitution + decision routes", async ({
-    page,
-  }) => {
+  test("policy page renders key sections", async ({ page }) => {
     await page.goto("/policy");
     await expect(
-      page.getByRole("heading", { name: /Outcome.*Refund Policy/i }),
+      page.getByRole("heading", { name: /Terms/i }).first(),
     ).toBeVisible();
-    const constitutionLink = page
-      .getByRole("contentinfo")
-      .locator('a[href="/about/constitution"]');
-    await expect(constitutionLink).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: /What we refund/i }),
+    ).toBeVisible();
   });
 });

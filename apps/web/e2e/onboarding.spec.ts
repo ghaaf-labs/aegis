@@ -14,6 +14,9 @@ test("landing page advertises explore + continue", async ({ page }) => {
 test("policy page is reachable without auth", async ({ page }) => {
   await page.goto("/policy");
   await expect(
-    page.getByRole("heading", { name: /Outcome.*Refund Policy/i }),
+    page.getByRole("heading", { name: /Terms & Privacy/i }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /What we refund/i }),
   ).toBeVisible();
 });
