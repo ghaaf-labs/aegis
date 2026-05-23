@@ -45,10 +45,6 @@ export function PortfolioSummaryCard() {
   const isPositive = portfolio.totalPnlUsd >= 0;
   const TrendIcon = isPositive ? TrendingUp : TrendingDown;
 
-  // "Total Value" is the sum of invested positions + idle wallet cash —
-  // otherwise a freshly funded user sees $0 across the board and concludes
-  // the platform is broken. Prefer the live EURC price off the market
-  // snapshot when available; fall back to a stable ~1.085 mid otherwise.
   const eurcUsd =
     snapshot?.assets.find((a) => a.symbol === "EURC")?.priceUsd ??
     EURC_USD_APPROX;
@@ -99,7 +95,7 @@ export function PortfolioSummaryCard() {
           </div>
         ) : (
           <p className="text-[11px] font-mono text-text-mut">
-            No investment yet. PnL appears after your first approved move.
+            No investment yet. PnL appears after your first approved plan.
           </p>
         )}
 
@@ -171,7 +167,7 @@ export function PortfolioSummaryCard() {
               <>
                 <p className="text-sm font-semibold text-text-mut">—</p>
                 <p className="text-[10px] text-text-mut mt-0.5">
-                  available after first approved move
+                  available after first approved plan
                 </p>
               </>
             )}

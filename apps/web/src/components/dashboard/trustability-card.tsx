@@ -13,12 +13,6 @@ const LABEL_TONE: Record<string, string> = {
   underperforming: "text-risk border-rose-500/30 bg-rose-500/5",
 };
 
-/**
- * Dashboard hero card showing the user's trustability score — the agent's
- * 7d realized return delta vs its own counterfactual. Built from the
- * `v_trustability_per_user` view (migration 0005); zero-decision users see
- * a starter copy instead of a number.
- */
 export function TrustabilityCard() {
   const [data, setData] = useState<TrustabilityResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -50,8 +44,8 @@ export function TrustabilityCard() {
       <Shell>
         <p className="text-sm text-text-default mb-1">No score yet</p>
         <p className="text-xs text-text-lo">
-          Run a few rebalances; the score becomes available after the agent has
-          24h of outcomes to compare against its own counterfactuals.
+          Review a few completed plans; the score appears after Aegis has enough
+          real outcomes to compare.
         </p>
       </Shell>
     );
@@ -102,17 +96,15 @@ export function TrustabilityCard() {
                 {sign}
                 {row.trustabilityDelta.toFixed(2)}%
               </span>
-              <span className="text-[11px] text-text-lo">
-                vs counterfactual · 7d
-              </span>
+              <span className="text-[11px] text-text-lo">7-day outcome</span>
             </div>
           )}
         </div>
 
         <p className="text-[11px] text-text-mut font-mono leading-relaxed">
           {isPreCalibration
-            ? `Trust score unlocks at ${CALIBRATION_FLOOR} executed decisions — the calibrator needs that sample to compare agent outcomes against the counterfactual.`
-            : "Realized vs counterfactual outcome delta over the trailing 7-day window."}
+            ? `Trust score unlocks at ${CALIBRATION_FLOOR} completed decisions.`
+            : "Shows how recent completed plans performed over the trailing 7-day window."}
         </p>
 
         <div
@@ -141,12 +133,12 @@ function Shell({ children }: { children: React.ReactNode }) {
     <div className="space-y-1 border-brutal border-border-default bg-surface p-4 rounded-sharp">
       <div className="flex items-center gap-2 mb-1">
         <ShieldCheck className="w-3.5 h-3.5 text-accent-agent" />
-        <span className="text-xs font-semibold text-text-hi">Trustability</span>
+        <span className="text-xs font-semibold text-text-hi">Trust score</span>
       </div>
       {children}
       <div className="pt-2 border-t border-white/10">
         <ProvenanceLine
-          source="on-chain outcomes + counterfactuals"
+          source="completed plan outcomes"
           freshness="7d window"
         />
       </div>

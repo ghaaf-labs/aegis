@@ -23,10 +23,6 @@ export function PerformanceChart() {
   const data: PerformancePoint[] = [];
   const hasData = data.length > 0;
 
-  // Until a portfolio has at least one rebalance + 24h of outcome
-  // history, this chart has nothing to render. Showing an empty "No
-  // history yet" panel was permanently occupying a whole dashboard row
-  // with zero information value — hide it instead.
   if (!hasData) {
     return null;
   }
@@ -51,7 +47,7 @@ export function PerformanceChart() {
           {!hasData && (
             <div className="absolute inset-0 flex items-center justify-center text-center pointer-events-none">
               <div className="text-xs text-text-mut font-mono px-4">
-                No history yet — first rebalance lands here
+                No history yet — completed plans appear here
               </div>
             </div>
           )}
@@ -142,10 +138,7 @@ export function PerformanceChart() {
 
         {hasData && (
           <div className="pt-2 border-t border-white/10">
-            <ProvenanceLine
-              source="on-chain outcomes + counterfactual replay"
-              freshness="live"
-            />
+            <ProvenanceLine source="completed plan outcomes" freshness="live" />
           </div>
         )}
       </CardContent>

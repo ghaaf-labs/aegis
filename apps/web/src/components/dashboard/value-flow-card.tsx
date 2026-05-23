@@ -23,7 +23,7 @@ export function ValueFlowCard({
   const walletCashUnavailable = walletCashStatus === "error";
   const walletCashLoading =
     walletCashStatus === "idle" || walletCashStatus === "loading";
-  const hasIdleCash = walletCashKnown && (idleUsdc > 0.5 || idleEurc > 0.5);
+  const hasWalletCash = walletCashKnown && (idleUsdc > 0.5 || idleEurc > 0.5);
   const hasInvested = investedUsd > 0.5;
   const targetCount =
     portfolio?.allocations?.filter((a) => a.targetWeight > 0).length ?? 0;
@@ -31,17 +31,17 @@ export function ValueFlowCard({
     ? "Could not confirm wallet cash"
     : walletCashLoading
       ? "Checking wallet cash"
-      : hasIdleCash
+      : hasWalletCash
         ? `${formatCurrency(idleUsdc)} USDC${idleEurc > 0 ? ` + EURC ${idleEurc.toFixed(2)}` : ""}`
-        : "No cash ready";
-  const reviewText = hasIdleCash
-    ? "Approval needed"
+        : "No cash available";
+  const reviewText = hasWalletCash
+    ? "Ready to review"
     : targetCount > 0
       ? "No plan pending"
       : "Set a target first";
   const nextActionText = walletCashUnavailable
     ? "Retry wallet balance"
-    : hasIdleCash
+    : hasWalletCash
       ? "Review a plan"
       : targetCount > 0
         ? "Add funds"
@@ -55,19 +55,19 @@ export function ValueFlowCard({
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] lg:items-start">
         <div className="font-mono">
           <p className="text-[10px] uppercase tracking-widest text-accent-agent">
-            Money status
+            Current state
           </p>
           <h2 className="mt-1 text-lg font-semibold text-text-hi">
             Where your money is right now
           </h2>
           <p className="mt-2 max-w-2xl text-xs leading-relaxed text-text-lo">
-            Cash stays in your wallet until you approve a plan. After the plan
-            finishes, that amount moves into invested positions.
+            Cash stays in your wallet. Invested value appears only after you
+            approve a plan and it completes.
           </p>
         </div>
         <div className="rounded-sharp border border-border-default bg-surface p-3 font-mono">
           <p className="text-[10px] uppercase tracking-widest text-text-mut">
-            Next action
+            Next step
           </p>
           <p className="mt-1 text-sm font-semibold text-text-hi">
             {nextActionText}
@@ -81,14 +81,14 @@ export function ValueFlowCard({
           label="Cash in wallet"
           title={walletCashText}
           tone={
-            walletCashUnavailable ? "warn" : hasIdleCash ? "pnl" : "neutral"
+            walletCashUnavailable ? "warn" : hasWalletCash ? "pnl" : "neutral"
           }
         />
         <FlowStep
           icon={ClipboardCheck}
           label="Approval"
           title={reviewText}
-          tone={hasIdleCash ? "agent" : "neutral"}
+          tone={hasWalletCash ? "agent" : "neutral"}
         />
         <FlowStep
           icon={LineChart}

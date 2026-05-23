@@ -26,20 +26,12 @@ const fadeUp = {
   visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: "easeOut" } },
 };
 
-/**
- * Multi-portfolio dashboard. Reads `portfolioId` from the route, marks it
- * active in the Zustand store, and renders the same dashboard surface as the
- * Sprint 1 single-portfolio view. The header switcher (in components/layout)
- * lets the user pivot between portfolios without a full reload.
- */
 export default function PortfolioDashboardPage() {
   const params = useParams<{ portfolioId: string }>();
   const setActive = usePortfolioStore((s) => s.setActivePortfolio);
 
   useEffect(() => {
     if (params?.portfolioId) setActive(params.portfolioId);
-    // Allocation hydration is handled by PortfolioLoader (mounted in the
-    // (app) layout) — it watches activePortfolioId and re-fetches detail.
   }, [params?.portfolioId, setActive]);
 
   const unifiedUsdc = usePortfolioStore((s) => s.unifiedUsdc);
@@ -112,7 +104,7 @@ export default function PortfolioDashboardPage() {
         : showFaucet
           ? "Add test funds"
           : showNoIdleCash && hasReviewableDrift
-            ? "Review rebalance"
+            ? "Review plan"
             : hasInvestedPositions
               ? "Monitoring"
               : "Set target";
@@ -126,8 +118,7 @@ export default function PortfolioDashboardPage() {
             Opening your dashboard
           </h1>
           <p className="mt-2 font-mono text-xs leading-relaxed text-text-lo">
-            If no portfolio exists yet, Aegis will send you back to portfolio
-            setup.
+            Checking your account and portfolio.
           </p>
         </div>
       </div>
@@ -146,11 +137,7 @@ export default function PortfolioDashboardPage() {
       router.push(`/rebalance/${planned.rebalanceId}`);
     } catch (e) {
       const raw =
-        e instanceof Error ? e.message : "Could not build deploy plan";
-      // The strategist occasionally returns malformed JSON; the backend then
-      // raises a 500 with the raw model output in the body. Dumping that into
-      // the UI looks like a crash. Map known signatures to a friendlier
-      // "agent hiccup, try again" message.
+        e instanceof Error ? e.message : "Could not build review plan";
       const cleaned = raw
         .replace(/^\d{3}:\s*/, "")
         .replace(/^conflict:\s*/i, "");
@@ -159,7 +146,7 @@ export default function PortfolioDashboardPage() {
         .includes("no rebalance plan was created")
         ? cleaned
         : /parse strategist proposal|json|JSON/i.test(raw)
-          ? "Agent had a formatting hiccup. Click Review deployment again — the second pass usually succeeds."
+          ? "Aegis could not format the plan. Try Review plan again."
           : raw;
       setDeployError(friendly);
       setDeploying(false);
@@ -184,7 +171,7 @@ export default function PortfolioDashboardPage() {
                 Dashboard
               </span>
               <span className="max-w-full truncate border border-border-default bg-bg px-2 py-1 text-[10px] font-mono uppercase tracking-widest text-text-mut">
-                Portfolio name:{" "}
+                Portfolio:{" "}
                 <span className="normal-case tracking-normal text-text-hi">
                   {portfolioTitle}
                 </span>
@@ -254,7 +241,7 @@ export default function PortfolioDashboardPage() {
                     <LockKeyhole className="h-4 w-4 text-warn" />
                     <div>
                       <p className="font-semibold text-text-hi">
-                        Rebalance is waiting for a wallet check
+                        Review is waiting for a wallet check
                       </p>
                       <p className="mt-1 leading-relaxed text-text-lo">
                         Aegis sees {maxTargetDriftPct.toFixed(1)}% target drift,
@@ -322,7 +309,7 @@ export default function PortfolioDashboardPage() {
               </h2>
               <p className="text-xs text-text-lo font-mono mt-2 max-w-3xl leading-relaxed">
                 {hasReviewableDrift
-                  ? "Your wallet has no spare USDC, but the current mix no longer matches the target. Review a rebalance before any trade executes."
+                  ? "Your wallet has no spare USDC, but the current mix no longer matches the target. Review the plan before any trade executes."
                   : "There is no spare USDC in the wallet right now. Add funds if you want Aegis to prepare a new move."}
               </p>
               {deployError && (
@@ -352,7 +339,7 @@ export default function PortfolioDashboardPage() {
                   ) : (
                     <>
                       <Rocket className="w-4 h-4 mr-2" />
-                      Review rebalance
+                      Review plan
                     </>
                   )}
                 </BrutalButton>
@@ -377,7 +364,7 @@ export default function PortfolioDashboardPage() {
               <h2 className="mt-1 text-lg font-mono font-semibold text-text-hi">
                 {isFirstDeploy
                   ? `You have ${formatCurrency(deployableUsdc)} USDC ready to invest`
-                  : `${formatCurrency(deployableUsdc)} USDC is still idle in your wallet`}
+                  : `${formatCurrency(deployableUsdc)} USDC is still cash in your wallet`}
               </h2>
               <p className="text-xs text-text-lo font-mono mt-2 max-w-3xl leading-relaxed">
                 {isFirstDeploy
@@ -410,13 +397,10 @@ export default function PortfolioDashboardPage() {
               <div className="grid grid-cols-3 gap-2 text-center text-[10px] font-mono">
                 <StepBadge
                   active
-                  label={isFirstDeploy ? "1 Funded" : "1 Cash idle"}
+                  label={isFirstDeploy ? "1 Funded" : "1 Cash ready"}
                 />
                 <StepBadge active={false} label="2 Review" />
-                <StepBadge
-                  active={!isFirstDeploy}
-                  label={isFirstDeploy ? "3 Invested" : "3 Deployed"}
-                />
+                <StepBadge active={!isFirstDeploy} label="3 Invested" />
               </div>
               <BrutalButton
                 variant="pnl"
@@ -432,9 +416,7 @@ export default function PortfolioDashboardPage() {
                 ) : (
                   <>
                     <Rocket className="w-4 h-4 mr-2" />
-                    {isFirstDeploy
-                      ? "Review investment plan"
-                      : "Review USDC deployment"}
+                    Review plan
                   </>
                 )}
               </BrutalButton>
@@ -518,10 +500,10 @@ function HeaderStat({
           : "text-text-hi";
 
   return (
-    <div className="border border-border-default bg-bg/90 px-3 py-2 rounded-sharp">
+    <div className="min-h-[58px] border border-border-default bg-bg/90 px-3 py-2 rounded-sharp">
       <dt className="text-[10px] font-mono uppercase text-text-mut">{label}</dt>
       <dd
-        className={`mt-1 truncate text-sm font-mono font-semibold tabular-nums ${valueClass}`}
+        className={`mt-1 break-words text-sm font-mono font-semibold leading-tight tabular-nums ${valueClass}`}
       >
         {value}
       </dd>

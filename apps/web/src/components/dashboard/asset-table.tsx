@@ -66,7 +66,7 @@ export function AssetTable() {
   }
   const walletCashKnown = gatewayBalanceStatus === "ready";
   const walletCashUnavailable = gatewayBalanceStatus === "error";
-  const deployableUsd = walletCashKnown ? unifiedUsdc : 0;
+  const walletCashUsd = walletCashKnown ? unifiedUsdc : 0;
 
   const allocList = portfolio.allocations ?? [];
   const metrics = derivePortfolioPositionMetrics(portfolio, snapshot);
@@ -74,7 +74,7 @@ export function AssetTable() {
     metrics.positions.map((position) => [position.symbol, position]),
   );
   const isUninvested = metrics.investedUsd < 0.5;
-  const hasDeployableWallet = isUninvested && deployableUsd > 0.5;
+  const hasWalletCash = isUninvested && walletCashUsd > 0.5;
   const hasUsdcSleeve = allocList.some(
     (a) => a.symbol === "USDC" && a.targetWeight > 0,
   );
@@ -82,21 +82,21 @@ export function AssetTable() {
     <Card>
       <CardHeader>
         <CardTitle>
-          {hasDeployableWallet
+          {hasWalletCash
             ? "Planned Target Mix"
             : isUninvested
               ? "Target Mix"
               : "Current Holdings"}
         </CardTitle>
       </CardHeader>
-      {hasDeployableWallet && (
+      {hasWalletCash && (
         <div className="mx-5 mb-4 border-brutal border-accent-pnl/40 bg-accent-pnl/5 p-3 rounded-sharp">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-start gap-2">
               <Wallet className="mt-0.5 h-4 w-4 shrink-0 text-accent-pnl" />
               <div>
                 <p className="text-sm font-mono font-semibold text-text-hi">
-                  {formatCurrency(deployableUsd)} USDC is still in your wallet,
+                  {formatCurrency(walletCashUsd)} USDC is still in your wallet,
                   not invested yet.
                 </p>
                 <p className="mt-1 text-xs font-mono text-text-lo leading-relaxed">
@@ -139,7 +139,7 @@ export function AssetTable() {
         <table className="w-full table-fixed">
           <thead>
             <tr className="border-b border-white/5">
-              {(hasDeployableWallet
+              {(hasWalletCash
                 ? ([
                     ["Asset", ""],
                     ["Target", ""],
@@ -182,9 +182,8 @@ export function AssetTable() {
                   ? alloc.valueUsd / alloc.quantity
                   : null;
               const displayPriceUsd = price?.priceUsd ?? fallbackPriceUsd;
-              const plannedUsd = deployableUsd * (alloc.targetWeight / 100);
-              const isUsdcReserve =
-                hasDeployableWallet && alloc.symbol === "USDC";
+              const plannedUsd = walletCashUsd * (alloc.targetWeight / 100);
+              const isUsdcReserve = hasWalletCash && alloc.symbol === "USDC";
               const drift = currentWeight - alloc.targetWeight;
               const driftAbs = Math.abs(drift);
 
@@ -209,7 +208,7 @@ export function AssetTable() {
                       </span>
                     </div>
                   </td>
-                  {hasDeployableWallet ? (
+                  {hasWalletCash ? (
                     <>
                       <td className="px-3 py-3.5 text-sm font-mono text-text-hi tabular-nums md:px-4">
                         {alloc.targetWeight.toFixed(0)}%
@@ -296,10 +295,10 @@ export function AssetTable() {
           </tbody>
         </table>
         <div className="px-5 py-2 text-[10px] text-text-mut font-mono border-t border-white/5">
-          {hasDeployableWallet
+          {hasWalletCash
             ? hasUsdcSleeve
-              ? "USDC target weight stays as cash reserve; other planned values use wallet USDC × target weights"
-              : "Planned values use wallet USDC × target weights"
+              ? "USDC target weight stays as cash reserve; other planned values use wallet cash and target weights"
+              : "Planned values use wallet cash and target weights"
             : walletCashUnavailable
               ? "Wallet cash unavailable; planned values are hidden until the balance check succeeds"
               : !walletCashKnown

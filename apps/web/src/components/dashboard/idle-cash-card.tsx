@@ -7,10 +7,6 @@ import { usePortfolioStore } from "@/stores/portfolio";
 import { formatCurrency } from "@/lib/utils";
 import { ProvenanceLine } from "@aegis/ui";
 
-/**
- * First-class dashboard card for idle wallet cash. Replaces the tiny header
- * summary that was easy to miss and hidden on mobile.
- */
 export function IdleCashCard() {
   const unifiedUsdc = usePortfolioStore((s) => s.unifiedUsdc);
   const unifiedEurc = usePortfolioStore((s) => s.unifiedEurc);
@@ -73,7 +69,7 @@ export function IdleCashCard() {
               available
             </>
           ) : (
-            "No wallet cash available right now"
+            "No wallet cash available"
           )}
         </p>
 
