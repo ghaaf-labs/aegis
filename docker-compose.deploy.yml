@@ -60,6 +60,15 @@ services:
       DIGEST_FROM: ${DIGEST_FROM:-Aegis <noreply@aegis.devberlin.de>}
     ports:
       - "127.0.0.1:8090:8080"
+    sysctls:
+      # The Hetzner host resolves external hostnames (e.g. api.resend.com) to
+      # IPv6 via Tailscale DNS. Docker containers on the default bridge have no
+      # IPv6 route to the internet, so TCP connects to those AAAA addresses hang
+      # until the kernel TCP timeout fires (>>60 s), triggering the nginx 504.
+      # Disabling IPv6 in the container's network namespace forces the system
+      # resolver to return only A records, restoring sub-second connect times.
+      net.ipv6.conf.all.disable_ipv6: 1
+      net.ipv6.conf.default.disable_ipv6: 1
 
   web:
     build:
