@@ -348,60 +348,56 @@ export default function PortfolioDashboardPage() {
           variants={fadeUp}
           className="border-brutal border-accent-pnl bg-accent-pnl/5 p-4 rounded-sharp shadow-brutal-sm md:p-5"
         >
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(240px,320px)] lg:items-center">
-            <div className="min-w-0">
-              <p className="text-[10px] font-mono uppercase tracking-widest text-accent-pnl">
-                Next step
-              </p>
-              <h2 className="mt-1 text-xl font-mono font-semibold text-text-hi">
-                {isFirstDeploy
-                  ? `${formatCurrency(deployableUsdc)} USDC ready to review`
-                  : `${formatCurrency(deployableUsdc)} USDC ready to move`}
-              </h2>
-              <div className="mt-4 grid gap-2 font-mono text-xs sm:grid-cols-3">
-                <MoneyStep active label="Wallet" value="Funded" />
-                <MoneyStep active label="Review" value="You approve" />
-                <MoneyStep label="Invested" value="After approval" />
+          <div className="min-w-0">
+            <p className="text-[10px] font-mono uppercase tracking-widest text-accent-pnl">
+              Next step
+            </p>
+            <h2 className="mt-1 text-xl font-mono font-semibold text-text-hi">
+              {isFirstDeploy
+                ? `${formatCurrency(deployableUsdc)} USDC ready to review`
+                : `${formatCurrency(deployableUsdc)} USDC ready to move`}
+            </h2>
+            <div className="mt-4 grid gap-2 font-mono text-xs sm:grid-cols-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(240px,320px)] lg:items-stretch">
+              <MoneyStep active label="Wallet" value="Funded" />
+              <MoneyStep active label="Review" value="You approve" />
+              <MoneyStep label="Invested" value="After approval" />
+              <div className="flex items-center sm:col-span-3 lg:col-span-1">
+                <BrutalButton
+                  variant="pnl"
+                  onClick={() => void handleDeploy()}
+                  disabled={deploying}
+                  className="w-full py-1.5"
+                >
+                  {deploying ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Preparing plan…
+                    </>
+                  ) : (
+                    <>
+                      <Rocket className="w-4 h-4 mr-2" />
+                      Review plan
+                    </>
+                  )}
+                </BrutalButton>
               </div>
-              {(usdcTargetWeight > 0 || unifiedEurc > 0) && (
-                <p className="mt-3 font-mono text-[11px] leading-relaxed text-text-lo">
-                  {usdcTargetWeight > 0 &&
-                    `${usdcTargetWeight.toFixed(0)}% remains USDC reserve.`}
-                  {unifiedEurc > 0 &&
-                    " EURC stays separate until a review includes it."}
-                </p>
-              )}
-              {deployError && (
-                <p className="text-xs text-risk font-mono mt-2">
-                  {deployError}
-                </p>
-              )}
-              {reviewMessage && (
-                <p className="mt-2 text-xs font-mono text-accent-agent">
-                  {reviewMessage}
-                </p>
-              )}
             </div>
-            <div className="grid gap-3">
-              <BrutalButton
-                variant="pnl"
-                onClick={() => void handleDeploy()}
-                disabled={deploying}
-                className="w-full"
-              >
-                {deploying ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Preparing plan…
-                  </>
-                ) : (
-                  <>
-                    <Rocket className="w-4 h-4 mr-2" />
-                    Review plan
-                  </>
-                )}
-              </BrutalButton>
-            </div>
+            {(usdcTargetWeight > 0 || unifiedEurc > 0) && (
+              <p className="mt-3 font-mono text-[11px] leading-relaxed text-text-lo">
+                {usdcTargetWeight > 0 &&
+                  `${usdcTargetWeight.toFixed(0)}% remains USDC reserve.`}
+                {unifiedEurc > 0 &&
+                  " EURC stays separate until a review includes it."}
+              </p>
+            )}
+            {deployError && (
+              <p className="text-xs text-risk font-mono mt-2">{deployError}</p>
+            )}
+            {reviewMessage && (
+              <p className="mt-2 text-xs font-mono text-accent-agent">
+                {reviewMessage}
+              </p>
+            )}
           </div>
         </motion.div>
       )}
