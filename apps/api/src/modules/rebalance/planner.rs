@@ -70,6 +70,12 @@ pub fn plan_legs(input: &PlanInput) -> Vec<PlannedLeg> {
     };
     let mut deltas: Vec<SymbolDelta> = deltas_source
         .into_iter()
+        // USDC is the settlement unit, not a tradeable position. A USDC weight
+        // delta is absorbed by the other legs (buys consume USDC, sells produce
+        // it), never its own USDC->USDC swap. `first_deploy_deltas` already drops
+        // it; `symbol_deltas` does not, so an over-weight USDC sleeve would emit a
+        // bogus self-swap the adapter rejects ("USDC<->token swaps only").
+        .filter(|d| !d.symbol.eq_ignore_ascii_case("USDC"))
         .filter(|d| {
             let band = if d.weight_drift < 0.0 {
                 sell_band
@@ -481,6 +487,33 @@ mod tests {
         assert!(legs
             .iter()
             .all(|l| !matches!(l.kind, LegKind::CrossChainBurn | LegKind::CrossChainMint)));
+    }
+
+    #[test]
+    fn over_weight_usdc_never_self_swaps() {
+        // Current 100% USDC, target 60% USDC / 40% ETH: the only action is one
+        // USDC->ETH swap. The 40% USDC reduction is absorbed by that buy and
+        // must NOT emit a USDC->USDC leg. Regression for the real-exec failure
+        // "swap adapter handles USDC<->token swaps only" (a live Base run halted
+        // on a bogus self-swap leg the planner had emitted).
+        let i = input(
+            100.0,
+            &[("USDC", 1.0)],
+            &[("USDC", 0.60), ("ETH", 0.40)],
+            0.0,
+            100.0,
+        );
+        let legs = plan_legs(&i);
+        assert_eq!(legs.len(), 1, "expected exactly one leg, got {legs:?}");
+        assert_eq!(legs[0].kind, LegKind::LocalSwap);
+        assert_eq!(legs[0].src_symbol.as_deref(), Some("USDC"));
+        assert_eq!(legs[0].dest_symbol.as_deref(), Some("ETH"));
+        assert!(
+            legs.iter()
+                .all(|l| !(l.src_symbol.as_deref() == Some("USDC")
+                    && l.dest_symbol.as_deref() == Some("USDC"))),
+            "no USDC->USDC self-swap may be emitted, got {legs:?}"
+        );
     }
 
     #[test]
