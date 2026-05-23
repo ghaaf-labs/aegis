@@ -1,12 +1,17 @@
 "use client";
 
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
 import { formatCurrency, formatPercent } from "@/lib/utils";
 import { derivePortfolioPositionMetrics } from "@/lib/portfolio-values";
 import { targetAllocationsForPortfolio } from "@/components/dashboard/target-allocations";
-import { ProvenanceLine } from "@aegis/ui";
+import {
+  BrutalCard as Card,
+  BrutalCardHeader as CardHeader,
+  BrutalCardTitle as CardTitle,
+  BrutalCardBody as CardContent,
+  ProvenanceLine,
+} from "@aegis/ui";
 
 // Chart palette sourced from design-system tokens + complementary shades.
 const CHART_COLORS = [

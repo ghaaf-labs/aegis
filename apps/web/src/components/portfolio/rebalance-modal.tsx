@@ -10,7 +10,7 @@ import {
   TrendingUp,
   TrendingDown,
 } from "lucide-react";
-import { BrutalButton } from "@aegis/ui";
+import { BrutalButton, BrutalBadge as Badge } from "@aegis/ui";
 import {
   Dialog,
   DialogContent,
@@ -18,7 +18,6 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { Badge } from "@/components/ui/badge";
 import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
 import { agentApi, rebalanceApi } from "@/lib/api";
 import type { AgentDecision } from "@/types";

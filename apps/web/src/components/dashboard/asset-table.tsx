@@ -9,8 +9,13 @@ import {
   TrendingDown,
   Wallet,
 } from "lucide-react";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import {
+  BrutalCard as Card,
+  BrutalCardHeader as CardHeader,
+  BrutalCardTitle as CardTitle,
+  BrutalCardBody as CardContent,
+  BrutalBadge as Badge,
+} from "@aegis/ui";
 import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
 import {
   formatCurrency,

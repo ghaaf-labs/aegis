@@ -53,3 +53,18 @@ export function BrutalCardBody({
 }: React.HTMLAttributes<HTMLDivElement>) {
   return <div className={cn("p-4", className)} {...rest} />;
 }
+
+export function BrutalCardTitle({
+  className,
+  ...rest
+}: React.HTMLAttributes<HTMLHeadingElement>) {
+  return (
+    <h3
+      className={cn(
+        "text-sm font-mono font-semibold tracking-tight text-text-hi",
+        className,
+      )}
+      {...rest}
+    />
+  );
+}

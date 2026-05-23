@@ -12,9 +12,9 @@ import {
 import {
   DEFAULT_PRICING_TIERS,
   PricingTable,
-} from "@/components/billing/PricingTable";
-import { UpgradeModal } from "@/components/billing/UpgradeModal";
-import { InvoiceList } from "@/components/billing/InvoiceList";
+} from "@/components/billing/pricing-table";
+import { UpgradeModal } from "@/components/billing/upgrade-modal";
+import { InvoiceList } from "@/components/billing/invoice-list";
 import { useBillingStore } from "@/stores/billing";
 import { usePortfolioStore } from "@/stores/portfolio";
 import { billingApi, type ReferralsResponse } from "@/lib/api";

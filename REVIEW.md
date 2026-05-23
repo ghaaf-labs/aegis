@@ -640,11 +640,11 @@ Sprint 3 is shippable post-audit. The remaining deferred items (M5 real counterf
 | S4.20       | Share-card → X intent flow via `/decision/[decisionId]` page + OG metadata                                               | `(public)/decision/[decisionId]/page.tsx`, `lib/share.ts`                                                | ✓                                  |
 | S4.21       | Referral payouts via `billing::record_referral`; wallet handlers thread `referrerHandle`; mock-paid under EXECUTION_MOCK | `billing/{service,handlers}.rs`, wallet handlers                                                         | ✓                                  |
 | S4.22       | k3s manifests + docker-compose.prod.yml + Caddyfile                                                                      | `infra/{docker,k3s}/*`                                                                                   | ✓                                  |
-| S4.23       | `docs/06-traction.md` ledger with SQL-backed metrics                                                                     | `docs/06-traction.md`                                                                                    | ✓                                  |
+| S4.23       | `docs/08-traction.md` ledger with SQL-backed metrics                                                                     | `docs/08-traction.md`                                                                                    | ✓                                  |
 | S4.24       | Daily digest opt-in card on dashboard                                                                                    | `settings/digest-opt-in.tsx`                                                                             | ✓                                  |
 | S4.25       | Multi-step plans (stretch)                                                                                               | —                                                                                                        | dropped, per cord pull             |
 | S4.26       | Sprint 4 audit (this section)                                                                                            | `REVIEW.md`                                                                                              | ✓                                  |
-| S4.27       | Submission package                                                                                                       | `docs/06-traction.md` + `docs/07-deployment.md`                                                          | ✓                                  |
+| S4.27       | Submission package                                                                                                       | `docs/08-traction.md` + `docs/07-deployment.md`                                                          | ✓                                  |
 
 ### Gate baseline (post-audit)
 
@@ -682,12 +682,12 @@ the repo can't carry:
    refuses the dev `dev-digest-secret-change-me` when `RESEND_API_KEY` is
    set.
 6. **Distribution push** (Canteen Discord thread, X thread, direct DMs)
-   on Day 7 of the sprint — fill the placeholders in `docs/06-traction.md`
+   on Day 7 of the sprint — fill the placeholders in `docs/08-traction.md`
    at submission time.
 
 ### Recommendation
 
 Sprint 4 is feature-complete and audit-clean. Open the PR (or merge to
 main) and proceed to deployment. The submission package only needs the
-real numbers in `docs/06-traction.md` plus the 3-min pitch video — both
+real numbers in `docs/08-traction.md` plus the 3-min pitch video — both
 are pure deployment-time work, not code.

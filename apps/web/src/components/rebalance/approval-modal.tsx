@@ -11,7 +11,7 @@ import type { AgentDecision } from "@/types";
 import { cn } from "@/lib/utils";
 import { walletRouteBadgeLabel } from "@/lib/wallet-routes";
 import { BacktestPreview } from "@/components/rebalance/backtest-preview";
-import { ConstitutionClauseBadge } from "@/components/agent/ConstitutionClauseBadge";
+import { ConstitutionClauseBadge } from "@/components/agent/constitution-clause-badge";
 import { ModelBadge, ChainBadge } from "@aegis/ui";
 
 /** Headline confidence the modal renders.
@@ -38,7 +38,7 @@ function formatRelativeSeconds(at: Date): string {
   return `${Math.round(secs / 3600)}h ago`;
 }
 
-export interface ApprovalModalProps {
+interface ApprovalModalProps {
   open: boolean;
   plan: RebalancePlanResponse | null;
   /** Drives the inline backtest preview. Defaults to no preview when null. */

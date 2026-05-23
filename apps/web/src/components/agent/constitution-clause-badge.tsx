@@ -10,7 +10,7 @@ const CLAUSE_SUMMARIES: Record<string, string> = {
   "USYC-1": "USYC ≥ 10% when AUM ≥ $50k (Business)",
 };
 
-export interface ConstitutionClauseBadgeProps {
+interface ConstitutionClauseBadgeProps {
   clauseId: string;
   /** When true, render in veto/risk tone. When false, render as a positive
    * clean signal in the agent/cyan tone. Default true. */

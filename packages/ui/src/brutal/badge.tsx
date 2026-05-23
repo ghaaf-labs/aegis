@@ -1,10 +1,6 @@
 import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
-import { cn } from "@/lib/utils";
-
-// FE-SHAD-1 (phase 1): in-place neo-brutalism restyle. Sharp corners,
-// semantic tone tokens, no rounded-full. Phase 2 migrates callers to
-// BrutalPill from @aegis/ui and deletes this file.
+import { cn } from "../utils";
 
 const badgeVariants = cva(
   "inline-flex items-center border-brutal rounded-sharp px-2 py-0.5 text-[10px] font-mono uppercase tracking-widest transition-colors focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-2",
@@ -24,15 +20,22 @@ const badgeVariants = cva(
   },
 );
 
-interface BadgeProps
+export interface BrutalBadgeProps
   extends
     React.HTMLAttributes<HTMLDivElement>,
     VariantProps<typeof badgeVariants> {}
 
-function Badge({ className, variant, ...props }: BadgeProps) {
+/**
+ * Subtle outlined status chip (tinted background + colored border/text). The
+ * quieter counterpart to {@link BrutalPill}'s solid block — use for inline
+ * labels like drift deltas, trigger kinds and model slugs.
+ */
+export function BrutalBadge({
+  className,
+  variant,
+  ...props
+}: BrutalBadgeProps) {
   return (
     <div className={cn(badgeVariants({ variant }), className)} {...props} />
   );
 }
-
-export { Badge };

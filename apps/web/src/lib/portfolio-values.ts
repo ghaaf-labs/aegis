@@ -14,7 +14,7 @@ interface PositionMetric {
   driftPct: number;
 }
 
-export interface PortfolioPositionMetrics {
+interface PortfolioPositionMetrics {
   investedUsd: number;
   positions: PositionMetric[];
   usingLivePrices: boolean;

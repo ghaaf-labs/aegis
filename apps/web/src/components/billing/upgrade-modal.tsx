@@ -5,7 +5,7 @@ import { BrutalButton, BrutalPill, ProvenanceLine } from "@aegis/ui";
 import type { PricingTier, Tier } from "@/types";
 import { useBillingStore } from "@/stores/billing";
 
-export interface UpgradeModalProps {
+interface UpgradeModalProps {
   open: boolean;
   /** Tier the user is upgrading TO. */
   targetTier: Tier;

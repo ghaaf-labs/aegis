@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { DEFAULT_PRICING_TIERS, PricingTable } from "./PricingTable";
+import { DEFAULT_PRICING_TIERS, PricingTable } from "./pricing-table";
 
 describe("<PricingTable />", () => {
   it("renders three tiers with correct names and monthly prices", () => {

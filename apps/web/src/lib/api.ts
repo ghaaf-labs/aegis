@@ -1,7 +1,6 @@
 import type {
   AgentDecision,
   ChainKey,
-  DiaryEntry,
   HarvestableLoss,
   Invoice,
   MarketSnapshot,
@@ -661,15 +660,6 @@ export const taxApi = {
     }),
 };
 
-// ── Diary (public — no auth) ───────────────────────────────────────────────
-
-export const diaryApi = {
-  byWallet: (wallet: string) =>
-    request<DiaryEntry[]>(`/diary/wallet/${wallet}`),
-  byDecision: (decisionId: string) =>
-    request<DiaryEntry>(`/diary/decision/${decisionId}`),
-};
-
 // ── Digest ─────────────────────────────────────────────────────────────────
 
 export const digestApi = {
@@ -741,7 +731,7 @@ export const backtestApi = {
     }),
 };
 
-// ── Trustability + leaderboard ────────────────────────────────────────────
+// ── Trustability ────────────────────────────────────────────
 
 export interface TrustabilityRow {
   userId: string;
@@ -760,15 +750,6 @@ export interface TrustabilityResponse {
 
 export const trustabilityApi = {
   me: () => request<TrustabilityResponse>("/trustability/me", { authed: true }),
-};
-
-export interface LeaderboardEntry extends TrustabilityRow {
-  label: "excellent" | "strong" | "stable" | "shaky" | "underperforming";
-}
-
-export const leaderboardApi = {
-  top: (limit = 50) =>
-    request<LeaderboardEntry[]>(`/leaderboard?limit=${limit}`),
 };
 
 // ── Analytics (best-effort) ───────────────────────────────────────────────
@@ -854,10 +835,4 @@ export const billingApi = {
   /** Referral earnings for the current user (GET /billing/referrals). */
   listReferrals: () =>
     request<ReferralsResponse>("/billing/referrals", { authed: true }),
-};
-
-// ── Health ─────────────────────────────────────────────────────────────────
-
-export const healthApi = {
-  check: () => request<{ status: string; version: string }>("/health"),
 };

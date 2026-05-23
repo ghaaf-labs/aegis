@@ -1,6 +1,6 @@
 import type { Allocation, AssetSymbol, Portfolio } from "@/types";
 
-export type TargetAllocationRow = Pick<
+type TargetAllocationRow = Pick<
   Allocation,
   | "assetId"
   | "symbol"
