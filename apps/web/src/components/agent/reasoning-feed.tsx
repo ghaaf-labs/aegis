@@ -486,7 +486,8 @@ function DecisionRow({
           blocked || legacyLocal || outdated ? "text-text-lo" : "text-text-hi"
         }`}
       >
-        {decision.recommendation?.summary ?? "Decision needs review"}
+        {decision.recommendation?.summary ??
+          (trades.length > 0 ? "Decision needs review" : "No action proposed")}
       </p>
       {showAuditDetails && blocked && (
         <p className="mb-2 text-[10px] font-mono text-risk">
