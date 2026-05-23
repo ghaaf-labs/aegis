@@ -197,6 +197,16 @@ pub struct Config {
     /// `EXECUTION_MOCK=true` (the opt-in test/CI/offline path) to mock execution.
     pub execution_mock: bool,
 
+    /// Part B0 — non-custodial execution. When true, real on-chain legs
+    /// (CCTP burn/mint, USDC approve, per-chain swap) are submitted from the
+    /// *user's* Circle developer-controlled wallet via Circle's
+    /// Create-Contract-Execution-Transaction API (entity-secret signed) rather
+    /// than from a backend EOA. Default `false`: the EOA path (`CHAIN_PRIVATE_KEY_*`)
+    /// stays the verified default so nothing regresses. Flip to `true` only with
+    /// live Circle developer creds + a funded user wallet — the round-trip is
+    /// untestable offline (same caveat as the existing real CCTP/swap paths).
+    pub circle_wallet_exec: bool,
+
     // ── Sprint 3: scheduler ───────────────────────────────────────────────
     /// Tick cadence (seconds) for the per-portfolio drift watcher.
     pub scheduler_tick_secs: u64,
@@ -408,6 +418,7 @@ impl Config {
                 .collect(),
 
             execution_mock: parse_or("EXECUTION_MOCK", false)?,
+            circle_wallet_exec: parse_or("CIRCLE_WALLET_EXEC", false)?,
 
             scheduler_tick_secs: parse_or("SCHEDULER_TICK_SECS", 300)?,
             scheduler_cooldown_secs: parse_or("SCHEDULER_COOLDOWN_SECS", 1800)?,
@@ -654,6 +665,7 @@ pub(crate) fn test_config() -> Config {
         billing_v2_enabled: false,
         admin_user_ids: vec![],
         execution_mock: true,
+        circle_wallet_exec: false,
         scheduler_tick_secs: 300,
         scheduler_cooldown_secs: 1800,
         harvest_threshold_usd: 50.0,

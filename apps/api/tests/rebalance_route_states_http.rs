@@ -293,6 +293,7 @@ fn base_config() -> Config {
         billing_v2_enabled: false,
         admin_user_ids: vec![],
         execution_mock: true,
+        circle_wallet_exec: false,
         scheduler_tick_secs: 3600,
         scheduler_cooldown_secs: 1800,
         harvest_threshold_usd: 50.0,

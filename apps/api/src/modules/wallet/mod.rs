@@ -13,6 +13,7 @@
 //! `MockProvider` returns deterministic synthetic data so local dev works when
 //! `MOCK_CIRCLE=true`.
 
+pub mod circle_exec;
 pub mod handlers;
 pub mod models;
 pub mod provider;

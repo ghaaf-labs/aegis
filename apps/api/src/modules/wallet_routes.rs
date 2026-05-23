@@ -172,6 +172,38 @@ pub async fn user_has_arc_and_base(
     Ok(has_arc && has_base)
 }
 
+/// Resolve the user's Circle developer-controlled wallet id for `blockchain`.
+/// Used by the non-custodial execution path (`circle_exec`) to address the
+/// user's own wallet as the contract-execution sender. Returns the live SCA
+/// route's `circle_wallet_id`, skipping mock placeholders.
+pub async fn wallet_id_for_user(
+    db: &Db,
+    user_id: Uuid,
+    blockchain: &str,
+    wallet_set_id: &str,
+) -> crate::error::Result<Option<String>> {
+    let wallet_id: Option<String> = sqlx::query_scalar(
+        "SELECT circle_wallet_id
+         FROM user_wallet_networks
+         WHERE user_id = $1
+           AND blockchain = $2
+           AND account_type = 'SCA'
+           AND state = 'LIVE'
+           AND ($3 = '' OR wallet_set_id = $3)
+         LIMIT 1",
+    )
+    .bind(user_id)
+    .bind(blockchain)
+    .bind(wallet_set_id.trim())
+    .fetch_optional(db)
+    .await?;
+
+    Ok(wallet_id.filter(|id| {
+        let id = id.trim();
+        !id.is_empty() && !id.starts_with("mock_wallet_")
+    }))
+}
+
 pub async fn user_id_for_address(db: &Db, address: &str) -> crate::error::Result<Option<Uuid>> {
     sqlx::query_scalar(
         "SELECT user_id
