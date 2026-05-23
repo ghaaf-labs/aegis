@@ -448,18 +448,26 @@ async fn dispatch(
 
     match kind {
         LegKind::CrossChainBurn => {
-            // The user's destination-chain EOA is the recipient embedded in the
-            // hook payload; minted USDC lands at the destination RebalanceExecutor
-            // which forwards it here.
-            let recipient = wallet_routes::address_for_user(
-                &state.db,
-                user_id,
-                blockchain_for_chain(ticket.dest_chain()),
-                &state.config.circle_wallet_set_id,
-            )
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("recipient lookup: {e}")))?
-            .unwrap_or_default();
+            // Recipient embedded in the hook payload: where the destination
+            // RebalanceExecutor forwards the minted (and optionally swapped)
+            // funds. Non-custodial path → the user's Circle wallet on the dest
+            // chain; custodial (EOA) path → the backend signer that holds funds
+            // in motion and runs the destination swap (a synthetic/EOA user has
+            // no Circle wallet route, so the lookup would be empty).
+            let recipient = if state.config.circle_wallet_exec {
+                wallet_routes::address_for_user(
+                    &state.db,
+                    user_id,
+                    blockchain_for_chain(ticket.dest_chain()),
+                    &state.config.circle_wallet_set_id,
+                )
+                .await
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("recipient lookup: {e}")))?
+                .unwrap_or_default()
+            } else {
+                adapters::cctp::eoa_address_for(&state.config, ticket.dest_chain())
+                    .unwrap_or_default()
+            };
             if recipient.is_empty() {
                 return Err(AppError::Internal(anyhow::anyhow!(
                     "destination wallet address is empty; cannot route mint"

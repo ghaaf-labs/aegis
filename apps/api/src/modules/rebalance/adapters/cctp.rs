@@ -42,6 +42,26 @@ pub fn capability(cfg: &Config) -> AdapterCapability {
     }
 }
 
+/// Backend EOA address on `chain`, derived from its signing key. In the
+/// custodial execution path (`circle_wallet_exec = false`) the backend signer
+/// holds the USDC in motion and performs the destination swap, so a cross-chain
+/// mint must be delivered to *it* — not to a per-user Circle wallet (which a
+/// synthetic/EOA user may not have). `None` when real-cctp is off or the key is
+/// unset/invalid, in which case the burn fails closed before the recipient is
+/// used.
+#[cfg(feature = "real-cctp")]
+pub fn eoa_address_for(cfg: &Config, chain: ChainKey) -> Option<String> {
+    use alloy::signers::local::PrivateKeySigner;
+    let bytes = hex::decode(cfg.chain_private_key_for(chain).trim_start_matches("0x")).ok()?;
+    let signer = PrivateKeySigner::from_slice(&bytes).ok()?;
+    Some(signer.address().to_string())
+}
+
+#[cfg(not(feature = "real-cctp"))]
+pub fn eoa_address_for(_cfg: &Config, _chain: ChainKey) -> Option<String> {
+    None
+}
+
 /// Burn USDC on the source chain, forwarding `hook` so the destination
 /// RebalanceExecutor can act on mint. Real path only — gated by the ticket.
 pub async fn burn(
