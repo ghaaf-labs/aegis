@@ -413,9 +413,9 @@ export default function TaxSettingsPage() {
 }
 
 function taxWalletStatus(lotCount: number, lastSyncedAt: string | null) {
-  if (lotCount === 0) return "No settled rows yet";
+  if (lotCount === 0) return "No cost-basis lots synced";
   const syncDate = lastSyncedAt
     ? new Date(lastSyncedAt).toLocaleDateString()
     : "sync pending";
-  return `${lotCount} records · ${syncDate}`;
+  return `${lotCount} lots · ${syncDate}`;
 }
