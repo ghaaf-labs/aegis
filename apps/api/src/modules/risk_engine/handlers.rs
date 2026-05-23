@@ -104,9 +104,9 @@ pub async fn kick_off_backtest(
         ));
     }
     let years = req.years.unwrap_or(5).clamp(1, 10);
-    let mut cfg = state.config.clone();
-    // Restrict model to the configured slug; ignore caller-supplied overrides
-    // to prevent billing abuse via expensive model injection.
+    let cfg = state.config.clone();
+    // Caller-supplied model overrides are intentionally ignored to prevent
+    // billing abuse via expensive model injection.
     let _ = req.model;
 
     let ai = OpenRouterClient::new(&state.http, &cfg);
