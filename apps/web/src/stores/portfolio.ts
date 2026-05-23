@@ -87,6 +87,9 @@ interface PortfolioState {
   setPerChain: (
     usdc: Record<string, number>,
     eurc: Record<string, number>,
+    /** Epoch ms the balance was *observed* server-side (Circle call time).
+     * Defaults to now for callers without a server timestamp (REST loader). */
+    updatedAt?: number,
   ) => void;
   setGatewayBalanceStatus: (
     status: "idle" | "loading" | "ready" | "error",
@@ -214,11 +217,11 @@ export const usePortfolioStore = create<PortfolioState>()(
         })),
       setUnifiedUsdc: (unifiedUsdc) => set({ unifiedUsdc }),
       setUnifiedEurc: (unifiedEurc) => set({ unifiedEurc }),
-      setPerChain: (perChainUsdc, perChainEurc) =>
+      setPerChain: (perChainUsdc, perChainEurc, updatedAt) =>
         set({
           perChainUsdc,
           perChainEurc,
-          gatewayBalanceUpdatedAt: Date.now(),
+          gatewayBalanceUpdatedAt: updatedAt ?? Date.now(),
         }),
       setGatewayBalanceStatus: (gatewayBalanceStatus, gatewayBalanceError) =>
         set({

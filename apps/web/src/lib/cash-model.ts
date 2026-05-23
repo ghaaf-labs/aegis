@@ -76,7 +76,11 @@ export function deriveCashSplit({
   const totalWalletUsd = unifiedUsdc + unifiedEurc * eurcUsd;
   const usdcTargetWeight =
     targetAllocations.find((a) => a.symbol === "USDC")?.targetWeight ?? 0;
-  // Plan basis includes idle USDC, matching the dashboard's existing math.
+  // Plan basis = invested positions + idle USDC. EURC is intentionally excluded:
+  // it is an FX *sleeve* the agent targets, not deployable settlement cash (only
+  // USDC is bridged/swapped to rebalance). One consequence: a wallet holding only
+  // EURC shows $0 deployable until it holds USDC. `totalWalletUsd` above still
+  // counts EURC for the "wallet cash" headline; this basis drives the USDC split.
   const totalValue = investedUsd + unifiedUsdc;
   const hasUsdcReserveTarget =
     targetAllocations.length > 0 && usdcTargetWeight > 0;

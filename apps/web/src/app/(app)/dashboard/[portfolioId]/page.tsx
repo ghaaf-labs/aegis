@@ -280,6 +280,34 @@ export default function PortfolioDashboardPage() {
       variants={stagger}
       className="max-w-[1400px] mx-auto space-y-6"
     >
+      {autoPilotEnabled && (
+        <motion.div
+          variants={fadeUp}
+          role="status"
+          className="border-brutal border-accent-agent/40 bg-accent-agent/5 p-3 md:p-4 rounded-sharp flex flex-wrap items-center justify-between gap-3"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <span
+              className="inline-block h-2 w-2 shrink-0 rounded-full bg-accent-agent animate-pulse"
+              aria-hidden
+            />
+            <p className="text-xs font-mono text-text-hi">
+              <span className="font-semibold text-accent-agent">
+                Auto-pilot is on.
+              </span>{" "}
+              The agent proposes, adopts, and executes within your guardrails —
+              moves run without a manual approval step.
+            </p>
+          </div>
+          <a
+            href="/settings/agent"
+            className="inline-flex min-h-9 shrink-0 items-center rounded-sharp border border-accent-agent/40 px-3 font-mono text-xs font-semibold text-accent-agent hover:bg-accent-agent/10"
+          >
+            Manage
+          </a>
+        </motion.div>
+      )}
+
       <motion.div
         variants={fadeUp}
         className="rounded-sharp border-brutal border-border-default bg-surface p-4 md:p-5"

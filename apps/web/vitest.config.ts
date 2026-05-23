@@ -14,6 +14,9 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
+    // Guarantees a working window.localStorage/sessionStorage under jsdom across
+    // Node 20–25 (Node 25's built-in Storage is method-less without a flag).
+    setupFiles: ["./src/test-setup.ts"],
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
     coverage: {
       provider: "v8",
@@ -24,6 +27,7 @@ export default defineConfig({
         "src/**/*.d.ts",
         "src/**/__mocks__/**",
         "src/**/mock-data.ts",
+        "src/test-setup.ts",
         "src/app/**", // Next.js route shells are integration-tested, not unit-tested
       ],
     },

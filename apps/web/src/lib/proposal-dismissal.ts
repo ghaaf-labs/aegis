@@ -6,6 +6,14 @@
  * event / remount because dismissal lived in ephemeral component state. Keying
  * dismissal by `decision.id` makes "skip this proposal" durable, while a fresh
  * proposal (a new id, e.g. from Re-propose) still surfaces.
+ *
+ * Scope (deliberate): this is best-effort, per-device state. It fixes the
+ * re-pop-on-refetch bug within a session/device but does NOT sync across
+ * devices or survive a storage clear — a dismissal on laptop A won't be known
+ * on phone B, where the still-pending proposal will surface once more. That's
+ * acceptable: the proposal is unapplied, so re-surfacing it elsewhere is safe
+ * (the user can dismiss or apply it there). Promoting this to a server-backed
+ * per-decision flag is the follow-up if cross-device suppression is needed.
  */
 
 const KEY = "aegis.dismissed_proposals";

@@ -64,8 +64,21 @@ export default async function globalSetup(_config: FullConfig) {
 }
 
 async function seedPortfolio(token: string): Promise<void> {
-  // Idempotent — if a portfolio already exists this will create a second one,
-  // which is fine; the dashboard redirects to the first it finds.
+  // Single-portfolio invariant (migration 0036): a user may have at most one
+  // portfolio, so re-running global-setup against a persisted DB must not POST a
+  // second one (it would 409 on the unique constraint, or silently replace the
+  // target). Create only when none exists.
+  const existing = await fetch(`${API_BASE}/portfolios`, {
+    headers: {
+      "X-Aegis-Request": "1",
+      Cookie: sessionCookieHeader(token),
+    },
+  });
+  if (existing.ok) {
+    const list: unknown = await existing.json().catch(() => null);
+    if (Array.isArray(list) && list.length > 0) return;
+  }
+
   const res = await fetch(`${API_BASE}/portfolios`, {
     method: "POST",
     headers: {
