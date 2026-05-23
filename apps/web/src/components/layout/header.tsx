@@ -256,6 +256,8 @@ export function Header() {
               variant="ghost"
               className="text-text-lo relative"
               aria-label="Notifications"
+              aria-haspopup="menu"
+              aria-expanded={notifOpen}
               onClick={() => setNotifOpen((v) => !v)}
             >
               <Bell className="w-4 h-4" />
@@ -331,6 +333,8 @@ export function Header() {
               className="w-7 h-7 rounded-sharp bg-accent-agent flex items-center justify-center border-brutal border-black hover:opacity-90"
               title="Account menu"
               aria-label="Account menu"
+              aria-haspopup="menu"
+              aria-expanded={userOpen}
             >
               <WalletIcon className="w-3.5 h-3.5 text-black" />
             </button>
