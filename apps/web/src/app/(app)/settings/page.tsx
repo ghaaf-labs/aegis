@@ -186,6 +186,13 @@ export default function SettingsIndex() {
     }
   };
 
+  const resetEmailChallenge = () => {
+    setEmailChallenge(null);
+    setEmailCode("");
+    setEmailStatus("idle");
+    setEmailMessage("");
+  };
+
   const confirmEmailUpdate = async () => {
     if (!emailChallenge) return;
     if (!/^\d{6}$/.test(emailCode.trim())) {
@@ -368,6 +375,13 @@ export default function SettingsIndex() {
                       aria-label="6-digit email verification code"
                       className="min-h-10 w-full rounded-sharp border-brutal border-border-default bg-bg px-3 py-2 font-mono text-sm tracking-[0.3em] text-text-hi outline-none focus:border-border-hi"
                     />
+                    <button
+                      type="button"
+                      onClick={resetEmailChallenge}
+                      className="font-mono text-[11px] text-text-mut underline-offset-2 hover:text-text-hi hover:underline"
+                    >
+                      Use a different email
+                    </button>
                   </div>
                 )}
                 <button
