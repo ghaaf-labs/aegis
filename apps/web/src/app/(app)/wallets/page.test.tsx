@@ -164,7 +164,7 @@ describe("<NetworkTokenPanel />", () => {
       "Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji",
     );
     expect(text).toContain("Saved to active portfolio");
-    expect(text).toContain("Wallet route sync required");
+    expect(text).toContain("Wallet route not synced yet");
     expect(text).toContain("Included for wallet tracking and rebalances");
     expect(text).toContain(
       "rebalance execution uses Arc testnet and Base Sepolia",
@@ -238,6 +238,7 @@ describe("<NetworkTokenPanel />", () => {
       "Included for wallet tracking; not a rebalance rail",
     );
     expect(text).not.toContain("Needs sync");
+    expect(text).not.toContain("Wallet route not synced yet");
 
     act(() => root.unmount());
   });

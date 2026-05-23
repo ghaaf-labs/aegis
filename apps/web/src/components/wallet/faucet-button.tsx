@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Coins, ExternalLink, Copy, Check } from "lucide-react";
 import { BrutalButton, ProvenanceLine } from "@aegis/ui";
-import { faucetApi, analyticsApi, type FaucetClaim } from "@/lib/api";
+import { faucetApi, type FaucetClaim } from "@/lib/api";
 import { copyTextToClipboard } from "@/lib/clipboard";
 
 export function FaucetButton() {
@@ -21,10 +21,6 @@ export function FaucetButton() {
     try {
       const r = await faucetApi.claim();
       setResult(r);
-      await analyticsApi.track("faucet.claimed", {
-        amountUsdc: r.amountUsdc,
-        chain: r.chain,
-      });
       // In real mode the backend hands back the public faucet URL —
       // pop it open in a new tab so the user can finish the claim there.
       if (r.claimUrl && typeof window !== "undefined") {

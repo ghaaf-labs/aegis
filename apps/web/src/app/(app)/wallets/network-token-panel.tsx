@@ -21,32 +21,27 @@ const NETWORKS = [
   {
     blockchain: "ARC-TESTNET",
     label: "Arc testnet",
-    state: "Ready",
-    detail: "Wallet and rebalance execution route ready",
+    detail: "Can receive funds, track balances, and execute rebalances",
   },
   {
     blockchain: "BASE-SEPOLIA",
     label: "Base Sepolia",
-    state: "Ready",
-    detail: "Wallet and rebalance execution route ready",
+    detail: "Can receive funds, track balances, and execute rebalances",
   },
   {
     blockchain: "ETH-SEPOLIA",
     label: "Ethereum Sepolia",
-    state: "Supported",
-    detail: "Wallet route sync required",
+    detail: "Can receive funds and track balances",
   },
   {
     blockchain: "ARB-SEPOLIA",
     label: "Arbitrum Sepolia",
-    state: "Supported",
-    detail: "Wallet route sync required",
+    detail: "Can receive funds and track balances",
   },
   {
     blockchain: "AVAX-FUJI",
     label: "Avalanche Fuji",
-    state: "Supported",
-    detail: "Wallet route sync required",
+    detail: "Can receive funds and track balances",
   },
 ] as const;
 
@@ -373,21 +368,31 @@ export function NetworkTokenPanel({
                               ? executionReady(network.blockchain)
                                 ? "Included for wallet tracking and rebalances"
                                 : "Included for wallet tracking; not a rebalance rail"
-                              : network.detail
+                              : executionReady(network.blockchain)
+                                ? "Ready, but not selected for agent use"
+                                : "Wallet-ready tracking route; not selected"
                             : tracked
                               ? "Queued for wallet sync"
-                              : network.detail}
+                              : "Wallet route not synced yet"}
                         </p>
                       </div>
                       <StatusPill
-                        tone={live ? "live" : tracked ? "agent" : "muted"}
+                        tone={
+                          live && selected
+                            ? "live"
+                            : live
+                              ? "muted"
+                              : tracked
+                                ? "agent"
+                                : "muted"
+                        }
                       >
                         {live
                           ? selected
                             ? executionReady(network.blockchain)
                               ? "Execution"
                               : "Wallet ready"
-                            : network.state
+                            : "Available"
                           : tracked
                             ? "Sync"
                             : "Needs sync"}
