@@ -100,7 +100,11 @@ export default function AgentSettingsPage() {
             </p>
           </div>
 
-          {error && <p className="text-xs text-risk font-mono">{error}</p>}
+          {error && (
+            <p role="alert" className="text-xs text-risk font-mono">
+              {error}
+            </p>
+          )}
         </BrutalCardBody>
       </BrutalCard>
     </div>
