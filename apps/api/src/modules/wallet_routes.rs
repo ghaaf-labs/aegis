@@ -19,7 +19,13 @@ pub const SUPPORTED_WALLET_BLOCKCHAINS: [&str; 5] = [
     AVAX_FUJI,
 ];
 
-pub const EXECUTION_BLOCKCHAINS: [&str; 3] = [ARC_TESTNET, BASE_SEPOLIA, ETH_SEPOLIA];
+pub const EXECUTION_BLOCKCHAINS: [&str; 5] = [
+    ARC_TESTNET,
+    BASE_SEPOLIA,
+    ETH_SEPOLIA,
+    ARB_SEPOLIA,
+    AVAX_FUJI,
+];
 
 /// Canonical mapping from a `ChainKey` to its Circle wallet `blockchain` slug.
 /// Single source of truth for the executor + the non-custodial `circle_exec`

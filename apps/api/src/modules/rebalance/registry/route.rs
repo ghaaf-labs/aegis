@@ -514,7 +514,7 @@ mod tests {
     fn non_execution_chain_is_flagged() {
         let cfg = real_cfg();
         let caps = RuntimeCapabilities::from_config(&cfg);
-        let legs = vec![leg(LegKind::CrossChainBurn, "arb-sepolia", "base", "USDC")];
+        let legs = vec![leg(LegKind::CrossChainBurn, "op-sepolia", "base", "USDC")];
         let blockers = validate_legs(&caps, &cfg, &legs);
         assert!(blockers
             .iter()

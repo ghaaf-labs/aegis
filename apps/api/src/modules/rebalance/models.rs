@@ -152,13 +152,18 @@ impl ChainKey {
     }
 
     /// Whether this chain is wired for live rebalance execution. Arc, Base, and
-    /// Eth Sepolia have a deployed RebalanceExecutor + swap venue; the rest are
-    /// wallet-supported (USDC custody) but the route registry must fail closed
-    /// for them until their executor is deployed. Adding a chain here without the
-    /// on-chain plumbing would let a plan slip past the gate, so this stays in
-    /// lockstep with `wallet_routes::EXECUTION_BLOCKCHAINS`.
+    /// Eth Sepolia run the full path (deployed RebalanceExecutor + swap venue);
+    /// Arb Sepolia and Avax Fuji are CCTP source/dest chains under the two-leg
+    /// baseline (plain USDC bridge to the EOA — no executor needed; swaps settle
+    /// on a venue-bearing chain). OP Sepolia stays wallet-only until funded.
+    /// Adding a chain here without the on-chain plumbing would let a plan slip
+    /// past the gate, so this stays in lockstep with
+    /// `wallet_routes::EXECUTION_BLOCKCHAINS`.
     pub fn is_execution(&self) -> bool {
-        matches!(self, Self::Arc | Self::Base | Self::EthSepolia)
+        matches!(
+            self,
+            Self::Arc | Self::Base | Self::EthSepolia | Self::ArbSepolia | Self::AvaxFuji
+        )
     }
 }
 
@@ -246,21 +251,21 @@ mod tests {
     }
 
     #[test]
-    fn arc_base_eth_are_execution_chains() {
-        // Arc, Base, and Eth Sepolia have a deployed RebalanceExecutor + venue.
-        assert!(ChainKey::Arc.is_execution());
-        assert!(ChainKey::Base.is_execution());
-        assert!(ChainKey::EthSepolia.is_execution());
-        // Arb/Avax/OP stay non-execution until their executor is deployed.
+    fn execution_chains_are_arc_base_eth_arb_avax() {
+        // Arc/Base/Eth run the full path; Arb/Avax are CCTP source/dest chains
+        // (two-leg baseline). OP stays non-execution until funded + wired.
         for k in [
+            ChainKey::Arc,
+            ChainKey::Base,
+            ChainKey::EthSepolia,
             ChainKey::ArbSepolia,
             ChainKey::AvaxFuji,
-            ChainKey::OpSepolia,
         ] {
-            assert!(
-                !k.is_execution(),
-                "{k:?} must stay non-execution until wired"
-            );
+            assert!(k.is_execution(), "{k:?} must be an execution chain");
         }
+        assert!(
+            !ChainKey::OpSepolia.is_execution(),
+            "OP Sepolia must stay non-execution until funded"
+        );
     }
 }
