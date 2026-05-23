@@ -151,14 +151,14 @@ impl ChainKey {
         }
     }
 
-    /// Whether this chain is wired for live rebalance execution. Only Arc and
-    /// Base have a deployed RebalanceExecutor / swap venue today; the rest are
+    /// Whether this chain is wired for live rebalance execution. Arc, Base, and
+    /// Eth Sepolia have a deployed RebalanceExecutor + swap venue; the rest are
     /// wallet-supported (USDC custody) but the route registry must fail closed
-    /// for them. Adding a chain here without the on-chain plumbing would let a
-    /// plan slip past the gate, so this stays in lockstep with
-    /// `wallet_routes::EXECUTION_BLOCKCHAINS`.
+    /// for them until their executor is deployed. Adding a chain here without the
+    /// on-chain plumbing would let a plan slip past the gate, so this stays in
+    /// lockstep with `wallet_routes::EXECUTION_BLOCKCHAINS`.
     pub fn is_execution(&self) -> bool {
-        matches!(self, Self::Arc | Self::Base)
+        matches!(self, Self::Arc | Self::Base | Self::EthSepolia)
     }
 }
 
@@ -246,11 +246,13 @@ mod tests {
     }
 
     #[test]
-    fn only_arc_and_base_are_execution_chains() {
+    fn arc_base_eth_are_execution_chains() {
+        // Arc, Base, and Eth Sepolia have a deployed RebalanceExecutor + venue.
         assert!(ChainKey::Arc.is_execution());
         assert!(ChainKey::Base.is_execution());
+        assert!(ChainKey::EthSepolia.is_execution());
+        // Arb/Avax/OP stay non-execution until their executor is deployed.
         for k in [
-            ChainKey::EthSepolia,
             ChainKey::ArbSepolia,
             ChainKey::AvaxFuji,
             ChainKey::OpSepolia,

@@ -1125,7 +1125,7 @@ mod tests {
     fn swap_chain_fails_closed_for_non_execution_or_unset_chains() {
         // Wallet-supported but non-execution chains must not resolve.
         assert_eq!(swap_chain(&swap_leg("op-sepolia", "op-sepolia")), None);
-        assert_eq!(swap_chain(&swap_leg("eth-sepolia", "eth-sepolia")), None);
+        assert_eq!(swap_chain(&swap_leg("arb-sepolia", "arb-sepolia")), None);
         // Unparsable / unset.
         assert_eq!(swap_chain(&swap_leg("solana", "solana")), None);
         let mut l = swap_leg("base", "base");
