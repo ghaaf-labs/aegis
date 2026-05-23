@@ -1,10 +1,15 @@
 import { Suspense } from "react";
 import { AuthPageShell } from "@/components/wallet/auth-page-shell";
 import { EmailAuthCard } from "@/components/wallet/email-auth-card";
+import { pageMetadata } from "@/lib/seo";
 
 export const metadata = {
-  title: "Aegis · Continue",
-  description: "Continue to Aegis with an email code.",
+  ...pageMetadata({
+    title: "Continue — Aegis",
+    description: "Sign in to Aegis with your email. No password required.",
+    path: "/login",
+  }),
+  robots: "noindex, nofollow",
 };
 
 function WalletCardSkeleton() {

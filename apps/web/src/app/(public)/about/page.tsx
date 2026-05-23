@@ -4,12 +4,14 @@ import Link from "next/link";
 import { Github, Globe, Linkedin } from "lucide-react";
 import { LandingShell } from "@/components/layout/landing-shell";
 import { BrutalPill } from "@aegis/ui";
+import { pageMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = pageMetadata({
   title: "About — Aegis",
   description:
     "Meet the team behind Aegis — an adaptive stablecoin portfolio agent built on Circle's stack.",
-};
+  path: "/about",
+});
 
 const TEAM = [
   {

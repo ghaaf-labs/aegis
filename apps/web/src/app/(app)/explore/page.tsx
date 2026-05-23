@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import {
   ArrowRight,
@@ -13,12 +14,14 @@ import {
   BrutalPill,
 } from "@aegis/ui";
 import { DEMO_BUNDLES } from "@/lib/explore-data";
+import { pageMetadata } from "@/lib/seo";
 
-export const metadata = {
-  title: "Aegis · Explore demo portfolios",
+export const metadata: Metadata = pageMetadata({
+  title: "Explore Demo Portfolios — Aegis",
   description:
     "Three curated Aegis portfolios across different risk profiles and regimes — see how the agent reasons before signing up.",
-};
+  path: "/explore",
+});
 
 export default function ExploreIndex() {
   const bundles = Object.values(DEMO_BUNDLES);

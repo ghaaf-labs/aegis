@@ -10,12 +10,14 @@ import {
   ModelBadge,
   ProvenanceLine,
 } from "@aegis/ui";
+import { pageMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
-  title: "Aegis · Regime classifier — model card",
+export const metadata: Metadata = pageMetadata({
+  title: "Regime Classifier Model Card — Aegis",
   description:
     "Backtest precision/recall numbers for the Aegis market-regime classifier. Trust signal, not marketing.",
-};
+  path: "/about/regime",
+});
 
 // Re-fetch on every request so the page reflects the latest persisted eval.
 export const dynamic = "force-dynamic";

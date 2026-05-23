@@ -2,12 +2,14 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ProvenanceLine } from "@aegis/ui";
 import { BacktestChart, type Sample } from "@/components/regime/backtest-chart";
+import { pageMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
-  title: "Aegis · Regime classifier — backtest evidence",
+export const metadata: Metadata = pageMetadata({
+  title: "Regime Classifier Backtest Evidence — Aegis",
   description:
-    "Backtest evidence for the Aegis market-regime classifier. Published when evaluation data is available.",
-};
+    "Backtest evidence for the Aegis market-regime classifier. Out-of-sample predictions replayed across historical price data.",
+  path: "/about/regime/backtest",
+});
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;

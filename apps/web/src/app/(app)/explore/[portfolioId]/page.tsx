@@ -11,6 +11,7 @@ import {
   ProvenanceLine,
 } from "@aegis/ui";
 import { DEMO_BUNDLES, DEMO_SLUGS } from "@/lib/explore-data";
+import { pageMetadata } from "@/lib/seo";
 
 interface PageProps {
   params: Promise<{ portfolioId: string }>;
@@ -25,11 +26,12 @@ export async function generateMetadata({
 }: PageProps): Promise<Metadata> {
   const { portfolioId } = await params;
   const bundle = DEMO_BUNDLES[portfolioId];
-  if (!bundle) return { title: "Aegis · Explore" };
-  return {
-    title: `Aegis · ${bundle.portfolio.name} (demo)`,
+  if (!bundle) return { title: "Explore — Aegis" };
+  return pageMetadata({
+    title: `${bundle.portfolio.name} (demo) — Aegis`,
     description: `Demo portfolio: ${bundle.portfolio.name}. See how the Aegis agent reasons about regime, allocation, and risk.`,
-  };
+    path: `/explore/${portfolioId}`,
+  });
 }
 
 export default async function ExploreDemoPage({ params }: PageProps) {

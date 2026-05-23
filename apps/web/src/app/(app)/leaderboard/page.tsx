@@ -2,12 +2,14 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Trophy } from "lucide-react";
 import { ModelBadge } from "@aegis/ui";
+import { pageMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
-  title: "Aegis · Leaderboard",
+export const metadata: Metadata = pageMetadata({
+  title: "Leaderboard — Aegis",
   description:
     "How the Aegis agent has performed across all live portfolios — ranked by realized 7d return vs counterfactual.",
-};
+  path: "/leaderboard",
+});
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;

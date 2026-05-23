@@ -2,12 +2,14 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { BrutalPill } from "@aegis/ui";
 import { LandingShell } from "@/components/layout/landing-shell";
+import { pageMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
-  title: "Aegis · Terms & Privacy",
+export const metadata: Metadata = pageMetadata({
+  title: "Terms & Privacy — Aegis",
   description:
     "Plain-English terms, privacy, account control, and refund policy for Aegis.",
-};
+  path: "/policy",
+});
 
 export default function PolicyPage() {
   return (

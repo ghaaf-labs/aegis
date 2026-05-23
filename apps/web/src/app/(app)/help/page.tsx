@@ -14,12 +14,14 @@ import {
   BrutalPill,
 } from "@aegis/ui";
 import { HelpItemGrid } from "./help-item-grid";
+import { pageMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
-  title: "Aegis · Help",
+export const metadata: Metadata = pageMetadata({
+  title: "Help — Aegis",
   description:
     "Plain-English help for wallet cash, approvals, agent decisions, tax exports, and support.",
-};
+  path: "/help",
+});
 
 export default function HelpPage() {
   return (

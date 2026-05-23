@@ -1,17 +1,18 @@
 import type { Metadata } from "next";
 import { PricingPageClient } from "./pricing-client";
+import { pageMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = pageMetadata({
   title: "Pricing — Aegis",
   description:
     "Free, Pro ($19/mo), and Business ($199/mo). Stablecoin-native portfolio agent — pay in USDC via Circle Nanopayments. No hidden swap spread. No charging on failed execution.",
-  openGraph: {
-    title: "Pricing — Aegis",
-    description: "Three tiers. USDC-native billing. No hidden fees.",
-    type: "website",
-  },
-};
+  path: "/pricing",
+});
 
 export default function PricingPage() {
-  return <PricingPageClient />;
+  return (
+    <main>
+      <PricingPageClient />
+    </main>
+  );
 }

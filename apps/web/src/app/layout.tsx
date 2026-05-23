@@ -39,8 +39,16 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: "Aegis — AI Portfolio Manager",
-    description: "AI-powered adaptive crypto portfolio management.",
+    description:
+      "AI-powered adaptive crypto portfolio management. Autonomously monitors, rebalances, and explains your investments.",
     type: "website",
+    siteName: "Aegis",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Aegis — AI Portfolio Manager",
+    description:
+      "AI-powered adaptive crypto portfolio management. Autonomously monitors, rebalances, and explains your investments.",
   },
 };
 
