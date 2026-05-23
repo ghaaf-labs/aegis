@@ -30,7 +30,7 @@ export const useBillingStore = create<BillingState>()(
         try {
           const [subscription, tiers, invoices] = await Promise.all([
             billingApi.getSubscription().catch(() => null),
-            billingApi.listTiers(),
+            billingApi.listTiers().catch(() => [] as PricingTier[]),
             billingApi.listInvoices({ limit: 24 }).catch(() => [] as Invoice[]),
           ]);
           set({ subscription, tiers, invoices, loading: false });

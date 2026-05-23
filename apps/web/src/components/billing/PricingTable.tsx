@@ -98,6 +98,8 @@ export interface PricingTableProps {
   publicActionLabel?: string | ((tier: PricingTier) => string);
   publicActionTone?: "pnl" | "agent";
   publicActionHint?: string | null;
+  actionsDisabled?: boolean;
+  disabledActionLabel?: string;
 }
 
 export function PricingTable({
@@ -109,6 +111,8 @@ export function PricingTable({
   publicActionLabel,
   publicActionTone = "pnl",
   publicActionHint = null,
+  actionsDisabled = false,
+  disabledActionLabel = "Unavailable",
 }: PricingTableProps) {
   return (
     <div className="grid gap-4 md:grid-cols-3" data-testid="pricing-table">
@@ -178,21 +182,25 @@ export function PricingTable({
             {onSelect ? (
               <BrutalButton
                 variant="pnl"
-                disabled={isCurrent || isBusy}
+                disabled={isCurrent || isBusy || actionsDisabled}
                 onClick={() => onSelect((t.tier ?? t.code) as Tier)}
                 aria-label={
                   isCurrent
                     ? `Currently on ${t.name ?? t.code}`
-                    : `Upgrade to ${t.name ?? t.code}`
+                    : actionsDisabled
+                      ? `${t.name ?? t.code} is unavailable`
+                      : `Upgrade to ${t.name ?? t.code}`
                 }
               >
                 {isCurrent
                   ? "Current plan"
-                  : isBusy
-                    ? "Settling…"
-                    : t.tier === "free"
-                      ? "Downgrade"
-                      : `Upgrade to ${t.name ?? t.code}`}
+                  : actionsDisabled
+                    ? disabledActionLabel
+                    : isBusy
+                      ? "Settling…"
+                      : t.tier === "free"
+                        ? "Downgrade"
+                        : `Upgrade to ${t.name ?? t.code}`}
               </BrutalButton>
             ) : (
               <a

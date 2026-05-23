@@ -146,7 +146,7 @@ export function UpgradeModal({
           )}
 
           <div className="pt-3 border-t border-white/5">
-            <ProvenanceLine source="Circle Nanopayments · USDC on Arc" />
+            <ProvenanceLine source="USDC billing on Arc" />
           </div>
 
           {error && (

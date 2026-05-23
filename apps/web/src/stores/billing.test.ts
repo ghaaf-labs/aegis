@@ -87,6 +87,20 @@ describe("useBillingStore", () => {
     expect(state.subscription).toBeNull();
   });
 
+  it("fetch() keeps Free plan usable when billing tiers are unavailable", async () => {
+    const { billingApi } = await import("@/lib/api");
+    (billingApi.listTiers as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error("404: That record was not found."),
+    );
+
+    await useBillingStore.getState().fetch();
+    const state = useBillingStore.getState();
+    expect(state.error).toBeNull();
+    expect(state.tiers).toHaveLength(0);
+    expect(state.subscription).toBeNull();
+    expect(state.loading).toBe(false);
+  });
+
   it("upgrade() calls the api and sets the new subscription", async () => {
     const result = await useBillingStore.getState().upgrade("pro");
     expect(result.tier).toBe("pro");

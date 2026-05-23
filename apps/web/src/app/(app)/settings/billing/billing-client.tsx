@@ -60,6 +60,7 @@ export function BillingSettingsClient() {
   }, [fetchBilling]);
 
   const effectiveTiers = tiers.length > 0 ? tiers : DEFAULT_PRICING_TIERS;
+  const upgradesAvailable = tiers.length > 0;
   const currentTier: Tier = subscription?.tier ?? "free";
   const isCanceled = !!subscription?.cancelAt;
 
@@ -133,6 +134,16 @@ export function BillingSettingsClient() {
         </div>
       )}
 
+      {!loading && !upgradesAvailable && (
+        <div
+          role="status"
+          className="border border-border-default bg-surface/80 p-3 text-xs text-text-default"
+        >
+          Plan upgrades are not available right now. Your Free plan remains
+          active.
+        </div>
+      )}
+
       <BrutalCard>
         <BrutalCardHeader>
           <span className="text-sm font-semibold text-text-hi">
@@ -168,7 +179,7 @@ export function BillingSettingsClient() {
           </dl>
 
           <div className="mt-5 flex flex-wrap gap-2">
-            {currentTier !== "business" && (
+            {upgradesAvailable && currentTier !== "business" && (
               <BrutalButton
                 variant="pnl"
                 onClick={() =>
@@ -208,7 +219,7 @@ export function BillingSettingsClient() {
           </div>
 
           <div className="mt-4">
-            <ProvenanceLine source="Circle Nanopayments · USDC on Arc" />
+            <ProvenanceLine source="USDC billing on Arc" />
           </div>
         </BrutalCardBody>
       </BrutalCard>
@@ -220,6 +231,8 @@ export function BillingSettingsClient() {
         <PricingTable
           tiers={effectiveTiers}
           currentTier={currentTier}
+          actionsDisabled={!upgradesAvailable}
+          disabledActionLabel="Unavailable"
           onSelect={(t) => {
             if (t !== currentTier) setPendingTier(t);
           }}
@@ -269,7 +282,7 @@ export function BillingSettingsClient() {
               </div>
             )}
             <div className="mt-3">
-              <ProvenanceLine source="Circle Nanopayments · referral rewards" />
+              <ProvenanceLine source="USDC referral rewards" />
             </div>
           </BrutalCardBody>
         </BrutalCard>

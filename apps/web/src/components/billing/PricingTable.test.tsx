@@ -25,6 +25,20 @@ describe("<PricingTable />", () => {
     expect(html).toContain("YOUR PLAN");
   });
 
+  it("can render unavailable upgrade actions without linking away", () => {
+    const html = renderToStaticMarkup(
+      <PricingTable
+        currentTier="free"
+        onSelect={() => undefined}
+        actionsDisabled
+        disabledActionLabel="Unavailable"
+      />,
+    );
+    expect(html).toContain("Unavailable");
+    expect(html).toContain("disabled");
+    expect(html).toContain("Pro is unavailable");
+  });
+
   it("DEFAULT_PRICING_TIERS mirrors §2.1 numbers exactly", () => {
     const find = (slug: "free" | "pro" | "business") => {
       const t = DEFAULT_PRICING_TIERS.find((x) => x.tier === slug);

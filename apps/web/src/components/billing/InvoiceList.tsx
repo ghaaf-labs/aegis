@@ -48,8 +48,7 @@ export function InvoiceList({
             No invoices yet — you&apos;re on the Free plan.
           </p>
           <p className="text-[11px] font-mono text-text-lo mt-2">
-            Upgrades and AUM-fee accruals will appear here as they settle via
-            Circle Nanopayments.
+            Upgrades and AUM-fee accruals will appear here after they settle.
           </p>
         </BrutalCardBody>
       </BrutalCard>
