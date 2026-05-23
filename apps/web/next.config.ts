@@ -1,5 +1,27 @@
 import type { NextConfig } from "next";
 
+const securityHeaders = [
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "X-Frame-Options", value: "DENY" },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  {
+    key: "Permissions-Policy",
+    value: "camera=(), microphone=(), geolocation=()",
+  },
+  {
+    key: "Content-Security-Policy",
+    value: [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval'", // unsafe-inline/eval required by Next.js/Turbopack in dev
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      "font-src 'self' https://fonts.gstatic.com",
+      "img-src 'self' data: https://assets.coingecko.com https://coin-images.coingecko.com",
+      "connect-src 'self' https://openrouter.ai https://api.circle.com https://eu.infisical.com",
+      "frame-ancestors 'none'",
+    ].join("; "),
+  },
+];
+
 const nextConfig: NextConfig = {
   distDir: process.env.NEXT_DIST_DIR ?? ".next",
   output: "standalone",
@@ -19,6 +41,14 @@ const nextConfig: NextConfig = {
         hostname: "coin-images.coingecko.com",
       },
     ],
+  },
+  async headers() {
+    return [
+      {
+        source: "/(.*)",
+        headers: securityHeaders,
+      },
+    ];
   },
   async rewrites() {
     return [

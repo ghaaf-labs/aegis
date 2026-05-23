@@ -1,0 +1,11 @@
+# Default owners for everything
+* @ghaaf-labs/core
+
+# Security-sensitive paths require explicit review
+apps/api/src/middleware/ @ghaaf-labs/core
+apps/api/src/modules/wallet/ @ghaaf-labs/core
+apps/api/src/modules/auth/ @ghaaf-labs/core
+apps/api/src/config.rs @ghaaf-labs/core
+scripts/fetch-secrets.sh @ghaaf-labs/core
+docker-compose.deploy.yml @ghaaf-labs/core
+.github/workflows/ @ghaaf-labs/core

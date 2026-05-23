@@ -158,6 +158,10 @@ pub struct Config {
     #[allow(dead_code)]
     pub billing_v2_enabled: bool,
 
+    /// Comma-separated list of user UUIDs that may call `/admin/*` endpoints.
+    /// Empty (default) disables all admin routes regardless of feature flags.
+    pub admin_user_ids: Vec<uuid::Uuid>,
+
     /// When true, the executor / cross-chain client skip real RPC calls and
     /// return deterministic mock receipts. Defaults to true so CI is hermetic.
     pub execution_mock: bool,
@@ -357,6 +361,12 @@ impl Config {
                 .unwrap_or_default(),
 
             billing_v2_enabled: parse_or("BILLING_V2_ENABLED", false)?,
+            admin_user_ids: std::env::var("ADMIN_USER_IDS")
+                .unwrap_or_default()
+                .split(',')
+                .filter(|s| !s.trim().is_empty())
+                .filter_map(|s| s.trim().parse::<uuid::Uuid>().ok())
+                .collect(),
 
             execution_mock: parse_or("EXECUTION_MOCK", true)?,
 
@@ -596,6 +606,7 @@ mod tests {
             nanopayments_seller_address: String::new(),
             nanopayments_treasury_address: String::new(),
             billing_v2_enabled: false,
+            admin_user_ids: vec![],
             execution_mock: true,
             scheduler_tick_secs: 300,
             scheduler_cooldown_secs: 1800,

@@ -83,6 +83,14 @@ pub async fn list_referrals(
 
 /// 404-with-this-body when `BILLING_V2_ENABLED=false`. Centralized so every
 /// gated handler returns the same shape.
+fn require_admin(state: &AppState, claims: &Claims) -> Result<()> {
+    if state.config.admin_user_ids.contains(&claims.sub) {
+        Ok(())
+    } else {
+        Err(AppError::NotFound("not found".into()))
+    }
+}
+
 fn billing_v2_disabled() -> AppError {
     AppError::NotFound("billing v2 disabled".into())
 }
@@ -437,9 +445,10 @@ fn require_aum_enabled(state: &AppState) -> Result<()> {
 
 pub async fn list_accruals(
     State(state): State<AppState>,
-    Extension(_claims): Extension<Claims>,
+    Extension(claims): Extension<Claims>,
     Query(q): Query<AccrualListQuery>,
 ) -> Result<Json<AccrualListResponse>> {
+    require_admin(&state, &claims)?;
     require_aum_enabled(&state)?;
     let limit = q.limit.unwrap_or(100).clamp(1, 1000);
     let rows: Vec<AccrualListRow> = match q.user_id {
@@ -471,8 +480,9 @@ pub async fn list_accruals(
 
 pub async fn run_accruals_once(
     State(state): State<AppState>,
-    Extension(_claims): Extension<Claims>,
+    Extension(claims): Extension<Claims>,
 ) -> Result<(StatusCode, Json<TickReport>)> {
+    require_admin(&state, &claims)?;
     require_aum_enabled(&state)?;
     let report = aum_stream::run_once(&state.db, &state.config)
         .await

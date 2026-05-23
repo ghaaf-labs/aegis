@@ -92,8 +92,12 @@ pub struct BacktestResponse {
 
 pub async fn kick_off_backtest(
     State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
     Json(req): Json<BacktestRequest>,
 ) -> Result<Json<BacktestResponse>> {
+    if !state.config.admin_user_ids.contains(&claims.sub) {
+        return Err(AppError::NotFound("not found".into()));
+    }
     if !state.config.regime_backtest_enabled {
         return Err(AppError::NotFound(
             "regime backtest endpoints are disabled".into(),
@@ -101,9 +105,9 @@ pub async fn kick_off_backtest(
     }
     let years = req.years.unwrap_or(5).clamp(1, 10);
     let mut cfg = state.config.clone();
-    if let Some(m) = req.model {
-        cfg.model_regime = m;
-    }
+    // Restrict model to the configured slug; ignore caller-supplied overrides
+    // to prevent billing abuse via expensive model injection.
+    let _ = req.model;
 
     let ai = OpenRouterClient::new(&state.http, &cfg);
     let classifier = OpenRouterRegimeClassifier {
