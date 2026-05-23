@@ -44,6 +44,12 @@ export function LandingHeader() {
           >
             Leaderboard
           </Link>
+          <Link
+            href="/about"
+            className="text-xs font-mono text-text-lo hover:text-text-hi transition-colors"
+          >
+            About
+          </Link>
           <Link href="/login" className="inline-flex">
             <BrutalButton variant="pnl">Get started</BrutalButton>
           </Link>
