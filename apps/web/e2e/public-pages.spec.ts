@@ -86,7 +86,22 @@ test("P10 — about page renders hero and team members", async ({ page }) => {
   await expect(page.getByText(/Staff Engineer/i).first()).toBeVisible();
 });
 
-test("P11 — pricing page renders", async ({ page }) => {
+test("P11 — pricing page renders tiers and heading", async ({ page }) => {
   await page.goto("/pricing");
-  await expect(page.locator("h1, h2").first()).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /Stablecoin-native pricing/i }),
+  ).toBeVisible();
+  // At least the Free tier label appears somewhere on the page
+  await expect(page.getByText(/Free forever/i).first()).toBeVisible();
+});
+
+test("P12 — help page renders heading and guide sections", async ({ page }) => {
+  await page.goto("/help");
+  await expect(
+    page.getByRole("heading", { name: /Help/i }).first(),
+  ).toBeVisible();
+  // Descriptive sub-text confirms the real content loaded (not a crash screen)
+  await expect(
+    page.getByText(/wallet cash|approvals|agent decisions/i).first(),
+  ).toBeVisible();
 });
