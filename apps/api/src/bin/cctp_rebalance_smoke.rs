@@ -144,9 +144,17 @@ async fn main() -> anyhow::Result<()> {
         anyhow::bail!("goal.targetAllocation empty; seed shape wrong");
     }
 
+    // Chain holding the seeded USDC. Defaults to Base (a same-chain swap test);
+    // set SMOKE_USDC_CHAIN=arc to force a cross-chain CCTP burn+mint (+hook swap).
+    let src_chain = std::env::var("SMOKE_USDC_CHAIN")
+        .ok()
+        .and_then(|s| ChainKey::parse(&s))
+        .unwrap_or(ChainKey::Base);
     let mut usdc_per_chain: HashMap<ChainKey, f64> = HashMap::new();
     usdc_per_chain.insert(ChainKey::Arc, 0.0);
-    usdc_per_chain.insert(ChainKey::Base, total_value_usd);
+    usdc_per_chain.insert(ChainKey::Base, 0.0);
+    usdc_per_chain.insert(src_chain, total_value_usd);
+    info!(?src_chain, "seeded USDC source chain");
 
     let input = PlanInput {
         portfolio_value_usd: total_value_usd,
