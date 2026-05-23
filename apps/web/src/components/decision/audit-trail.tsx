@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { explorerTxUrl, type ExplorerChain } from "@/lib/explorers";
 
 interface DecisionLeg {
@@ -105,13 +104,12 @@ export function AuditTrail({ data }: { data: DecisionFull }) {
               data.criticVerdict.clauses.length > 0 && (
                 <div className="md:col-span-2 flex flex-wrap gap-2 mt-2">
                   {data.criticVerdict.clauses.map((id) => (
-                    <Link
+                    <span
                       key={id}
-                      href={`/about/constitution#${id}`}
-                      className="px-2 py-0.5 text-[10px] font-mono border border-cyan-500/40 text-accent-agent bg-cyan-500/10 hover:bg-cyan-500/20"
+                      className="px-2 py-0.5 text-[10px] font-mono border border-cyan-500/40 text-accent-agent bg-cyan-500/10"
                     >
                       {id}
-                    </Link>
+                    </span>
                   ))}
                 </div>
               )}
