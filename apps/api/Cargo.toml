@@ -89,3 +89,75 @@ real-swap = ["dep:alloy"]
 
 [dev-dependencies]
 tokio-test = "0.4"
+
+# ── Lints ─────────────────────────────────────────────────────────────────────
+# Ratchet pattern: the pedantic + nursery groups are guard-rails for NEW code.
+# The lints already firing across the existing tree (measured 2026-05-23, 34k LOC)
+# are allowed back so `cargo clippy --all-targets -- -D warnings` (CI) stays green —
+# we don't refactor the whole tree to satisfy stylistic lints. To raise the bar,
+# delete an allow-back and fix the sites it flags. See docs/15-quality-bar.md.
+# `clippy::cargo` is omitted on purpose: dep hygiene is covered by cargo-deny +
+# cargo-machete in CI, and its `multiple_crate_versions` is unfixable here.
+[lints.rust]
+unsafe_code = "forbid"        # the API has zero unsafe; chain crates live behind cargo features
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery  = { level = "warn", priority = -1 }
+# allow-backs — pedantic/nursery lints that currently fire (alphabetical):
+branches_sharing_code = "allow"
+case_sensitive_file_extension_comparisons = "allow"
+cast_lossless = "allow"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+derive_partial_eq_without_eq = "allow"
+doc_markdown = "allow"
+duration_suboptimal_units = "allow"
+elidable_lifetime_names = "allow"
+explicit_iter_loop = "allow"
+float_cmp = "allow"
+format_push_string = "allow"
+if_not_else = "allow"
+ignore_without_reason = "allow"
+ignored_unit_patterns = "allow"
+implicit_clone = "allow"
+implicit_hasher = "allow"
+items_after_statements = "allow"
+manual_let_else = "allow"
+map_unwrap_or = "allow"
+match_same_arms = "allow"
+match_wildcard_for_single_variants = "allow"
+missing_const_for_fn = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+needless_collect = "allow"
+needless_pass_by_value = "allow"
+needless_raw_string_hashes = "allow"
+option_if_let_else = "allow"
+or_fun_call = "allow"
+ptr_as_ptr = "allow"
+redundant_clone = "allow"
+redundant_closure_for_method_calls = "allow"
+ref_option = "allow"
+return_self_not_must_use = "allow"
+semicolon_if_nothing_returned = "allow"
+significant_drop_tightening = "allow"
+similar_names = "allow"
+single_match_else = "allow"
+struct_excessive_bools = "allow"
+suboptimal_flops = "allow"
+too_long_first_doc_paragraph = "allow"
+too_many_lines = "allow"
+trivially_copy_pass_by_ref = "allow"
+tuple_array_conversions = "allow"
+uninlined_format_args = "allow"
+unnecessary_wraps = "allow"
+unnested_or_patterns = "allow"
+unreadable_literal = "allow"
+unused_async = "allow"
+use_self = "allow"
+used_underscore_binding = "allow"
+wildcard_imports = "allow"

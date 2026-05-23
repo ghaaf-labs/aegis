@@ -1,0 +1,14 @@
+# rustfmt — stable-toolchain safe (this repo pins no nightly). These match the
+# formatting the tree is already in, so `cargo fmt --check` stays green; they
+# exist to pin intent and edition for anyone running rustfmt outside cargo.
+edition              = "2021"
+max_width            = 100
+newline_style        = "Unix"
+use_small_heuristics = "Default"
+
+# High-value options below are NIGHTLY-only — enable with `cargo +nightly fmt`
+# (would need `unstable_features = true`). Not wired into CI because CI is stable.
+#   group_imports        = "StdExternalCrate"   # std / extern / crate import blocks
+#   imports_granularity  = "Crate"              # merge `use` per crate
+#   wrap_comments        = true                 # reflow long doc comments
+#   format_code_in_doc_comments = true
