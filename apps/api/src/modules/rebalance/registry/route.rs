@@ -185,7 +185,7 @@ pub fn validate_legs(
             ));
         }
         // Every leg kind needs at least one Arc/Base execution chain. A leg with
-        // both chains unset (or unparseable) must fail closed here, not late at
+        // both chains unset (or unparsable) must fail closed here, not late at
         // submit time.
         let has_exec_chain = leg.src_chain.as_deref().and_then(ChainKey::parse).is_some()
             || leg

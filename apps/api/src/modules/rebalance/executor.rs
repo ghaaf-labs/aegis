@@ -380,7 +380,7 @@ async fn dispatch(
         leg.dest_symbol.clone(),
         leg.amount_usdc,
     )
-    .ok_or_else(|| AppError::Internal(anyhow::anyhow!("unparseable leg kind")))?;
+    .ok_or_else(|| AppError::Internal(anyhow::anyhow!("unparsable leg kind")))?;
 
     let now = Utc::now();
     let src_chain = ChainKey::parse(leg.src_chain.as_deref().unwrap_or(""))
