@@ -735,6 +735,47 @@ export const backtestApi = {
     }),
 };
 
+// ── Traction (public landing stats) ─────────────────────────
+
+export interface Traction {
+  totalUsers: number;
+  usersWithRealRebalance: number;
+  portfolios: number;
+  totalAumUsd: number;
+  agentDecisions: number;
+  completedRealRebalances: number;
+  chains: number;
+}
+
+export const tractionApi = {
+  /** Public — landing page renders live DB-backed stats. No auth. */
+  get: () => request<Traction>("/api/traction"),
+};
+
+// ── Leaderboard (public) ────────────────────────────────────
+
+export interface LeaderboardEntry {
+  userId: string;
+  handle: string;
+  decisionsExecuted: number;
+  distinctModels: number;
+  avg7dReturn: number;
+  trustabilityDelta: number;
+  lastDecisionAt: string | null;
+  label: "excellent" | "strong" | "stable" | "shaky" | "underperforming";
+  recentModelSlug?: string;
+  recentCriticVerdict?: {
+    verdict?: "approved" | "revised" | "abstained";
+    demandsRevision?: boolean;
+  };
+}
+
+export const leaderboardApi = {
+  /** Public — top performers ranked by 7d realized return. No auth. */
+  list: (limit = 50) =>
+    request<LeaderboardEntry[]>(`/leaderboard?limit=${limit}`),
+};
+
 // ── Trustability ────────────────────────────────────────────
 
 export interface TrustabilityRow {

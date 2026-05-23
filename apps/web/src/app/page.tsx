@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import {
@@ -23,8 +23,45 @@ import {
 } from "lucide-react";
 import { BrutalButton, BrutalPill } from "@aegis/ui";
 import { cn } from "@/lib/utils";
+import {
+  leaderboardApi,
+  tractionApi,
+  type LeaderboardEntry,
+  type Traction,
+} from "@/lib/api";
 import { LandingHeader } from "@/components/layout/landing-header";
 import { LandingFooter } from "@/components/layout/landing-footer";
+
+const LEADERBOARD_PREVIEW_COUNT = 3;
+
+/** Compact USD formatting for the trust-stats bar: $0 → "$0", 1_240 →
+ *  "$1.2k", 142_000 → "$142k", 3_200_000 → "$3.2M". */
+function formatCompactUsd(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "$0";
+  if (value < 1_000) return `$${Math.round(value)}`;
+  if (value < 1_000_000) {
+    const k = value / 1_000;
+    return `$${k < 10 ? k.toFixed(1).replace(/\.0$/, "") : Math.round(k)}k`;
+  }
+  const m = value / 1_000_000;
+  return `$${m < 10 ? m.toFixed(1).replace(/\.0$/, "") : Math.round(m)}M`;
+}
+
+const STAT_LABELS = [
+  { label: "portfolios" },
+  { label: "agent decisions" },
+  { label: "USDC managed" },
+  { label: "chains" },
+] as const;
+
+function tractionStats(t: Traction) {
+  return [
+    { value: String(t.portfolios), label: "portfolios" },
+    { value: String(t.agentDecisions), label: "agent decisions" },
+    { value: formatCompactUsd(t.totalAumUsd), label: "USDC managed" },
+    { value: String(t.chains), label: "chains" },
+  ];
+}
 
 const fadeUp = {
   hidden: { opacity: 0, y: 24 },
@@ -34,43 +71,6 @@ const fadeUp = {
     transition: { delay: i * 0.1, duration: 0.5, ease: "easeOut" },
   }),
 };
-
-const TICKER_ITEMS = [
-  {
-    type: "propose",
-    text: "Agent proposed USDC → USYC park +$800",
-    model: "deepseek-v4-flash",
-    time: "2m ago",
-  },
-  {
-    type: "approve",
-    text: "Rebalance approved · leg 1/2 settled on Arc",
-    time: "5m ago",
-  },
-  {
-    type: "warn",
-    text: "Peg monitor: USDC/EUR drift 0.3% · defense queued",
-    model: "qwen3-flash",
-    time: "12m ago",
-  },
-  {
-    type: "propose",
-    text: "Tax-loss harvest: EURC lot Apr 2 · save ~$34",
-    model: "deepseek-v4-flash",
-    time: "18m ago",
-  },
-  {
-    type: "approve",
-    text: "USYC redeem $1,200 → USDC · Base settled",
-    time: "24m ago",
-  },
-  {
-    type: "propose",
-    text: "Regime flip: bull → consolidation · rebalance staged",
-    model: "qwen3-flash",
-    time: "31m ago",
-  },
-];
 
 const FEATURES = [
   {
@@ -218,29 +218,19 @@ const HOW_IT_WORKS = [
   },
 ];
 
-const TOP_PERFORMERS = [
-  {
-    handle: "0xc3f2…8a1b",
-    avg7d: "+4.2%",
-    decisions: 14,
-    label: "excellent",
-  },
-  { handle: "0x7fe1…2d90", avg7d: "+2.8%", decisions: 9, label: "strong" },
-  { handle: "0x91ab…ff3c", avg7d: "+1.1%", decisions: 6, label: "stable" },
-];
-
-const LABEL_TONE: Record<string, string> = {
+const LABEL_TONE: Record<LeaderboardEntry["label"], string> = {
   excellent: "text-accent-pnl border-accent-pnl/30 bg-accent-pnl/5",
   strong: "text-accent-pnl/80 border-accent-pnl/20 bg-accent-pnl/5",
   stable: "text-text-default border-border-default bg-raised",
+  shaky: "text-warn border-amber-500/30 bg-amber-500/5",
+  underperforming: "text-risk border-risk/30 bg-risk/5",
 };
 
-const STATS = [
-  { value: "14", label: "portfolios created" },
-  { value: "87", label: "agent decisions" },
-  { value: "$142k", label: "USDC managed" },
-  { value: "2", label: "chains" },
-];
+function signedPct(value: number) {
+  const rounded = Math.round(value * 100) / 100;
+  const safe = rounded === 0 ? 0 : rounded;
+  return `${safe >= 0 ? "+" : ""}${safe.toFixed(1)}%`;
+}
 
 export default function LandingPage() {
   const [announcementDismissed, setAnnouncementDismissed] = useState(() => {
@@ -248,6 +238,28 @@ export default function LandingPage() {
     return sessionStorage.getItem("aegis.announcement.dismissed") === "1";
   });
   const [mockApproved, setMockApproved] = useState(false);
+  const [traction, setTraction] = useState<Traction | null>(null);
+  const [topPerformers, setTopPerformers] = useState<LeaderboardEntry[]>([]);
+  const [statsLoaded, setStatsLoaded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const [t, board] = await Promise.allSettled([
+        tractionApi.get(),
+        leaderboardApi.list(LEADERBOARD_PREVIEW_COUNT),
+      ]);
+      if (cancelled) return;
+      if (t.status === "fulfilled") setTraction(t.value);
+      if (board.status === "fulfilled") setTopPerformers(board.value);
+      setStatsLoaded(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const stats = traction ? tractionStats(traction) : null;
 
   return (
     <div className="min-h-screen bg-bg text-text-hi overflow-hidden">
@@ -375,45 +387,6 @@ export default function LandingPage() {
         </motion.div>
       </section>
 
-      {/* Activity ticker */}
-      <div className="relative z-10 border-t border-b border-border-default bg-surface overflow-hidden py-2.5">
-        <div
-          className="flex gap-0 whitespace-nowrap"
-          data-ticker
-          style={{ animation: "ticker 32s linear infinite" }}
-        >
-          {[...TICKER_ITEMS, ...TICKER_ITEMS].map((item, i) => (
-            <span
-              key={i}
-              className="inline-flex items-center gap-2 mr-10 text-[11px] font-mono"
-            >
-              <span
-                className={cn(
-                  "shrink-0",
-                  item.type === "approve" && "text-accent-pnl",
-                  item.type === "propose" && "text-accent-agent",
-                  item.type === "warn" && "text-warn",
-                )}
-              >
-                {item.type === "approve"
-                  ? "✓"
-                  : item.type === "warn"
-                    ? "⚠"
-                    : "↻"}
-              </span>
-              <span className="text-text-default">{item.text}</span>
-              {"model" in item && item.model && (
-                <span className="text-accent-agent/60 border border-accent-agent/20 px-1.5 py-0.5 rounded-sharp">
-                  {item.model}
-                </span>
-              )}
-              <span className="text-text-mut">{item.time}</span>
-              <span className="text-border-default mx-4">·</span>
-            </span>
-          ))}
-        </div>
-      </div>
-
       {/* Dashboard mockup */}
       <motion.section
         initial={{ opacity: 0, y: 40 }}
@@ -424,7 +397,12 @@ export default function LandingPage() {
         <div className="border-brutal border-border-default bg-surface shadow-brutal">
           {/* Browser chrome */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-border-default bg-raised">
-            <span className="text-xs text-text-mut font-mono">dashboard</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-text-mut font-mono">dashboard</span>
+              <span className="text-[10px] font-mono uppercase tracking-widest text-text-mut border border-border-default px-1.5 py-0.5 rounded-sharp">
+                Illustrative
+              </span>
+            </div>
             <div className="flex items-center gap-2">
               <span className="flex items-center gap-1 text-[10px] font-mono text-accent-agent">
                 <span className="w-1.5 h-1.5 rounded-full bg-accent-agent animate-pulse" />
@@ -1069,13 +1047,17 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Trust stats bar */}
+      {/* Trust stats bar — live from /api/traction (no fabricated fallback) */}
       <div className="relative z-10 border-t border-b border-border-default bg-surface py-6 mb-16">
         <div className="max-w-4xl mx-auto px-6 grid grid-cols-2 md:grid-cols-4 gap-6">
-          {STATS.map((stat) => (
+          {(stats ?? STAT_LABELS).map((stat) => (
             <div key={stat.label} className="text-center">
               <p className="text-3xl font-mono font-bold text-text-hi tabular-nums">
-                {stat.value}
+                {"value" in stat ? (
+                  stat.value
+                ) : (
+                  <span className="text-text-mut">—</span>
+                )}
               </p>
               <p className="text-xs font-mono text-text-mut mt-1">
                 {stat.label}
@@ -1148,35 +1130,66 @@ export default function LandingPage() {
               Full leaderboard →
             </Link>
           </div>
-          <div className="divide-y divide-border-default">
-            {TOP_PERFORMERS.map((entry, i) => (
-              <div
-                key={entry.handle}
-                className="flex items-center gap-4 px-5 py-3"
-              >
-                <span className="text-sm font-mono text-text-mut w-4 text-center">
-                  {i + 1}
-                </span>
-                <span className="text-xs font-mono text-text-default flex-1">
-                  {entry.handle}
-                </span>
-                <span className="text-xs font-mono text-text-mut">
-                  {entry.decisions} decisions
-                </span>
-                <span className="text-sm font-mono font-semibold text-accent-pnl tabular-nums">
-                  {entry.avg7d}
-                </span>
-                <span
-                  className={cn(
-                    "text-[10px] font-mono px-1.5 py-0.5 border rounded-sharp",
-                    LABEL_TONE[entry.label],
-                  )}
+          {topPerformers.length === 0 ? (
+            <div className="px-5 py-8 text-center space-y-2">
+              <p className="text-xs font-mono text-text-lo">
+                {statsLoaded
+                  ? "No ranked portfolios yet — be the first on the board."
+                  : "Loading top performers…"}
+              </p>
+              {statsLoaded && (
+                <Link
+                  href="/login"
+                  className="inline-block text-xs font-mono text-accent-agent hover:underline"
                 >
-                  {entry.label}
-                </span>
-              </div>
-            ))}
-          </div>
+                  Start for free →
+                </Link>
+              )}
+            </div>
+          ) : (
+            <div className="divide-y divide-border-default">
+              {topPerformers.map((entry, i) => {
+                const returnTone =
+                  entry.avg7dReturn >= 0 ? "text-accent-pnl" : "text-risk";
+                return (
+                  <div
+                    key={entry.userId}
+                    className="flex items-center gap-4 px-5 py-3"
+                  >
+                    <span className="text-sm font-mono text-text-mut w-4 text-center">
+                      {i + 1}
+                    </span>
+                    <Link
+                      href={`/diary/${entry.handle}`}
+                      className="text-xs font-mono text-text-default flex-1 truncate hover:text-accent-agent transition-colors"
+                    >
+                      <span className="opacity-70">0x</span>
+                      {entry.handle}
+                    </Link>
+                    <span className="text-xs font-mono text-text-mut">
+                      {entry.decisionsExecuted} decisions
+                    </span>
+                    <span
+                      className={cn(
+                        "text-sm font-mono font-semibold tabular-nums",
+                        returnTone,
+                      )}
+                    >
+                      {signedPct(entry.avg7dReturn)}
+                    </span>
+                    <span
+                      className={cn(
+                        "text-[10px] font-mono px-1.5 py-0.5 border rounded-sharp",
+                        LABEL_TONE[entry.label],
+                      )}
+                    >
+                      {entry.label}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </motion.div>
       </section>
 
