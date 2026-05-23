@@ -194,6 +194,7 @@ export function GoalWizard() {
   const go = (delta: 1 | -1) => {
     if (delta === 1 && !canNext) {
       setState((s) => ({ ...s, attemptedAdvance: true }));
+      focusFirstInvalidField(state.step);
       return;
     }
     if (delta === 1 && state.step === 4 && canNext) {
@@ -241,7 +242,14 @@ export function GoalWizard() {
           ))}
         </div>
 
-        {state.step === 1 && <NameStep state={state} setState={setState} />}
+        {state.step === 1 && (
+          <NameStep
+            state={state}
+            setState={setState}
+            showError={shouldShowNextHint(state, totalAlloc)}
+            error={disabledReason}
+          />
+        )}
         {state.step === 2 && <HorizonStep state={state} setState={setState} />}
         {state.step === 3 && <RiskStep state={state} setState={setState} />}
         {state.step === 4 && (
@@ -255,11 +263,14 @@ export function GoalWizard() {
         {state.error && (
           <div className="mt-4 text-xs text-risk font-mono">{state.error}</div>
         )}
-        {!canNext &&
+        {state.step !== 1 &&
+          !canNext &&
           shouldShowNextHint(state, totalAlloc) &&
           disabledReason && (
             <div
               data-testid="goal-wizard-next-hint"
+              role="alert"
+              aria-live="polite"
               className="mt-4 border border-warn/40 bg-warn/5 px-3 py-2 text-xs text-warn font-mono"
             >
               {disabledReason}
@@ -340,7 +351,12 @@ interface StepProps {
   setState: React.Dispatch<React.SetStateAction<WizardState>>;
 }
 
-function NameStep({ state, setState }: StepProps) {
+function NameStep({
+  state,
+  setState,
+  showError,
+  error,
+}: StepProps & { showError: boolean; error: string | null }) {
   return (
     <div className="space-y-3">
       <label
@@ -355,14 +371,29 @@ function NameStep({ state, setState }: StepProps) {
         autoFocus
         value={state.name}
         onChange={(e) => setState((s) => ({ ...s, name: e.target.value }))}
-        aria-describedby="portfolio-name-help"
+        aria-describedby={
+          showError && error
+            ? "portfolio-name-help portfolio-name-error"
+            : "portfolio-name-help"
+        }
+        aria-invalid={showError && !!error}
         className="min-h-11 w-full rounded-sharp border-brutal border-border-default bg-bg px-3 py-2 font-mono text-base text-text-hi outline-none focus:border-border-hi sm:text-sm"
-        placeholder="e.g. Retirement"
+        placeholder="Main portfolio"
         maxLength={48}
       />
       <p id="portfolio-name-help" className="text-xs text-text-mut font-mono">
-        Use a label you will recognize in Dashboard, approvals, and tax export.
+        You can rename it later.
       </p>
+      {showError && error && (
+        <p
+          id="portfolio-name-error"
+          role="alert"
+          aria-live="polite"
+          className="text-xs text-warn font-mono"
+        >
+          {error}
+        </p>
+      )}
     </div>
   );
 }
@@ -601,4 +632,11 @@ function normalizeAllocation(allocation: Partial<Record<AssetSymbol, number>>) {
     running += value;
   });
   return next;
+}
+
+function focusFirstInvalidField(step: WizardState["step"]) {
+  if (typeof document === "undefined") return;
+  const targetId = step === 1 ? "portfolio-name" : null;
+  if (!targetId) return;
+  window.setTimeout(() => document.getElementById(targetId)?.focus(), 0);
 }
