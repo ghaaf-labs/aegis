@@ -6,8 +6,8 @@ import { Shield } from "lucide-react";
 import {
   DEFAULT_PRICING_TIERS,
   PricingTable,
-} from "@/components/billing/PricingTable";
-import { UpgradeModal } from "@/components/billing/UpgradeModal";
+} from "@/components/billing/pricing-table";
+import { UpgradeModal } from "@/components/billing/upgrade-modal";
 import { useBillingStore } from "@/stores/billing";
 import { walletApi } from "@/lib/api";
 import { cn } from "@/lib/utils";

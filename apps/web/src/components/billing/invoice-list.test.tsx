@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { Invoice } from "@/types";
-import { InvoiceList } from "./InvoiceList";
+import { InvoiceList } from "./invoice-list";
 
 const INVOICES: Invoice[] = [
   {
