@@ -2,17 +2,29 @@
 -- UNIQUE CONSTRAINT, matching 0019's original intent (dropped by 0023). The
 -- agent-decided-allocation model has exactly one portfolio per user; the
 -- constraint makes that a named, schema-level guarantee.
-WITH ranked AS (
-    SELECT
-        p.id,
-        ROW_NUMBER() OVER (
-            PARTITION BY p.user_id
-            ORDER BY p.updated_at DESC, p.created_at DESC
-        ) AS rn
-    FROM portfolios p
-)
-DELETE FROM portfolios
-WHERE id IN (SELECT id FROM ranked WHERE rn > 1);
+--
+-- Non-destructive (same rationale as 0034): if any user still has more than one
+-- portfolio, bail with an explicit message rather than CASCADE-deleting history.
+-- After 0034 this is normally a no-op, but it is re-checked here so the ADD
+-- CONSTRAINT below can never silently lose data to satisfy uniqueness.
+DO $$
+DECLARE
+    dup_users BIGINT;
+BEGIN
+    SELECT COUNT(*) INTO dup_users
+    FROM (
+        SELECT user_id
+        FROM portfolios
+        GROUP BY user_id
+        HAVING COUNT(*) > 1
+    ) d;
+
+    IF dup_users > 0 THEN
+        RAISE EXCEPTION
+            'single-portfolio invariant: % user(s) have more than one portfolio. Archive or merge the extras manually, then re-run this migration. No rows were deleted.',
+            dup_users;
+    END IF;
+END $$;
 
 DROP INDEX IF EXISTS portfolios_single_user_idx;
 

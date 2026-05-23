@@ -548,12 +548,9 @@ impl Config {
                 .unwrap_or_default(),
 
             billing_v2_enabled: parse_or("BILLING_V2_ENABLED", false)?,
-            admin_user_ids: std::env::var("ADMIN_USER_IDS")
-                .unwrap_or_default()
-                .split(',')
-                .filter(|s| !s.trim().is_empty())
-                .filter_map(|s| s.trim().parse::<uuid::Uuid>().ok())
-                .collect(),
+            admin_user_ids: parse_admin_user_ids(
+                &std::env::var("ADMIN_USER_IDS").unwrap_or_default(),
+            ),
 
             execution_mock: parse_or("EXECUTION_MOCK", false)?,
             circle_wallet_exec: parse_or("CIRCLE_WALLET_EXEC", false)?,
@@ -573,7 +570,7 @@ impl Config {
             public_base_url,
             api_base_url,
 
-            regime_backtest_enabled: parse_or("REGIME_BACKTEST_ENABLED", true)?,
+            regime_backtest_enabled: parse_or("REGIME_BACKTEST_ENABLED", false)?,
             peg_defense_enabled: parse_or("PEG_DEFENSE_ENABLED", true)?,
             peg_monitor_tick_secs: parse_or("PEG_MONITOR_TICK_SECS", 10)?,
             peg_fire_cooldown_secs: parse_or("PEG_FIRE_COOLDOWN_SECS", 1800)?,
@@ -593,15 +590,28 @@ impl Config {
     /// while preventing a deploy from silently running with placeholder keys.
     pub fn validate(&self) -> anyhow::Result<()> {
         if !self.execution_mock {
-            if self.chain_private_key_arc.trim().is_empty() {
-                anyhow::bail!(
-                    "EXECUTION_MOCK=false but CHAIN_PRIVATE_KEY_ARC is empty; set it or flip EXECUTION_MOCK=true"
-                );
-            }
-            if self.chain_private_key_base.trim().is_empty() {
-                anyhow::bail!(
-                    "EXECUTION_MOCK=false but CHAIN_PRIVATE_KEY_BASE is empty; set it or flip EXECUTION_MOCK=true"
-                );
+            if self.circle_wallet_exec {
+                // Non-custodial execution submits CCTP burns/mints/swaps from
+                // each user's Circle developer-controlled wallet, so it needs
+                // real Circle (validated below under !circle_mock) — not backend
+                // EOA signing keys. Requiring CHAIN_PRIVATE_KEY_* here would
+                // force operators to hold keys the non-custodial path never uses.
+                if self.circle_mock {
+                    anyhow::bail!(
+                        "CIRCLE_WALLET_EXEC=true with EXECUTION_MOCK=false requires MOCK_CIRCLE=false; it submits from the user's Circle wallet"
+                    );
+                }
+            } else {
+                if self.chain_private_key_arc.trim().is_empty() {
+                    anyhow::bail!(
+                        "EXECUTION_MOCK=false but CHAIN_PRIVATE_KEY_ARC is empty; set it, enable CIRCLE_WALLET_EXEC, or flip EXECUTION_MOCK=true"
+                    );
+                }
+                if self.chain_private_key_base.trim().is_empty() {
+                    anyhow::bail!(
+                        "EXECUTION_MOCK=false but CHAIN_PRIVATE_KEY_BASE is empty; set it, enable CIRCLE_WALLET_EXEC, or flip EXECUTION_MOCK=true"
+                    );
+                }
             }
         }
         if !self.circle_mock {
@@ -807,6 +817,22 @@ impl Config {
 
 fn required(key: &str) -> anyhow::Result<String> {
     std::env::var(key).with_context(|| format!("missing required env var: {key}"))
+}
+
+/// Parse a comma-separated `ADMIN_USER_IDS` list into UUIDs, warning loudly on
+/// any malformed entry instead of silently dropping it (a typo would otherwise
+/// quietly demote an operator out of the admin set).
+fn parse_admin_user_ids(raw: &str) -> Vec<uuid::Uuid> {
+    let mut ids = Vec::new();
+    for entry in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        match entry.parse::<uuid::Uuid>() {
+            Ok(id) => ids.push(id),
+            Err(e) => {
+                tracing::warn!(value = %entry, error = %e, "ADMIN_USER_IDS: ignoring invalid UUID");
+            }
+        }
+    }
+    ids
 }
 
 fn parse_or<T: std::str::FromStr>(key: &str, default: T) -> anyhow::Result<T>
