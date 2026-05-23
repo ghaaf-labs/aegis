@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { EmailAuthCard } from "./email-auth-card";
 import { walletApi } from "@/lib/api";
 import { usePortfolioStore } from "@/stores/portfolio";
+import type { Portfolio } from "@/types";
 
 const routerReplace = vi.fn();
 let mockSearchParams = new URLSearchParams();
@@ -210,6 +211,53 @@ describe("<EmailAuthCard />", () => {
     act(() => root.unmount());
   });
 
+  it("clears stale portfolio state before opening a verified account", async () => {
+    mockSearchParams = new URLSearchParams("email=new-owner@example.com");
+    act(() => {
+      usePortfolioStore.getState().setPortfolios([stalePortfolio()]);
+    });
+    expect(usePortfolioStore.getState().portfolios).toHaveLength(1);
+
+    vi.mocked(walletApi.session).mockRejectedValue(new Error("missing"));
+    vi.mocked(walletApi.startEmail).mockResolvedValue({
+      challengeId: "code-clean",
+      email: "new-owner@example.com",
+      expiresAt: new Date(Date.now() + 600_000).toISOString(),
+      resendInSeconds: 30,
+    });
+    vi.mocked(walletApi.verifyEmail).mockResolvedValue({
+      status: "active",
+      user: {
+        id: "user-clean",
+        email: "new-owner@example.com",
+        riskTolerance: "moderate",
+        accountStatus: "active",
+      },
+      wallet: {
+        walletId: "wallet-clean",
+        arcAddress: "0x1111111111111111111111111111111111111111",
+        baseAddress: "0x2222222222222222222222222222222222222222",
+        createdAt: new Date().toISOString(),
+      },
+    });
+
+    const { root, container } = render(<EmailAuthCard />);
+    await flushEffects();
+    await click(container, '[data-testid="wallet-auth-submit"]');
+    await flushEffects();
+    await fill(container, '[data-testid="wallet-auth-code"]', "123456");
+    await click(container, '[data-testid="wallet-auth-submit"]');
+    await flushEffects();
+
+    expect(routerReplace).toHaveBeenCalledWith("/dashboard");
+    expect(usePortfolioStore.getState().portfolios).toHaveLength(0);
+    expect(usePortfolioStore.getState().activePortfolioId).toBe(null);
+    expect(usePortfolioStore.getState().sessionActive).toBe(true);
+    expect(usePortfolioStore.getState().wallet?.walletId).toBe("wallet-clean");
+
+    act(() => root.unmount());
+  });
+
   it("uses a calm finishing state when the account is not ready yet", async () => {
     mockSearchParams = new URLSearchParams("email=slow@example.com");
     vi.mocked(walletApi.session).mockRejectedValue(new Error("missing"));
@@ -390,6 +438,22 @@ describe("<EmailAuthCard />", () => {
     act(() => root.unmount());
   });
 });
+
+function stalePortfolio(): Portfolio {
+  return {
+    id: "old-portfolio",
+    userId: "old-user",
+    name: "Previous account",
+    totalValueUsd: 100,
+    totalPnlUsd: 0,
+    totalPnlPct: 0,
+    allocations: [],
+    riskScore: 0,
+    goal: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
 
 function render(element: React.ReactElement): {
   container: HTMLDivElement;

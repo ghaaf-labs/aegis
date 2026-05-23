@@ -131,6 +131,7 @@ export function EmailAuthCard() {
   const finish = useCallback(
     async (resp: WalletAuthResponse) => {
       setError(null);
+      resetSession();
       setSessionActive(true);
       setSessionResolved(true);
       setWallet(resp.wallet);
@@ -147,6 +148,7 @@ export function EmailAuthCard() {
     [
       nextPath,
       referrerHandle,
+      resetSession,
       router,
       setSessionActive,
       setSessionResolved,
