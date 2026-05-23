@@ -63,7 +63,7 @@ describe("<AgentStudioPage />", () => {
     const { root, container } = render(<AgentStudioPage />);
     await flushEffects();
 
-    expect(container.textContent).toContain("Recommendation locked");
+    expect(container.textContent).toContain("Recommendation needs setup");
     expect(container.textContent).toContain(
       "Add wallet cash or hold an invested position before asking for a recommendation.",
     );
@@ -72,7 +72,7 @@ describe("<AgentStudioPage />", () => {
     );
     const recommendationButton = Array.from(
       container.querySelectorAll<HTMLButtonElement>("button"),
-    ).find((button) => button.textContent?.includes("Recommendation locked"));
+    ).find((button) => button.textContent?.includes("Set up first"));
     expect(recommendationButton?.disabled).toBe(true);
 
     act(() => root.unmount());

@@ -12,7 +12,7 @@ export function MarketOverview() {
 
   if (!snapshot) {
     return (
-      <Card className="h-full">
+      <Card>
         <CardHeader>
           <CardTitle>Market</CardTitle>
         </CardHeader>
@@ -73,7 +73,7 @@ export function MarketOverview() {
         : "text-accent-pnl";
 
   return (
-    <Card className="h-full">
+    <Card>
       <CardHeader>
         <CardTitle>Market</CardTitle>
       </CardHeader>

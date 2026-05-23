@@ -71,18 +71,18 @@ describe("<AgentReasoningFeed />", () => {
     expect(
       container.querySelector('button[aria-label="Refresh decisions"]'),
     ).toBeTruthy();
-    expect(text).toContain("Manual");
+    expect(text).toContain("User Review");
     expect(text).toContain("0%");
-    expect(text).toContain("REVIEW");
+    expect(text).toContain("Review");
     expect(text).toContain("ETH");
     expect(text).toContain("UNKNOWN");
-    expect(text).toContain("Malformed historical trade row");
-    expect(text).toContain("Review each move before execution.");
+    expect(text).toContain("Needs review");
+    expect(text).toContain("No funds move until you approve.");
     expect(text).not.toContain("No reasoning was returned with this decision.");
 
     const fullAuditButton = Array.from(
       container.querySelectorAll("button"),
-    ).find((button) => button.textContent?.includes("Full audit"));
+    ).find((button) => button.textContent?.includes("History"));
     expect(fullAuditButton).toBeTruthy();
     act(() => {
       fullAuditButton!.dispatchEvent(
@@ -132,13 +132,13 @@ describe("<AgentReasoningFeed />", () => {
     const { root, container } = render(<AgentReasoningFeed />);
     let text = container.textContent ?? "";
 
-    expect(text).toContain("Full audit · 1");
-    expect(text).toContain("1 historical, rejected, or cash-mismatched row");
-    expect(text).toContain("No current executable guidance");
+    expect(text).toContain("History (1)");
+    expect(text).toContain("1 older or stale row is in History");
+    expect(text).toContain("No current plan");
 
     const fullAuditButton = Array.from(
       container.querySelectorAll("button"),
-    ).find((button) => button.textContent?.includes("Full audit"));
+    ).find((button) => button.textContent?.includes("History"));
     expect(fullAuditButton).toBeTruthy();
     act(() => {
       fullAuditButton!.dispatchEvent(

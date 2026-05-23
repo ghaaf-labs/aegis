@@ -69,7 +69,7 @@ export default function TransactionsPage() {
           Transactions
         </h1>
         <p className="mt-1 max-w-2xl text-sm text-text-lo">
-          Approved moves appear here. Reviews that are waiting, blocked, or
+          Approved moves appear here. Reviews that are waiting, need changes, or
           finished stay separate so it is clear what actually moved money.
         </p>
         {rows.length > 0 && (
@@ -91,7 +91,7 @@ export default function TransactionsPage() {
               tone="agent"
             />
             <SummaryPill
-              label="Blocked"
+              label="Needs changes"
               value={
                 rows.filter((r) => r.approvalSafety?.approvable === false)
                   .length
@@ -400,7 +400,7 @@ function ApprovalStatePill({ row }: { row: RebalanceHistoryRow }) {
     return (
       <span className="inline-flex items-center gap-1 border border-warn/40 bg-warn/10 px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-warn">
         <AlertTriangle className="h-3 w-3" />
-        {safety.code === "SUPERSEDED" ? "Superseded" : "Blocked"}
+        {safety.code === "SUPERSEDED" ? "Superseded" : "Needs changes"}
       </span>
     );
   }
@@ -452,7 +452,7 @@ function rowAction(row: RebalanceHistoryRow): {
     return { href: `/rebalance/${row.id}`, label: "Review", tone: "agent" };
   }
   if (row.status === "planned" && row.approvalSafety?.approvable === false) {
-    return { href: `/rebalance/${row.id}`, label: "Open block", tone: "warn" };
+    return { href: `/rebalance/${row.id}`, label: "Open review", tone: "warn" };
   }
   return {
     href: `/dashboard/${row.portfolioId}`,
@@ -485,7 +485,7 @@ function rowMeaning(row: RebalanceHistoryRow) {
     return "Wallet cash or holdings changed after this review was built. Rebuild before approving.";
   }
   if (row.approvalSafety?.code === "BALANCE_UNAVAILABLE") {
-    return "Wallet cash could not be verified. Open the blocked review for the leg audit, then check Wallets before rebuilding.";
+    return "Wallet cash could not be verified. Open the review for the leg audit, then check Wallets before rebuilding.";
   }
   if (row.approvalSafety?.code === "EXECUTION_UNAVAILABLE") {
     return "One selected route is not ready to move money. Open the review, change the target mix, then rebuild.";
@@ -506,7 +506,7 @@ function approvalSafetySummary(safety: RebalanceApprovalSafety): string {
     case "MOCK_OR_LEGACY_PLAN":
       return "This review was created outside the current real-execution path.";
     default:
-      return safety.message || "Approval is blocked for this review.";
+      return safety.message || "Approval needs changes for this review.";
   }
 }
 

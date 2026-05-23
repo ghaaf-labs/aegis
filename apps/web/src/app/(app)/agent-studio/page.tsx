@@ -2,7 +2,16 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Bot, CircleAlert, Pause, Play, Sparkles, Target } from "lucide-react";
+import {
+  Bot,
+  CheckCircle2,
+  CircleAlert,
+  Pause,
+  Play,
+  Sparkles,
+  Target,
+  Wallet,
+} from "lucide-react";
 import {
   BrutalButton,
   BrutalCard,
@@ -102,21 +111,51 @@ export default function AgentStudioPage() {
 
   return (
     <div className="mx-auto max-w-[1400px] space-y-6">
-      <div>
-        <p className="text-[10px] font-mono uppercase tracking-widest text-accent-agent">
-          Agent controls
-        </p>
-        <h1 className="mt-1 flex items-center gap-2 text-2xl font-mono font-semibold tracking-tight text-text-hi">
-          <Bot className="h-5 w-5 text-accent-agent" />
-          Agent Studio
-        </h1>
-        <p className="mt-1 max-w-2xl text-sm text-text-lo">
-          Ask for a recommendation or pause automatic checks. Nothing moves
-          without your approval.
-        </p>
-      </div>
+      <section className="rounded-sharp border-brutal border-border-default bg-surface p-4 md:p-5">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] lg:items-end">
+          <div>
+            <p className="text-[10px] font-mono uppercase tracking-widest text-accent-agent">
+              Agent controls
+            </p>
+            <h1 className="mt-1 flex items-center gap-2 text-2xl font-mono font-semibold tracking-tight text-text-hi">
+              <Bot className="h-5 w-5 text-accent-agent" />
+              Agent Studio
+            </h1>
+            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-text-lo">
+              Ask for one recommendation, pause background checks, and see what
+              setup is still needed. Nothing moves without your approval.
+            </p>
+          </div>
+          <div className="grid gap-2 font-mono text-[11px]">
+            <ReadinessRow
+              ready={!!portfolio}
+              label="Portfolio"
+              value={portfolio ? portfolio.name : "Create target first"}
+            />
+            <ReadinessRow
+              ready={!!wallet}
+              label="Wallet"
+              value={wallet ? "Connected" : "Not ready"}
+            />
+            <ReadinessRow
+              ready={gatewayBalanceStatus === "ready"}
+              label="Balance"
+              value={
+                gatewayBalanceStatus === "ready"
+                  ? hasCapital
+                    ? "Capital available"
+                    : "No capital yet"
+                  : gatewayBalanceStatus === "error"
+                    ? "Check failed"
+                    : "Checking"
+              }
+              warn={gatewayBalanceStatus === "error" || !hasCapital}
+            />
+          </div>
+        </div>
+      </section>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
         <BrutalCard>
           <BrutalCardHeader>
             <span className="text-sm font-mono text-text-hi">Agent state</span>
@@ -126,8 +165,8 @@ export default function AgentStudioPage() {
           </BrutalCardHeader>
           <BrutalCardBody className="space-y-4">
             <p className="text-sm leading-relaxed text-text-lo">
-              Pausing stops automatic checks. You can still ask for a
-              recommendation or review a plan whenever you want.
+              Pausing only stops background checks. Existing reviews and manual
+              recommendations stay available.
             </p>
             <BrutalButton
               type="button"
@@ -154,8 +193,9 @@ export default function AgentStudioPage() {
           </BrutalCardHeader>
           <BrutalCardBody className="space-y-4">
             <p className="text-sm leading-relaxed text-text-lo">
-              Looks at targets, cash, market data, and recent decisions. It
-              creates a recommendation for you to approve.
+              Aegis reads your target mix, wallet cash, market data, and recent
+              decisions, then creates a review plan. It does not execute from
+              this screen.
             </p>
             {analysisBlocked && (
               <div className="border border-warn/40 bg-warn/5 px-3 py-2 font-mono">
@@ -163,7 +203,7 @@ export default function AgentStudioPage() {
                   <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warn" />
                   <div>
                     <p className="text-[10px] uppercase tracking-widest text-warn">
-                      Recommendation locked
+                      Recommendation needs setup
                     </p>
                     <p className="mt-1 text-[11px] leading-relaxed text-text-lo">
                       {analysisBlock.copy}
@@ -188,9 +228,9 @@ export default function AgentStudioPage() {
             >
               <Sparkles className="h-4 w-4" />
               {analyzing
-                ? "Preparing..."
+                ? "Preparing recommendation..."
                 : analysisBlocked
-                  ? "Recommendation locked"
+                  ? "Set up first"
                   : "Get recommendation"}
             </BrutalButton>
             {notice && (
@@ -207,20 +247,18 @@ export default function AgentStudioPage() {
 
       <BrutalCard>
         <BrutalCardHeader>
-          <span className="text-sm font-mono text-text-hi">
-            Review before asking
-          </span>
+          <span className="text-sm font-mono text-text-hi">Before asking</span>
         </BrutalCardHeader>
         <BrutalCardBody className="grid gap-3 md:grid-cols-3">
           <StudioLink
             href="/portfolio"
             title="Target weights"
-            body="Review current target allocation and drift."
+            body="Check the mix Aegis will compare against."
           />
           <StudioLink
             href="/wallets"
             title="Wallet cash"
-            body="Confirm available cash before asking for a move."
+            body="Confirm available cash before planning a move."
           />
           <StudioLink
             href="/settings/peg"
@@ -238,6 +276,39 @@ export default function AgentStudioPage() {
           {error}
         </p>
       )}
+    </div>
+  );
+}
+
+function ReadinessRow({
+  ready,
+  warn = false,
+  label,
+  value,
+}: {
+  ready: boolean;
+  warn?: boolean;
+  label: string;
+  value: string;
+}) {
+  const toneClass = ready
+    ? "border-accent-pnl/35 bg-accent-pnl/5 text-accent-pnl"
+    : warn
+      ? "border-warn/40 bg-warn/5 text-warn"
+      : "border-border-default bg-bg text-text-lo";
+  const Icon = ready ? CheckCircle2 : warn ? CircleAlert : Wallet;
+
+  return (
+    <div
+      className={`grid min-h-10 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 rounded-sharp border px-3 py-2 ${toneClass}`}
+    >
+      <Icon className="h-3.5 w-3.5" />
+      <div className="min-w-0">
+        <p className="text-[10px] uppercase tracking-widest text-text-mut">
+          {label}
+        </p>
+        <p className="truncate text-xs font-semibold text-text-hi">{value}</p>
+      </div>
     </div>
   );
 }
@@ -278,7 +349,7 @@ function manualAnalysisBlockCopy(
     return {
       copy:
         gatewayBalanceError ??
-        "The balance check did not return wallet cash. Recommendations stay locked so unknown cash is not treated as zero.",
+        "The balance check did not return wallet cash. Recommendations wait so unknown cash is not treated as zero.",
       href: "/wallets",
       cta: "Open wallet status",
     };

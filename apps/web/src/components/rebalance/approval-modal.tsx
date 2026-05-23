@@ -174,7 +174,7 @@ export function ApprovalModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [counterfactualOpen, setCounterfactualOpen] = useState(false);
-  const [routeOpen, setRouteOpen] = useState(true);
+  const [routeOpen, setRouteOpen] = useState(false);
 
   if (!open || !plan) return null;
 
@@ -206,7 +206,7 @@ export function ApprovalModal({
     ? blockedReviewMessage(approvalSafety)
     : isMockExecution
       ? "This review was created outside the real execution path. Build a fresh review before approving."
-      : "Approval is blocked for this review. Build a fresh review before any execution.";
+      : "Approval needs changes for this review. Build a fresh review before any execution.";
   const changeHeadline =
     plan.totalLegs === 0
       ? "No portfolio changes needed"
@@ -238,7 +238,7 @@ export function ApprovalModal({
         <header className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
           <div>
             <h2 className="text-base font-semibold text-text-hi">
-              Approve rebalance
+              Review plan
             </h2>
             {portfolioName && (
               <p className="text-[11px] font-mono text-text-lo mt-1">
@@ -270,7 +270,7 @@ export function ApprovalModal({
                   key={`source-${item.symbol}`}
                   className="flex items-center justify-between border border-risk/20 bg-risk/5 px-3 py-2 text-risk"
                 >
-                  <span>Sell / redeem {item.symbol}</span>
+                  <span>{sourceActionLabel(item.symbol)}</span>
                   <span>${item.amountUsdc.toFixed(2)}</span>
                 </div>
               ))}
@@ -280,7 +280,7 @@ export function ApprovalModal({
                     key={`dest-${item.symbol}`}
                     className="flex items-center justify-between border border-white/10 bg-black/30 px-3 py-2"
                   >
-                    <span>Buy / park {item.symbol}</span>
+                    <span>{destinationActionLabel(item.symbol)}</span>
                     <span className="text-accent-pnl">
                       ${item.amountUsdc.toFixed(2)}
                     </span>
@@ -303,15 +303,6 @@ export function ApprovalModal({
                 </div>
               )}
             </div>
-            <p className="mt-3 text-[11px] leading-relaxed text-text-lo">
-              {approvalBlocked
-                ? blockedAmountCopy(approvalSafety)
-                : isMockExecution
-                  ? "This historical test review cannot be approved for real execution. Build a fresh review before money moves."
-                  : hasPositionSales
-                    ? "This approval sells overweight positions, routes USDC, and buys or parks underweight targets. It is not idle-wallet deployment."
-                    : "This approval uses wallet USDC for real execution after you confirm."}
-            </p>
           </div>
 
           <RebalanceRouteMap plan={plan} />
@@ -352,64 +343,58 @@ export function ApprovalModal({
               const raw = decision.rawConfidence ?? decision.confidence ?? 0;
               const rawPct = Math.round(raw * 100);
               const clauseIds = decision.criticVerdict?.clauseIds ?? [];
+              const criticWarning =
+                decision.criticVerdict?.demandsRevision === true ||
+                decision.criticVerdict?.verdict === "veto" ||
+                decision.criticVerdict?.verdict === "revised";
 
               return (
-                <div className="mb-4 border border-white/10 bg-black/40 p-3 font-mono text-[11px] space-y-2">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-accent-agent uppercase tracking-wider">
-                      Agent
-                    </span>
-                    {decision.modelSlug && (
-                      <ModelBadge model={decision.modelSlug} />
-                    )}
-                    {decision.regime && (
-                      <span className="px-1.5 py-0.5 bg-violet-500/10 border border-violet-500/30 text-violet-200">
-                        regime: {decision.regime}
+                <details className="mb-3 border border-white/10 bg-black/30 p-3 font-mono text-[11px]">
+                  <summary className="cursor-pointer list-none">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-accent-agent uppercase tracking-wider">
+                        Agent check
                       </span>
-                    )}
-                    <span
-                      className="ml-auto text-text-lo"
-                      title={
-                        isCalibrated
-                          ? `Histogram-bin calibrated · raw ${rawPct}%`
-                          : "Raw strategist confidence — no calibration available yet"
-                      }
-                    >
-                      {isCalibrated ? "calibrated " : "confidence "}
-                      <span className="text-accent-agent">{headlinePct}%</span>
-                      {isCalibrated && (
-                        <span className="text-text-mut"> (raw {rawPct}%)</span>
+                      <span className="border border-accent-agent/30 bg-accent-agent/10 px-2 py-0.5 text-accent-agent">
+                        {headlinePct}% confidence
+                      </span>
+                      <span
+                        className={
+                          criticWarning
+                            ? "border border-warn/30 bg-warn/10 px-2 py-0.5 text-warn"
+                            : "border border-accent-pnl/30 bg-accent-pnl/10 px-2 py-0.5 text-accent-pnl"
+                        }
+                      >
+                        {criticWarning ? "Critic warning" : "Critic passed"}
+                      </span>
+                      <span className="ml-auto text-text-mut">details</span>
+                    </div>
+                  </summary>
+                  <div className="mt-3 space-y-2 border-t border-white/5 pt-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {decision.modelSlug && (
+                        <ModelBadge model={decision.modelSlug} />
                       )}
-                    </span>
-                  </div>
+                      {decision.regime && (
+                        <span className="px-1.5 py-0.5 bg-violet-500/10 border border-violet-500/30 text-violet-200">
+                          regime: {decision.regime}
+                        </span>
+                      )}
+                      {isCalibrated && (
+                        <span className="text-text-mut">raw {rawPct}%</span>
+                      )}
+                    </div>
 
-                  <div
-                    className="h-1.5 w-full bg-white/5 border border-white/10 overflow-hidden"
-                    aria-label={`Calibrated confidence ${headlinePct}%`}
-                  >
-                    <div
-                      className="h-full bg-cyan-400"
-                      style={{
-                        width: `${Math.min(100, Math.max(0, headlinePct))}%`,
-                      }}
-                    />
-                  </div>
+                    {(() => {
+                      const reasoning = displayReasoning(decision);
+                      return reasoning ? (
+                        <p className="text-text-lo leading-relaxed">
+                          {reasoning}
+                        </p>
+                      ) : null;
+                    })()}
 
-                  {(() => {
-                    const reasoning = displayReasoning(decision);
-                    return reasoning ? (
-                      <p className="text-text-default leading-relaxed">
-                        {reasoning}
-                      </p>
-                    ) : null;
-                  })()}
-
-                  {/* F-CON-4: constitution clause IDs (veto reasons). */}
-                  {clauseIds.length > 0 && (
-                    <div className="border-t border-white/5 pt-2 space-y-1">
-                      <p className="text-[10px] uppercase tracking-wider text-risk">
-                        Critic veto reasons (constitution)
-                      </p>
+                    {clauseIds.length > 0 && (
                       <div className="flex flex-wrap gap-1">
                         {clauseIds.map((id) => (
                           <ConstitutionClauseBadge
@@ -419,59 +404,39 @@ export function ApprovalModal({
                           />
                         ))}
                       </div>
-                    </div>
-                  )}
-                  {decision.criticVerdict &&
-                    clauseIds.length === 0 &&
-                    decision.criticVerdict.verdict !== "veto" && (
-                      <div className="border-t border-white/5 pt-2">
+                    )}
+                    {decision.criticVerdict &&
+                      clauseIds.length === 0 &&
+                      decision.criticVerdict.verdict !== "veto" && (
                         <ConstitutionClauseBadge
                           clauseId="Constitution clean"
                           violated={false}
                           summary="No hard constraints violated. Critic ran free-form review only."
                         />
+                      )}
+                    {decision.criticVerdict && (
+                      <p className="text-warn/90">
+                        Critic: {decision.criticVerdict.notes}
+                      </p>
+                    )}
+                    {decision.counterfactual && (
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => setCounterfactualOpen((v) => !v)}
+                          className="text-[10px] uppercase tracking-wider text-accent-agent hover:text-accent-agent/70"
+                        >
+                          {counterfactualOpen ? "Hide" : "Show"} risk note
+                        </button>
+                        {counterfactualOpen && (
+                          <p className="mt-1.5 text-[11px] text-accent-agent/70 bg-cyan-500/5 border border-cyan-500/20 px-2 py-1.5">
+                            {decision.counterfactual}
+                          </p>
+                        )}
                       </div>
                     )}
-
-                  {decision.criticVerdict && (
-                    <p className="text-[10px] text-warn/90 border-t border-white/5 pt-2">
-                      <span className="uppercase tracking-wider text-warn mr-1.5">
-                        Critic
-                      </span>
-                      (
-                      {Math.round(
-                        (decision.criticVerdict.confidence ?? 0) * 100,
-                      )}
-                      %): {decision.criticVerdict.notes}
-                    </p>
-                  )}
-
-                  {/* F-CONF-6: counterfactual. */}
-                  {decision.counterfactual && (
-                    <div className="border-t border-white/5 pt-2">
-                      <button
-                        type="button"
-                        onClick={() => setCounterfactualOpen((v) => !v)}
-                        className="text-[10px] uppercase tracking-wider text-accent-agent hover:text-accent-agent/70"
-                      >
-                        {counterfactualOpen ? "▾" : "▸"} Why this might be wrong
-                      </button>
-                      {counterfactualOpen && (
-                        <p className="mt-1.5 text-[11px] text-accent-agent/60 bg-cyan-500/5 border border-cyan-500/20 px-2 py-1.5">
-                          {decision.counterfactual}
-                        </p>
-                      )}
-                    </div>
-                  )}
-                  {isCalibrated && (
-                    <p
-                      className="text-[10px] text-text-mut"
-                      title="Calibration source persisted in `calibrations` table"
-                    >
-                      Calibration: histogram-bin · via model_evaluations
-                    </p>
-                  )}
-                </div>
+                  </div>
+                </details>
               );
             })()}
 
@@ -486,7 +451,23 @@ export function ApprovalModal({
             </div>
           )}
 
-          <p className="text-sm text-text-default mb-3">
+          <div className="mb-3 grid gap-2 text-xs font-mono sm:grid-cols-3">
+            <ReviewFact
+              label="Plan"
+              value={`${plan.totalLegs} move${plan.totalLegs === 1 ? "" : "s"}`}
+            />
+            <ReviewFact
+              label="Approval"
+              value={approvalBlocked ? "Needs changes" : "Required"}
+              tone={approvalBlocked ? "warn" : "agent"}
+            />
+            <ReviewFact
+              label="Updates"
+              value={approvalBlocked ? "Paused" : "Live after approval"}
+            />
+          </div>
+
+          <p className="sr-only">
             {approvalBlocked ? (
               <>{blockedLegCopy(plan, approvalSafety)}</>
             ) : (
@@ -509,9 +490,9 @@ export function ApprovalModal({
               onClick={() => setRouteOpen((v) => !v)}
               className="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-mono text-text-hi hover:bg-white/5"
             >
-              <span>Technical route</span>
+              <span>Route details</span>
               <span className="text-text-mut">
-                {plan.totalLegs} leg{plan.totalLegs === 1 ? "" : "s"}{" "}
+                {plan.totalLegs} move{plan.totalLegs === 1 ? "" : "s"}{" "}
                 {routeOpen ? "shown" : "hidden"}
               </span>
             </button>
@@ -559,20 +540,30 @@ export function ApprovalModal({
             </div>
           )}
 
-          <BacktestPreview portfolioId={portfolioId ?? null} />
+          <details className="mb-4 border border-white/10 bg-black/20">
+            <summary className="cursor-pointer px-3 py-2 text-xs font-mono text-text-hi">
+              Backtest preview
+            </summary>
+            <div className="px-3 pb-3">
+              <BacktestPreview portfolioId={portfolioId ?? null} />
+            </div>
+          </details>
 
           <div className="bg-black/40 border border-white/5 p-3 text-xs font-mono mb-4">
+            <p className="mb-2 text-[10px] uppercase tracking-wider text-text-mut">
+              Cost estimate
+            </p>
             <div className="flex justify-between text-text-lo">
+              <span>Plan amount</span>
+              <span className="text-text-hi">${routedUsdc.toFixed(2)}</span>
+            </div>
+            <div className="mt-1 flex justify-between text-text-lo">
               <span title="Indicative gas estimate — not a binding quote. Actual settlement fee is published in the trace once the leg confirms.">
-                Paymaster (USDC gas)*
+                Gas
               </span>
               <span className="text-accent-pnl">
                 ≈ ${estimatedFeeUsdc.toFixed(4)} USDC
               </span>
-            </div>
-            <div className="flex justify-between text-text-lo mt-1">
-              <span>Gross leg notional</span>
-              <span className="text-text-hi">${routedUsdc.toFixed(2)}</span>
             </div>
             <div className="text-[10px] text-text-mut mt-2">
               via{" "}
@@ -585,22 +576,18 @@ export function ApprovalModal({
               )}
             </div>
 
-            {/* Protocol fee — Nanopayments 25bps story for judging */}
             {plan && plan.legs && plan.legs.length > 0 && (
               <div className="mt-3 text-sm flex justify-between border-t border-white/10 pt-2">
-                <span className="text-warn">
-                  Protocol fee (25 bps via Nanopayments x402)
-                </span>
+                <span className="text-warn">Aegis fee</span>
                 <span className="font-mono text-warn">
                   ≈ ${(routedUsdc * 0.0025).toFixed(4)} USDC
                 </span>
               </div>
             )}
 
-            {/* Total estimated cost to user */}
             {plan && plan.legs && plan.legs.length > 0 && (
               <div className="mt-2 pt-2 border-t border-white/10 flex justify-between text-sm font-semibold">
-                <span className="text-text-hi">Total estimated cost</span>
+                <span className="text-text-hi">Estimated total</span>
                 <span className="font-mono text-text-hi">
                   ≈ ${(estimatedFeeUsdc + routedUsdc * 0.0025).toFixed(4)} USDC
                 </span>
@@ -646,16 +633,49 @@ export function ApprovalModal({
               )}
             >
               {approvalBlocked
-                ? "Approval blocked"
+                ? "Needs changes"
                 : submitting
                   ? "Submitting…"
-                  : "Approve & execute"}
+                  : "Approve and move funds"}
             </button>
           </div>
         </footer>
       </div>
     </div>
   );
+}
+
+function ReviewFact({
+  label,
+  value,
+  tone = "default",
+}: {
+  label: string;
+  value: string;
+  tone?: "default" | "agent" | "warn";
+}) {
+  const toneClass =
+    tone === "agent"
+      ? "text-accent-agent"
+      : tone === "warn"
+        ? "text-warn"
+        : "text-text-hi";
+  return (
+    <div className="border border-white/10 bg-black/30 px-3 py-2">
+      <p className="text-[9px] uppercase tracking-wider text-text-mut">
+        {label}
+      </p>
+      <p className={`mt-1 font-semibold ${toneClass}`}>{value}</p>
+    </div>
+  );
+}
+
+function sourceActionLabel(symbol: string) {
+  return symbol === "USYC" ? "Redeem USYC" : `Sell ${symbol}`;
+}
+
+function destinationActionLabel(symbol: string) {
+  return symbol === "USYC" ? "Move to USYC" : `Buy ${symbol}`;
 }
 
 function legRouteText(plan: RebalancePlanResponse["legs"][number]) {
@@ -690,7 +710,7 @@ function approvalBlockLabel(code: string): string {
     case "BALANCE_UNAVAILABLE":
       return "Balance unavailable";
     default:
-      return "Approval blocked";
+      return "Needs changes";
   }
 }
 
@@ -701,23 +721,6 @@ function displayReasoning(decision: AgentDecision): string | null {
     return "This review was generated in demo mode. Build a fresh review to see live strategist commentary.";
   }
   return reasoning;
-}
-
-function blockedAmountCopy(safety?: RebalanceApprovalSafety | null): string {
-  switch (safety?.code) {
-    case "EXECUTION_UNAVAILABLE":
-      return "These amounts are current, but one selected route is not ready to move money. Change the target mix, then build a fresh executable review.";
-    case "SUPERSEDED":
-      return "These amounts belong to an older review. Open the latest review to see the active route.";
-    case "STALE_PLAN":
-      return "These amounts no longer match current wallet cash or holdings. Build a fresh review before approving.";
-    case "BALANCE_UNAVAILABLE":
-      return "Wallet cash cannot be verified right now, so real execution stays locked.";
-    case "MOCK_OR_LEGACY_PLAN":
-      return "This review came from an older non-real planner and cannot be used for real execution.";
-    default:
-      return "Approval is blocked for this review. Build a fresh review before any execution.";
-  }
 }
 
 function blockedReviewMessage(safety: RebalanceApprovalSafety): string {
@@ -735,7 +738,7 @@ function blockedReviewMessage(safety: RebalanceApprovalSafety): string {
     default:
       return (
         safety.message ||
-        "Approval is blocked for this review. Build a fresh review before any execution."
+        "Approval needs changes for this review. Build a fresh review before any execution."
       );
   }
 }
@@ -749,7 +752,7 @@ function blockedLegCopy(
     return (
       <>
         Aegis is showing <strong>{plan.totalLegs}</strong> valid review leg
-        {plan.totalLegs === 1 ? "" : "s"}, but approval is locked because{" "}
+        {plan.totalLegs === 1 ? "" : "s"}, but approval is paused because{" "}
         {count > 1 ? `${count} route checks are` : "one route check is"} not
         ready yet. Change the target mix, then build a fresh executable review.
       </>
@@ -766,9 +769,9 @@ function blockedLegCopy(
   }
   return (
     <>
-      Aegis is showing <strong>{plan.totalLegs}</strong> blocked leg
-      {plan.totalLegs === 1 ? "" : "s"}. Read the block reason above before
-      creating the next review.
+      Aegis is showing <strong>{plan.totalLegs}</strong> review leg
+      {plan.totalLegs === 1 ? "" : "s"} that need changes. Read the reason above
+      before creating the next review.
     </>
   );
 }
@@ -865,7 +868,6 @@ function RebalanceRouteMap({ plan }: { plan: RebalancePlanResponse }) {
     return (
       <SingleChainRouteMap
         chain={chain}
-        legCount={plan.totalLegs}
         sourceUsd={
           hasPositionSales
             ? chainAmount(saleTotals, chain)
@@ -882,11 +884,10 @@ function RebalanceRouteMap({ plan }: { plan: RebalancePlanResponse }) {
     <div className="mb-4 border border-white/10 bg-black/30 p-3">
       <div className="mb-2 flex items-center justify-between gap-3">
         <p className="text-[10px] font-mono uppercase tracking-wider text-accent-agent">
-          Execution route
+          Money path
         </p>
         <p className="text-[10px] font-mono text-text-mut">
-          {chainLabel(sourceChain)} → {chainLabel(targetChain)} ·{" "}
-          {plan.totalLegs} legs
+          {chainDisplayName(sourceChain)} → {chainDisplayName(targetChain)}
         </p>
       </div>
       <svg
@@ -922,7 +923,7 @@ function RebalanceRouteMap({ plan }: { plan: RebalancePlanResponse }) {
             fontSize="12"
             fontWeight="700"
           >
-            {chainLabel(sourceChain)} {hasPositionSales ? "SOLD" : "SOURCE"}
+            {hasPositionSales ? "Sold positions" : "Wallet cash"}
           </text>
           <text
             x="38"
@@ -940,7 +941,9 @@ function RebalanceRouteMap({ plan }: { plan: RebalancePlanResponse }) {
             fontFamily="monospace"
             fontSize="10"
           >
-            {hasPositionSales ? "positions to USDC" : "source wallet cash"}
+            {hasPositionSales
+              ? "changed to USDC"
+              : chainDisplayName(sourceChain)}
           </text>
         </g>
 
@@ -1029,7 +1032,7 @@ function RebalanceRouteMap({ plan }: { plan: RebalancePlanResponse }) {
             fontSize="12"
             fontWeight="700"
           >
-            {chainLabel(targetChain)} TARGET
+            Target mix
           </text>
           <text
             x="422"
@@ -1091,193 +1094,119 @@ function RebalanceRouteMap({ plan }: { plan: RebalancePlanResponse }) {
 
 function SingleChainRouteMap({
   chain,
-  legCount,
   sourceUsd,
   targetUsd,
   targets,
   sourceKind,
 }: {
   chain: "arc" | "base";
-  legCount: number;
   sourceUsd: number;
   targetUsd: number;
   targets: Array<{ symbol: string; amountUsdc: number }>;
   sourceKind: "wallet" | "positions";
 }) {
-  const sourceStroke = sourceKind === "positions" ? "#fb7185" : "#38E27D";
   return (
-    <div className="mb-4 border border-white/10 bg-black/30 p-3">
+    <div className="mb-4 border border-white/10 bg-black/30 p-3 font-mono">
       <div className="mb-2 flex items-center justify-between gap-3">
         <p className="text-[10px] font-mono uppercase tracking-wider text-accent-agent">
-          Execution route
+          Money path
         </p>
         <p className="text-[10px] font-mono text-text-mut">
-          single-chain {chainLabel(chain)} · {legCount} legs
+          {chainDisplayName(chain)} only
         </p>
       </div>
-      <svg
-        viewBox="0 0 560 170"
+      <div
         role="img"
-        aria-label={`Route map showing ${chainLabel(chain)} wallet USDC flowing into target sleeves without a CCTP bridge`}
-        className="h-auto w-full"
+        aria-label={`Money path showing ${chainDisplayName(chain)} wallet cash moving into the target allocation`}
+        className="border border-white/10 bg-bg p-3"
       >
-        <rect
-          x="1"
-          y="1"
-          width="558"
-          height="168"
-          fill="#0A0A0A"
-          stroke="#2A2A2A"
-          strokeWidth="2"
-        />
-        <g>
-          <rect
-            x="24"
-            y="34"
-            width="150"
-            height="78"
-            fill="#101010"
-            stroke={sourceStroke}
-            strokeWidth="2"
+        <div className="grid items-stretch gap-3 sm:grid-cols-[minmax(0,1fr)_64px_minmax(0,1fr)]">
+          <RouteNode
+            label={
+              sourceKind === "positions" ? "Sold positions" : "Wallet cash"
+            }
+            value={`$${sourceUsd.toFixed(2)}`}
+            detail={
+              sourceKind === "positions"
+                ? "changed to USDC"
+                : chainDisplayName(chain)
+            }
+            tone={sourceKind === "positions" ? "risk" : "pnl"}
           />
-          <text
-            x="42"
-            y="61"
-            fill={sourceStroke}
-            fontFamily="monospace"
-            fontSize="12"
-            fontWeight="700"
-          >
-            {chainLabel(chain)} {sourceKind === "positions" ? "SOLD" : "WALLET"}
-          </text>
-          <text
-            x="42"
-            y="86"
-            fill="#E8E8E8"
-            fontFamily="monospace"
-            fontSize="18"
-          >
-            ${sourceUsd.toFixed(2)}
-          </text>
-          <text
-            x="42"
-            y="103"
-            fill="#8A8A8A"
-            fontFamily="monospace"
-            fontSize="10"
-          >
-            {sourceKind === "positions" ? "positions to USDC" : "USDC used now"}
-          </text>
-        </g>
+          <div className="flex h-8 items-center justify-center self-center sm:h-auto sm:self-stretch">
+            <div className="h-full w-px border-l-2 border-dashed border-accent-pnl sm:h-px sm:w-full sm:border-l-0 sm:border-t-2" />
+          </div>
+          <RouteNode
+            label="Target mix"
+            value={`$${targetUsd.toFixed(2)}`}
+            detail="no bridge needed"
+            tone="pnl"
+          />
+        </div>
 
-        <path
-          d="M178 73H322"
-          fill="none"
-          stroke="#38E27D"
-          strokeWidth="3"
-          strokeDasharray="9 7"
-        >
-          <animate
-            attributeName="stroke-dashoffset"
-            from="0"
-            to="-32"
-            dur="1.4s"
-            repeatCount="indefinite"
-          />
-        </path>
-        <g>
-          <rect
-            x="312"
-            y="34"
-            width="224"
-            height="78"
-            fill="#101010"
-            stroke="#38E27D"
-            strokeWidth="2"
-          />
-          <text
-            x="332"
-            y="61"
-            fill="#38E27D"
-            fontFamily="monospace"
-            fontSize="12"
-            fontWeight="700"
-          >
-            TARGET SLEEVES
-          </text>
-          <text
-            x="332"
-            y="86"
-            fill="#E8E8E8"
-            fontFamily="monospace"
-            fontSize="18"
-          >
-            ${targetUsd.toFixed(2)}
-          </text>
-          <text
-            x="332"
-            y="103"
-            fill="#8A8A8A"
-            fontFamily="monospace"
-            fontSize="10"
-          >
-            no bridge needed
-          </text>
-        </g>
-
-        <g transform="translate(24 130)">
-          {targets.map((target, index) => (
-            <g key={target.symbol} transform={`translate(${index * 132} 0)`}>
-              <rect
-                width="116"
-                height="24"
-                fill="#151515"
-                stroke="#2A2A2A"
-                strokeWidth="1"
-              />
-              <text
-                x="9"
-                y="16"
-                fill="#E8E8E8"
-                fontFamily="monospace"
-                fontSize="10"
-                fontWeight="700"
-              >
-                {target.symbol}
-              </text>
-              <text
-                x="107"
-                y="16"
-                textAnchor="end"
-                fill="#38E27D"
-                fontFamily="monospace"
-                fontSize="10"
-              >
-                ${target.amountUsdc.toFixed(0)}
-              </text>
-            </g>
-          ))}
-          <g transform={`translate(${Math.min(targets.length, 3) * 132} 0)`}>
-            <rect
-              width="128"
-              height="24"
-              fill="#111A14"
-              stroke="#38E27D"
-              strokeWidth="1"
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          {targets.map((target) => (
+            <RouteChip
+              key={target.symbol}
+              label={target.symbol}
+              value={`$${target.amountUsdc.toFixed(0)}`}
             />
-            <text
-              x="9"
-              y="16"
-              fill="#38E27D"
-              fontFamily="monospace"
-              fontSize="10"
-              fontWeight="700"
-            >
-              USDC RESERVE
-            </text>
-          </g>
-        </g>
-      </svg>
+          ))}
+          <RouteChip label="USDC reserve" value="cash" tone="pnl" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RouteNode({
+  label,
+  value,
+  detail,
+  tone,
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  tone: "pnl" | "risk";
+}) {
+  const toneClass = tone === "risk" ? "text-risk" : "text-accent-pnl";
+  const borderClass =
+    tone === "risk" ? "border-risk/60" : "border-accent-pnl/60";
+  return (
+    <div
+      data-route-node="true"
+      className={`flex min-h-24 flex-col justify-center border-2 bg-surface px-4 py-3 ${borderClass}`}
+    >
+      <p className={`text-[10px] font-semibold ${toneClass}`}>{label}</p>
+      <p className="mt-2 text-xl text-text-hi">{value}</p>
+      <p className="mt-1 text-[10px] text-text-mut">{detail}</p>
+    </div>
+  );
+}
+
+function RouteChip({
+  label,
+  value,
+  tone = "default",
+}: {
+  label: string;
+  value: string;
+  tone?: "default" | "pnl";
+}) {
+  return (
+    <div
+      className={
+        "grid min-h-8 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border px-3 py-1.5 text-[10px] " +
+        (tone === "pnl"
+          ? "border-accent-pnl/45 bg-accent-pnl/5 text-accent-pnl"
+          : "border-white/10 bg-black/30 text-text-hi")
+      }
+    >
+      <span className="min-w-0 truncate font-semibold">{label}</span>
+      <span className={tone === "pnl" ? "text-accent-pnl" : "text-accent-pnl"}>
+        {value}
+      </span>
     </div>
   );
 }

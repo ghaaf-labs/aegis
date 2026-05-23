@@ -34,9 +34,20 @@ export function IdleCashCard() {
     eurcUsd,
     routeKeys: walletRouteKeysFromNetworks(wallet?.networks),
   });
+  const activeBalanceRows = balanceRows.filter((row) => row.totalUsd > 0.5);
+  const visibleBalanceRows =
+    activeBalanceRows.length > 0 ? activeBalanceRows : balanceRows.slice(0, 2);
+  const hiddenEmptyRoutes = Math.max(
+    0,
+    balanceRows.length - visibleBalanceRows.length,
+  );
+  const cashLocation =
+    activeBalanceRows.length === 1
+      ? `on ${activeBalanceRows[0]?.shortLabel ?? "one route"}`
+      : `across ${activeBalanceRows.length} routes`;
 
   return (
-    <Card data-testid="idle-cash-card" className="h-full">
+    <Card data-testid="idle-cash-card">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Wallet className="w-3.5 h-3.5 text-accent-pnl" />
@@ -73,11 +84,10 @@ export function IdleCashCard() {
                   {" · "}€{unifiedEurc.toFixed(2)} EURC
                 </>
               )}{" "}
-              across {balanceRows.length} wallet{" "}
-              {balanceRows.length === 1 ? "route" : "routes"}
+              {cashLocation}
             </>
           ) : (
-            "No wallet cash available"
+            "Wallet is ready, but no idle cash is available"
           )}
         </p>
 
@@ -92,7 +102,7 @@ export function IdleCashCard() {
         )}
 
         <div className="grid gap-1.5">
-          {balanceRows.map((row) => (
+          {visibleBalanceRows.map((row) => (
             <div
               key={row.key}
               className="grid min-h-10 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border border-border-default bg-bg/70 px-2.5 py-2"
@@ -103,7 +113,7 @@ export function IdleCashCard() {
                 </p>
                 <p className="mt-0.5 truncate font-mono text-[10px] text-text-lo">
                   {balanceUnavailable || balanceLoading ? (
-                    "pending check"
+                    "waiting for balance"
                   ) : (
                     <>
                       {row.usdc.toFixed(2)} USDC
@@ -119,6 +129,12 @@ export function IdleCashCard() {
               </p>
             </div>
           ))}
+          {hiddenEmptyRoutes > 0 && !balanceLoading && !balanceUnavailable && (
+            <p className="border border-border-default bg-bg/50 px-2.5 py-2 font-mono text-[10px] text-text-mut">
+              {hiddenEmptyRoutes} empty wallet{" "}
+              {hiddenEmptyRoutes === 1 ? "route" : "routes"} hidden
+            </p>
+          )}
         </div>
 
         <Link
@@ -127,7 +143,7 @@ export function IdleCashCard() {
         >
           <span className="min-w-0 truncate">
             {balanceUnavailable
-              ? "Retry in wallet"
+              ? "Retry wallet"
               : hasIdleCash
                 ? "Wallet details"
                 : "Open wallet"}

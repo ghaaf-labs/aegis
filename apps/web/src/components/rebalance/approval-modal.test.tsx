@@ -59,12 +59,11 @@ describe("<ApprovalModal />", () => {
 
     const text = container.textContent ?? "";
     expect(text).toContain("Bridge Base → Arc");
-    expect(text).toContain("BASE → ARC");
-    expect(text).toContain("BASE SOURCE");
-    expect(text).toContain("ARC TARGET");
+    expect(text).toContain("Base → Arc");
+    expect(text).toContain("Wallet cash");
+    expect(text).toContain("Target mix");
     expect(text).not.toContain("Bridge Arc → Base");
-    expect(text).not.toContain("ARC SOURCE");
-    expect(text).not.toContain("BASE TARGET");
+    expect(text).not.toContain("Arc → Base");
 
     act(() => root.unmount());
   });
@@ -109,9 +108,9 @@ describe("<ApprovalModal />", () => {
 
     const text = container.textContent ?? "";
     expect(text).toContain("Rebalance $600.00 from overweight positions");
-    expect(text).toContain("BASE SOLD");
-    expect(text).toContain("positions to USDC");
-    expect(text).toContain("Gross leg notional");
+    expect(text).toContain("Sold positions");
+    expect(text).toContain("changed to USDC");
+    expect(text).toContain("Plan amount");
     expect(text).toContain("One approval executes the planned route");
     expect(text).not.toContain("One approval executes the Base legs");
     expect(text).not.toContain("One approval executes the Arc legs");

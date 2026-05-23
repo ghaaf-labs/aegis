@@ -257,7 +257,7 @@ export function RebalanceModal({ open, onClose }: Props) {
                   Getting commentary…
                 </>
               ) : commentaryBlocked ? (
-                <>Commentary locked until balances are trusted</>
+                <>Commentary waits for trusted balances</>
               ) : (
                 <>Add strategist commentary</>
               )}
@@ -268,7 +268,7 @@ export function RebalanceModal({ open, onClose }: Props) {
             <div className="p-4 rounded-sharp bg-accent-agent/10 border-brutal border-accent-agent/30">
               {criticBlocked && (
                 <p className="mb-3 rounded-sharp border border-risk/30 bg-risk/10 px-3 py-2 text-[11px] font-mono text-risk">
-                  Critic blocked this analysis. Treat the text below as audit
+                  Critic rejected this analysis. Treat the text below as audit
                   history; the review plan will be rebuilt before approval.
                 </p>
               )}
@@ -479,7 +479,7 @@ function BlockedPlanPanel({
         <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warn" />
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-widest text-warn">
-            Review plan locked
+            Review needs setup
           </p>
           <p className="mt-1 text-[11px] leading-relaxed text-text-lo">
             Aegis needs a portfolio, a completed account, and a confirmed wallet

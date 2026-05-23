@@ -93,8 +93,10 @@ export function ValueFlowCard({
         <FlowStep
           icon={LineChart}
           label="3 Invested"
-          title={hasInvested ? formatCurrency(investedUsd) : "Not invested yet"}
-          tone={hasInvested ? "pnl" : "neutral"}
+          title={
+            hasInvested ? formatCurrency(investedUsd) : "Waiting for approval"
+          }
+          tone={hasInvested ? "pnl" : "warn"}
         />
       </div>
     </section>
