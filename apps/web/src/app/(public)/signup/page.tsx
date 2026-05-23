@@ -33,6 +33,10 @@ async function redirectToLogin(
     }
   }
 
+  if (!forwardSearch.has("entry")) {
+    forwardSearch.set("entry", "signup");
+  }
+
   const query = forwardSearch.toString();
   redirect(`/login${query ? `?${query}` : ""}`);
 }

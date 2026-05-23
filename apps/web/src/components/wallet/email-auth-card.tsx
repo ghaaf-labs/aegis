@@ -24,12 +24,43 @@ import { usePortfolioStore } from "@/stores/portfolio";
 
 type Mode = "email" | "verify" | "finishing" | "done";
 
-export function EmailAuthCard() {
+const NEXT_PATH_LABELS: Record<string, string> = {
+  "/wallets": "Continue to your wallets",
+  "/settings/billing": "Sign in to manage billing",
+  "/onboarding": "Finish setting up your account",
+  "/tax-center": "Sign in to view your tax center",
+  "/transactions": "Sign in to view your transactions",
+  "/rebalance": "Sign in to review this plan",
+};
+
+function nextPathLabel(path: string | null): string {
+  if (!path) return "Sign in to continue";
+  const pathname = path.split(/[?#]/)[0] ?? path;
+  if (NEXT_PATH_LABELS[pathname]) return NEXT_PATH_LABELS[pathname]!;
+  for (const [prefix, label] of Object.entries(NEXT_PATH_LABELS)) {
+    if (pathname.startsWith(`${prefix}/`)) return label;
+  }
+  return "Sign in to continue";
+}
+
+interface EmailAuthCardProps {
+  entry?: "login" | "signup";
+}
+
+export function EmailAuthCard({ entry: entryProp }: EmailAuthCardProps = {}) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const referrerHandle = searchParams?.get("ref")?.trim().toLowerCase();
   const queryEmail = searchParams?.get("email")?.trim().toLowerCase();
   const nextPath = safeNextPath(searchParams?.get("next"));
+  const entryParam = searchParams?.get("entry");
+  const entry: "login" | "signup" | undefined =
+    entryProp ??
+    (entryParam === "signup"
+      ? "signup"
+      : entryParam === "login"
+        ? "login"
+        : undefined);
   const signedOutFromQuery = searchParams?.get("signedOut") === "1";
   const redirectReason = authRedirectReason(searchParams?.get("reason"));
   const skipInitialSessionCheck = signedOutFromQuery || redirectReason !== null;
@@ -50,6 +81,7 @@ export function EmailAuthCard() {
   const [submitting, setSubmitting] = useState(false);
   const [resending, setResending] = useState(false);
   const [resendSeconds, setResendSeconds] = useState(0);
+  const [resendAnnouncement, setResendAnnouncement] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [checkingAccount, setCheckingAccount] = useState(
     !skipInitialSessionCheck,
@@ -242,6 +274,7 @@ export function EmailAuthCard() {
     if (resendSeconds > 0) return;
 
     setResending(true);
+    setResendAnnouncement("");
     setError(null);
     try {
       const resp = await walletApi.resendEmail(codeChallenge.id);
@@ -252,6 +285,7 @@ export function EmailAuthCard() {
         expiresAt: resp.expiresAt,
       });
       setResendSeconds(resp.resendInSeconds);
+      if (mountedRef.current) setResendAnnouncement("New code sent.");
     } catch (e) {
       setError(friendlyAuthError(e));
     } finally {
@@ -313,6 +347,8 @@ export function EmailAuthCard() {
   const emailInvalidId = "wallet-auth-email-invalid";
   const emailInputId = "wallet-auth-email-input";
   const errorId = "wallet-auth-error";
+  const headingId = "wallet-auth-heading";
+  const resendStatusId = "wallet-auth-resend-status";
   const showSignedOutNotice = signedOutFromQuery && mode === "email";
   const redirectNotice = redirectReason
     ? authRedirectNotice(redirectReason)
@@ -323,6 +359,19 @@ export function EmailAuthCard() {
         ? "Signed out. Enter your email to continue."
         : redirectNotice
       : null;
+  const isSignupEntry = entry === "signup";
+  const headingText =
+    mode === "email"
+      ? isSignupEntry
+        ? "Create your account"
+        : "Continue with email"
+      : mode === "verify"
+        ? "Enter the code we emailed you"
+        : mode === "finishing"
+          ? "Setting up your account..."
+          : "Ready";
+  const destinationSubcopy =
+    !isSignupEntry && mode === "email" ? nextPathLabel(nextPath) : null;
 
   if (checkingAccount) {
     return (
@@ -330,13 +379,17 @@ export function EmailAuthCard() {
         <BrutalCardHeader>
           <div className="flex flex-wrap items-center gap-2">
             <Loader2 className="h-4 w-4 animate-spin text-accent-agent" />
-            <span className="text-sm font-semibold text-text-hi">
+            <h1 id={headingId} className="text-sm font-semibold text-text-hi">
               Checking sign-in
-            </span>
+            </h1>
           </div>
         </BrutalCardHeader>
         <BrutalCardBody>
-          <p className="font-mono text-xs leading-relaxed text-text-lo">
+          <p
+            role="status"
+            aria-live="polite"
+            className="font-mono text-xs leading-relaxed text-text-lo"
+          >
             One moment.
           </p>
         </BrutalCardBody>
@@ -357,16 +410,20 @@ export function EmailAuthCard() {
           ) : (
             <KeyRound className="h-4 w-4 text-accent-agent" />
           )}
-          <span className="text-sm font-semibold text-text-hi">
-            {mode === "email"
-              ? "Continue with email"
-              : mode === "verify"
-                ? "Enter the code we emailed you"
-                : mode === "finishing"
-                  ? "Setting up your account..."
-                  : "Ready"}
-          </span>
+          <h1 id={headingId} className="text-sm font-semibold text-text-hi">
+            {headingText}
+          </h1>
         </div>
+        {destinationSubcopy && (
+          <p className="mt-1 font-mono text-[11px] leading-relaxed text-text-lo">
+            {destinationSubcopy}
+          </p>
+        )}
+        {isSignupEntry && mode === "email" && (
+          <p className="mt-1 font-mono text-[11px] leading-relaxed text-text-lo">
+            Enter your email — we&apos;ll create your account after you verify.
+          </p>
+        )}
       </BrutalCardHeader>
       <BrutalCardBody>
         {emailNotice && (
@@ -377,6 +434,7 @@ export function EmailAuthCard() {
 
         {mode === "email" && (
           <form
+            aria-labelledby={headingId}
             onSubmit={(e) => {
               e.preventDefault();
               if (!submitting && emailValid) void requestVerificationCode();
@@ -391,11 +449,13 @@ export function EmailAuthCard() {
             <input
               id={emailInputId}
               data-testid="wallet-auth-email"
+              name="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               type="email"
               inputMode="email"
               autoComplete="email"
+              required
               placeholder="you@example.com"
               aria-invalid={emailInvalid}
               aria-describedby={`${emailHelpId}${emailInvalid ? ` ${emailInvalidId}` : ""}${error ? ` ${errorId}` : ""}`}
@@ -411,16 +471,51 @@ export function EmailAuthCard() {
               <p
                 id={emailInvalidId}
                 role="alert"
+                aria-live="assertive"
                 className="mt-2 font-mono text-[11px] leading-relaxed text-warn"
               >
                 Enter a valid email address.
               </p>
             )}
+            {error && (
+              <div
+                id={errorId}
+                role="alert"
+                className="mt-3 space-y-3 border border-risk/40 bg-risk/5 px-3 py-2 font-mono text-xs text-risk"
+              >
+                <div className="flex items-start gap-2">
+                  <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>{error}</span>
+                </div>
+              </div>
+            )}
+            <div className="mt-4">
+              <BrutalButton
+                type="submit"
+                data-testid="wallet-auth-submit"
+                variant="agent"
+                className="min-h-11 w-full"
+                disabled={submitting || !emailValid}
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Sending...
+                  </>
+                ) : (
+                  <>
+                    Continue
+                    <ArrowRight className="h-4 w-4" />
+                  </>
+                )}
+              </BrutalButton>
+            </div>
           </form>
         )}
 
         {mode === "verify" && codeChallenge && (
           <form
+            aria-labelledby={headingId}
             onSubmit={(e) => {
               e.preventDefault();
               if (!submitting && codeValid) void submitVerificationCode();
@@ -457,6 +552,8 @@ export function EmailAuthCard() {
               By continuing, you agree to our{" "}
               <Link
                 href="/policy#terms"
+                target="_blank"
+                rel="noopener noreferrer"
                 className="text-accent-agent hover:underline"
               >
                 Terms
@@ -464,6 +561,8 @@ export function EmailAuthCard() {
               and{" "}
               <Link
                 href="/policy#privacy"
+                target="_blank"
+                rel="noopener noreferrer"
                 className="text-accent-agent hover:underline"
               >
                 Privacy Policy
@@ -475,83 +574,43 @@ export function EmailAuthCard() {
                 checked={marketingOptIn}
                 onChange={(e) => setMarketingOptIn(e.target.checked)}
                 type="checkbox"
+                aria-label="Email me product updates"
                 className="h-4 w-4 accent-accent-agent"
               />
               Email me product updates.
             </label>
-          </form>
-        )}
-
-        {mode === "finishing" && (
-          <div
-            className="space-y-3 font-mono text-xs text-text-lo"
-            role="status"
-            aria-live="polite"
-          >
-            <div className="flex items-start gap-2">
-              <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-accent-agent" />
-              <p>This is taking longer than usual.</p>
-            </div>
-          </div>
-        )}
-
-        {error && (
-          <div
-            id={errorId}
-            role="alert"
-            className="mt-3 space-y-3 border border-risk/40 bg-risk/5 px-3 py-2 font-mono text-xs text-risk"
-          >
-            <div className="flex items-start gap-2">
-              <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              <span>{error}</span>
-            </div>
-          </div>
-        )}
-
-        {mode !== "done" && (
-          <div className="mt-4 flex flex-col gap-2">
-            <BrutalButton
-              type="button"
-              data-testid="wallet-auth-submit"
-              variant="agent"
-              className="min-h-11 w-full"
-              onClick={() =>
-                void (mode === "email"
-                  ? requestVerificationCode()
-                  : mode === "verify"
-                    ? submitVerificationCode()
-                    : checkAccountReady())
-              }
-              disabled={
-                submitting ||
-                (mode === "email"
-                  ? !emailValid
-                  : mode === "verify"
-                    ? !codeValid
-                    : false)
-              }
-            >
-              {submitting ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  {mode === "email"
-                    ? "Sending..."
-                    : mode === "verify"
-                      ? "Checking..."
-                      : "Trying again..."}
-                </>
-              ) : (
-                <>
-                  {mode === "finishing" ? "Try again" : "Continue"}
-                  {mode === "finishing" ? (
-                    <RotateCw className="h-4 w-4" />
-                  ) : (
+            {error && (
+              <div
+                id={errorId}
+                role="alert"
+                className="mt-1 space-y-3 border border-risk/40 bg-risk/5 px-3 py-2 font-mono text-xs text-risk"
+              >
+                <div className="flex items-start gap-2">
+                  <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>{error}</span>
+                </div>
+              </div>
+            )}
+            <div className="flex flex-col gap-2">
+              <BrutalButton
+                type="submit"
+                data-testid="wallet-auth-submit"
+                variant="agent"
+                className="min-h-11 w-full"
+                disabled={submitting || !codeValid}
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Checking...
+                  </>
+                ) : (
+                  <>
+                    Continue
                     <ArrowRight className="h-4 w-4" />
-                  )}
-                </>
-              )}
-            </BrutalButton>
-            {mode === "verify" && (
+                  </>
+                )}
+              </BrutalButton>
               <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-[11px]">
                 <button
                   type="button"
@@ -580,8 +639,66 @@ export function EmailAuthCard() {
                     : "Resend code"}
                 </button>
               </div>
+              <p
+                id={resendStatusId}
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+                className="sr-only"
+              >
+                {resendAnnouncement}
+              </p>
+            </div>
+          </form>
+        )}
+
+        {mode === "finishing" && (
+          <>
+            <div
+              className="space-y-3 font-mono text-xs text-text-lo"
+              role="status"
+              aria-live="polite"
+            >
+              <div className="flex items-start gap-2">
+                <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-accent-agent" />
+                <p>This is taking longer than usual.</p>
+              </div>
+            </div>
+            {error && (
+              <div
+                id={errorId}
+                role="alert"
+                className="mt-3 space-y-3 border border-risk/40 bg-risk/5 px-3 py-2 font-mono text-xs text-risk"
+              >
+                <div className="flex items-start gap-2">
+                  <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>{error}</span>
+                </div>
+              </div>
             )}
-          </div>
+            <div className="mt-4">
+              <BrutalButton
+                type="button"
+                data-testid="wallet-auth-submit"
+                variant="agent"
+                className="min-h-11 w-full"
+                onClick={() => void checkAccountReady()}
+                disabled={submitting}
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Trying again...
+                  </>
+                ) : (
+                  <>
+                    Try again
+                    <RotateCw className="h-4 w-4" />
+                  </>
+                )}
+              </BrutalButton>
+            </div>
+          </>
         )}
 
         {mode === "done" && (
