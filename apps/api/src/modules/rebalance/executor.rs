@@ -119,7 +119,7 @@ pub async fn create_plan(
 /// Conservative — for a single user-action UX we show the gross USDC the
 /// user might spend, not a per-leg breakdown.
 async fn estimate_total_gas(state: &AppState, legs: &[PlannedLeg]) -> f64 {
-    use crate::modules::paymaster::service::{estimate, PaymasterChain};
+    use crate::modules::paymaster::service::estimate;
     use std::collections::HashSet;
 
     let mut chains: HashSet<ChainKey> = HashSet::new();
@@ -130,14 +130,11 @@ async fn estimate_total_gas(state: &AppState, legs: &[PlannedLeg]) -> f64 {
     }
     let mut total = 0.0;
     for c in chains {
-        // Arc gas is native USDC; every other EVM testnet pays ETH-style gas,
-        // so they fall under the Base estimate. Only Arc/Base are executable
-        // today, so the others never actually produce a leg here.
-        let chain = match c {
-            ChainKey::Arc => PaymasterChain::Arc,
-            _ => PaymasterChain::Base,
-        };
-        if let Ok(e) = estimate(&state.config, chain, "rebalance").await {
+        // The paymaster now estimates per `ChainKey` directly: Arc gas is native
+        // USDC, every other EVM chain pays ETH-style gas via the live
+        // `eth_gasPrice` path. Only Arc/Base are executable today, so the others
+        // never actually produce a leg here.
+        if let Ok(e) = estimate(&state.config, c, "rebalance").await {
             total += e.fee_usdc;
         }
     }

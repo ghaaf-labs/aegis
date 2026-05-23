@@ -1,25 +1,15 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::config::Config;
 use crate::error::AppError;
+use crate::modules::rebalance::models::ChainKey;
 
-/// Chains supported by the paymaster module. Extend in Sprint 3 when we
-/// add more.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum PaymasterChain {
-    Arc,
-    Base,
-}
-
-impl PaymasterChain {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Arc => "Arc",
-            Self::Base => "Base",
-        }
-    }
-}
+/// Chain a gas estimate is requested for. The paymaster speaks `ChainKey`
+/// directly so OP/Arb/Eth/Avax map to the live native-gas path rather than a
+/// `_ => Base` catch-all. The handler deserializes this from the `chain` query
+/// param; `ChainKey`'s `snake_case` serde form keeps `arc`/`base` (and the new
+/// chains' `eth_sepolia`, …) on the wire.
+pub type PaymasterChain = ChainKey;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -37,11 +27,11 @@ pub struct FeeEstimate {
 /// Representative gas units per action, used to size the live fee estimate.
 const GAS_UNITS_REBALANCE: u64 = 200_000;
 const GAS_UNITS_DEFAULT: u64 = 150_000;
-/// Conservative ETH price (USD) used to convert Base ETH-denominated gas into a
-/// USDC figure. Base gas is paid in ETH and the exact USDC charge comes from
-/// the Circle Paymaster API (premium included), so the Base number stays
-/// flagged `is_indicative` until that API is wired (F-PAYMASTER-1). Arc gas is
-/// native USDC, so its live estimate is exact.
+/// Conservative ETH price (USD) used to convert ETH-denominated gas into a USDC
+/// figure on every non-Arc EVM chain. Their gas is paid in the native coin and
+/// the exact USDC charge comes from the Circle Paymaster API (premium
+/// included), so the figure stays flagged `is_indicative` until that API is
+/// wired (F-PAYMASTER-1). Arc gas is native USDC, so its live estimate is exact.
 const ETH_PRICE_USD_HINT: f64 = 3000.0;
 
 fn gas_units_for(action: &str) -> u64 {
@@ -51,10 +41,40 @@ fn gas_units_for(action: &str) -> u64 {
     }
 }
 
-fn stub_fee(chain: PaymasterChain) -> f64 {
+/// Human label for the chain in the fee estimate response.
+fn chain_label(chain: ChainKey) -> &'static str {
     match chain {
-        PaymasterChain::Arc => 0.012,
-        PaymasterChain::Base => 0.105,
+        ChainKey::Arc => "Arc",
+        ChainKey::Base => "Base",
+        ChainKey::EthSepolia => "Ethereum Sepolia",
+        ChainKey::ArbSepolia => "Arbitrum Sepolia",
+        ChainKey::AvaxFuji => "Avalanche Fuji",
+        ChainKey::OpSepolia => "OP Sepolia",
+    }
+}
+
+/// True when the chain pays gas in native USDC (Arc) rather than a volatile
+/// native coin. Only Arc does today; everything else converts via the price
+/// hint and stays `is_indicative`.
+fn native_gas_is_usdc(chain: ChainKey) -> bool {
+    matches!(chain, ChainKey::Arc)
+}
+
+/// JSON-RPC URL used for the live `eth_gasPrice` probe on `chain`.
+fn rpc_for_gas(cfg: &Config, chain: ChainKey) -> &str {
+    cfg.rpc_url_for(chain)
+}
+
+/// Deterministic per-chain stub used in mock mode and as the RPC fallback.
+fn stub_fee(chain: ChainKey) -> f64 {
+    match chain {
+        ChainKey::Arc => 0.012,
+        ChainKey::Base => 0.105,
+        // Other EVM testnets pay ETH-style gas; use the Base-class stub until a
+        // live quote (or the Circle Paymaster fee API) replaces it.
+        ChainKey::EthSepolia | ChainKey::ArbSepolia | ChainKey::AvaxFuji | ChainKey::OpSepolia => {
+            0.105
+        }
     }
 }
 
@@ -97,10 +117,8 @@ pub async fn estimate(
     let (fee_usdc, is_indicative) = if config.circle_mock {
         (stub_fee(chain), true)
     } else {
-        let (rpc, native_is_usdc) = match chain {
-            PaymasterChain::Arc => (config.arc_rpc_url.as_str(), true),
-            PaymasterChain::Base => (config.base_rpc_url.as_str(), false),
-        };
+        let rpc = rpc_for_gas(config, chain);
+        let native_is_usdc = native_gas_is_usdc(chain);
         let units = gas_units_for(action) as f64;
         match fetch_gas_price_wei(rpc).await {
             Some(price_wei) => {
@@ -108,7 +126,7 @@ pub async fn estimate(
                 let (fee, indicative) = if native_is_usdc {
                     (native_cost, false) // Arc: native gas IS USDC.
                 } else {
-                    (native_cost * ETH_PRICE_USD_HINT, true) // Base: ETH→USDC.
+                    (native_cost * ETH_PRICE_USD_HINT, true) // ETH-style → USDC.
                 };
                 // Sanity guard against decimal/units surprises on a new testnet.
                 if fee.is_finite() && fee > 0.0 && fee < 50.0 {
@@ -122,7 +140,7 @@ pub async fn estimate(
     };
 
     Ok(FeeEstimate {
-        chain: chain.label(),
+        chain: chain_label(chain),
         action: action.to_string(),
         fee_usdc,
         via: "Circle Paymaster",
@@ -150,5 +168,52 @@ mod tests {
     #[tokio::test]
     async fn estimate_rejects_empty_action() {
         assert!(estimate(&cfg(), PaymasterChain::Arc, "").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn estimate_base_uses_eth_style_stub_in_mock() {
+        // Mock mode → deterministic stub; Base is ETH-style gas, not Arc-native.
+        let e = estimate(&cfg(), PaymasterChain::Base, "rebalance")
+            .await
+            .unwrap();
+        assert_eq!(e.chain, "Base");
+        assert_eq!(e.fee_usdc, stub_fee(ChainKey::Base));
+    }
+
+    #[tokio::test]
+    async fn estimate_new_chains_resolve_per_chain_labels() {
+        // Each new chain estimates via its own ChainKey arm, not a `_ => Base`
+        // fallback — verified through the distinct labels.
+        for (chain, label) in [
+            (ChainKey::OpSepolia, "OP Sepolia"),
+            (ChainKey::ArbSepolia, "Arbitrum Sepolia"),
+            (ChainKey::EthSepolia, "Ethereum Sepolia"),
+            (ChainKey::AvaxFuji, "Avalanche Fuji"),
+        ] {
+            let e = estimate(&cfg(), chain, "rebalance").await.unwrap();
+            assert_eq!(e.chain, label);
+        }
+    }
+
+    #[test]
+    fn only_arc_pays_native_usdc_gas() {
+        assert!(native_gas_is_usdc(ChainKey::Arc));
+        for c in [
+            ChainKey::Base,
+            ChainKey::EthSepolia,
+            ChainKey::ArbSepolia,
+            ChainKey::AvaxFuji,
+            ChainKey::OpSepolia,
+        ] {
+            assert!(!native_gas_is_usdc(c), "{c:?} must not pay USDC-native gas");
+        }
+    }
+
+    #[test]
+    fn rpc_for_gas_reads_per_chain_url() {
+        let mut c = cfg();
+        c.op_rpc_url = "https://op.example".into();
+        assert_eq!(rpc_for_gas(&c, ChainKey::OpSepolia), "https://op.example");
+        assert_eq!(rpc_for_gas(&c, ChainKey::Arc), c.arc_rpc_url.as_str());
     }
 }
