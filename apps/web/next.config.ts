@@ -1,5 +1,7 @@
 import type { NextConfig } from "next";
 
+const isDev = process.env.NODE_ENV !== "production";
+
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "X-Frame-Options", value: "DENY" },
@@ -16,7 +18,7 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
       "img-src 'self' data: https://assets.coingecko.com https://coin-images.coingecko.com",
-      "connect-src 'self' https://openrouter.ai https://api.circle.com https://eu.infisical.com https://cloudflareinsights.com",
+      `connect-src 'self'${isDev ? " http://localhost:* ws://localhost:*" : ""} https://openrouter.ai https://api.circle.com https://eu.infisical.com https://cloudflareinsights.com`,
       "frame-ancestors 'none'",
     ].join("; "),
   },
