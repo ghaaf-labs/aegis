@@ -43,6 +43,7 @@ export function LandingFooter() {
               Transparency
             </p>
             {[
+              { href: "/about", label: "About us" },
               { href: "/about/constitution", label: "Agent constitution" },
               { href: "/about/regime", label: "Regime model" },
               { href: "/policy", label: "Policy" },
