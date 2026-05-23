@@ -46,6 +46,8 @@ export default function HelpPage() {
         </div>
       </section>
 
+      <HelpItemGrid />
+
       <BrutalCard>
         <BrutalCardBody className="grid gap-5 lg:grid-cols-[1fr_420px] lg:items-center">
           <div className="space-y-3">
@@ -84,8 +86,6 @@ export default function HelpPage() {
           <HelpFlowSvg />
         </BrutalCardBody>
       </BrutalCard>
-
-      <HelpItemGrid />
 
       <BrutalCard>
         <BrutalCardHeader className="gap-3">

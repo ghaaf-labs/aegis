@@ -57,12 +57,15 @@ export default function AboutPage() {
   return (
     <LandingShell>
       {/* ── Hero ─────────────────────────────────────────────────── */}
-      <header className="pt-6 pb-16">
+      <header className="pt-6 pb-16" aria-labelledby="about-heading">
         <BrutalPill tone="agent" className="mb-6">
           Agora Agents Hackathon · May 2026
         </BrutalPill>
 
-        <h1 className="text-6xl sm:text-7xl font-black tracking-tighter text-text-hi leading-none mb-6">
+        <h1
+          id="about-heading"
+          className="text-6xl sm:text-7xl font-black tracking-tighter text-text-hi leading-none mb-6"
+        >
           WE BUILD
           <br />
           <span className="text-accent-agent">AEGIS</span>
@@ -90,10 +93,13 @@ export default function AboutPage() {
       </header>
 
       {/* ── Team ─────────────────────────────────────────────────── */}
-      <section className="mb-16">
-        <p className="text-[10px] font-mono uppercase tracking-widest text-text-lo mb-6">
-          {/* team */}
-        </p>
+      <section className="mb-16" aria-labelledby="section-team">
+        <h2
+          id="section-team"
+          className="text-[10px] font-mono uppercase tracking-widest text-text-lo mb-6"
+        >
+          Team
+        </h2>
 
         <div className="grid gap-px sm:grid-cols-2 border-brutal border-border-default overflow-hidden">
           {TEAM.map((member, i) => (
@@ -134,18 +140,20 @@ export default function AboutPage() {
                   href={member.linkedin}
                   target="_blank"
                   rel="noopener noreferrer"
+                  aria-label={`${member.name} on LinkedIn (opens in new tab)`}
                   className="inline-flex items-center gap-1.5 border border-border-default px-3 py-1.5 text-xs font-mono text-text-lo hover:text-text-hi hover:border-accent-agent transition-colors"
                 >
-                  <Linkedin className="w-3 h-3" />
+                  <Linkedin className="w-3 h-3" aria-hidden="true" />
                   LinkedIn
                 </Link>
                 <Link
                   href={member.github}
                   target="_blank"
                   rel="noopener noreferrer"
+                  aria-label={`${member.name} on GitHub (opens in new tab)`}
                   className="inline-flex items-center gap-1.5 border border-border-default px-3 py-1.5 text-xs font-mono text-text-lo hover:text-text-hi hover:border-accent-agent transition-colors"
                 >
-                  <Github className="w-3 h-3" />
+                  <Github className="w-3 h-3" aria-hidden="true" />
                   GitHub
                 </Link>
                 {member.website && (
@@ -153,9 +161,10 @@ export default function AboutPage() {
                     href={member.website}
                     target="_blank"
                     rel="noopener noreferrer"
+                    aria-label={`${member.name}'s personal site (opens in new tab)`}
                     className="inline-flex items-center gap-1.5 border border-border-default px-3 py-1.5 text-xs font-mono text-text-lo hover:text-text-hi hover:border-accent-agent transition-colors"
                   >
-                    <Globe className="w-3 h-3" />
+                    <Globe className="w-3 h-3" aria-hidden="true" />
                     {member.website.replace("https://", "")}
                   </Link>
                 )}
@@ -166,7 +175,13 @@ export default function AboutPage() {
       </section>
 
       {/* ── Mission quote ─────────────────────────────────────────── */}
-      <section className="mb-16 border-l-4 border-accent-agent pl-6 py-2">
+      <section
+        className="mb-16 border-l-4 border-accent-agent pl-6 py-2"
+        aria-labelledby="section-mission"
+      >
+        <h2 id="section-mission" className="sr-only">
+          Mission
+        </h2>
         <p className="text-lg font-mono text-text-hi leading-relaxed">
           &ldquo;Stablecoin-native finance deserves an agent that earns trust
           one approved move at a time.&rdquo;
@@ -174,10 +189,13 @@ export default function AboutPage() {
       </section>
 
       {/* ── Stack ─────────────────────────────────────────────────── */}
-      <section>
-        <p className="text-[10px] font-mono uppercase tracking-widest text-text-lo mb-4">
-          {/* built with */}
-        </p>
+      <section className="mb-16" aria-labelledby="section-stack">
+        <h2
+          id="section-stack"
+          className="text-[10px] font-mono uppercase tracking-widest text-text-lo mb-4"
+        >
+          Built with
+        </h2>
         <div className="flex flex-wrap gap-2">
           {STACK.map((tech) => (
             <span
@@ -188,6 +206,67 @@ export default function AboutPage() {
             </span>
           ))}
         </div>
+      </section>
+
+      {/* ── Explore ───────────────────────────────────────────────── */}
+      <section className="mb-16" aria-labelledby="section-explore">
+        <h2
+          id="section-explore"
+          className="text-[10px] font-mono uppercase tracking-widest text-text-lo mb-4"
+        >
+          Explore
+        </h2>
+        <div className="grid gap-3 sm:grid-cols-3">
+          {[
+            {
+              href: "/explore",
+              label: "Demo portfolios",
+              desc: "See the agent reason across three curated risk profiles.",
+            },
+            {
+              href: "/about/regime",
+              label: "Regime model card",
+              desc: "Precision and recall for the market-regime classifier.",
+            },
+            {
+              href: "/pricing",
+              label: "Pricing",
+              desc: "Free tier with no credit card required.",
+            },
+          ].map(({ href, label, desc }) => (
+            <Link
+              key={href}
+              href={href}
+              className="border border-border-default px-4 py-3 text-xs font-mono text-text-lo hover:text-text-hi hover:border-accent-agent transition-colors group"
+            >
+              <p className="font-semibold text-text-hi group-hover:text-accent-agent transition-colors">
+                {label}
+              </p>
+              <p className="mt-1 text-text-mut">{desc}</p>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      {/* ── Hackathon context ─────────────────────────────────────── */}
+      <section aria-labelledby="section-hackathon">
+        <h2
+          id="section-hackathon"
+          className="text-[10px] font-mono uppercase tracking-widest text-text-lo mb-4"
+        >
+          Hackathon context
+        </h2>
+        <p className="text-sm font-mono text-text-lo max-w-2xl leading-relaxed">
+          Aegis was submitted to{" "}
+          <span className="text-text-hi">
+            RFB 04: Adaptive Portfolio Manager
+          </span>{" "}
+          at the Canteen × Circle{" "}
+          <span className="text-text-hi">Agora Agents Hackathon</span> (May
+          11–25, 2026). It runs on Arc and Base through Circle&apos;s full
+          stack: Wallets, CCTP V2, Gateway, Paymaster, StableFX, and
+          Nanopayments.
+        </p>
       </section>
     </LandingShell>
   );

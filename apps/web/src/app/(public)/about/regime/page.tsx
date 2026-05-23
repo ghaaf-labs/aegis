@@ -91,11 +91,19 @@ export default async function RegimeModelCardPage() {
           <h1 className="text-2xl font-semibold text-text-hi font-mono tracking-tight">
             Regime classifier — model card
           </h1>
-          <p className="text-sm text-text-lo mt-0.5 max-w-2xl">
-            How well does the Aegis regime classifier actually call the market?
-            Numbers below are from a replay backtest of the live model against
-            historical price data — no marketing gloss, no hand-picked windows.
-          </p>
+          {evaluation ? (
+            <p className="text-sm text-text-lo mt-0.5 max-w-2xl">
+              Precision, recall, and confusion data from a replay backtest of
+              the live model against historical price data — no marketing gloss,
+              no hand-picked windows.
+            </p>
+          ) : (
+            <p className="text-sm text-text-lo mt-0.5 max-w-2xl">
+              Model evidence isn&apos;t published yet. This page will show
+              precision, recall, and confusion data once the first evaluation
+              cycle completes.
+            </p>
+          )}
         </div>
       </header>
 
@@ -115,20 +123,27 @@ export default async function RegimeModelCardPage() {
       )}
 
       <p className="mt-8 text-center text-xs font-mono text-text-mut">
-        Want to see it on a live portfolio?{" "}
-        <Link
-          href="/explore"
-          className="inline-flex min-h-9 items-center text-accent-agent hover:underline"
-        >
-          Explore demo portfolios
-        </Link>{" "}
-        ·{" "}
-        <Link
-          href="/login"
-          className="inline-flex min-h-9 items-center text-accent-pnl hover:underline"
-        >
-          Create your own
-        </Link>
+        {evaluation ? (
+          <>
+            Want to see the classifier in action?{" "}
+            <Link
+              href="/explore"
+              className="inline-flex min-h-9 items-center text-accent-agent hover:underline"
+            >
+              Explore demo portfolios
+            </Link>
+          </>
+        ) : (
+          <>
+            Learn how the regime classifier works:{" "}
+            <Link
+              href="/explore"
+              className="inline-flex min-h-9 items-center text-accent-agent hover:underline"
+            >
+              See it in a demo portfolio
+            </Link>
+          </>
+        )}
       </p>
     </LandingShell>
   );
@@ -340,14 +355,27 @@ function MethodologyNote() {
 function EmptyState() {
   return (
     <BrutalCard>
-      <BrutalCardBody className="text-center py-12">
-        <p className="text-sm text-text-default mb-2">
-          Evaluation data not yet available.
+      <BrutalCardBody className="text-center py-12 space-y-4">
+        <p className="text-sm font-mono font-semibold text-text-hi">
+          Model evidence isn&apos;t published yet.
         </p>
-        <p className="text-xs text-text-lo">
-          The model card populates after the first live evaluation cycle
-          completes. Check back once the agent has processed enough decisions.
+        <p className="text-xs text-text-lo max-w-md mx-auto">
+          Precision, recall, and confusion-matrix data will appear here after
+          the first live evaluation cycle completes. Charts and backtest
+          comparisons will be added at the same time.
         </p>
+        <div className="mt-6 border border-border-default bg-bg px-4 py-3 text-left max-w-sm mx-auto space-y-2">
+          <p className="text-[10px] font-mono uppercase tracking-widest text-accent-agent">
+            How it works
+          </p>
+          <p className="text-xs text-text-lo leading-relaxed">
+            At each scheduled interval the classifier labels the current market
+            as RISK-ON, NEUTRAL, or RISK-OFF using backward-looking price and
+            volatility features. The agent then picks a strategy that fits that
+            regime. Evaluation data is published once enough live decisions have
+            accumulated to compute meaningful statistics.
+          </p>
+        </div>
       </BrutalCardBody>
     </BrutalCard>
   );

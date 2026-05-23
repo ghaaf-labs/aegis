@@ -262,12 +262,26 @@ function MobileMetric({
 
 function EmptyState() {
   return (
-    <div className="border-brutal border-border-default bg-raised p-12 text-center space-y-3">
+    <div className="border-brutal border-border-default bg-raised p-12 text-center space-y-4">
       <p className="text-sm font-mono text-text-lo">No live portfolios yet.</p>
-      <p className="text-xs font-mono text-text-mut">
+      <p className="text-xs font-mono text-text-mut max-w-sm mx-auto">
         The leaderboard fills out as the agent has 24h of outcomes to compare
         against its own counterfactuals.
       </p>
+      <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+        <Link
+          href="/explore"
+          className="inline-flex min-h-9 items-center gap-2 border border-accent-agent/40 bg-accent-agent/10 px-4 py-2 font-mono text-xs text-accent-agent hover:border-accent-agent"
+        >
+          Explore demo portfolios
+        </Link>
+        <Link
+          href="/about/regime"
+          className="inline-flex min-h-9 items-center gap-2 border border-border-default bg-bg px-4 py-2 font-mono text-xs text-text-lo hover:text-text-hi"
+        >
+          How the leaderboard works
+        </Link>
+      </div>
     </div>
   );
 }
