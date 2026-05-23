@@ -1,0 +1,82 @@
+//! CCTP V2 bridge adapter — USDC burn on the source chain, mint on the
+//! destination. Wraps [`CctpClient`] (which holds the real alloy path behind
+//! `real-cctp`) and reports its capability from `Config`.
+
+use crate::config::Config;
+use crate::error::Result;
+
+use super::super::cross_chain::{CctpClient, HookPayload};
+use super::super::models::ChainKey;
+use super::super::registry::capabilities::AdapterCapability;
+use super::super::registry::ticket::ExecutionTicket;
+use super::super::registry::tokens::{self, USDC};
+use super::RealReceipt;
+
+/// Capability of the CCTP V2 USDC bridge (Arc ↔ Base). Requires *every*
+/// address the real burn/mint path parses — USDC, TokenMessengerV2,
+/// MessageTransmitterV2, and the destination RebalanceExecutor on both chains —
+/// so a leg fails closed at approval rather than late at submit time.
+pub fn capability(cfg: &Config) -> AdapterCapability {
+    let usdc = tokens::token(USDC).expect("USDC in registry");
+    let have_addrs = usdc.address_for(cfg, ChainKey::Arc).is_some()
+        && usdc.address_for(cfg, ChainKey::Base).is_some()
+        && tokens::is_real_addr(&cfg.cctp_token_messenger_arc)
+        && tokens::is_real_addr(&cfg.cctp_token_messenger_base)
+        && tokens::is_real_addr(&cfg.cctp_message_transmitter_arc)
+        && tokens::is_real_addr(&cfg.cctp_message_transmitter_base)
+        && tokens::is_real_addr(&cfg.rebalance_executor_arc)
+        && tokens::is_real_addr(&cfg.rebalance_executor_base);
+    if !cfg!(feature = "real-cctp") {
+        AdapterCapability::NeedsFeature
+    } else if !have_addrs {
+        AdapterCapability::NeedsAddress
+    } else if cfg.chain_private_key_arc.trim().is_empty()
+        || cfg.chain_private_key_base.trim().is_empty()
+    {
+        AdapterCapability::NeedsSigner
+    } else {
+        AdapterCapability::Live
+    }
+}
+
+/// Burn USDC on the source chain, forwarding `hook` so the destination
+/// RebalanceExecutor can act on mint. Real path only — gated by the ticket.
+pub async fn burn(
+    cfg: &Config,
+    http: &reqwest::Client,
+    ticket: &ExecutionTicket,
+    hook: &HookPayload,
+) -> Result<RealReceipt> {
+    let client = CctpClient::new(http, cfg);
+    let r = client
+        .deposit_for_burn(
+            ticket.src_chain(),
+            ticket.dest_chain(),
+            ticket.amount_usdc(),
+            hook,
+        )
+        .await?;
+    Ok(RealReceipt {
+        tx_hash: r.tx_hash,
+        cctp_message_hash: Some(r.message_hash),
+    })
+}
+
+/// Wait for the attestation produced by `burn_tx_hash` and mint on the
+/// destination chain.
+pub async fn mint(
+    cfg: &Config,
+    http: &reqwest::Client,
+    ticket: &ExecutionTicket,
+    burn_tx_hash: &str,
+) -> Result<RealReceipt> {
+    let client = CctpClient::new(http, cfg);
+    let att = client
+        .wait_for_attestation(ticket.src_chain().domain_id(), burn_tx_hash)
+        .await?;
+    let r = client.receive_message(ticket.dest_chain(), &att).await?;
+    Ok(RealReceipt {
+        tx_hash: r.tx_hash,
+        cctp_message_hash: None,
+    })
+}

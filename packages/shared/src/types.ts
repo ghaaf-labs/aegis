@@ -416,6 +416,23 @@ export type LegKind =
 
 export type LegStatus = "pending" | "submitted" | "confirmed" | "failed";
 
+/**
+ * Plain-language execution state for a token/route, mirrored from the backend
+ * route registry (`RouteState`). The UI must use exactly these labels so users
+ * never mistake a non-executable route for a working one:
+ * - `ready` — can execute now
+ * - `track-only` — price-tracked but not executable (disabled / KYB-gated)
+ * - `needs-route` — adapter or rail not connected
+ * - `needs-quote` — live route, awaiting a fresh quote
+ * - `needs-address` — live adapter, but the token's on-chain address is unset
+ */
+export type RouteState =
+  | "ready"
+  | "track-only"
+  | "needs-route"
+  | "needs-quote"
+  | "needs-address";
+
 export type RebalanceLifecycle =
   | "planned"
   | "approved"

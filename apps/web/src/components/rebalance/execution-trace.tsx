@@ -26,6 +26,12 @@ export interface ExecutionTraceProps {
   /** Auth-aware SSE URL (with token query, etc.). */
   sseUrl: string;
   executionMode?: "mock" | "real";
+  /**
+   * Lifts the live execution status (e.g. "executing" → "failed"/"completed")
+   * to the parent so the page header stays in sync with the trace instead of
+   * showing a stale one-shot status.
+   */
+  onStatusChange?: (status: string) => void;
 }
 
 interface InternalLeg {
@@ -51,6 +57,7 @@ export function ExecutionTrace({
   rebalanceId,
   sseUrl,
   executionMode,
+  onStatusChange,
 }: ExecutionTraceProps) {
   const [legs, setLegs] = useState<InternalLeg[]>([]);
   const [status, setStatus] = useState<string>("loading…");
@@ -152,6 +159,12 @@ export function ExecutionTrace({
       }
     },
   } as Parameters<typeof useEventSource>[1]);
+
+  // Keep the parent (page header) in sync with the live trace status. Skip the
+  // initial "loading…" sentinel so we never clobber the page's known status.
+  useEffect(() => {
+    if (status !== "loading…") onStatusChange?.(status);
+  }, [onStatusChange, status]);
 
   const progressPct = total > 0 ? Math.round((completed / total) * 100) : 0;
   const isMockExecution = resolvedExecutionMode === "mock";

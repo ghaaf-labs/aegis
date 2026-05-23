@@ -212,6 +212,14 @@ pub async fn analyze_portfolio(
         "harvestable_losses",
         format_harvestable_losses(&harvestable),
     );
+    // Route-execution awareness: the strategist must only propose moving funds
+    // into tokens that can actually execute. Track-only tokens (disabled USYC,
+    // KYB-gated EURC, volatiles without a live swap route) may be discussed but
+    // not traded — the registry would otherwise block them at approval/execute.
+    strategist_ctx.insert(
+        "route_capabilities",
+        format_route_capabilities(&state.config),
+    );
     // Per-user signal: broadcast a tax.harvest.proposed event for any open
     // loss above the configured threshold so the UI surfaces it ahead of the
     // strategist's full reasoning.
@@ -592,6 +600,27 @@ async fn previous_regime(state: &AppState, portfolio_id: Uuid) -> Option<String>
             None
         }
     }
+}
+
+/// Render the route-execution capability block for the strategist prompt:
+/// which tokens can actually be traded vs. which are price-tracked only.
+fn format_route_capabilities(cfg: &crate::config::Config) -> String {
+    use crate::modules::rebalance::registry::{
+        capabilities::RuntimeCapabilities, executable_token_symbols, tokens::TOKEN_REGISTRY,
+    };
+    let caps = RuntimeCapabilities::from_config(cfg);
+    let executable = executable_token_symbols(&caps, cfg);
+    let tracked: Vec<&str> = TOKEN_REGISTRY
+        .iter()
+        .map(|s| s.symbol)
+        .filter(|s| !executable.contains(s))
+        .collect();
+    format!(
+        "- **Executable now** (you MAY propose buying/parking/selling these): {}\n\
+         - **Track-only** (price-tracked but NOT executable — do NOT propose trades into these; mention as context only): {}",
+        executable.join(", "),
+        if tracked.is_empty() { "none".to_string() } else { tracked.join(", ") },
+    )
 }
 
 fn build_strategist_context(
@@ -1376,6 +1405,10 @@ mod tests {
         );
         ctx.insert("harvestable_losses", "(none)".into());
         ctx.insert("wallet_block", "Wallet balance: $0".into());
+        ctx.insert(
+            "route_capabilities",
+            format_route_capabilities(&crate::config::test_config()),
+        );
         let rendered = reg.render(PromptKey::Strategist, &ctx);
         assert!(
             !rendered.contains("{{"),

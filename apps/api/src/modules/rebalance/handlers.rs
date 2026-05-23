@@ -14,6 +14,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::config::Config;
 use crate::error::{AppError, Result};
 use crate::middleware::auth::Claims;
 use crate::modules::agent::{models::AnalyzeRequest, service::analyze_portfolio};
@@ -21,6 +22,7 @@ use crate::modules::rebalance::{
     executor::{approve_and_execute, create_plan},
     models::{ChainKey, PlanInput, PlannedLeg, ARC_NATIVE_SYMBOLS, BASE_NATIVE_SYMBOLS},
     planner::plan_legs,
+    registry::{capabilities::RuntimeCapabilities, route, route::RouteLeg},
 };
 use crate::modules::wallet_routes;
 use crate::router::AppState;
@@ -603,9 +605,9 @@ async fn approval_safety(state: &AppState, rebalance_id: Uuid) -> Result<Approva
     }
 
     if real_mode {
-        let missing_capabilities = unsupported_real_execution_capabilities(&stored_legs);
+        let missing_capabilities = route_blockers(&state.config, &stored_legs);
         if !missing_capabilities.is_empty() {
-            let message = unsupported_real_execution_message(&missing_capabilities);
+            let message = execution_blocked_message(&missing_capabilities);
             return Ok(ApprovalSafety {
                 approvable: false,
                 code: "EXECUTION_UNAVAILABLE".into(),
@@ -667,106 +669,35 @@ fn legs_match_current(stored: &[LegView], current: &[PlannedLeg]) -> bool {
     })
 }
 
-fn unsupported_real_execution_capabilities(legs: &[LegView]) -> Vec<MissingCapability> {
-    let mut missing = Vec::new();
-
-    let unsupported_chains = unsupported_rebalance_chains(legs);
-    if !unsupported_chains.is_empty() {
-        missing.push(MissingCapability {
-            code: "NON_EXECUTION_CHAIN".into(),
-            label: "Route cannot execute yet".into(),
-            detail: format!(
-                "Wallets are live on {unsupported_chains}, but live rebalances currently execute only on Arc testnet and Base Sepolia."
-            ),
-        });
-    }
-
-    if !real_cctp_enabled()
-        && legs
-            .iter()
-            .any(|leg| leg.kind == "cross_chain_burn" || leg.kind == "cross_chain_mint")
-    {
-        missing.push(MissingCapability {
-            code: "REAL_CCTP_FEATURE".into(),
-            label: "Bridge rail not enabled".into(),
-            detail:
-                "Restart the API with real CCTP enabled, then build a fresh review before approving."
-                    .into(),
-        });
-    }
-
-    if legs.iter().any(cross_chain_token_swap_needed) {
-        missing.push(MissingCapability {
-            code: "CROSS_CHAIN_TOKEN_SWAP".into(),
-            label: "Token buy route not ready".into(),
-            detail:
-                "BTC, ETH, and SOL can be tracked as targets, but live cross-chain token buying is not connected yet. Remove those target sleeves for an executable review."
-                    .into(),
-        });
-    }
-
-    if !real_usyc_enabled()
-        && legs
-            .iter()
-            .any(|leg| leg.kind == "park_usyc" || leg.kind == "redeem_usyc")
-    {
-        missing.push(MissingCapability {
-            code: "REAL_USYC_FEATURE".into(),
-            label: "USYC rail not enabled".into(),
-            detail:
-                "Restart the API with real USYC enabled, then build a fresh review before approving."
-                    .into(),
-        });
-    }
-
-    if legs.iter().any(|leg| leg.kind == "fx_stablefx") {
-        missing.push(MissingCapability {
-            code: "STABLEFX_ADAPTER".into(),
-            label: "EURC route not ready".into(),
-            detail:
-                "EURC can be tracked as a target, but the live FX route is not connected yet. Remove the EURC sleeve for an executable review."
-                    .into(),
-        });
-    }
-
-    if legs.iter().any(|leg| leg.kind == "local_swap") {
-        missing.push(MissingCapability {
-            code: "LOCAL_SWAP_ADAPTER".into(),
-            label: "Swap route not ready".into(),
-            detail:
-                "This review needs a live swap route that is not connected yet. Remove token sleeves that require swaps for an executable review."
-                    .into(),
-        });
-    }
-
-    missing
-}
-
-fn unsupported_rebalance_chains(legs: &[LegView]) -> String {
-    let mut chains: Vec<&str> = legs
+/// Map the route registry's blockers onto the wire `MissingCapability` shape
+/// the frontend approval modal already renders. Single source of truth: the
+/// same `route::validate_legs` consulted by the executor and the agent.
+fn route_blockers(cfg: &Config, legs: &[LegView]) -> Vec<MissingCapability> {
+    let caps = RuntimeCapabilities::from_config(cfg);
+    let route_legs: Vec<RouteLeg> = legs
         .iter()
-        .flat_map(|leg| [leg.src_chain.as_deref(), leg.dest_chain.as_deref()])
-        .flatten()
-        .filter(|chain| !is_rebalance_execution_chain(chain))
+        .filter_map(|l| {
+            RouteLeg::from_parts(
+                &l.kind,
+                l.src_chain.clone(),
+                l.dest_chain.clone(),
+                l.src_symbol.clone(),
+                l.dest_symbol.clone(),
+                l.amount_usdc,
+            )
+        })
         .collect();
-    chains.sort_unstable();
-    chains.dedup();
-    chains.join(", ")
+    route::validate_legs(&caps, cfg, &route_legs)
+        .into_iter()
+        .map(|b| MissingCapability {
+            code: b.code.wire_code().to_string(),
+            label: b.code.label().to_string(),
+            detail: b.detail,
+        })
+        .collect()
 }
 
-fn is_rebalance_execution_chain(chain: &str) -> bool {
-    matches!(chain, "arc" | "base")
-}
-
-fn cross_chain_token_swap_needed(leg: &LegView) -> bool {
-    leg.kind == "cross_chain_burn"
-        && leg
-            .dest_symbol
-            .as_deref()
-            .is_some_and(|symbol| !symbol.eq_ignore_ascii_case("USDC"))
-}
-
-fn unsupported_real_execution_message(missing: &[MissingCapability]) -> String {
+fn execution_blocked_message(missing: &[MissingCapability]) -> String {
     let labels = missing
         .iter()
         .map(|cap| cap.label.as_str())
@@ -780,14 +711,6 @@ fn unsupported_real_execution_message(missing: &[MissingCapability]) -> String {
     format!(
         "This review is saved as a draft because {noun} must be ready before money can move: {labels}. Change the target and build a fresh executable review before approving."
     )
-}
-
-fn real_cctp_enabled() -> bool {
-    cfg!(feature = "real-cctp")
-}
-
-fn real_usyc_enabled() -> bool {
-    cfg!(feature = "real-usyc")
 }
 
 fn amount_matches(stored: f64, current: f64) -> bool {
@@ -1291,25 +1214,6 @@ mod tests {
         );
     }
 
-    fn leg(kind: &str) -> LegView {
-        LegView {
-            id: Uuid::new_v4(),
-            rebalance_id: Uuid::new_v4(),
-            leg_index: 0,
-            kind: kind.to_string(),
-            src_chain: Some("arc".into()),
-            dest_chain: Some("arc".into()),
-            src_symbol: Some("USDC".into()),
-            dest_symbol: Some("USYC".into()),
-            amount_usdc: 10.0,
-            status: "pending".into(),
-            tx_hash: None,
-            failure_reason: None,
-            submitted_at: None,
-            confirmed_at: None,
-        }
-    }
-
     fn planned_leg(
         kind: crate::modules::rebalance::models::LegKind,
         chain: ChainKey,
@@ -1342,84 +1246,5 @@ mod tests {
             )]),
             "Arc transaction"
         );
-    }
-
-    #[test]
-    fn real_execution_capability_blocks_synthetic_executor_legs() {
-        let missing =
-            unsupported_real_execution_capabilities(&[leg("fx_stablefx"), leg("local_swap")]);
-        assert!(missing.iter().any(|cap| cap.code == "STABLEFX_ADAPTER"));
-        assert!(missing.iter().any(|cap| cap.code == "LOCAL_SWAP_ADAPTER"));
-        assert!(unsupported_real_execution_message(&missing).contains("EURC route not ready"));
-    }
-
-    #[cfg(not(feature = "real-cctp"))]
-    #[test]
-    fn real_execution_capability_blocks_uncompiled_cctp() {
-        let missing = unsupported_real_execution_capabilities(&[leg("cross_chain_burn")]);
-        assert!(missing.iter().any(|cap| cap.code == "REAL_CCTP_FEATURE"));
-    }
-
-    #[test]
-    fn real_execution_capability_blocks_cross_chain_token_swaps() {
-        for symbol in ["BTC", "ETH", "SOL", "USYC", "EURC"] {
-            let mut token_buy = leg("cross_chain_burn");
-            token_buy.dest_symbol = Some(symbol.into());
-            let missing = unsupported_real_execution_capabilities(&[token_buy]);
-
-            assert!(
-                missing
-                    .iter()
-                    .any(|cap| cap.code == "CROSS_CHAIN_TOKEN_SWAP"),
-                "{symbol} cross-chain buys must stay blocked until a real route exists",
-            );
-        }
-    }
-
-    #[test]
-    fn real_execution_capability_blocks_non_execution_wallet_routes() {
-        let mut eth_leg = leg("cross_chain_burn");
-        eth_leg.src_chain = Some("eth-sepolia".into());
-        eth_leg.dest_chain = Some("base".into());
-        eth_leg.dest_symbol = Some("USDC".into());
-
-        let missing = unsupported_real_execution_capabilities(&[eth_leg]);
-        assert!(
-            missing.iter().any(|cap| cap.code == "NON_EXECUTION_CHAIN"),
-            "non Arc/Base wallet routes must not reach real execution"
-        );
-    }
-
-    #[test]
-    fn real_execution_capability_allows_cross_chain_usdc_mints() {
-        for symbol in ["USDC", "usdc"] {
-            let mut usdc_bridge = leg("cross_chain_burn");
-            usdc_bridge.dest_symbol = Some(symbol.into());
-            let missing = unsupported_real_execution_capabilities(&[usdc_bridge]);
-
-            assert!(
-                !missing
-                    .iter()
-                    .any(|cap| cap.code == "CROSS_CHAIN_TOKEN_SWAP"),
-                "{symbol} bridge mints should not be treated as token swaps",
-            );
-        }
-    }
-
-    #[cfg(not(feature = "real-usyc"))]
-    #[test]
-    fn real_execution_capability_blocks_uncompiled_usyc() {
-        let missing = unsupported_real_execution_capabilities(&[leg("park_usyc")]);
-        assert!(missing.iter().any(|cap| cap.code == "REAL_USYC_FEATURE"));
-    }
-
-    #[cfg(not(feature = "real-usyc"))]
-    #[test]
-    fn real_execution_capability_reports_all_missing_capabilities() {
-        let missing =
-            unsupported_real_execution_capabilities(&[leg("park_usyc"), leg("fx_stablefx")]);
-        assert_eq!(missing.len(), 2);
-        assert!(unsupported_real_execution_message(&missing).contains("USYC"));
-        assert!(unsupported_real_execution_message(&missing).contains("StableFX"));
     }
 }

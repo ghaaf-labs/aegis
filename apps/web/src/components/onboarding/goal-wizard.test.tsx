@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { GoalWizard } from "./goal-wizard";
 import { usePortfolioStore } from "@/stores/portfolio";
+import { analyticsApi, portfolioApi } from "@/lib/api";
 
 const push = vi.fn();
 
@@ -52,6 +53,59 @@ describe("<GoalWizard />", () => {
       "Enter a portfolio name to continue.",
     );
     expect(container.textContent).not.toContain("tax export");
+
+    act(() => root.unmount());
+  });
+
+  it("creates a portfolio with executable route preferences by default", async () => {
+    window.sessionStorage.setItem(
+      "aegis.goal-wizard.draft",
+      JSON.stringify({
+        step: 4,
+        name: "Main portfolio",
+        horizon: "5y",
+        risk: "moderate",
+        allocation: { USDC: 70, BTC: 0, ETH: 0, SOL: 0, USYC: 30, EURC: 0 },
+        monthlyContribution: "",
+      }),
+    );
+    vi.mocked(portfolioApi.create).mockResolvedValue({
+      id: "portfolio-1",
+      userId: "user-1",
+      name: "Main portfolio",
+      totalValueUsd: 0,
+      totalPnlUsd: 0,
+      totalPnlPct: 0,
+      allocations: [],
+      riskScore: 0,
+      goal: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    vi.mocked(analyticsApi.track).mockResolvedValue(undefined);
+    const { container, root } = render(<GoalWizard />);
+
+    await act(async () => {
+      buttonByText(container, "Create portfolio").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const request = vi.mocked(portfolioApi.create).mock.calls[0]?.[0];
+    expect(request?.goal?.targetAllocation).toEqual({
+      USDC: 70,
+      BTC: 0,
+      ETH: 0,
+      SOL: 0,
+      USYC: 30,
+      EURC: 0,
+    });
+    expect(request?.goal?.routePreferences).toEqual({
+      networks: ["ARC-TESTNET", "BASE-SEPOLIA"],
+      networkWatchlist: ["ETH-SEPOLIA", "ARB-SEPOLIA", "AVAX-FUJI"],
+      tokens: ["USDC"],
+      watchlist: ["BTC", "ETH", "SOL", "USYC", "EURC"],
+    });
 
     act(() => root.unmount());
   });

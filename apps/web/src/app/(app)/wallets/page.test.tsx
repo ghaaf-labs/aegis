@@ -145,32 +145,48 @@ describe("<NetworkTokenPanel />", () => {
       "Avalanche Fuji",
     ];
     const expectedTokens = [
-      ["USDC", "Cash · Funding, transfer, and reserve route is live"],
-      ["BTC", "Market target · Pricing and swap planning available"],
-      ["ETH", "Market target · Pricing and swap planning available"],
-      ["SOL", "Market target · Pricing and swap planning available"],
-      ["USYC", "Yield target · Planner supports park and redeem routes"],
-      ["EURC", "FX target · Planner supports the StableFX sleeve"],
+      ["USDC", "Cash · Reserve, funding, and transfer route is ready"],
+      [
+        "BTC",
+        "Market target · Price tracking is ready; swap execution is not connected yet",
+      ],
+      [
+        "ETH",
+        "Market target · Price tracking is ready; swap execution is not connected yet",
+      ],
+      [
+        "SOL",
+        "Market target · Price tracking is ready; swap execution is not connected yet",
+      ],
+      [
+        "USYC",
+        "Yield target · Yield parking is turned off — the USYC Teller on Arc is allowlist-gated, so USYC is tracked only for now",
+      ],
+      [
+        "EURC",
+        "FX target · FX tracking is ready; Arc StableFX execution is KYB-gated",
+      ],
     ];
 
     for (const network of expectedNetworks) {
       expect(text).toContain(network);
     }
-    expect(text).toContain("Agent wallet scope");
+    expect(text).toContain("Current selection");
     expect(text).toContain("Arc testnet, Base Sepolia");
-    expect(text).toContain("Execution rails");
-    expect(text).toContain("No extra token watchlist");
+    expect(text).toContain("Can rebalance now");
+    expect(text).toContain("BTC, ETH, SOL, USYC, EURC");
     expect(text).toContain(
       "Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji",
     );
     expect(text).toContain("Saved to active portfolio");
-    expect(text).toContain("Wallet route not synced yet");
-    expect(text).toContain("Included for wallet tracking and rebalances");
+    expect(text).toContain("No wallet address yet");
+    expect(text).toContain("Selected for balance tracking and rebalances");
     expect(text).toContain(
-      "rebalance execution uses Arc testnet and Base Sepolia",
+      "Aegis can prepare real reviews on Arc testnet and Base Sepolia",
     );
-    expect(text).toContain("Needs sync");
-    expect(text).toContain("Use wallet-ready routes");
+    expect(text).toContain("Not ready");
+    expect(text).toContain("Use ready routes");
+    expect(text).toContain("USDC reserve as the active execution target");
     expect(text).not.toContain("Circle transfer rail");
 
     for (const tokenCopy of expectedTokens.flat()) {
@@ -185,18 +201,19 @@ describe("<NetworkTokenPanel />", () => {
     });
 
     const suggestedText = container.textContent ?? "";
-    expect(suggestedText).toContain("USDC, BTC, ETH, SOL, USYC, EURC");
+    expect(suggestedText).toContain("USDC");
+    expect(suggestedText).toContain("BTC, ETH, SOL, USYC, EURC");
     expect(suggestedText).toContain(
       "Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji",
     );
     expect(onPreferencesChange).toHaveBeenCalledWith({
       networks: ["ARC-TESTNET", "BASE-SEPOLIA"],
       networkWatchlist: ["ETH-SEPOLIA", "ARB-SEPOLIA", "AVAX-FUJI"],
-      tokens: ["USDC", "BTC", "ETH", "SOL", "USYC", "EURC"],
-      watchlist: [],
+      tokens: ["USDC"],
+      watchlist: ["BTC", "ETH", "SOL", "USYC", "EURC"],
     });
     expect(
-      window.localStorage.getItem("aegis.wallet.route-preferences.v1"),
+      window.localStorage.getItem("aegis.wallet.route-preferences.v2"),
     ).toContain("BTC");
 
     act(() => root.unmount());
@@ -234,13 +251,11 @@ describe("<NetworkTokenPanel />", () => {
     expect(text).toContain(
       "Arc testnet, Base Sepolia, Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji",
     );
-    expect(text).toContain("Execution rails");
+    expect(text).toContain("Can rebalance now");
     expect(text).toContain("All supported routes ready");
-    expect(text).toContain(
-      "Included for wallet tracking; not a rebalance rail",
-    );
-    expect(text).not.toContain("Needs sync");
-    expect(text).not.toContain("Wallet route not synced yet");
+    expect(text).toContain("Selected for balance tracking only");
+    expect(text).not.toContain("Not ready");
+    expect(text).not.toContain("No wallet address yet");
 
     act(() => root.unmount());
   });
@@ -283,7 +298,8 @@ describe("<NetworkTokenPanel />", () => {
     expect(text).toContain(
       "Arc testnet, Base Sepolia, Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji",
     );
-    expect(text).toContain("USDC, BTC, ETH, SOL, USYC, EURC");
+    expect(text).toContain("USDC");
+    expect(text).toContain("BTC, ETH, SOL, USYC, EURC");
     expect(text).toContain("All supported routes ready");
 
     act(() => root.unmount());

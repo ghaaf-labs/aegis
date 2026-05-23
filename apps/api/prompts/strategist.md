@@ -54,6 +54,15 @@ money. A human approves every action.
 - **USYC annualized yield:** {{ usyc_rate }} (use as the risk-off parking option)
 - **USDC ↔ EURC mid rate:** {{ usdc_eurc_basis }} (consider when the user opts into a EUR sleeve)
 
+### Route execution capability
+
+These are the only tokens that can actually settle on-chain right now. **Do not
+put Track-only tokens in your `trades` array** (no buy / sell / park) — the
+executor refuses them and the plan cannot be approved. You may reference
+Track-only tokens as market context only.
+
+{{ route_capabilities }}
+
 ### Tax-loss harvesting (per-user)
 
 The following allocations on this user's portfolio are currently sitting at an

@@ -9,7 +9,12 @@ import {
   BrutalCardHeader,
   BrutalButton,
 } from "@aegis/ui";
-import type { GoalHorizon, RiskTolerance, AssetSymbol } from "@/types";
+import type {
+  GoalHorizon,
+  RiskTolerance,
+  AssetSymbol,
+  RoutePreferences,
+} from "@/types";
 import { portfolioApi, analyticsApi } from "@/lib/api";
 import { usePortfolioStore } from "@/stores/portfolio";
 
@@ -29,6 +34,7 @@ const STORAGE_KEY = "aegis.goal-wizard.draft";
 
 /** EURC always in the allocation universe (user moves from 0% upward). */
 const ASSETS: { symbol: AssetSymbol; label: string }[] = [
+  { symbol: "USDC", label: "Cash reserve" },
   { symbol: "BTC", label: "Bitcoin" },
   { symbol: "ETH", label: "Ethereum" },
   { symbol: "SOL", label: "Solana" },
@@ -37,11 +43,23 @@ const ASSETS: { symbol: AssetSymbol; label: string }[] = [
 ];
 
 const DEFAULT_ALLOC: Partial<Record<AssetSymbol, number>> = {
-  BTC: 50,
-  ETH: 30,
-  SOL: 10,
-  USYC: 10,
+  USDC: 70,
+  BTC: 0,
+  ETH: 0,
+  SOL: 0,
+  USYC: 30,
   EURC: 0,
+};
+
+const DEFAULT_ROUTE_PREFERENCES: RoutePreferences = {
+  networks: ["ARC-TESTNET", "BASE-SEPOLIA"],
+  networkWatchlist: ["ETH-SEPOLIA", "ARB-SEPOLIA", "AVAX-FUJI"],
+  // Only USDC is executable today; USYC (disabled), volatiles, and EURC are
+  // tracked targets until their routes are live. Keeps onboarding aligned with
+  // the backend's executable_token_symbols so users never start with a target
+  // that cannot execute.
+  tokens: ["USDC"],
+  watchlist: ["BTC", "ETH", "SOL", "USYC", "EURC"],
 };
 
 const ALLOCATION_PRESETS: Array<{
@@ -50,19 +68,19 @@ const ALLOCATION_PRESETS: Array<{
   allocation: Partial<Record<AssetSymbol, number>>;
 }> = [
   {
-    label: "Balanced core",
-    hint: "Crypto growth with a small yield sleeve",
+    label: "Ready reserve",
+    hint: "Executable cash plus yield",
     allocation: DEFAULT_ALLOC,
   },
   {
     label: "Stable yield",
-    hint: "Lower volatility, more USYC",
-    allocation: { BTC: 20, ETH: 20, SOL: 0, USYC: 50, EURC: 10 },
+    hint: "More USYC, still liquid",
+    allocation: { USDC: 50, BTC: 0, ETH: 0, SOL: 0, USYC: 50, EURC: 0 },
   },
   {
-    label: "Growth",
-    hint: "Higher beta with no FX sleeve",
-    allocation: { BTC: 55, ETH: 30, SOL: 15, USYC: 0, EURC: 0 },
+    label: "Cash only",
+    hint: "No investment moves yet",
+    allocation: { USDC: 100, BTC: 0, ETH: 0, SOL: 0, USYC: 0, EURC: 0 },
   },
 ];
 
@@ -144,6 +162,7 @@ export function GoalWizard() {
         targetAllocation: state.allocation,
         includeUsyc: (state.allocation.USYC ?? 0) > 0,
         includeEurc: (state.allocation.EURC ?? 0) > 0,
+        routePreferences: DEFAULT_ROUTE_PREFERENCES,
         ...(monthly !== undefined ? { monthlyContributionUsd: monthly } : {}),
         createdAt: new Date().toISOString(),
       };
@@ -212,7 +231,7 @@ export function GoalWizard() {
     <BrutalCard
       data-testid={`goal-wizard-step-${state.step}`}
       shadow={false}
-      className="mx-auto w-full max-w-lg"
+      className="mx-auto w-full max-w-2xl"
     >
       <BrutalCardHeader className="block space-y-1">
         <div className="flex items-center justify-between gap-3">
@@ -277,7 +296,7 @@ export function GoalWizard() {
             </div>
           )}
 
-        <div className="mt-6 grid grid-cols-2 gap-2">
+        <div className="mt-6 grid gap-2 sm:grid-cols-2">
           <BrutalButton
             variant="ghost"
             className="min-h-11"
@@ -488,6 +507,10 @@ function AllocationStep({
           <SlidersHorizontal className="h-3.5 w-3.5 text-accent-agent" />
           Pick a preset, then adjust the weights.
         </div>
+        <p className="text-[11px] font-mono leading-relaxed text-text-mut">
+          USDC and USYC can execute now. BTC, ETH, SOL, and EURC are tracked
+          until their live routes are ready.
+        </p>
         <div className="grid gap-2 sm:grid-cols-3">
           {ALLOCATION_PRESETS.map((preset) => (
             <button
@@ -548,9 +571,12 @@ function AllocationStep({
         </div>
       </div>
 
-      <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2">
         {ASSETS.map((a) => (
-          <div key={a.symbol} className="grid grid-cols-[1fr_auto] gap-3">
+          <div
+            key={a.symbol}
+            className="grid grid-cols-[1fr_auto] gap-3 border border-border-default bg-bg/70 p-3"
+          >
             <label htmlFor={`alloc-${a.symbol}`} className="min-w-0 font-mono">
               <span className="block text-sm text-text-hi">{a.symbol}</span>
               <span className="block text-xs text-text-lo">{a.label}</span>
