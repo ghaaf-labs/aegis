@@ -55,14 +55,14 @@ export function ValueFlowCard({
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,360px)] lg:items-start">
         <div className="font-mono">
           <p className="text-[10px] uppercase tracking-widest text-accent-agent">
-            Current state
+            Money status
           </p>
           <h2 className="mt-1 text-lg font-semibold text-text-hi">
             Where your money is right now
           </h2>
           <p className="mt-2 max-w-2xl text-xs leading-relaxed text-text-lo">
-            Cash stays in your wallet. Invested value appears only after you
-            approve a plan and it completes.
+            Cash is separate from invested positions. Aegis only changes that
+            after you review and approve a plan.
           </p>
         </div>
         <div className="rounded-sharp border border-border-default bg-surface p-3 font-mono">
@@ -78,7 +78,7 @@ export function ValueFlowCard({
       <div className="mt-4 grid gap-2 md:grid-cols-3">
         <FlowStep
           icon={Wallet}
-          label="Cash in wallet"
+          label="1 Wallet cash"
           title={walletCashText}
           tone={
             walletCashUnavailable ? "warn" : hasWalletCash ? "pnl" : "neutral"
@@ -86,13 +86,13 @@ export function ValueFlowCard({
         />
         <FlowStep
           icon={ClipboardCheck}
-          label="Approval"
+          label="2 Approval"
           title={reviewText}
           tone={hasWalletCash ? "agent" : "neutral"}
         />
         <FlowStep
           icon={LineChart}
-          label="Invested positions"
+          label="3 Invested"
           title={hasInvested ? formatCurrency(investedUsd) : "Not invested yet"}
           tone={hasInvested ? "pnl" : "neutral"}
         />

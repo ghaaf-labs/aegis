@@ -179,12 +179,19 @@ export default function PortfolioDashboardPage() {
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <h1 className="text-2xl font-semibold text-text-hi font-mono tracking-tight">
-                Money, targets, and approvals
+                {nextStep}
               </h1>
             </div>
             <p className="mt-2 max-w-2xl text-xs font-mono leading-relaxed text-text-lo">
-              One screen for the simple state: what is already invested, what is
-              still cash in your wallet, and what needs your approval next.
+              {dashboardGuidance({
+                gatewayBalanceUnavailable,
+                gatewayBalanceStatus,
+                showDeploy,
+                showFaucet,
+                showNoIdleCash,
+                hasReviewableDrift,
+                hasInvestedPositions,
+              })}
             </p>
           </div>
           <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[520px]">
@@ -518,6 +525,45 @@ function formatAssetList(symbols: string[]) {
   if (unique.length === 2) return `${unique[0]} and ${unique[1]}`;
   return `${unique.slice(0, -1).join(", ")}, and ${unique[unique.length - 1]}`;
 }
+
+function dashboardGuidance({
+  gatewayBalanceUnavailable,
+  gatewayBalanceStatus,
+  showDeploy,
+  showFaucet,
+  showNoIdleCash,
+  hasReviewableDrift,
+  hasInvestedPositions,
+}: {
+  gatewayBalanceUnavailable: boolean;
+  gatewayBalanceStatus: "idle" | "loading" | "ready" | "error";
+  showDeploy: boolean;
+  showFaucet: boolean;
+  showNoIdleCash: boolean;
+  hasReviewableDrift: boolean;
+  hasInvestedPositions: boolean;
+}) {
+  if (gatewayBalanceUnavailable) {
+    return "Wallet balance is unavailable, so cash actions are paused until the balance check succeeds.";
+  }
+  if (gatewayBalanceStatus === "idle" || gatewayBalanceStatus === "loading") {
+    return "Checking your wallet before showing cash actions.";
+  }
+  if (showDeploy) {
+    return "You have cash ready. Review the plan before anything moves.";
+  }
+  if (showFaucet) {
+    return "Your wallet is empty. Add test USDC, then review the first plan.";
+  }
+  if (showNoIdleCash && hasReviewableDrift) {
+    return "Your current holdings drifted from target. Review the plan before any trade runs.";
+  }
+  if (hasInvestedPositions) {
+    return "Your portfolio is invested. Aegis is monitoring for drift and new review opportunities.";
+  }
+  return "Choose a target mix and add funds to start.";
+}
+
 function StepBadge({ active, label }: { active: boolean; label: string }) {
   return (
     <span

@@ -66,7 +66,7 @@ describe("<AgentReasoningFeed />", () => {
     });
 
     const { root, container } = render(<AgentReasoningFeed />);
-    const text = container.textContent ?? "";
+    let text = container.textContent ?? "";
 
     expect(text).toContain("Manual");
     expect(text).toContain("0%");
@@ -74,6 +74,20 @@ describe("<AgentReasoningFeed />", () => {
     expect(text).toContain("ETH");
     expect(text).toContain("UNKNOWN");
     expect(text).toContain("Malformed historical trade row");
+    expect(text).toContain("Review each move before execution.");
+    expect(text).not.toContain("No reasoning was returned with this decision.");
+
+    const fullAuditButton = Array.from(
+      container.querySelectorAll("button"),
+    ).find((button) => button.textContent?.includes("Full audit"));
+    expect(fullAuditButton).toBeTruthy();
+    act(() => {
+      fullAuditButton!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    text = container.textContent ?? "";
     expect(text).toContain("No reasoning was returned with this decision.");
 
     act(() => root.unmount());

@@ -273,6 +273,7 @@ function DecisionList({
               decision={g.head}
               index={i}
               currentState={currentState}
+              view={view}
             />
             {g.repeats > 0 && (
               <div className="px-5 py-2 border-b border-white/4 text-[10px] font-mono text-text-mut italic">
@@ -405,10 +406,12 @@ function DecisionRow({
   decision,
   index,
   currentState,
+  view,
 }: {
   decision: AgentDecision;
   index: number;
   currentState: CurrentDecisionState;
+  view: DecisionView;
 }) {
   const trigger = knownTrigger(decision.triggeredBy);
   const triggerVariant = TRIGGER_VARIANTS[trigger] ?? "secondary";
@@ -421,6 +424,7 @@ function DecisionRow({
   const trades = decision.recommendation?.trades ?? [];
   const expectedCashNeeded = decisionExpectedCashNeeded(decision);
   const snapshotMismatch = decisionSnapshotMismatch(decision, currentState);
+  const showAuditDetails = view === "audit";
 
   return (
     <motion.div
@@ -436,7 +440,7 @@ function DecisionRow({
           <Badge variant={triggerVariant} className="text-[10px] px-1.5 py-0">
             {triggerLabel}
           </Badge>
-          {regime && (
+          {showAuditDetails && regime && (
             <span
               className={`px-1.5 py-0.5 rounded-sm text-[10px] font-mono font-semibold tracking-tight ${REGIME_CLASS[regime]}`}
               title={`Regime classifier: ${REGIME_LABEL[regime]}`}
@@ -444,7 +448,7 @@ function DecisionRow({
               {REGIME_LABEL[regime]}
             </span>
           )}
-          {decision.modelSlug && (
+          {showAuditDetails && decision.modelSlug && (
             <span
               className="flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-mono border border-cyan-500/30 text-accent-agent/90 bg-cyan-500/5"
               title="Model that produced this decision"
@@ -453,17 +457,17 @@ function DecisionRow({
               {decision.modelSlug}
             </span>
           )}
-          {blocked && (
+          {showAuditDetails && blocked && (
             <span className="px-1.5 py-0.5 rounded-sm text-[10px] font-mono border border-rose-500/30 text-risk bg-rose-500/5">
               Blocked by critic
             </span>
           )}
-          {legacyLocal && (
+          {showAuditDetails && legacyLocal && (
             <span className="px-1.5 py-0.5 rounded-sm text-[10px] font-mono border border-white/15 text-text-mut bg-white/5">
               Legacy local
             </span>
           )}
-          {outdated && (
+          {showAuditDetails && outdated && (
             <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-sm text-[10px] font-mono border border-amber-500/30 text-warn bg-amber-500/5">
               <AlertTriangle className="w-2.5 h-2.5" />
               Needs fresh plan
@@ -483,19 +487,19 @@ function DecisionRow({
       >
         {decision.recommendation?.summary ?? "Decision needs review"}
       </p>
-      {blocked && (
+      {showAuditDetails && blocked && (
         <p className="mb-2 text-[10px] font-mono text-risk">
           Not executable. The critic rejected this proposal; build a fresh plan
           before approving any movement.
         </p>
       )}
-      {legacyLocal && (
+      {showAuditDetails && legacyLocal && (
         <p className="mb-2 text-[10px] font-mono text-text-mut">
           Historical test row only. It does not describe the current
           real-execution path.
         </p>
       )}
-      {outdated && (
+      {showAuditDetails && outdated && (
         <p className="mb-2 text-[10px] font-mono text-warn">
           {snapshotMismatch
             ? `Historical proposal. It was built from ${formatCurrency(snapshotMismatch.portfolioValueUsd)} positions and ${formatCurrency(snapshotMismatch.idleUsdc)} idle USDC; current state is ${formatCurrency(currentState.investedUsd)} positions and ${formatCurrency(currentState.idleUsdc)} idle USDC.`
@@ -504,9 +508,18 @@ function DecisionRow({
         </p>
       )}
 
-      <p className="text-[11px] text-text-mut leading-relaxed line-clamp-3">
-        {decision.reasoning || "No reasoning was returned with this decision."}
-      </p>
+      {showAuditDetails ? (
+        <p className="text-[11px] text-text-mut leading-relaxed line-clamp-3">
+          {decision.reasoning ||
+            "No reasoning was returned with this decision."}
+        </p>
+      ) : (
+        <p className="text-[11px] text-text-mut leading-relaxed">
+          {trades.length > 0
+            ? "Review each move before execution."
+            : "No movement is proposed right now."}
+        </p>
+      )}
 
       {trades.length > 0 && (
         <div className="mt-3 space-y-1.5">
@@ -549,11 +562,13 @@ function DecisionRow({
         </div>
       )}
 
-      {verdict && (verdict.demandsRevision || verdict.notes) && (
-        <CriticLine verdict={verdict} />
-      )}
+      {showAuditDetails &&
+        verdict &&
+        (verdict.demandsRevision || verdict.notes) && (
+          <CriticLine verdict={verdict} />
+        )}
 
-      <TelemetryFooter decision={decision} />
+      {showAuditDetails && <TelemetryFooter decision={decision} />}
     </motion.div>
   );
 }
