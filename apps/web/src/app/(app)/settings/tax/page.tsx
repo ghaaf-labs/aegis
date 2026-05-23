@@ -31,21 +31,30 @@ export default function TaxSettingsPage() {
   const [shares, setShares] = useState<TaxShareToken[]>([]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  const [error, setError] = useState<string | null>(null);
   const copyShare = useCallback(async (id: string, shareUrl: string) => {
     try {
-      await navigator.clipboard.writeText(shareUrl);
+      await copyText(shareUrl);
+      setError(null);
       setCopiedId(id);
       setTimeout(() => setCopiedId(null), 1800);
     } catch {
-      /* clipboard blocked */
+      setError("Could not copy the link. Open the report and copy it there.");
     }
   }, []);
-  const [error, setError] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [summary, setSummary] = useState<TaxSummary | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const selectedPortfolio = portfolios.find((p) => p.id === portfolioId);
+  const selectedShare = shares.find(
+    (s) => s.portfolioId === portfolioId && s.year === year,
+  );
+  const sharePortfolioName = useCallback(
+    (portfolioId: string) =>
+      portfolios.find((p) => p.id === portfolioId)?.name ?? "Portfolio",
+    [portfolios],
+  );
 
   useEffect(() => {
     setMounted(true);
@@ -319,59 +328,74 @@ export default function TaxSettingsPage() {
           <BrutalButton
             variant="agent"
             onClick={onCreateShare}
-            disabled={!portfolioId || creating}
+            disabled={!portfolioId || creating || !!selectedShare}
           >
-            {creating ? "Creating…" : "Create share link"}
+            {creating
+              ? "Creating…"
+              : selectedShare
+                ? "Link active"
+                : "Create accountant link"}
           </BrutalButton>
+          {selectedShare ? (
+            <p className="text-xs text-text-lo">
+              A link already exists for this portfolio and year. Copy it below
+              or revoke it before creating a new one.
+            </p>
+          ) : null}
 
           {shares.length > 0 ? (
             <ul className="space-y-2">
               {shares.map((s) => (
                 <li
                   key={s.id}
-                  className="flex items-center justify-between gap-2 border-brutal border-border-default rounded-sharp px-3 py-2 bg-raised text-xs font-mono"
+                  className="grid gap-3 border-brutal border-border-default rounded-sharp bg-raised px-3 py-2 text-xs font-mono sm:grid-cols-[minmax(0,1fr)_auto]"
                 >
                   <div className="flex flex-col min-w-0">
-                    <span className="text-text-hi truncate">
-                      Year {s.year} · expires{" "}
+                    <span className="text-text-hi">
+                      {sharePortfolioName(s.portfolioId)} · {s.year} · expires{" "}
                       {new Date(s.expiresAt).toISOString().slice(0, 10)}
                     </span>
+                    <span className="text-text-lo">
+                      Read-only tax report link
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                     <a
                       href={s.shareUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="text-accent-agent hover:underline truncate text-left flex items-center gap-1"
+                      className="inline-flex min-h-[32px] items-center gap-1 rounded-sharp border border-accent-agent/40 bg-accent-agent/5 px-2 text-accent-agent hover:bg-accent-agent/10"
                     >
-                      {s.shareUrl}
+                      Open report
                       <ExternalLink className="w-3 h-3 shrink-0" />
                     </a>
+                    <button
+                      type="button"
+                      className="inline-flex min-h-[32px] shrink-0 items-center gap-1 rounded-sharp border border-border-default bg-bg px-2 text-text-lo hover:border-border-hi hover:text-text-hi"
+                      onClick={() => void copyShare(s.id, s.shareUrl)}
+                      title="Copy share URL"
+                      aria-label="Copy share URL"
+                    >
+                      {copiedId === s.id ? (
+                        <>
+                          <Check className="w-3 h-3 text-accent-pnl" />
+                          Copied
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3" />
+                          Copy link
+                        </>
+                      )}
+                    </button>
+                    <BrutalButton
+                      variant="danger"
+                      onClick={() => onRevoke(s.id)}
+                      className="text-xs"
+                    >
+                      Revoke
+                    </BrutalButton>
                   </div>
-                  <button
-                    type="button"
-                    className="inline-flex min-h-[32px] shrink-0 items-center gap-1 rounded-sharp border border-border-default bg-bg px-2 text-text-lo hover:border-border-hi hover:text-text-hi"
-                    onClick={() => void copyShare(s.id, s.shareUrl)}
-                    title="Copy share URL"
-                    aria-label="Copy share URL"
-                  >
-                    {copiedId === s.id ? (
-                      <>
-                        <Check className="w-3 h-3 text-accent-pnl" />
-                        Copied
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3 h-3" />
-                        Copy link
-                      </>
-                    )}
-                  </button>
-                  <BrutalButton
-                    variant="danger"
-                    onClick={() => onRevoke(s.id)}
-                    className="text-xs"
-                  >
-                    Revoke
-                  </BrutalButton>
                 </li>
               ))}
             </ul>
@@ -396,4 +420,26 @@ function taxWalletStatus(lotCount: number, lastSyncedAt: string | null) {
     ? new Date(lastSyncedAt).toLocaleDateString()
     : "sync pending";
   return `${lotCount} records · ${syncDate}`;
+}
+
+async function copyText(value: string) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return;
+    } catch {
+      // Fallback below handles embedded browsers that block clipboard writes.
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  if (!copied) throw new Error("copy failed");
 }
