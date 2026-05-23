@@ -41,6 +41,8 @@ async fn main() -> anyhow::Result<()> {
         .run(&db)
         .await?;
 
+    aegis_api::modules::catalog::ensure_reference_data(&db).await?;
+
     if cfg.aum_stream_enabled {
         aegis_api::modules::billing::aum_stream::spawn(
             db.clone(),

@@ -4,7 +4,7 @@
 //! portfolio is enforced on each lookup so session A can never read
 //! or execute a rebalance belonging to user B.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use axum::{
     extract::{Path, State},
@@ -19,7 +19,7 @@ use crate::middleware::auth::Claims;
 use crate::modules::agent::{models::AnalyzeRequest, service::analyze_portfolio};
 use crate::modules::rebalance::{
     executor::{approve_and_execute, create_plan},
-    models::{ChainKey, PlanInput, PlannedLeg},
+    models::{ChainKey, PlanInput, PlannedLeg, ARC_NATIVE_SYMBOLS, BASE_NATIVE_SYMBOLS},
     planner::plan_legs,
 };
 use crate::modules::wallet_routes;
@@ -674,9 +674,9 @@ fn unsupported_real_execution_capabilities(legs: &[LegView]) -> Vec<MissingCapab
     if !unsupported_chains.is_empty() {
         missing.push(MissingCapability {
             code: "NON_EXECUTION_CHAIN".into(),
-            label: "Non-execution wallet route".into(),
+            label: "Route cannot execute yet".into(),
             detail: format!(
-                "Wallet routes are live on {unsupported_chains}, but this rebalance executor is wired only for Arc testnet and Base Sepolia."
+                "Wallets are live on {unsupported_chains}, but live rebalances currently execute only on Arc testnet and Base Sepolia."
             ),
         });
     }
@@ -688,9 +688,9 @@ fn unsupported_real_execution_capabilities(legs: &[LegView]) -> Vec<MissingCapab
     {
         missing.push(MissingCapability {
             code: "REAL_CCTP_FEATURE".into(),
-            label: "CCTP V2 bridge".into(),
+            label: "Bridge rail not enabled".into(),
             detail:
-                "API binary is missing --features real-cctp, so Arc/Base bridge legs cannot execute."
+                "Restart the API with real CCTP enabled, then build a fresh review before approving."
                     .into(),
         });
     }
@@ -698,9 +698,9 @@ fn unsupported_real_execution_capabilities(legs: &[LegView]) -> Vec<MissingCapab
     if legs.iter().any(cross_chain_token_swap_needed) {
         missing.push(MissingCapability {
             code: "CROSS_CHAIN_TOKEN_SWAP".into(),
-            label: "Cross-chain token swap".into(),
+            label: "Token buy route not ready".into(),
             detail:
-                "Real cross-chain token buys need a destination token address and swap adapter before approval can execute."
+                "BTC, ETH, and SOL can be tracked as targets, but live cross-chain token buying is not connected yet. Remove those target sleeves for an executable review."
                     .into(),
         });
     }
@@ -712,9 +712,9 @@ fn unsupported_real_execution_capabilities(legs: &[LegView]) -> Vec<MissingCapab
     {
         missing.push(MissingCapability {
             code: "REAL_USYC_FEATURE".into(),
-            label: "USYC mint/redeem".into(),
+            label: "USYC rail not enabled".into(),
             detail:
-                "API binary is missing --features real-usyc, so USYC park/redeem legs cannot execute."
+                "Restart the API with real USYC enabled, then build a fresh review before approving."
                     .into(),
         });
     }
@@ -722,9 +722,9 @@ fn unsupported_real_execution_capabilities(legs: &[LegView]) -> Vec<MissingCapab
     if legs.iter().any(|leg| leg.kind == "fx_stablefx") {
         missing.push(MissingCapability {
             code: "STABLEFX_ADAPTER".into(),
-            label: "StableFX EURC route".into(),
+            label: "EURC route not ready".into(),
             detail:
-                "Real StableFX execution is not wired in this build, so EURC legs would otherwise produce synthetic hashes."
+                "EURC can be tracked as a target, but the live FX route is not connected yet. Remove the EURC sleeve for an executable review."
                     .into(),
         });
     }
@@ -732,9 +732,9 @@ fn unsupported_real_execution_capabilities(legs: &[LegView]) -> Vec<MissingCapab
     if legs.iter().any(|leg| leg.kind == "local_swap") {
         missing.push(MissingCapability {
             code: "LOCAL_SWAP_ADAPTER".into(),
-            label: "Per-chain swap route".into(),
+            label: "Swap route not ready".into(),
             detail:
-                "Real local swap execution is not wired in this build, so swap legs would otherwise produce synthetic hashes."
+                "This review needs a live swap route that is not connected yet. Remove token sleeves that require swaps for an executable review."
                     .into(),
         });
     }
@@ -778,7 +778,7 @@ fn unsupported_real_execution_message(missing: &[MissingCapability]) -> String {
         "capabilities"
     };
     format!(
-        "This plan needs unavailable real-execution {noun}: {labels}. Enable the missing adapter/build feature or build a fresh plan without those sleeves before approving."
+        "This review is saved as a draft because {noun} must be ready before money can move: {labels}. Change the target and build a fresh executable review before approving."
     )
 }
 
@@ -827,6 +827,7 @@ async fn build_plan_input(state: &AppState, portfolio_id: Uuid) -> Result<PlanIn
             }
         }
     }
+    apply_route_preferences_to_targets(&goal, &mut target_weights);
 
     let relevant_symbols: Vec<String> = allocations
         .iter()
@@ -951,6 +952,60 @@ fn stable_planning_price(symbol: &str) -> Option<f64> {
         "USDC" | "USYC" => Some(1.0),
         _ => None,
     }
+}
+
+fn apply_route_preferences_to_targets(
+    goal: &serde_json::Value,
+    target_weights: &mut HashMap<String, f64>,
+) {
+    let Some(route_preferences) = goal.get("routePreferences") else {
+        return;
+    };
+
+    let allowed_tokens = route_preference_set(route_preferences, "tokens");
+    if !allowed_tokens.is_empty() {
+        target_weights.retain(|symbol, _| {
+            symbol == "USDC" || allowed_tokens.contains(&symbol.to_ascii_uppercase())
+        });
+    }
+
+    let selected_networks = route_preference_set(route_preferences, "networks");
+    if selected_networks.is_empty() {
+        return;
+    }
+
+    let arc_allowed =
+        selected_networks.contains(wallet_routes::ARC_TESTNET) || selected_networks.contains("ARC");
+    let base_allowed = selected_networks.contains(wallet_routes::BASE_SEPOLIA)
+        || selected_networks.contains("BASE");
+    target_weights.retain(|symbol, _| {
+        let symbol = symbol.as_str();
+        if ARC_NATIVE_SYMBOLS.contains(&symbol) {
+            return arc_allowed;
+        }
+        if BASE_NATIVE_SYMBOLS.contains(&symbol) {
+            return base_allowed;
+        }
+        true
+    });
+}
+
+fn route_preference_set(route_preferences: &serde_json::Value, key: &str) -> HashSet<String> {
+    let mut values: HashSet<String> = route_preferences
+        .get(key)
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|v| v.as_str())
+        .map(|v| v.trim().to_ascii_uppercase())
+        .filter(|v| !v.is_empty())
+        .collect();
+    if values.remove("BTC_ETH_SOL") {
+        values.insert("BTC".into());
+        values.insert("ETH".into());
+        values.insert("SOL".into());
+    }
+    values
 }
 
 /// Lookup unified USDC by chain from Circle Gateway. Real execution fails
@@ -1188,6 +1243,54 @@ mod tests {
         );
     }
 
+    #[test]
+    fn route_preferences_filter_unselected_target_tokens() {
+        let goal = json!({
+            "targetAllocation": {"USDC": 40, "BTC": 30, "ETH": 20, "USYC": 10},
+            "routePreferences": {
+                "networks": ["ARC-TESTNET", "BASE-SEPOLIA"],
+                "tokens": ["USDC", "USYC"],
+                "watchlist": ["BTC_ETH_SOL"]
+            }
+        });
+        let mut targets = HashMap::from([
+            ("USDC".to_string(), 0.40),
+            ("BTC".to_string(), 0.30),
+            ("ETH".to_string(), 0.20),
+            ("USYC".to_string(), 0.10),
+        ]);
+
+        apply_route_preferences_to_targets(&goal, &mut targets);
+
+        assert!(targets.contains_key("USDC"));
+        assert!(targets.contains_key("USYC"));
+        assert!(!targets.contains_key("BTC"));
+        assert!(!targets.contains_key("ETH"));
+    }
+
+    #[test]
+    fn route_preferences_filter_targets_by_selected_execution_networks() {
+        let goal = json!({
+            "routePreferences": {
+                "networks": ["ARC-TESTNET"],
+                "tokens": ["BTC_ETH_SOL", "USYC", "EURC"]
+            }
+        });
+        let mut targets = HashMap::from([
+            ("BTC".to_string(), 0.30),
+            ("ETH".to_string(), 0.20),
+            ("USYC".to_string(), 0.30),
+            ("EURC".to_string(), 0.20),
+        ]);
+
+        apply_route_preferences_to_targets(&goal, &mut targets);
+
+        assert_eq!(
+            targets.keys().cloned().collect::<HashSet<_>>(),
+            HashSet::from(["USYC".to_string(), "EURC".to_string()])
+        );
+    }
+
     fn leg(kind: &str) -> LegView {
         LegView {
             id: Uuid::new_v4(),
@@ -1247,7 +1350,7 @@ mod tests {
             unsupported_real_execution_capabilities(&[leg("fx_stablefx"), leg("local_swap")]);
         assert!(missing.iter().any(|cap| cap.code == "STABLEFX_ADAPTER"));
         assert!(missing.iter().any(|cap| cap.code == "LOCAL_SWAP_ADAPTER"));
-        assert!(unsupported_real_execution_message(&missing).contains("StableFX"));
+        assert!(unsupported_real_execution_message(&missing).contains("EURC route not ready"));
     }
 
     #[cfg(not(feature = "real-cctp"))]

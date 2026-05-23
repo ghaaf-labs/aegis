@@ -119,6 +119,59 @@ describe("<ApprovalModal />", () => {
 
     act(() => root.unmount());
   });
+
+  it("hides internal route blocker details from the approval copy", () => {
+    const plan: RebalancePlanResponse = {
+      rebalanceId: "rebalance-3",
+      decisionId: "decision-3",
+      executionMode: "real",
+      totalLegs: 1,
+      legs: [
+        {
+          legIndex: 0,
+          kind: "local_swap",
+          srcChain: "base",
+          destChain: "base",
+          srcSymbol: "USDC",
+          destSymbol: "BTC",
+          amountUsdc: 100,
+        },
+      ],
+    };
+
+    const { root, container } = render(
+      <ApprovalModal
+        open
+        plan={plan}
+        estimatedFeeUsdc={0.01}
+        approvalSafety={{
+          approvable: false,
+          code: "EXECUTION_UNAVAILABLE",
+          message:
+            "internal: enable the missing adapter or cargo feature before approving",
+          missingCapabilities: [
+            {
+              code: "LOCAL_SWAP_ADAPTER",
+              label: "Swap route not ready",
+              detail: "internal adapter detail",
+            },
+          ],
+        }}
+        onApproved={() => {}}
+        onClose={() => {}}
+      />,
+    );
+
+    const text = container.textContent ?? "";
+    expect(text).toContain("Route not ready");
+    expect(text).toContain("one selected route is not ready");
+    expect(text).toContain("Swap route not ready");
+    expect(text).not.toContain("cargo feature");
+    expect(text).not.toContain("adapter detail");
+    expect(text).not.toContain("Execution unavailable");
+
+    act(() => root.unmount());
+  });
 });
 
 function render(element: React.ReactElement): {

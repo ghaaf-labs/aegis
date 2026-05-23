@@ -5,9 +5,14 @@ import { Wallet, ArrowRight, CircleAlert, Loader2 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { usePortfolioStore } from "@/stores/portfolio";
 import { formatCurrency } from "@/lib/utils";
+import {
+  chainBalanceRows,
+  walletRouteKeysFromNetworks,
+} from "@/lib/wallet-routes";
 import { ProvenanceLine } from "@aegis/ui";
 
 export function IdleCashCard() {
+  const wallet = usePortfolioStore((s) => s.wallet);
   const unifiedUsdc = usePortfolioStore((s) => s.unifiedUsdc);
   const unifiedEurc = usePortfolioStore((s) => s.unifiedEurc);
   const perChainUsdc = usePortfolioStore((s) => s.perChainUsdc);
@@ -23,10 +28,12 @@ export function IdleCashCard() {
   const balanceLoading =
     gatewayBalanceStatus === "idle" || gatewayBalanceStatus === "loading";
   const balanceUnavailable = gatewayBalanceStatus === "error";
-
-  const arcTotal = (perChainUsdc.arc ?? 0) + (perChainEurc.arc ?? 0) * eurcUsd;
-  const baseTotal =
-    (perChainUsdc.base ?? 0) + (perChainEurc.base ?? 0) * eurcUsd;
+  const balanceRows = chainBalanceRows({
+    perChainUsdc,
+    perChainEurc,
+    eurcUsd,
+    routeKeys: walletRouteKeysFromNetworks(wallet?.networks),
+  });
 
   return (
     <Card data-testid="idle-cash-card" className="h-full">
@@ -66,7 +73,8 @@ export function IdleCashCard() {
                   {" · "}€{unifiedEurc.toFixed(2)} EURC
                 </>
               )}{" "}
-              available
+              across {balanceRows.length} wallet{" "}
+              {balanceRows.length === 1 ? "route" : "routes"}
             </>
           ) : (
             "No wallet cash available"
@@ -83,51 +91,34 @@ export function IdleCashCard() {
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-2">
-          <div className="border border-border-default bg-bg/70 p-2">
-            <p className="mb-1 font-mono text-[10px] uppercase tracking-wider text-text-mut">
-              Arc
-            </p>
-            <p className="text-sm font-semibold text-text-hi tabular-nums">
-              {balanceUnavailable || balanceLoading
-                ? "—"
-                : formatCurrency(arcTotal, { compact: true })}
-            </p>
-            <p className="mt-0.5 font-mono text-[10px] text-text-lo">
-              {balanceUnavailable || balanceLoading ? (
-                "pending check"
-              ) : (
-                <>
-                  {(perChainUsdc.arc ?? 0).toFixed(2)} USDC
-                  {(perChainEurc.arc ?? 0) > 0 && (
-                    <> · €{(perChainEurc.arc ?? 0).toFixed(2)}</>
+        <div className="grid gap-1.5">
+          {balanceRows.map((row) => (
+            <div
+              key={row.key}
+              className="grid min-h-10 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border border-border-default bg-bg/70 px-2.5 py-2"
+            >
+              <div className="min-w-0">
+                <p className="truncate font-mono text-[10px] uppercase tracking-wider text-text-mut">
+                  {row.shortLabel}
+                </p>
+                <p className="mt-0.5 truncate font-mono text-[10px] text-text-lo">
+                  {balanceUnavailable || balanceLoading ? (
+                    "pending check"
+                  ) : (
+                    <>
+                      {row.usdc.toFixed(2)} USDC
+                      {row.eurc > 0 && <> · €{row.eurc.toFixed(2)}</>}
+                    </>
                   )}
-                </>
-              )}
-            </p>
-          </div>
-          <div className="border border-border-default bg-bg/70 p-2">
-            <p className="mb-1 font-mono text-[10px] uppercase tracking-wider text-text-mut">
-              Base
-            </p>
-            <p className="text-sm font-semibold text-text-hi tabular-nums">
-              {balanceUnavailable || balanceLoading
-                ? "—"
-                : formatCurrency(baseTotal, { compact: true })}
-            </p>
-            <p className="mt-0.5 font-mono text-[10px] text-text-lo">
-              {balanceUnavailable || balanceLoading ? (
-                "pending check"
-              ) : (
-                <>
-                  {(perChainUsdc.base ?? 0).toFixed(2)} USDC
-                  {(perChainEurc.base ?? 0) > 0 && (
-                    <> · €{(perChainEurc.base ?? 0).toFixed(2)}</>
-                  )}
-                </>
-              )}
-            </p>
-          </div>
+                </p>
+              </div>
+              <p className="text-right text-sm font-semibold text-text-hi tabular-nums">
+                {balanceUnavailable || balanceLoading
+                  ? "—"
+                  : formatCurrency(row.totalUsd, { compact: true })}
+              </p>
+            </div>
+          ))}
         </div>
 
         <Link

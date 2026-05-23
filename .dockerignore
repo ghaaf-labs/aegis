@@ -1,0 +1,16 @@
+.git/
+.claude/
+.env
+.env.*
+node_modules/
+apps/*/node_modules/
+apps/api/target/
+apps/web/.next/
+apps/web/out/
+.turbo/
+coverage/
+lcov.info
+screenshots/
+tmp/
+output/
+*.log

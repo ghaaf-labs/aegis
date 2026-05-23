@@ -6,6 +6,10 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
 import { formatCurrency, formatPercent, changeColor } from "@/lib/utils";
 import { derivePortfolioPositionMetrics } from "@/lib/portfolio-values";
+import {
+  chainBalanceRows,
+  walletRouteKeysFromNetworks,
+} from "@/lib/wallet-routes";
 import { ProvenanceLine, Skeleton } from "@aegis/ui";
 
 /// EURC's mid-market USD price for the Total Wealth headline. Cheap stable
@@ -20,6 +24,7 @@ export function PortfolioSummaryCard() {
   const perChainUsdc = usePortfolioStore((s) => s.perChainUsdc);
   const perChainEurc = usePortfolioStore((s) => s.perChainEurc);
   const gatewayBalanceStatus = usePortfolioStore((s) => s.gatewayBalanceStatus);
+  const wallet = usePortfolioStore((s) => s.wallet);
 
   if (!portfolio) {
     return (
@@ -56,10 +61,12 @@ export function PortfolioSummaryCard() {
     gatewayBalanceStatus === "idle" || gatewayBalanceStatus === "loading";
   const confirmedIdleCashUsd = walletBalanceUnavailable ? 0 : idleCashUsd;
   const totalWealthUsd = investedUsd + confirmedIdleCashUsd;
-
-  const arcTotal = (perChainUsdc.arc ?? 0) + (perChainEurc.arc ?? 0) * eurcUsd;
-  const baseTotal =
-    (perChainUsdc.base ?? 0) + (perChainEurc.base ?? 0) * eurcUsd;
+  const balanceRows = chainBalanceRows({
+    perChainUsdc,
+    perChainEurc,
+    eurcUsd,
+    routeKeys: walletRouteKeysFromNetworks(wallet?.networks),
+  });
   const currentHoldingCount = positionMetrics.positions.filter(
     (position) => position.valueUsd > 0.5,
   ).length;
@@ -117,29 +124,27 @@ export function PortfolioSummaryCard() {
         {!walletBalanceUnavailable &&
           !walletBalanceLoading &&
           idleCashUsd > 0.5 && (
-            <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
+            <div className="grid gap-2 font-mono text-[11px]">
               <div className="border border-border-default bg-bg/70 p-2">
-                <p className="mb-0.5 text-[9px] uppercase tracking-wider text-text-mut">
-                  Arc balance
-                </p>
-                <p className="text-text-hi tabular-nums">
-                  {formatCurrency(arcTotal, { compact: true })}
-                </p>
-              </div>
-              <div className="border border-border-default bg-bg/70 p-2">
-                <p className="mb-0.5 text-[9px] uppercase tracking-wider text-text-mut">
-                  Base balance
-                </p>
-                <p className="text-text-hi tabular-nums">
-                  {formatCurrency(baseTotal, { compact: true })}
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[9px] uppercase tracking-wider text-text-mut">
+                    Wallet cash routes
+                  </p>
+                  <p className="text-text-hi tabular-nums">
+                    {formatCurrency(idleCashUsd, { compact: true })}
+                  </p>
+                </div>
+                <p className="mt-1 text-[10px] leading-relaxed text-text-lo">
+                  Counted across {balanceRows.length} wallet{" "}
+                  {balanceRows.length === 1 ? "route" : "routes"}.
                 </p>
               </div>
               <Link
                 href="/wallets"
-                className="col-span-2 flex items-center justify-between gap-2 border border-accent-pnl/20 bg-accent-pnl/5 px-2 py-1.5 text-[10px] text-accent-pnl/80 transition-colors hover:text-accent-pnl"
+                className="flex items-center justify-between gap-2 border border-accent-pnl/20 bg-accent-pnl/5 px-2 py-1.5 text-[10px] text-accent-pnl/80 transition-colors hover:text-accent-pnl"
               >
                 <span className="min-w-0 truncate">
-                  Wallet address + per-token breakdown
+                  View addresses and per-route balances
                 </span>
                 <ArrowRight className="h-3 w-3 shrink-0" />
               </Link>

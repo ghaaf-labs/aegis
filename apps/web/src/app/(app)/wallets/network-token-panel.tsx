@@ -258,7 +258,7 @@ export function NetworkTokenPanel({
                 onClick={chooseLiveRoutes}
                 className="rounded-sharp border border-accent-pnl/50 bg-accent-pnl/10 px-3 py-2 text-xs font-mono text-accent-pnl transition-colors hover:bg-accent-pnl/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-hi"
               >
-                Use ready routes
+                Use wallet-ready routes
               </button>
               <button
                 type="button"
@@ -453,10 +453,10 @@ export function NetworkTokenPanel({
           <LockKeyhole className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warn" />
           <p className="min-w-0">
             Selection is an agent instruction, not a bypass. A token action
-            becomes executable only after the selected wallet route, Circle
-            transfer rail, pricing, and executor tests are all live. Today,
-            rebalance execution uses Arc testnet and Base Sepolia; other ready
-            routes are for receiving funds and balance tracking.{" "}
+            becomes executable only after the selected wallet route, transfer
+            rail, pricing, and executor tests are all live. Today, rebalance
+            execution uses Arc testnet and Base Sepolia; other ready routes are
+            for receiving funds and balance tracking.{" "}
             <span className="font-mono uppercase tracking-wider text-text-mut">
               {persistenceLabel}
             </span>

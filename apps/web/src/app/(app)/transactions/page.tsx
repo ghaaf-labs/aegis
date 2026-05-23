@@ -18,7 +18,7 @@ import {
   BrutalCardHeader,
   BrutalPill,
 } from "@aegis/ui";
-import { rebalanceApi } from "@/lib/api";
+import { rebalanceApi, type RebalanceApprovalSafety } from "@/lib/api";
 import { formatCurrency, timeAgo } from "@/lib/utils";
 import { useActivePortfolio } from "@/stores/portfolio";
 
@@ -215,12 +215,12 @@ function HistoryRow({ row }: { row: RebalanceHistoryRow }) {
       </td>
       <td className="px-3 py-3">
         <ApprovalStatePill row={row} />
-        {blocked && row.approvalSafety?.message && (
+        {blocked && row.approvalSafety && (
           <div className="mt-1 max-w-[280px] space-y-1 text-[10px] leading-relaxed text-warn">
-            <p>{row.approvalSafety.message}</p>
+            <p>{approvalSafetySummary(row.approvalSafety)}</p>
             {row.approvalSafety.missingCapabilities?.length ? (
               <p className="text-text-mut">
-                Missing:{" "}
+                Needed:{" "}
                 {row.approvalSafety.missingCapabilities
                   .map((capability) => capability.label)
                   .join(", ")}
@@ -309,9 +309,9 @@ function HistoryCard({ row }: { row: RebalanceHistoryRow }) {
         </div>
       </div>
 
-      {blocked && row.approvalSafety?.message && (
+      {blocked && row.approvalSafety && (
         <p className="mt-3 border border-warn/40 bg-warn/5 px-3 py-2 text-[11px] leading-relaxed text-warn">
-          {row.approvalSafety.message}
+          {approvalSafetySummary(row.approvalSafety)}
         </p>
       )}
 
@@ -488,9 +488,26 @@ function rowMeaning(row: RebalanceHistoryRow) {
     return "Wallet cash could not be verified. Open the blocked review for the leg audit, then check Wallets before rebuilding.";
   }
   if (row.approvalSafety?.code === "EXECUTION_UNAVAILABLE") {
-    return "Execution is unavailable right now. Open the block details before changing targets or approving a new review.";
+    return "One selected route is not ready to move money. Open the review, change the target mix, then rebuild.";
   }
   return row.approvalSafety?.message ?? "This row is kept for audit history.";
+}
+
+function approvalSafetySummary(safety: RebalanceApprovalSafety): string {
+  switch (safety.code) {
+    case "EXECUTION_UNAVAILABLE":
+      return "One selected route is not ready to move money. Change the target mix, then build a fresh executable review.";
+    case "SUPERSEDED":
+      return "A newer review exists for this portfolio.";
+    case "STALE_PLAN":
+      return "Wallet cash or holdings changed after this review was built.";
+    case "BALANCE_UNAVAILABLE":
+      return "Wallet cash cannot be verified right now.";
+    case "MOCK_OR_LEGACY_PLAN":
+      return "This review was created outside the current real-execution path.";
+    default:
+      return safety.message || "Approval is blocked for this review.";
+  }
 }
 
 function LedgerFlowSvg() {

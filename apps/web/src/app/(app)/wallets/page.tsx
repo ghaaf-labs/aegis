@@ -21,6 +21,10 @@ import { gatewayApi, portfolioApi, walletApi } from "@/lib/api";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { explorerAddressUrl, type ExplorerChain } from "@/lib/explorers";
 import {
+  walletRouteFromBlockchain,
+  walletRouteLabel,
+} from "@/lib/wallet-routes";
+import {
   formatGatewayBalanceError,
   walletStatusError,
 } from "@/lib/account-error-copy";
@@ -269,7 +273,7 @@ export default function WalletPage() {
     label: string;
     address: string;
   }> = allNetworks.flatMap((network) => {
-    const route = supportedNetworkRoute(network.blockchain);
+    const route = walletRouteFromBlockchain(network.blockchain);
     return route ? [{ ...route, address: network.address }] : [];
   });
 
@@ -404,7 +408,7 @@ export default function WalletPage() {
       <AccountWalletCard
         accountAddress={accountAddress}
         networks={allNetworks.map((network) =>
-          networkLabel(network.blockchain),
+          walletRouteLabel(network.blockchain),
         )}
         explorerLinks={chains}
       />
@@ -437,50 +441,6 @@ export default function WalletPage() {
       </div>
     </div>
   );
-}
-
-function supportedNetworkRoute(blockchain: string): {
-  key: ExplorerChain;
-  label: string;
-} | null {
-  switch (blockchain) {
-    case "ARC-TESTNET":
-    case "ARC":
-      return { key: "arc", label: "Arc testnet" };
-    case "BASE-SEPOLIA":
-    case "BASE":
-      return { key: "base", label: "Base Sepolia" };
-    case "ETH-SEPOLIA":
-    case "ETH":
-      return { key: "eth-sepolia", label: "Ethereum Sepolia" };
-    case "ARB-SEPOLIA":
-    case "ARB":
-      return { key: "arb-sepolia", label: "Arbitrum Sepolia" };
-    case "AVAX-FUJI":
-    case "AVAX":
-      return { key: "avax-fuji", label: "Avalanche Fuji" };
-    default:
-      return null;
-  }
-}
-
-function networkLabel(blockchain: string) {
-  switch (blockchain) {
-    case "ARC-TESTNET":
-      return "Arc testnet";
-    case "BASE-SEPOLIA":
-      return "Base Sepolia";
-    case "ETH-SEPOLIA":
-      return "Ethereum Sepolia";
-    case "ARB-SEPOLIA":
-      return "Arbitrum Sepolia";
-    case "AVAX-FUJI":
-      return "Avalanche Fuji";
-    case "MATIC-AMOY":
-      return "Polygon Amoy";
-    default:
-      return blockchain.replaceAll("-", " ");
-  }
 }
 
 interface ChainCardProps {

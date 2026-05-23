@@ -262,7 +262,7 @@ function isCrossChainLeg(leg: { kind: string }) {
 function blockedReviewCopy(safety: RebalanceApprovalSafety) {
   switch (safety.code) {
     case "EXECUTION_UNAVAILABLE":
-      return "This review matches the current plan, but the running API cannot execute every leg in real mode. Approval stays locked until the missing adapter or cargo feature is enabled, or the target excludes that sleeve.";
+      return "This review matches the current plan, but one selected route is not ready to move money. Change the target mix, then build a fresh executable review before approving.";
     case "SUPERSEDED":
       return "A newer rebalance review exists for this portfolio. Open the latest review or build a fresh one before approving.";
     case "STALE_PLAN":

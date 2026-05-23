@@ -26,6 +26,7 @@ export type {
   RebalanceStatus,
   GatewayBalance,
   WalletInfo,
+  WalletNetwork,
   PortfolioGoal,
   RoutePreferences,
   GoalHorizon,

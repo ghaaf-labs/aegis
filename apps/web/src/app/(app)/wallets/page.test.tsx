@@ -118,7 +118,7 @@ describe("<AccountWalletCard />", () => {
 });
 
 describe("<NetworkTokenPanel />", () => {
-  it("lets the user choose live execution routes and track blocked tokens", async () => {
+  it("lets the user choose wallet routes and target tokens", async () => {
     const onPreferencesChange = vi.fn();
     const { container, root } = render(
       <NetworkTokenPanel
@@ -170,6 +170,8 @@ describe("<NetworkTokenPanel />", () => {
       "rebalance execution uses Arc testnet and Base Sepolia",
     );
     expect(text).toContain("Needs sync");
+    expect(text).toContain("Use wallet-ready routes");
+    expect(text).not.toContain("Circle transfer rail");
 
     for (const tokenCopy of expectedTokens.flat()) {
       expect(text).toContain(tokenCopy);

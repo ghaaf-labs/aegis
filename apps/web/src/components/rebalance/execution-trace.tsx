@@ -12,8 +12,12 @@ import {
 import { buildShareIntent } from "@/lib/share";
 import type { ChainKey, LegStatus } from "@/types";
 import { usePortfolioStore } from "@/stores/portfolio";
-import { explorerTxUrl } from "@/lib/explorers";
+import { explorerTxUrl, type ExplorerChain } from "@/lib/explorers";
 import { copyTextToClipboard } from "@/lib/clipboard";
+import {
+  walletRouteFromKey,
+  walletRouteKeyFromBlockchain,
+} from "@/lib/wallet-routes";
 
 import { LegCard } from "./leg-card";
 
@@ -151,6 +155,9 @@ export function ExecutionTrace({
 
   const progressPct = total > 0 ? Math.round((completed / total) * 100) : 0;
   const isMockExecution = resolvedExecutionMode === "mock";
+  const settlementChain = settlementChainForLegs(legs);
+  const settlementChainLabel =
+    walletRouteFromKey(settlementChain)?.shortLabel ?? settlementChain;
 
   useEffect(() => {
     if (status !== "completed" || !portfolioId || synced) return;
@@ -278,12 +285,7 @@ export function ExecutionTrace({
                   {settlementTx.slice(0, 10)}… ↗
                 </a>
                 <span className="text-warn/60 text-[10px]">
-                  on{" "}
-                  {legs.some(
-                    (l) => l.destChain === "base" || l.srcChain === "base",
-                  )
-                    ? "Base"
-                    : "Arc"}
+                  on {settlementChainLabel}
                 </span>
                 {settlementTx.startsWith("0x") && (
                   <span className="text-accent-agent text-[10px] border border-cyan-500/30 px-1 rounded">
@@ -313,11 +315,16 @@ export function ExecutionTrace({
   );
 }
 
+function settlementChainForLegs(legs: InternalLeg[]): ExplorerChain {
+  for (const leg of legs) {
+    const key = walletRouteKeyFromBlockchain(leg.destChain ?? leg.srcChain);
+    if (key) return key;
+  }
+  return "arc";
+}
+
 function getExplorerUrlForTx(tx: string, legs: InternalLeg[]): string {
-  const hasBase = legs.some(
-    (l) => l.destChain === "base" || l.srcChain === "base",
-  );
-  return explorerTxUrl(hasBase ? "base" : "arc", tx) ?? "#";
+  return explorerTxUrl(settlementChainForLegs(legs), tx) ?? "#";
 }
 
 function ShareBlock({ decisionId }: { decisionId: string }) {

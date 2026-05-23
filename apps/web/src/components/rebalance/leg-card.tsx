@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { ChainBadge } from "@aegis/ui";
 import type { ChainKey, LegStatus } from "@/types";
 import { explorerTxUrl } from "@/lib/explorers";
+import { walletRouteBadgeLabel } from "@/lib/wallet-routes";
 
 interface LegCardProps {
   legIndex: number;
@@ -115,6 +116,6 @@ export function LegCard({
   );
 }
 
-function toChainBadge(chain: ChainKey): "ARC" | "BASE" {
-  return chain === "arc" ? "ARC" : "BASE";
+function toChainBadge(chain: ChainKey): string {
+  return walletRouteBadgeLabel(chain);
 }

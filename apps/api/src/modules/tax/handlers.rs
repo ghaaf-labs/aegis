@@ -200,13 +200,7 @@ pub async fn summary(
     require_ownership(&state, claims.sub, q.portfolio_id).await?;
     let year = q.year.unwrap_or_else(|| Utc::now().year());
 
-    let arc = wallet_routes::arc_address_for_user(
-        &state.db,
-        claims.sub,
-        &state.config.circle_wallet_set_id,
-    )
-    .await?;
-    let base = wallet_routes::base_address_for_user(
+    let route_addresses = wallet_routes::addresses_for_user(
         &state.db,
         claims.sub,
         &state.config.circle_wallet_set_id,
@@ -226,23 +220,15 @@ pub async fn summary(
     .await?;
     let (total, last_synced) = counts;
 
-    let mut wallets = Vec::new();
-    if let Some(addr) = arc {
-        wallets.push(WalletSummaryRow {
-            chain: "arc".into(),
-            address: addr,
+    let wallets = route_addresses
+        .into_iter()
+        .map(|route| WalletSummaryRow {
+            chain: route.blockchain,
+            address: route.address,
             lot_count: total,
             last_synced_at: last_synced,
-        });
-    }
-    if let Some(addr) = base {
-        wallets.push(WalletSummaryRow {
-            chain: "base".into(),
-            address: addr,
-            lot_count: total,
-            last_synced_at: last_synced,
-        });
-    }
+        })
+        .collect();
 
     Ok(Json(TaxSummary {
         year,

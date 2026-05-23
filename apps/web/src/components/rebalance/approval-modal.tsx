@@ -9,6 +9,7 @@ import {
 } from "@/lib/api";
 import type { AgentDecision } from "@/types";
 import { cn } from "@/lib/utils";
+import { walletRouteBadgeLabel } from "@/lib/wallet-routes";
 import { BacktestPreview } from "@/components/rebalance/backtest-preview";
 import { ConstitutionClauseBadge } from "@/components/agent/ConstitutionClauseBadge";
 import { ModelBadge, ChainBadge } from "@aegis/ui";
@@ -201,11 +202,11 @@ export function ApprovalModal({
   const approvalBlockCode = isMockExecution
     ? "HISTORICAL_TEST_REVIEW"
     : (approvalSafety?.code ?? "APPROVAL_BLOCKED");
-  const approvalBlockMessage =
-    approvalSafety?.message ??
-    (isMockExecution
+  const approvalBlockMessage = approvalSafety
+    ? blockedReviewMessage(approvalSafety)
+    : isMockExecution
       ? "This review was created outside the real execution path. Build a fresh review before approving."
-      : "Approval is blocked for this review. Build a fresh review before any execution.");
+      : "Approval is blocked for this review. Build a fresh review before any execution.";
   const changeHeadline =
     plan.totalLegs === 0
       ? "No portfolio changes needed"
@@ -316,24 +317,19 @@ export function ApprovalModal({
           <RebalanceRouteMap plan={plan} />
 
           {approvalBlocked && (
-            <div className="mb-4 border-brutal border-warn/50 bg-warn/10 p-3 text-xs font-mono text-warn">
+            <div className="mb-4 border-brutal border-warn/45 bg-warn/5 p-4 text-xs font-mono text-warn">
               <p className="text-[10px] uppercase tracking-wider">
                 {approvalBlockLabel(approvalBlockCode)}
               </p>
               <p className="mt-1 leading-relaxed">{approvalBlockMessage}</p>
               {approvalSafety?.missingCapabilities?.length ? (
-                <ul className="mt-3 grid gap-2">
+                <ul className="mt-3 flex flex-wrap gap-2">
                   {approvalSafety.missingCapabilities.map((capability) => (
                     <li
                       key={capability.code}
-                      className="border border-warn/30 bg-black/20 px-2 py-1.5"
+                      className="border border-warn/30 bg-black/20 px-2 py-1.5 text-[10px] uppercase tracking-wider"
                     >
-                      <p className="text-[10px] uppercase tracking-wider text-warn">
-                        {capability.label}
-                      </p>
-                      <p className="mt-1 text-[11px] leading-relaxed text-text-lo">
-                        {capability.detail}
-                      </p>
+                      {capability.label}
                     </li>
                   ))}
                 </ul>
@@ -672,8 +668,8 @@ function legRouteText(plan: RebalancePlanResponse["legs"][number]) {
   return `${plan.srcSymbol ?? "source"} → ${plan.destSymbol ?? "destination"}`;
 }
 
-function toChainBadge(chain: "arc" | "base"): "ARC" | "BASE" {
-  return chain === "arc" ? "ARC" : "BASE";
+function toChainBadge(chain: "arc" | "base"): string {
+  return walletRouteBadgeLabel(chain);
 }
 
 function isCrossChainLeg(plan: RebalancePlanResponse["legs"][number]) {
@@ -686,7 +682,7 @@ function approvalBlockLabel(code: string): string {
     case "MOCK_OR_LEGACY_PLAN":
       return "Historical test review";
     case "EXECUTION_UNAVAILABLE":
-      return "Execution unavailable";
+      return "Route not ready";
     case "SUPERSEDED":
       return "Superseded review";
     case "STALE_PLAN":
@@ -710,7 +706,7 @@ function displayReasoning(decision: AgentDecision): string | null {
 function blockedAmountCopy(safety?: RebalanceApprovalSafety | null): string {
   switch (safety?.code) {
     case "EXECUTION_UNAVAILABLE":
-      return "These amounts are current, but this API cannot execute one or more legs in real mode. Enable the missing adapter or build a target that avoids the unsupported sleeve.";
+      return "These amounts are current, but one selected route is not ready to move money. Change the target mix, then build a fresh executable review.";
     case "SUPERSEDED":
       return "These amounts belong to an older review. Open the latest review to see the active route.";
     case "STALE_PLAN":
@@ -724,6 +720,26 @@ function blockedAmountCopy(safety?: RebalanceApprovalSafety | null): string {
   }
 }
 
+function blockedReviewMessage(safety: RebalanceApprovalSafety): string {
+  switch (safety.code) {
+    case "EXECUTION_UNAVAILABLE":
+      return "This review is saved, but at least one selected route is not ready to move money. Change the target mix, then build a fresh executable review before approving.";
+    case "SUPERSEDED":
+      return "A newer review exists for this portfolio. Open the latest review or build a fresh one before approving.";
+    case "STALE_PLAN":
+      return "Wallet cash or holdings changed after this review was created. Build a fresh review so the amounts match current balances.";
+    case "BALANCE_UNAVAILABLE":
+      return "Wallet cash cannot be verified right now. Check Wallets, then build a fresh review after balances recover.";
+    case "MOCK_OR_LEGACY_PLAN":
+      return "This review was created outside the current real-execution path. Build a fresh review before approving.";
+    default:
+      return (
+        safety.message ||
+        "Approval is blocked for this review. Build a fresh review before any execution."
+      );
+  }
+}
+
 function blockedLegCopy(
   plan: RebalancePlanResponse,
   safety?: RebalanceApprovalSafety | null,
@@ -733,10 +749,9 @@ function blockedLegCopy(
     return (
       <>
         Aegis is showing <strong>{plan.totalLegs}</strong> valid review leg
-        {plan.totalLegs === 1 ? "" : "s"}, but execution is locked because this
-        environment cannot perform{" "}
-        {count > 1 ? `${count} required adapters` : "a required adapter"}.
-        Configure the missing capability, then build a fresh review.
+        {plan.totalLegs === 1 ? "" : "s"}, but approval is locked because{" "}
+        {count > 1 ? `${count} route checks are` : "one route check is"} not
+        ready yet. Change the target mix, then build a fresh executable review.
       </>
     );
   }
@@ -786,7 +801,7 @@ function BlockedRecoveryActions({
         ? [
             {
               href: dashboardHref,
-              label: "Change target or rebuild review",
+              label: "Change target mix",
               primary: true,
             },
             {
