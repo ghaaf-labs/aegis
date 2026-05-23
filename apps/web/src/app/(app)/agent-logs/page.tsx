@@ -221,7 +221,7 @@ function auditReason(
     return {
       tone: "risk",
       message:
-        "The critic did not approve this recommendation. Keep it as audit evidence and build a fresh review before acting.",
+        "The safety check did not approve this recommendation. Keep it for history and build a fresh review before acting.",
     };
   }
 
@@ -242,9 +242,9 @@ function auditReason(
           Number.isFinite(investedValueUsd) ? investedValueUsd : 0,
         )} invested and ${formatUsd(
           Number.isFinite(idleUsdc) ? idleUsdc : 0,
-        )} idle USDC; current state is ${formatUsd(
+        )} wallet cash; current state is ${formatUsd(
           currentState.investedUsd,
-        )} invested and ${formatUsd(currentState.idleUsdc)} idle USDC.`,
+        )} invested and ${formatUsd(currentState.idleUsdc)} wallet cash.`,
       };
     }
   }

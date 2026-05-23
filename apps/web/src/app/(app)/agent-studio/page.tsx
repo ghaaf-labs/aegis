@@ -186,7 +186,7 @@ export default function AgentStudioPage() {
           <StudioLink
             href="/wallets"
             title="Wallet cash"
-            body="Confirm idle USDC and EURC before deployment."
+            body="Confirm available cash before asking for a move."
           />
           <StudioLink
             href="/settings/peg"
@@ -220,7 +220,7 @@ function manualAnalysisBlockCopy(
   }
   if (!hasWallet) {
     return {
-      copy: "Finish account setup first. The agent needs a ready wallet before it can reason about deployable cash.",
+      copy: "Finish account setup first. The agent needs a ready wallet before it can use wallet cash in a recommendation.",
       href: "/wallets",
       cta: "Check account setup",
     };
