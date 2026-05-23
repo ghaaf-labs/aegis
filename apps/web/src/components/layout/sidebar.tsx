@@ -309,10 +309,14 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
                     ? "/wallets"
                     : authHref("/login", item.href)
                   : item.href;
+                const itemDescription = locked
+                  ? lockedDescription(walletPending)
+                  : item.description;
                 return (
                   <Link
                     key={item.href}
                     href={href}
+                    aria-label={`${item.label}: ${itemDescription}`}
                     aria-current={active ? "page" : undefined}
                     title={
                       locked
@@ -355,9 +359,8 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
                         {item.label}
                       </span>
                       <span className="mt-0.5 block truncate text-[10px] text-text-mut">
-                        {locked
-                          ? lockedDescription(walletPending)
-                          : item.description}
+                        {" "}
+                        {itemDescription}
                       </span>
                     </span>
                     {locked && (
