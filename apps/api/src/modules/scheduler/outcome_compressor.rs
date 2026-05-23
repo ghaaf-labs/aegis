@@ -25,6 +25,11 @@ use crate::router::AppState;
 
 const TICK_SECS: u64 = 3600;
 
+/// Benchmark symbol for the "vs market" comparison in the 24h outcome.
+/// BTC is always captured in `price_history` (it's a base price-reference
+/// symbol), so the benchmark return is real, not seeded.
+const BENCHMARK_SYMBOL: &str = "BTC";
+
 pub fn spawn_outcome_compressor(state: AppState, cancel: CancellationToken) {
     tokio::spawn(async move {
         loop {
@@ -102,16 +107,29 @@ async fn compress_one(state: &AppState, row: &DecisionRow) -> crate::error::Resu
             .await
             .unwrap_or(realized + 0.5);
 
+    // BTC benchmark: real return over the same decision_time -> +24h window,
+    // from the same historical price source. `None` when BTC is missing at
+    // either end of the window (e.g. a sparse early-bootstrap diary row).
+    let btc_return = compute_benchmark_return(state, row.created_at).await;
+    let outperformance_vs_btc = btc_return.map(|b| realized - b);
+
     let summary = format!(
         "{}: realized {realized:+.2}%, would-have-been {counterfactual:+.2}%",
         row.triggered_by
     );
-    let outcome = serde_json::json!({
+    let mut outcome = serde_json::json!({
         "realizedPctChange": realized,
         "counterfactualPctChange": counterfactual,
         "compressedSummary": summary,
         "recordedAt": chrono::Utc::now(),
     });
+    if let (Some(obj), Some(btc)) = (outcome.as_object_mut(), btc_return) {
+        obj.insert("btcReturn".into(), serde_json::json!(btc));
+        obj.insert(
+            "outperformanceVsBtc".into(),
+            serde_json::json!(outperformance_vs_btc),
+        );
+    }
 
     sqlx::query(
         "INSERT INTO agent_memory (portfolio_id, decision_id, outcome_24h)
@@ -209,6 +227,45 @@ async fn compute_counterfactual(
     Some((counterfactual_value - snap_total) / snap_total * 100.0)
 }
 
+/// BTC return (pct) over `decision_created_at` -> +24h, using the same
+/// historical price source as the counterfactual. `None` if BTC is missing at
+/// either endpoint or its decision-time price is non-positive.
+async fn compute_benchmark_return(
+    state: &AppState,
+    decision_created_at: chrono::DateTime<chrono::Utc>,
+) -> Option<f64> {
+    let symbols = [BENCHMARK_SYMBOL.to_string()];
+    let target_time = decision_created_at + chrono::Duration::hours(24);
+
+    let at_decision = crate::modules::market_data::service::get_historical_prices(
+        &state.db,
+        &symbols,
+        decision_created_at,
+    )
+    .await
+    .ok()?;
+    let at_target = crate::modules::market_data::service::get_historical_prices(
+        &state.db,
+        &symbols,
+        target_time,
+    )
+    .await
+    .ok()?;
+
+    pct_change(
+        at_decision.get(BENCHMARK_SYMBOL).copied()?,
+        at_target.get(BENCHMARK_SYMBOL).copied()?,
+    )
+}
+
+/// Percent change from `start` to `end`. `None` when `start` is non-positive.
+fn pct_change(start: f64, end: f64) -> Option<f64> {
+    if start <= 0.0 {
+        return None;
+    }
+    Some((end - start) / start * 100.0)
+}
+
 fn snapshot_total(snapshot: &serde_json::Value) -> f64 {
     snapshot
         .get("totalValueUsd")
@@ -231,6 +288,27 @@ mod tests {
     fn snapshot_total_zero_when_missing() {
         assert_eq!(snapshot_total(&json!({})), 0.0);
         assert_eq!(snapshot_total(&json!({ "totalValueUsd": null })), 0.0);
+    }
+
+    #[test]
+    fn pct_change_computes_signed_return() {
+        assert_eq!(pct_change(100.0, 110.0), Some(10.0));
+        assert_eq!(pct_change(100.0, 90.0), Some(-10.0));
+        assert_eq!(pct_change(50.0, 50.0), Some(0.0));
+    }
+
+    #[test]
+    fn pct_change_none_on_non_positive_start() {
+        assert_eq!(pct_change(0.0, 100.0), None);
+        assert_eq!(pct_change(-5.0, 100.0), None);
+    }
+
+    #[test]
+    fn outperformance_is_realized_minus_btc() {
+        // realized +3%, BTC +1% -> +2 pts of outperformance.
+        let realized = 3.0;
+        let btc = pct_change(100.0, 101.0).unwrap();
+        assert!((realized - btc - 2.0).abs() < 1e-9);
     }
 
     // compute_counterfactual is async + hits market_data; isolated logic in
