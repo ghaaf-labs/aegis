@@ -65,7 +65,7 @@ describe("<GoalWizard />", () => {
         name: "Main portfolio",
         horizon: "5y",
         risk: "moderate",
-        allocation: { USDC: 70, BTC: 0, ETH: 0, SOL: 0, USYC: 30, EURC: 0 },
+        allocation: { USDC: 100, BTC: 0, ETH: 0, SOL: 0, EURC: 0 },
         monthlyContribution: "",
       }),
     );
@@ -93,18 +93,17 @@ describe("<GoalWizard />", () => {
 
     const request = vi.mocked(portfolioApi.create).mock.calls[0]?.[0];
     expect(request?.goal?.targetAllocation).toEqual({
-      USDC: 70,
+      USDC: 100,
       BTC: 0,
       ETH: 0,
       SOL: 0,
-      USYC: 30,
       EURC: 0,
     });
     expect(request?.goal?.routePreferences).toEqual({
       networks: ["ARC-TESTNET", "BASE-SEPOLIA"],
       networkWatchlist: ["ETH-SEPOLIA", "ARB-SEPOLIA", "AVAX-FUJI"],
       tokens: ["USDC"],
-      watchlist: ["BTC", "ETH", "SOL", "USYC", "EURC"],
+      watchlist: ["BTC", "ETH", "SOL", "EURC"],
     });
 
     act(() => root.unmount());

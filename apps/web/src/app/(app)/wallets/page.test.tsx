@@ -160,7 +160,7 @@ describe("<NetworkTokenPanel />", () => {
       ],
       [
         "USYC",
-        "Yield target · Yield parking is turned off — the USYC Teller on Arc is allowlist-gated, so USYC is tracked only for now",
+        "Yield target · Not available in this build; USYC stays visible as a coming-soon route",
       ],
       [
         "EURC",
@@ -174,7 +174,9 @@ describe("<NetworkTokenPanel />", () => {
     expect(text).toContain("Current selection");
     expect(text).toContain("Arc testnet, Base Sepolia");
     expect(text).toContain("Can rebalance now");
-    expect(text).toContain("BTC, ETH, SOL, USYC, EURC");
+    expect(text).toContain("BTC, ETH, SOL, EURC");
+    expect(text).toContain("Coming soon");
+    expect(text).toContain("USYC");
     expect(text).toContain(
       "Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji",
     );
@@ -202,7 +204,7 @@ describe("<NetworkTokenPanel />", () => {
 
     const suggestedText = container.textContent ?? "";
     expect(suggestedText).toContain("USDC");
-    expect(suggestedText).toContain("BTC, ETH, SOL, USYC, EURC");
+    expect(suggestedText).toContain("BTC, ETH, SOL, EURC");
     expect(suggestedText).toContain(
       "Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji",
     );
@@ -210,7 +212,7 @@ describe("<NetworkTokenPanel />", () => {
       networks: ["ARC-TESTNET", "BASE-SEPOLIA"],
       networkWatchlist: ["ETH-SEPOLIA", "ARB-SEPOLIA", "AVAX-FUJI"],
       tokens: ["USDC"],
-      watchlist: ["BTC", "ETH", "SOL", "USYC", "EURC"],
+      watchlist: ["BTC", "ETH", "SOL", "EURC"],
     });
     expect(
       window.localStorage.getItem("aegis.wallet.route-preferences.v2"),
@@ -299,7 +301,9 @@ describe("<NetworkTokenPanel />", () => {
       "Arc testnet, Base Sepolia, Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji",
     );
     expect(text).toContain("USDC");
-    expect(text).toContain("BTC, ETH, SOL, USYC, EURC");
+    expect(text).toContain("BTC, ETH, SOL, EURC");
+    expect(text).toContain("Coming soon");
+    expect(text).toContain("USYC");
     expect(text).toContain("All supported routes ready");
 
     act(() => root.unmount());

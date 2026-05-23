@@ -1,5 +1,14 @@
 import type { NextConfig } from "next";
 
+const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+const connectSources = [
+  "'self'",
+  apiUrl,
+  "https://openrouter.ai",
+  "https://api.circle.com",
+  "https://eu.infisical.com",
+];
+
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "X-Frame-Options", value: "DENY" },
@@ -16,7 +25,7 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
       "img-src 'self' data: https://assets.coingecko.com https://coin-images.coingecko.com",
-      "connect-src 'self' https://openrouter.ai https://api.circle.com https://eu.infisical.com",
+      `connect-src ${connectSources.join(" ")}`,
       "frame-ancestors 'none'",
     ].join("; "),
   },
@@ -54,7 +63,7 @@ const nextConfig: NextConfig = {
     return [
       {
         source: "/api/backend/:path*",
-        destination: `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080"}/:path*`,
+        destination: `${apiUrl}/:path*`,
       },
     ];
   },

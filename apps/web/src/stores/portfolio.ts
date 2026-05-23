@@ -23,7 +23,7 @@ export interface RegimeState {
 }
 
 interface PortfolioState {
-  /** All portfolios for the logged-in user. */
+  /** The single portfolio target for the logged-in user. */
   portfolios: Portfolio[];
   /** True once portfolioApi.list() has resolved at least once this session. */
   portfoliosLoaded: boolean;
@@ -145,7 +145,7 @@ export const usePortfolioStore = create<PortfolioState>()(
       setPortfolios: (portfolios) =>
         set((state) => {
           const existingById = new Map(state.portfolios.map((p) => [p.id, p]));
-          const mergedPortfolios = portfolios.map((portfolio) => {
+          const mergedPortfolios = portfolios.slice(0, 1).map((portfolio) => {
             const existing = existingById.get(portfolio.id);
             const existingAllocations = existing?.allocations;
             if (
@@ -180,13 +180,10 @@ export const usePortfolioStore = create<PortfolioState>()(
           ),
         })),
       addPortfolio: (portfolio) =>
-        set((state) => {
+        set(() => {
           saveStoredActivePortfolioId(portfolio.id);
           return {
-            portfolios: [
-              ...state.portfolios.filter((p) => p.id !== portfolio.id),
-              portfolio,
-            ],
+            portfolios: [portfolio],
             portfoliosLoaded: true,
             portfoliosError: false,
             activePortfolioId: portfolio.id,

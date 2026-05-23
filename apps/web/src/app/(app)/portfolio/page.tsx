@@ -37,7 +37,7 @@ export default function PortfolioPage() {
             href="/strategies"
             className="text-accent-agent hover:underline"
           >
-            adopt a strategy
+            choose a target
           </Link>{" "}
           to get started.
         </p>

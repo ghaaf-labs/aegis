@@ -32,34 +32,30 @@ interface WizardState {
 
 const STORAGE_KEY = "aegis.goal-wizard.draft";
 
-/** EURC always in the allocation universe (user moves from 0% upward). */
+/** USYC is not selectable until its real route is verified. */
 const ASSETS: { symbol: AssetSymbol; label: string }[] = [
   { symbol: "USDC", label: "Cash reserve" },
   { symbol: "BTC", label: "Bitcoin" },
   { symbol: "ETH", label: "Ethereum" },
   { symbol: "SOL", label: "Solana" },
-  { symbol: "USYC", label: "USYC (yield)" },
   { symbol: "EURC", label: "EURC (EUR sleeve)" },
 ];
 
 const DEFAULT_ALLOC: Partial<Record<AssetSymbol, number>> = {
-  USDC: 70,
+  USDC: 100,
   BTC: 0,
   ETH: 0,
   SOL: 0,
-  USYC: 30,
   EURC: 0,
 };
 
 const DEFAULT_ROUTE_PREFERENCES: RoutePreferences = {
   networks: ["ARC-TESTNET", "BASE-SEPOLIA"],
   networkWatchlist: ["ETH-SEPOLIA", "ARB-SEPOLIA", "AVAX-FUJI"],
-  // Only USDC is executable today; USYC (disabled), volatiles, and EURC are
-  // tracked targets until their routes are live. Keeps onboarding aligned with
-  // the backend's executable_token_symbols so users never start with a target
-  // that cannot execute.
+  // Only USDC is executable today. USYC is coming soon, so it is not included
+  // in onboarding targets or watchlists.
   tokens: ["USDC"],
-  watchlist: ["BTC", "ETH", "SOL", "USYC", "EURC"],
+  watchlist: ["BTC", "ETH", "SOL", "EURC"],
 };
 
 const ALLOCATION_PRESETS: Array<{
@@ -69,18 +65,18 @@ const ALLOCATION_PRESETS: Array<{
 }> = [
   {
     label: "Ready reserve",
-    hint: "Executable cash plus yield",
+    hint: "Executable USDC only",
     allocation: DEFAULT_ALLOC,
   },
   {
-    label: "Stable yield",
-    hint: "More USYC, still liquid",
-    allocation: { USDC: 50, BTC: 0, ETH: 0, SOL: 0, USYC: 50, EURC: 0 },
+    label: "Market watch",
+    hint: "USDC core plus tracked markets",
+    allocation: { USDC: 60, BTC: 25, ETH: 15, SOL: 0, EURC: 0 },
   },
   {
-    label: "Cash only",
-    hint: "No investment moves yet",
-    allocation: { USDC: 100, BTC: 0, ETH: 0, SOL: 0, USYC: 0, EURC: 0 },
+    label: "FX watch",
+    hint: "USDC core plus EURC tracking",
+    allocation: { USDC: 80, BTC: 0, ETH: 0, SOL: 0, EURC: 20 },
   },
 ];
 
@@ -160,7 +156,7 @@ export function GoalWizard() {
         horizon: state.horizon,
         riskTolerance: state.risk,
         targetAllocation: state.allocation,
-        includeUsyc: (state.allocation.USYC ?? 0) > 0,
+        includeUsyc: false,
         includeEurc: (state.allocation.EURC ?? 0) > 0,
         routePreferences: DEFAULT_ROUTE_PREFERENCES,
         ...(monthly !== undefined ? { monthlyContributionUsd: monthly } : {}),
@@ -508,8 +504,8 @@ function AllocationStep({
           Pick a preset, then adjust the weights.
         </div>
         <p className="text-[11px] font-mono leading-relaxed text-text-mut">
-          USDC and USYC can execute now. BTC, ETH, SOL, and EURC are tracked
-          until their live routes are ready.
+          USDC can execute now. BTC, ETH, SOL, and EURC are tracked until their
+          live routes are ready. USYC is coming soon.
         </p>
         <div className="grid gap-2 sm:grid-cols-3">
           {ALLOCATION_PRESETS.map((preset) => (

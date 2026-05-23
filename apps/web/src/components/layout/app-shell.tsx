@@ -132,7 +132,7 @@ function mobileTitle(pathname: string) {
     portfolio: "Portfolio",
     rebalance: "Rebalance Review",
     settings: "Settings",
-    strategies: "Strategies",
+    strategies: "Builder",
     transactions: "Transactions",
     wallet: "Wallet",
     wallets: "Wallets",

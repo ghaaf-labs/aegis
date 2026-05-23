@@ -74,8 +74,8 @@ const BASE_NAV_SECTIONS: NavSection[] = [
       {
         href: "/strategies",
         icon: LayoutGrid,
-        label: "Strategies",
-        description: "choose an approach",
+        label: "Builder",
+        description: "targets and routes",
       },
       {
         href: "/transactions",

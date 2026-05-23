@@ -32,7 +32,12 @@ export function LandingHeader() {
           >
             Explore demo
           </Link>
-
+          <Link
+            href="/strategies"
+            className="text-xs font-mono text-text-lo hover:text-text-hi transition-colors"
+          >
+            Builder
+          </Link>
           <Link
             href="/leaderboard"
             className="text-xs font-mono text-text-lo hover:text-text-hi transition-colors"

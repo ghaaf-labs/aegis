@@ -53,20 +53,19 @@ describe("dashboardDestination", () => {
 });
 
 describe("<DashboardIndex />", () => {
-  it("redirects the bare dashboard route to the active portfolio", async () => {
+  it("redirects the bare dashboard route to the single portfolio", async () => {
     usePortfolioStore
       .getState()
       .setPortfolios([portfolio("p1", "Primary"), portfolio("p2", "Treasury")]);
-    usePortfolioStore.getState().setActivePortfolio("p2");
 
     const { container, root } = render(<DashboardIndex />);
     await flushEffects();
 
-    expect(routerReplace).toHaveBeenCalledWith("/dashboard/p2");
+    expect(routerReplace).toHaveBeenCalledWith("/dashboard/p1");
     expect(container.textContent).toContain("Opening dashboard");
-    expect(container.textContent).toContain("Taking you to Treasury.");
+    expect(container.textContent).toContain("Taking you to Primary.");
     expect(
-      container.querySelector<HTMLAnchorElement>('a[href="/dashboard/p2"]')
+      container.querySelector<HTMLAnchorElement>('a[href="/dashboard/p1"]')
         ?.textContent,
     ).toContain("Open dashboard");
 

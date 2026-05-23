@@ -43,6 +43,16 @@ describe("portfolio store onboarding state", () => {
     expect(stored.allocations[0]?.symbol).toBe("BTC");
   });
 
+  it("replaces the previous target when builder saves again", () => {
+    usePortfolioStore.getState().addPortfolio(portfolio("p1"));
+    usePortfolioStore.getState().addPortfolio(portfolio("p2"));
+
+    const state = usePortfolioStore.getState();
+    expect(state.portfolios).toHaveLength(1);
+    expect(state.portfolios[0]?.id).toBe("p2");
+    expect(state.activePortfolioId).toBe("p2");
+  });
+
   it("uses product language for unknown wallet cash", () => {
     usePortfolioStore.getState().setGatewayBalanceStatus("error");
 
