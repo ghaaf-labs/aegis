@@ -1,0 +1,10 @@
+# Clippy thresholds. Held at (roughly) current quality so they don't force a
+# refactor of the existing tree; tighten them as the code is cleaned up and run
+# `cargo clippy --all-targets -- -D warnings` to confirm. See docs/15-quality-bar.md.
+#
+# Lint enable/allow lives in Cargo.toml `[lints.clippy]`, not here — this file
+# only configures the *thresholds* of lints that are already on.
+
+cognitive-complexity-threshold = 25   # nursery `cognitive_complexity` (default 25)
+too-many-arguments-threshold   = 8    # `too_many_arguments` (default 7; +1 for Axum handlers)
+type-complexity-threshold      = 250  # `type_complexity` (default 250)

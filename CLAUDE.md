@@ -1,12 +1,40 @@
-# CLAUDE.md
+# CLAUDE.md · AGENTS.md
 
-Guidance for Claude Code when working on Aegis. **Read [`docs/`](./docs/) first** — especially [`docs/06-harness.md`](./docs/06-harness.md) for how this repo uses Claude Code's skills, subagents, and hooks. For branch / commit / CI / coverage details, see [`CONTRIBUTING.md`](./CONTRIBUTING.md). For environment-variable hygiene (load order, secrets-vs-public split, common pitfalls), read [`docs/09-env-hygiene.md`](./docs/09-env-hygiene.md) before editing `.env` or `.env.local`.
+Guidance for AI coding agents (Claude Code, Codex, …) working on Aegis. **`AGENTS.md` is a symlink to this file — keep them one file.**
+
+**Read [`docs/`](./docs/) first** — especially [`docs/06-harness.md`](./docs/06-harness.md) for how this repo uses agent skills, subagents, and hooks. Branch / commit / CI / coverage: [`CONTRIBUTING.md`](./CONTRIBUTING.md). Env-var hygiene (load order, secrets-vs-public split, pitfalls): [`docs/09-env-hygiene.md`](./docs/09-env-hygiene.md) before editing `.env` / `.env.local`. Running the servers: [`docs/14-dev-runtime.md`](./docs/14-dev-runtime.md). What "good code" means here: [`docs/15-quality-bar.md`](./docs/15-quality-bar.md).
+
+## How to work here
+
+These reduce the common LLM coding mistakes. They bias toward caution over speed — use judgement on trivial tasks.
+
+1. **Think before coding.** State your assumptions; if uncertain, ask. If multiple interpretations exist, surface them — don't silently pick one. If a simpler approach exists, say so and push back when warranted. When something is unclear, stop and name what's confusing rather than guessing.
+2. **Simplicity first.** Minimum code that solves the problem, nothing speculative. No features beyond the ask, no abstraction for single-use code, no "flexibility"/config nobody requested, no error handling for impossible states. Three similar lines beat a premature wrapper (abstract on the third occurrence, not the second). If 200 lines could be 50, rewrite it.
+3. **Surgical changes.** Touch only what the task requires. Don't reformat or "improve" adjacent code, don't refactor what isn't broken, match existing style even if you'd do it differently. Remove only the imports/symbols _your_ change orphaned; flag pre-existing dead code, don't delete it unasked. Every changed line should trace to the request.
+4. **Goal-driven execution.** Turn the task into a verifiable goal and loop until met: "fix the bug" → write a failing test, then make it pass; "add validation" → test the invalid inputs, then make them pass; "refactor X" → tests green before and after. State a short plan for multi-step work and verify each step.
+
+> Working if: smaller diffs, fewer rewrites from overcomplication, and clarifying questions come _before_ implementation rather than after mistakes.
+
+Aegis-specific conventions (trust signals, the dual-accent rule, `model_slug`) are under [Conventions](#conventions). The quality bar (complexity / size / duplication thresholds, abstraction & data-flow rules) is [`docs/15-quality-bar.md`](./docs/15-quality-bar.md).
+
+## Dev runtime — never bare `cargo run` / `pnpm dev`
+
+Several agents share this repo at once. Start servers **only** through the supervisor, so they outlive the tool call, any agent can restart/tail them, and they don't orphan on `:8080` / `:3000`:
+
+```bash
+scripts/dev.sh up           # ensure api (:8080) + web (:3000) running (idempotent, health-checked)
+scripts/dev.sh status       # what's running, ports, who owns it
+scripts/dev.sh logs api     # tail recent output without attaching
+scripts/dev.sh restart api  # restart in place after an edit (the hand-off op)
+scripts/dev.sh claim "…"    # advisory: tell other agents you're working
+scripts/dev.sh down         # stop both, free the ports
+```
+
+A linked **worktree** gets deterministic offset ports automatically (`scripts/dev.sh ports`); the main checkout owns `:8080`/`:3000`. Full protocol + the lock/heartbeat model: [`docs/14-dev-runtime.md`](./docs/14-dev-runtime.md). Postgres/Redis still come from `make db-up`.
 
 ## What this is
 
-**Aegis** is an adaptive crypto portfolio harness for stablecoin-native finance, submitted to **RFB 04: Adaptive Portfolio Manager** at Canteen × Circle's **Agora Agents Hackathon** (May 11–25, 2026). The user steers (sets a goal, approves moves); a multi-model AI agent executes on **Arc + Base** through Circle's stack.
-
-Repository is a **Turborepo monorepo** with a Next.js 15 frontend (`apps/web`) and a Rust/Axum backend (`apps/api`).
+**Aegis** is an adaptive crypto portfolio harness for stablecoin-native finance, submitted to **RFB 04: Adaptive Portfolio Manager** at Canteen × Circle's **Agora Agents Hackathon** (May 11–25, 2026). The user steers (sets a goal, approves moves); a multi-model AI agent executes on **Arc + Base** through Circle's stack. Turborepo monorepo: a Next.js 15 frontend (`apps/web`) and a Rust/Axum backend (`apps/api`).
 
 ## Locked-in decisions (do not silently change)
 
@@ -18,7 +46,7 @@ Repository is a **Turborepo monorepo** with a Next.js 15 frontend (`apps/web`) a
 | **Circle stack**: Wallets · Gateway · CCTP V2 · USYC · Paymaster · StableFX · Nanopayments | All required for Circle Tool Usage judging                    | [`docs/03-circle-stack.md`](./docs/03-circle-stack.md)   |
 | **EURC sleeve** via Arc StableFX                                                           | Multi-currency portfolio with native FX rails                 | [`docs/03-circle-stack.md`](./docs/03-circle-stack.md)   |
 | **Dark neo-brutalism** UI with **dual-accent** (green = money, cyan = agent)               | Premium fintech feel; strict separation rule                  | [`docs/04-design-system.md`](./docs/04-design-system.md) |
-| **Real users** (not simulated) for the Traction judging dimension                          | 30% of the score                                              | [Plan](#)                                                |
+| **Real users** (not simulated) for the Traction judging dimension                          | 30% of the score                                              | Plan                                                     |
 | **Project docs** in OpenAI "harness engineering" style, condensed (~1.5–2.5k words)        | Communicates engineering rigor to judges                      | [`docs/`](./docs/)                                       |
 
 ## Workspace layout
@@ -28,195 +56,102 @@ apps/
   web/          Next.js 15 — TS · Tailwind · neo-brutalism · Zustand · React Query · EventSource
   api/          Rust Axum — Tokio · SQLx · PostgreSQL · SSE · OpenRouter · Circle SDK
 packages/
-  shared/       Domain types + chain constants (TS)
+  shared/       Domain types + chain constants (TS) — the FE/BE contract
   ui/           Neo-brutalism primitives (Card, Button, Pill, ModelBadge, ChainBadge…)
   config/       Shared ESLint, TypeScript, Tailwind configurations
 infra/
   contracts/    RebalanceExecutor.sol (Foundry)
   docker/       Dockerfiles for api and web
+scripts/        dev.sh (multi-agent runtime) + seed/env helpers
 docs/           Project documentation (read first)
 ```
 
 ## Common commands
 
 ```bash
-# Install all workspace dependencies
-pnpm install
+pnpm install                      # install all workspace deps
+make setup                        # first run: deps + Postgres + migrate
 
-# ── Frontend (apps/web) ──────────────────────────────────────────────────
-pnpm dev                          # Next.js dev server (localhost:3000)
-pnpm build
-pnpm lint
-pnpm type-check
+# Dev servers — via the supervisor (see docs/14), not bare commands:
+scripts/dev.sh up                 # api (:8080) + web (:3000)
+make db-up                        # Postgres + Redis (Docker)
 
-# ── Backend (apps/api — run from apps/api/) ──────────────────────────────
-cargo run                         # API on localhost:8080
-cargo check
-cargo clippy -- -D warnings
-cargo fmt --all
-cargo test
+# Frontend (apps/web)
+pnpm build · pnpm lint · pnpm type-check
 
-# ── Database ─────────────────────────────────────────────────────────────
-docker compose up -d postgres
-cargo sqlx migrate run            # from apps/api/
-cargo sqlx migrate revert
+# Backend (from apps/api/)
+cargo check · cargo clippy -- -D warnings · cargo fmt --all · cargo test
+cargo sqlx migrate run            # apply migrations  (revert: migrate revert)
 
-# ── Contracts (infra/contracts) ──────────────────────────────────────────
-forge build
-forge test
-
-# ── shadcn/ui ────────────────────────────────────────────────────────────
-# Avoid for new components — prefer packages/ui/ neo-brutalism primitives.
-# Only used to scaffold something quickly, then restyled.
+# Contracts (infra/contracts)
+forge build · forge test
 ```
 
-> `pnpm dev` only starts the Next.js frontend. The Rust API is not a pnpm workspace and must be started separately with `cargo run` from `apps/api/`.
+> `pnpm dev` only starts the Next.js frontend; the Rust API is a separate `cargo` project. `scripts/dev.sh` starts both correctly and is the right entry point when more than one agent is active. Avoid scaffolding new UI with shadcn — prefer the `packages/ui/` neo-brutalism primitives.
 
-## Quality gates
+**Cargo build matrix** (real-execution paths are feature-gated; default build is hermetic mocks):
 
-| Layer       | Local pre-commit (Lefthook)       | CI (blocking)                                                                                  | CI (advisory)                    |
-| ----------- | --------------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------- |
-| Format      | `prettier --write {staged_files}` | `prettier --check`                                                                             | —                                |
-| Frontend    | —                                 | `next lint` · `tsc --noEmit` · `vitest run` · `next build`                                     | `vitest run --coverage` · `knip` |
-| Backend     | —                                 | `cargo fmt --check` · `cargo clippy --all-targets -- -D warnings` · `cargo test --all-targets` | `cargo llvm-cov`                 |
-| Deps        | —                                 | `cargo-audit` · `cargo-deny check` · `cargo-machete`                                           | —                                |
-| Spelling    | —                                 | `typos` (crate-ci/typos action)                                                                | —                                |
-| Commit msg  | `commitlint --edit {1}`           | `commitlint` job on PRs                                                                        | —                                |
-| Branch name | `scripts/check-branch-name.sh`    | `branch-name` job on PRs                                                                       | —                                |
+```bash
+cargo run                                    # every flag off, no chain code compiled
+cargo run --features real-cctp               # cross-chain works, USYC park stays mocked
+cargo run --features "real-cctp real-usyc"   # full real-exec readiness
+```
 
-Tooling stack: **Lefthook** (hooks runner) · **commitlint** · **Prettier** · **Vitest** + **@vitest/coverage-v8** · **knip** (unused TS) · **typos** (spell check) · **cargo-llvm-cov** (Rust coverage) · **cargo-audit** · **cargo-deny** (config: `apps/api/deny.toml`) · **cargo-machete** (unused deps).
+## Quality bar
 
-Bypass any local hook: `git commit --no-verify` or `git push --no-verify` — use sparingly.
+Lint is **real config, not prose in this file** (full table + rationale: [`docs/15-quality-bar.md`](./docs/15-quality-bar.md)):
+
+- **Rust** — `apps/api/Cargo.toml [lints]` enables `clippy::pedantic` + `clippy::nursery` as a _ratchet_ (guard-rails for new code; the lints already firing across the tree are allowed back), plus `clippy.toml` thresholds. CI runs `cargo clippy --all-targets -- -D warnings`, so every Rust lint is a hard gate.
+- **TypeScript** — complexity / function-length / file-length / nesting / params rules in `apps/web/eslint.config.mjs`, at `warn` (advisory; `next lint` / `next build` fail only on errors). Duplicate code: `pnpm dlx jscpd`.
+
+**To raise the bar:** delete a clippy allow-back or flip a TS `warn` → `error`, then fix the fallout. **Never loosen a gate to make a red build green.**
+
+## Architecture (quick map; detail in `docs/`)
+
+- **Frontend** (`apps/web`) — App Router: `(app)/` authenticated shell; `/explore/:portfolioId` read-only demo (no wallet); `/diary/:wallet` public agent diary. State: Zustand (`stores/portfolio.ts`) + React Query. Realtime: `EventSource` via `lib/sse.ts` (`price.tick`, `regime.flip`, `agent.decision`, `rebalance.status`, `gateway.balance`). Mock layer: `src/lib/mock-data.ts`. Design + the strict green/cyan separation rule: [`docs/04-design-system.md`](./docs/04-design-system.md).
+- **Backend** (`apps/api`) — single binary, module-per-domain under `src/modules/` (`auth`, `portfolio`, `market_data`, `agent`, `rebalance`, `risk_engine`, `sse`, `ai`, `wallet`, `gateway`, `yield`, `fx`, `tax`, `billing`). Typed env in `config.rs` (+ `Config::validate()`); unified errors in `error.rs`; router + `AppState` in `router.rs`. SQLx migrations in `apps/api/migrations/`; `updated_at` is trigger-maintained.
+- **Agent flow** — trigger → regime classifier (Haiku) → strategist (Opus: goal + regime + memory + prices + harvestable losses + USYC rate + EURC basis) → adversarial critic (GPT-5), strategist may revise once → store proposal in `agent_decisions` (`model_slug` + confidence) → SSE `agent.decision` → user approves (USDC fee preview) → executor: Gateway delta → CCTP V2 + Hook swaps, Paymaster pays gas in USDC → SSE `rebalance.status` per leg → 24h later the outcome compresses into `agent_memory`. Detail: [`docs/02-agent-design.md`](./docs/02-agent-design.md).
+- **Shared contract** — `packages/shared/src/types.ts` (`MarketRegime`, `WalletInfo`, `CrossChainRoute`, `TaxLot`, `ModelRoute`, `SseEvent`, …) and `constants.ts` (Arc/Base addresses, USYC, Paymaster, Circle URLs).
 
 ## Feature flags
 
-Every flag defaults `false` / mock-on so `main` stays trunk-shippable. Real-execution paths require both the runtime flag _and_ (for chain calls) a matching cargo `--features` build. Source of truth: `apps/api/src/config.rs` + `Config::validate()`.
+Every flag defaults `false` / mock-on so `main` stays trunk-shippable. Real-execution paths require the runtime flag **and** (for chain calls) a matching cargo `--features` build. Source of truth: `apps/api/src/config.rs` + `Config::validate()` (fail-fast at boot).
 
-| Env var                   | Default | Cargo feature | Depends on                | What flipping it does                                                                                                                                                                                     |
-| ------------------------- | ------- | ------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `EXECUTION_MOCK`          | `false` | —             | —                         | **Real by default.** When `true` (opt-in for tests/CI/offline dev): executor uses mock adapters. When `false`: real RPC + signers; the route registry mints an `ExecutionTicket` per leg or fails closed. |
-| `MOCK_CIRCLE`             | `false` | —             | —                         | **Real by default.** When `true`: in-process mock Circle provider. When `false`: Circle Wallets, Gateway, Paymaster hit live APIs.                                                                        |
-| `USYC_ENABLED`            | `false` | —             | —                         | Kill-switch for the USYC park/redeem sleeve. While `false`, USYC is Track-only (Hashnote Teller is allowlist/KYB-gated). Flip once the Aegis EOA is allowlisted.                                          |
-| `BILLING_V2_ENABLED`      | `false` | —             | —                         | Real Nanopayments fee settle/refund, referral payouts, subscription tier gating.                                                                                                                          |
-| `AUM_STREAM_ENABLED`      | `false` | —             | `BILLING_V2_ENABLED=true` | Nightly AUM-fee accrual ticker — premature pre-revenue.                                                                                                                                                   |
-| `REGIME_BACKTEST_ENABLED` | `false` | —             | —                         | Mounts `/about/regime/backtest` reading the precomputed 5y backtest.                                                                                                                                      |
-| `PEG_DEFENSE_ENABLED`     | `true`  | —             | —                         | Peg monitor proposes a defensive rebalance plan when a stable depegs. Default-on per FF-3 (2026-05-17); auto-execute (Pro tier) stays gated until F-PEG-8 lands.                                          |
-| `TAX_EXPORT_V1_ENABLED`   | `true`  | —             | —                         | Mounts `/tax/export.csv` for the 1099-DA per-wallet basis export. Default-on per FF-2 (2026-05-17).                                                                                                       |
-| `CALIBRATED_CONF_ENABLED` | `false` | —             | ≥50 real decisions        | Surfaces calibrated confidence instead of raw model confidence in the approval modal.                                                                                                                     |
-| `CONSTITUTION_ENABLED`    | `false` | —             | —                         | Constitution evaluator runs at decision-time, vetoes off-policy plans.                                                                                                                                    |
-| —                         | —       | `real-cctp`   | `EXECUTION_MOCK=false`    | Compile in alloy + CCTP V2 sol! interfaces. Without this, cross-chain legs fail closed (`REAL_CCTP_FEATURE`).                                                                                             |
-| —                         | —       | `real-usyc`   | `EXECUTION_MOCK=false`    | Compile in Hashnote Teller mint/redeem. Without this (and `USYC_ENABLED=true`), USYC fails closed.                                                                                                        |
-| —                         | —       | `real-swap`   | `EXECUTION_MOCK=false`    | Compile the real Uniswap V3 (Base Sepolia) swap adapter (QuoterV2 + SwapRouter02). Without this, USDC↔token swaps fail closed (`REAL_SWAP_FEATURE`).                                                      |
-
-Build matrix recipes:
-
-```bash
-# Hermetic default — every flag off, no chain code compiled.
-cargo run
-
-# Real CCTP V2 only (cross-chain works, USYC park stays mocked).
-cargo run --features real-cctp
-
-# Full real-exec build for first-paid-user readiness.
-cargo run --features "real-cctp real-usyc"
-```
-
-The runtime-flag matrix lives in `.env.local` (per-developer overrides); the committed `.env` keeps mocks on. Validation runs at boot — flipping `BILLING_V2_ENABLED=true` without the required addresses will fail-fast in `Config::validate()`.
-
-## Architecture
-
-### Frontend (`apps/web`)
-
-- **App Router** — `(app)/` for the authenticated shell; `/explore/:portfolioId` for read-only demo mode (no wallet); `/diary/:wallet` for the public agent diary.
-- **State:** Zustand (`stores/portfolio.ts`) for domain state; React Query for server-fetched data.
-- **Realtime:** native `EventSource` via `lib/sse.ts` `useEventSource()` hook. Event types: `price.tick`, `regime.flip`, `agent.decision`, `rebalance.status`, `gateway.balance`.
-- **Mock layer:** `src/lib/mock-data.ts` seeds the store via `components/providers.tsx` — used by `/explore` demo mode.
-- **Design:** dark neo-brutalism, dual-accent (green = PnL/money, cyan = agent activity). Tokens in `apps/web/src/app/globals.css` + `packages/config/tailwind/`. Primitives in `packages/ui/`. Strict separation rule: green never appears in agent surfaces; cyan never in PnL numbers. See [`docs/04-design-system.md`](./docs/04-design-system.md).
-- **Trust signals on every screen:** data provenance · chain badges · USDC fee preview · model slug · confidence bar.
-
-### Backend (`apps/api`)
-
-Module-per-domain, single binary:
-
-```
-src/
-  main.rs           tracing init, DB connect, migrate, serve
-  config.rs         typed env (Config::from_env) — OPENROUTER + CIRCLE keys
-  error.rs          AppError — unified IntoResponse
-  db.rs             PgPool setup
-  router.rs         Axum router + AppState
-  middleware/
-    auth.rs         JWT extraction → Claims extension
-  modules/
-    auth/           wallet-create + passkey login (Circle Wallets)
-    portfolio/      CRUD + goals (JSONB)
-    market_data/    CoinGecko price fetch + snapshot
-    agent/          strategist + critic pipeline + memory retrieval
-    rebalance/      local + cross_chain.rs (CCTP V2 + Hooks)
-    risk_engine/    concentration + vol + drift + regime.rs
-    sse/            /sse event stream (axum::response::sse)
-    ai/             OpenRouterClient + ModelRoute enum
-    wallet/         Circle Wallets (modular MSCA) REST wrapper
-    gateway/        Unified USDC balance across chains
-    yield/          USDC ↔ USYC (atomic API)
-    fx/             Arc StableFX (USDC ↔ EURC)
-    tax/            Cost-basis lots, harvestable losses
-    billing/        Nanopayments — protocol fees + referral payouts
-    strategies/     (conditional) marketplace
-```
-
-### Agent flow
-
-```
-Trigger (user · scheduler · drift · regime flip)
-  → regime classifier (Haiku) → MarketRegime
-  → strategist (Opus) reads goal + regime + memory + prices
-                + harvestable losses + USYC rate + EURC basis
-  → critic (GPT-5) adversarial pass; strategist may revise once
-  → store proposal in agent_decisions (model_slug + confidence)
-  → SSE push agent.decision
-  → user reviews single approval modal (USDC fee preview)
-  → executor: Gateway delta plan → CCTP V2 + Hook swaps on dest chain
-  → Paymaster pays gas in USDC
-  → SSE push rebalance.status per leg
-  → 24h later: outcome compressed into agent_memory
-```
-
-### Database
-
-Migrations:
-
-- `0001_initial.sql` — users, portfolios, allocations, assets, agent_decisions, rebalance_events, market_snapshots
-- `0002_cost_basis_and_wallets.sql` — `wallet_id` + `arc_address` + `base_address` on users; `cost_basis_lots`; `agent_memory`; extended `agent_decisions` with `model_slug` + `prompt_tokens` + `latency_ms`; `strategies` (conditional)
-
-`updated_at` is maintained by the `set_updated_at()` trigger.
-
-### Shared types (`packages/shared`)
-
-`src/types.ts` is the contract between frontend and backend. Adds for this build: `MarketRegime`, `WalletInfo`, `CrossChainRoute`, `TaxLot`, `ModelRoute`, `SseEvent`. `src/constants.ts` holds Arc + Base addresses, USYC token address, Paymaster addresses, Circle API URLs.
-
-## Git workflow
-
-Branch naming, commit format, and PR checklist live in [`CONTRIBUTING.md`](./CONTRIBUTING.md). In short:
-
-- Branches: `feat/<slug>` · `fix/<slug>` · `docs/<slug>` · `chore/<slug>` · `refactor/<slug>` · `ci/<slug>` · `test/<slug>` · `perf/<slug>` · `build/<slug>`. Enforced locally by Lefthook `pre-push` and in CI by `branch-name` job.
-- Commits: **Conventional Commits**. Enforced by Lefthook `commit-msg` and in CI by `commitlint` job. Config: [`commitlint.config.cjs`](./commitlint.config.cjs).
-- **Do not** add `Co-authored-by:` trailers for AI tools or `Made-with:` footers anywhere.
-
-```
-feat(agent): add critic pass with gpt-5 routing
-feat(sse): replace ws with axum::response::sse stream
-feat(fx): add Arc StableFX USDC↔EURC module
-fix(gateway): correct unified-balance polling on chain switch
-chore(ci): cache Foundry artifacts
-docs: add 02-agent-design and 04-design-system
-```
+| Env var                   | Default | Cargo feature | Depends on                | What flipping it does                                                                                                                                            |
+| ------------------------- | ------- | ------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `EXECUTION_MOCK`          | `false` | —             | —                         | **Real by default.** `true` → mock adapters (tests/CI/offline). `false` → real RPC + signers; route registry mints an `ExecutionTicket` per leg or fails closed. |
+| `MOCK_CIRCLE`             | `false` | —             | —                         | **Real by default.** `true` → in-process mock Circle. `false` → live Wallets/Gateway/Paymaster.                                                                  |
+| `USYC_ENABLED`            | `false` | —             | —                         | Kill-switch for the USYC park/redeem sleeve. While `false`, USYC is Track-only (Teller is allowlist/KYB-gated).                                                  |
+| `BILLING_V2_ENABLED`      | `false` | —             | —                         | Real Nanopayments fee settle/refund, referral payouts, subscription tier gating.                                                                                 |
+| `AUM_STREAM_ENABLED`      | `false` | —             | `BILLING_V2_ENABLED=true` | Nightly AUM-fee accrual ticker.                                                                                                                                  |
+| `REGIME_BACKTEST_ENABLED` | `false` | —             | —                         | Mounts `/about/regime/backtest` (precomputed 5y backtest).                                                                                                       |
+| `PEG_DEFENSE_ENABLED`     | `true`  | —             | —                         | Peg monitor proposes a defensive plan on depeg. Auto-execute (Pro) stays gated until F-PEG-8.                                                                    |
+| `TAX_EXPORT_V1_ENABLED`   | `true`  | —             | —                         | Mounts `/tax/export.csv` (1099-DA per-wallet basis export).                                                                                                      |
+| `CALIBRATED_CONF_ENABLED` | `false` | —             | ≥50 real decisions        | Surfaces calibrated confidence instead of raw model confidence in the approval modal.                                                                            |
+| `CONSTITUTION_ENABLED`    | `false` | —             | —                         | Constitution evaluator runs at decision-time, vetoes off-policy plans.                                                                                           |
+| —                         | —       | `real-cctp`   | `EXECUTION_MOCK=false`    | Compile alloy + CCTP V2 `sol!` interfaces; without it cross-chain legs fail closed (`REAL_CCTP_FEATURE`).                                                        |
+| —                         | —       | `real-usyc`   | `EXECUTION_MOCK=false`    | Compile Hashnote Teller mint/redeem; without it (and `USYC_ENABLED=true`) USYC fails closed.                                                                     |
+| —                         | —       | `real-swap`   | `EXECUTION_MOCK=false`    | Compile the real Uniswap V3 (Base Sepolia) swap adapter; without it USDC↔token swaps fail closed (`REAL_SWAP_FEATURE`).                                          |
 
 ## Conventions
 
-- **No comments unless the WHY is non-obvious.** Names + types do the work.
-- **No premature abstraction.** A bug fix doesn't need a refactor; three similar lines beat a wrapper.
-- **Trust internal code.** Validate at boundaries (user input, external APIs), nowhere else.
-- **No backwards-compat shims.** This is a hackathon repo; delete the old code, don't dual-path it.
-- **Every agent decision must surface its `model_slug` in the UI.** This is both a trust signal and a debugging aid.
-- **Every external value must show provenance** (`via CoinGecko · 2.1s ago`). Trust signals are non-negotiable per [`docs/04-design-system.md`](./docs/04-design-system.md).
+- **Comments only when the WHY is non-obvious.** Names + types do the work.
+- **Validate at boundaries** (user input, external APIs), trust internal code elsewhere.
+- **No backwards-compat shims** — hackathon repo; delete old code, don't dual-path it.
+- **Every agent decision surfaces its `model_slug` in the UI** — trust signal + debugging aid.
+- **Every external value shows provenance** (`via CoinGecko · 2.1s ago`). Non-negotiable per [`docs/04-design-system.md`](./docs/04-design-system.md).
+- **Money is `Decimal`, never `f64`.** SSE is server→client only.
+
+## Git workflow
+
+Full rules in [`CONTRIBUTING.md`](./CONTRIBUTING.md). In short:
+
+- Branches: `feat/` · `fix/` · `docs/` · `chore/` · `refactor/` · `ci/` · `test/` · `perf/` · `build/<slug>` (enforced by Lefthook `pre-push` + CI `branch-name`).
+- Commits: **Conventional Commits** (Lefthook `commit-msg` + CI `commitlint`; config `commitlint.config.cjs`).
+- **Do not** add `Co-authored-by:` trailers for AI tools or `Made-with:` footers anywhere. Plan-step labels (e.g. `F-EXEC-1c`) go in commit messages / `docs/05-open-questions.md`, never in filenames or code comments.
+
+```
+feat(agent): add critic pass with gpt-5 routing
+feat(fx): add Arc StableFX USDC↔EURC module
+fix(gateway): correct unified-balance polling on chain switch
+```
