@@ -240,6 +240,19 @@ pub struct Config {
     #[allow(dead_code)]
     pub uniswap_v3_router_op: String,
 
+    // ── Trader Joe Liquidity Book (Avalanche) ──────────────────────────────
+    // Avax's primary DEX is Trader Joe LB v2.2, whose `LBRouter` uses a
+    // bin-step + version `Path` ABI distinct from the V3 exactInput surface, so
+    // it gets its own adapter arm (the V3 `swap_router_for` returns these too,
+    // but the swap adapter dispatches on `SwapVenue`). Empty ⇒ Avax swaps
+    // report `NeedsAddress` and fail closed.
+    #[allow(dead_code)]
+    pub trader_joe_lb_router_avax: String,
+    /// Trader Joe `LBQuoter` (`findBestPathFromAmountIn`/`Out`) used to price
+    /// LB swaps and derive `min_out`. Empty ⇒ fail closed.
+    #[allow(dead_code)]
+    pub trader_joe_lb_quoter_avax: String,
+
     /// Canonical volatile ERC-20s on the additional execution chains. Empty ⇒
     /// the symbol is track-only on that chain (the registry fails closed).
     #[allow(dead_code)]
@@ -516,6 +529,10 @@ impl Config {
             uniswap_v3_router_arb: std::env::var("UNISWAP_V3_ROUTER_ARB").unwrap_or_default(),
             uniswap_v3_quoter_op: std::env::var("UNISWAP_V3_QUOTER_OP").unwrap_or_default(),
             uniswap_v3_router_op: std::env::var("UNISWAP_V3_ROUTER_OP").unwrap_or_default(),
+            trader_joe_lb_router_avax: std::env::var("TRADER_JOE_LB_ROUTER_AVAX")
+                .unwrap_or_default(),
+            trader_joe_lb_quoter_avax: std::env::var("TRADER_JOE_LB_QUOTER_AVAX")
+                .unwrap_or_default(),
             weth_eth: std::env::var("WETH_ETH").unwrap_or_default(),
             weth_arb: std::env::var("WETH_ARB").unwrap_or_default(),
             weth_op: std::env::var("WETH_OP").unwrap_or_default(),
@@ -755,12 +772,12 @@ impl Config {
         }
     }
 
-    /// Uniswap-V3-compatible SwapRouter02 address for `chain`. Base = Aerodrome
-    /// Slipstream, OP = Velodrome, Eth/Arb = Uniswap V3 — all share the V3-style
-    /// `exactInputSingle`/`exactOutputSingle` surface. Arc has no AMM swap venue
-    /// (it settles stables / FX, not volatiles) and Avax's Trader Joe is a
-    /// Liquidity-Book router (different ABI), so both return empty and fail
-    /// closed in the swap adapter.
+    /// Swap router address for `chain`. Base = Aerodrome Slipstream, OP =
+    /// Velodrome, Eth/Arb = Uniswap V3 (all share the V3-style
+    /// `exactInputSingle`/`exactOutputSingle` surface); Avax = Trader Joe LB
+    /// (its own bin-step `Path` ABI — the swap adapter dispatches on
+    /// `SwapVenue`). Arc has no AMM venue (it settles stables / FX), so it
+    /// returns empty and fails closed in the swap adapter.
     #[allow(dead_code)]
     pub fn swap_router_for(&self, chain: ChainKey) -> &str {
         match chain {
@@ -768,13 +785,13 @@ impl Config {
             ChainKey::EthSepolia => &self.uniswap_v3_router_eth,
             ChainKey::ArbSepolia => &self.uniswap_v3_router_arb,
             ChainKey::OpSepolia => &self.uniswap_v3_router_op,
-            // TODO(traderjoe-lb): Avax Trader Joe uses a Liquidity-Book router
-            // (LBRouter), not the V3 exactInput surface — needs its own adapter.
-            ChainKey::Arc | ChainKey::AvaxFuji => "",
+            ChainKey::AvaxFuji => &self.trader_joe_lb_router_avax,
+            ChainKey::Arc => "",
         }
     }
 
-    /// Uniswap-V3-compatible QuoterV2 address for `chain` (see `swap_router_for`).
+    /// Swap quoter address for `chain` — QuoterV2 on the V3 venues, the Trader
+    /// Joe `LBQuoter` on Avax (see `swap_router_for`).
     #[allow(dead_code)]
     pub fn swap_quoter_for(&self, chain: ChainKey) -> &str {
         match chain {
@@ -782,8 +799,8 @@ impl Config {
             ChainKey::EthSepolia => &self.uniswap_v3_quoter_eth,
             ChainKey::ArbSepolia => &self.uniswap_v3_quoter_arb,
             ChainKey::OpSepolia => &self.uniswap_v3_quoter_op,
-            // TODO(traderjoe-lb): see `swap_router_for`.
-            ChainKey::Arc | ChainKey::AvaxFuji => "",
+            ChainKey::AvaxFuji => &self.trader_joe_lb_quoter_avax,
+            ChainKey::Arc => "",
         }
     }
 }
@@ -920,6 +937,8 @@ pub(crate) fn test_config() -> Config {
         uniswap_v3_router_arb: String::new(),
         uniswap_v3_quoter_op: String::new(),
         uniswap_v3_router_op: String::new(),
+        trader_joe_lb_router_avax: String::new(),
+        trader_joe_lb_quoter_avax: String::new(),
         weth_eth: String::new(),
         weth_arb: String::new(),
         weth_op: String::new(),
@@ -1064,14 +1083,19 @@ mod tests {
         cfg.uniswap_v3_quoter_base = "0xbase_quoter".into();
         cfg.uniswap_v3_router_op = "0xop_router".into();
         cfg.uniswap_v3_quoter_eth = "0xeth_quoter".into();
+        cfg.trader_joe_lb_router_avax = "0xavax_lb_router".into();
+        cfg.trader_joe_lb_quoter_avax = "0xavax_lb_quoter".into();
 
         assert_eq!(cfg.swap_router_for(ChainKey::Base), "0xbase_router");
         assert_eq!(cfg.swap_quoter_for(ChainKey::Base), "0xbase_quoter");
         assert_eq!(cfg.swap_router_for(ChainKey::OpSepolia), "0xop_router");
         assert_eq!(cfg.swap_quoter_for(ChainKey::EthSepolia), "0xeth_quoter");
-        // Arc and Avax (Trader Joe LB) have no V3 venue → always empty.
+        // Avax resolves to the Trader Joe LB venue (its own ABI, dispatched in
+        // the swap adapter).
+        assert_eq!(cfg.swap_router_for(ChainKey::AvaxFuji), "0xavax_lb_router");
+        assert_eq!(cfg.swap_quoter_for(ChainKey::AvaxFuji), "0xavax_lb_quoter");
+        // Arc has no AMM venue → always empty.
         assert_eq!(cfg.swap_router_for(ChainKey::Arc), "");
-        assert_eq!(cfg.swap_router_for(ChainKey::AvaxFuji), "");
-        assert_eq!(cfg.swap_quoter_for(ChainKey::AvaxFuji), "");
+        assert_eq!(cfg.swap_quoter_for(ChainKey::Arc), "");
     }
 }

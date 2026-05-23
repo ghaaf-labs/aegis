@@ -368,6 +368,8 @@ fn base_config() -> Config {
         uniswap_v3_router_arb: String::new(),
         uniswap_v3_quoter_op: String::new(),
         uniswap_v3_router_op: String::new(),
+        trader_joe_lb_router_avax: String::new(),
+        trader_joe_lb_quoter_avax: String::new(),
         weth_eth: String::new(),
         weth_arb: String::new(),
         weth_op: String::new(),

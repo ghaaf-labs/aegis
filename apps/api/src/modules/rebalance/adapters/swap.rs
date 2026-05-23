@@ -13,8 +13,9 @@
 //! Eth/Arb = Uniswap V3. All three expose the same V3-style
 //! `exactInputSingle`/`exactOutputSingle` router + QuoterV2 surface, so the
 //! single `sol!` interface below works against any of their addresses. Avax's
-//! Trader Joe is a Liquidity-Book router (different ABI) and stays fail-closed
-//! (see `TODO(traderjoe-lb)` in `config.rs`); Arc has no AMM venue.
+//! Trader Joe Liquidity Book (LB v2.2) uses a different `LBRouter` ABI (a
+//! bin-step + version `Path`), so `quote`/`execute` dispatch on `SwapVenue` and
+//! the LB calls go through their own `sol!` interface. Arc has no AMM venue.
 //!
 //! Both directions are wired: buys (USDC → token) via `exactInputSingle` sized
 //! by the USDC budget, and sells (token → USDC) via `exactOutputSingle` sized
@@ -156,6 +157,68 @@ sol! {
     }
 }
 
+// Trader Joe Liquidity Book (LB v2.2) on Avalanche. The router takes a `Path`
+// of (pairBinSteps, versions, tokenPath) rather than the V3 single-pool fee
+// tier; the quoter returns the best path's `amounts`. Both behind `real-swap`.
+#[cfg(feature = "real-swap")]
+sol! {
+    #[sol(rpc)]
+    #[allow(clippy::too_many_arguments)]
+    interface ILBRouter {
+        enum Version { V1, V2, V2_1, V2_2 }
+
+        struct Path {
+            uint256[] pairBinSteps;
+            Version[] versions;
+            address[] tokenPath;
+        }
+
+        function swapExactTokensForTokens(
+            uint256 amountIn,
+            uint256 amountOutMin,
+            Path path,
+            address to,
+            uint256 deadline
+        ) external returns (uint256 amountOut);
+
+        function swapTokensForExactTokens(
+            uint256 amountOut,
+            uint256 amountInMax,
+            Path path,
+            address to,
+            uint256 deadline
+        ) external returns (uint256[] amountsIn);
+    }
+
+    #[sol(rpc)]
+    interface ILBQuoter {
+        struct Quote {
+            address[] route;
+            address[] pairs;
+            uint256[] binSteps;
+            uint8[] versions;
+            uint128[] amounts;
+            uint128[] virtualAmountsWithoutSlippage;
+            uint128[] fees;
+        }
+
+        function findBestPathFromAmountIn(address[] route, uint128 amountIn)
+            external
+            view
+            returns (Quote memory);
+
+        function findBestPathFromAmountOut(address[] route, uint128 amountOut)
+            external
+            view
+            returns (Quote memory);
+    }
+}
+
+/// LB v2.2 bin step used for the USDC↔token pair (the canonical Avax USDC pool
+/// uses a 20-bp bin step). Encoded into the LB `Path`.
+#[cfg(feature = "real-swap")]
+const LB_BIN_STEP: u64 = 20;
+
 /// A USDC↔token swap direction with the non-USDC token symbol. The token
 /// symbol is only read in the `real-swap` build (the no-feature path just
 /// validates the direction and returns a "feature off" error).
@@ -177,6 +240,26 @@ fn swap_chain(leg: &RouteLeg) -> Option<ChainKey> {
         .or(leg.src_chain.as_deref())
         .and_then(ChainKey::parse)
         .filter(|c| c.is_execution())
+}
+
+/// Which on-chain DEX a swap leg routes through. The V3-style venues
+/// (Aerodrome/Velodrome/Uniswap V3) share one router ABI; Trader Joe LB on Avax
+/// has its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwapVenue {
+    /// Uniswap-V3-compatible `exactInputSingle`/`exactOutputSingle` venue.
+    UniswapV3,
+    /// Trader Joe Liquidity Book (LB v2.2) on Avalanche.
+    TraderJoeLb,
+}
+
+/// Resolve the DEX venue for a swap chain. Only Avax uses Trader Joe LB; every
+/// other configured swap chain uses the V3-style surface.
+pub fn swap_venue(chain: ChainKey) -> SwapVenue {
+    match chain {
+        ChainKey::AvaxFuji => SwapVenue::TraderJoeLb,
+        _ => SwapVenue::UniswapV3,
+    }
 }
 
 /// Classify a leg as a buy or sell. Returns `None` for anything that isn't a
@@ -211,9 +294,14 @@ pub async fn quote(cfg: &Config, leg: &RouteLeg, now: DateTime<Utc>) -> Result<V
 
     #[cfg(feature = "real-swap")]
     {
-        match dir {
-            SwapDir::Buy(token) => real_quote_buy(cfg, chain, &token, leg.amount_usdc, now).await,
-            SwapDir::Sell(token) => real_quote_sell(cfg, chain, &token, leg.amount_usdc, now).await,
+        match (swap_venue(chain), dir) {
+            (SwapVenue::UniswapV3, SwapDir::Buy(token)) => {
+                real_quote_buy(cfg, chain, &token, leg.amount_usdc, now).await
+            }
+            (SwapVenue::UniswapV3, SwapDir::Sell(token)) => {
+                real_quote_sell(cfg, chain, &token, leg.amount_usdc, now).await
+            }
+            (SwapVenue::TraderJoeLb, dir) => lb_quote(cfg, chain, &dir, leg.amount_usdc, now).await,
         }
     }
 }
@@ -393,6 +481,316 @@ async fn real_quote_sell(
     })
 }
 
+/// Price a Trader Joe LB (Avax) USDC↔token swap via the `LBQuoter` and build a
+/// fresh `ValidatedQuote`. Buys size by exact-input (USDC budget → token out);
+/// sells size by exact-output (token in → exact USDC realized), matching the
+/// V3 path's `amount_in`/`min_out` convention.
+#[cfg(feature = "real-swap")]
+async fn lb_quote(
+    cfg: &Config,
+    chain: ChainKey,
+    dir: &SwapDir,
+    amount_usdc: f64,
+    now: DateTime<Utc>,
+) -> Result<ValidatedQuote> {
+    let token_symbol = match dir {
+        SwapDir::Buy(t) | SwapDir::Sell(t) => t.as_str(),
+    };
+    let (usdc, token, _router, quoter) = swap_addresses(cfg, chain, token_symbol)?;
+    let amount_units = (amount_usdc * 1_000_000.0) as u128;
+
+    let provider = ProviderBuilder::new().connect_http(
+        cfg.rpc_url_for(chain)
+            .parse()
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
+    );
+    let q = ILBQuoter::new(quoter, &provider);
+
+    match dir {
+        SwapDir::Buy(_) => {
+            let route = vec![usdc, token];
+            let quote = q
+                .findBestPathFromAmountIn(route, amount_units)
+                .call()
+                .await
+                .map_err(|e| {
+                    AppError::Internal(anyhow::anyhow!("LB quoter (amountIn) failed: {e}"))
+                })?;
+            let amount_out = lb_last_amount(&quote.amounts)?;
+            let min_out = amount_out.saturating_mul((10_000 - SLIPPAGE_BPS) as u128) / 10_000;
+            Ok(ValidatedQuote {
+                quote_id: uuid::Uuid::new_v4(),
+                issued_at: now,
+                expires_at: now + Duration::seconds(MAX_QUOTE_TTL_SECS),
+                src_token: "USDC".into(),
+                dest_token: token_symbol.to_string(),
+                src_chain: chain,
+                dest_chain: chain,
+                amount_in: amount_units,
+                min_out: min_out.max(1),
+                slippage_bps: SLIPPAGE_BPS,
+                deadline: (now + Duration::seconds(600)).timestamp() as u64,
+                provider: "trader-joe-lb".into(),
+            })
+        }
+        SwapDir::Sell(_) => {
+            let route = vec![token, usdc];
+            let quote = q
+                .findBestPathFromAmountOut(route, amount_units)
+                .call()
+                .await
+                .map_err(|e| {
+                    AppError::Internal(anyhow::anyhow!("LB quoter (amountOut) failed: {e}"))
+                })?;
+            // amounts[0] is the token input required for the requested USDC out.
+            let amount_in_token = lb_first_amount(&quote.amounts)?;
+            let max_in = amount_in_token.saturating_mul((10_000 + SLIPPAGE_BPS) as u128) / 10_000;
+            Ok(ValidatedQuote {
+                quote_id: uuid::Uuid::new_v4(),
+                issued_at: now,
+                expires_at: now + Duration::seconds(MAX_QUOTE_TTL_SECS),
+                src_token: token_symbol.to_string(),
+                dest_token: "USDC".into(),
+                src_chain: chain,
+                dest_chain: chain,
+                amount_in: max_in.max(1),
+                min_out: amount_units,
+                slippage_bps: SLIPPAGE_BPS,
+                deadline: (now + Duration::seconds(600)).timestamp() as u64,
+                provider: "trader-joe-lb".into(),
+            })
+        }
+    }
+}
+
+/// The final swap output the LB quoter reports (`amounts.last()`), rejecting an
+/// empty path or a zero (no-liquidity) result.
+#[cfg(feature = "real-swap")]
+fn lb_last_amount(amounts: &[u128]) -> Result<u128> {
+    let out = *amounts
+        .last()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("LB quote returned no amounts")))?;
+    if out == 0 {
+        return Err(AppError::Internal(anyhow::anyhow!(
+            "LB quote returned zero output; no liquidity"
+        )));
+    }
+    Ok(out)
+}
+
+/// The token input the LB quoter reports for an exact-output sell
+/// (`amounts.first()`), rejecting an empty path or a zero result.
+#[cfg(feature = "real-swap")]
+fn lb_first_amount(amounts: &[u128]) -> Result<u128> {
+    let amt = *amounts
+        .first()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("LB quote returned no amounts")))?;
+    if amt == 0 {
+        return Err(AppError::Internal(anyhow::anyhow!(
+            "LB quote returned zero input; no liquidity"
+        )));
+    }
+    Ok(amt)
+}
+
+/// Build the LB v2.2 `Path` for a single-hop USDC↔token swap: one bin step, one
+/// `V2_2` version, and the two-token path.
+#[cfg(feature = "real-swap")]
+fn lb_path(token_in: Address, token_out: Address) -> ILBRouter::Path {
+    ILBRouter::Path {
+        pairBinSteps: vec![U256::from(LB_BIN_STEP)],
+        versions: vec![ILBRouter::Version::V2_2],
+        tokenPath: vec![token_in, token_out],
+    }
+}
+
+/// Resolved args for a Trader Joe LB swap, bundled so `lb_execute` keeps a small
+/// signature (mirrors `CircleSwapArgs` on the V3 path).
+#[cfg(feature = "real-swap")]
+struct LbSwapArgs {
+    chain: ChainKey,
+    dir: SwapDir,
+    amount_in: u128,
+    min_out: u128,
+}
+
+/// Execute a Trader Joe LB (Avax) swap. Fails closed when the LB router/quoter
+/// addresses are unset (`swap_addresses` returns an error). Mirrors the EOA /
+/// non-custodial split of the V3 path.
+#[cfg(feature = "real-swap")]
+async fn lb_execute(
+    cfg: &Config,
+    http: &reqwest::Client,
+    db: &crate::db::Db,
+    user_id: uuid::Uuid,
+    args: LbSwapArgs,
+) -> Result<RealReceipt> {
+    use alloy::network::EthereumWallet;
+    use alloy::providers::WalletProvider;
+    use alloy::signers::local::PrivateKeySigner;
+    use alloy::sol_types::SolCall;
+
+    let LbSwapArgs {
+        chain,
+        dir,
+        amount_in,
+        min_out,
+    } = args;
+    let is_sell = matches!(dir, SwapDir::Sell(_));
+    let token_symbol = match &dir {
+        SwapDir::Buy(t) | SwapDir::Sell(t) => t.as_str(),
+    };
+    let (usdc, token, router, _quoter) = swap_addresses(cfg, chain, token_symbol)?;
+    let (token_in, token_out, approve_token) = if is_sell {
+        (token, usdc, token)
+    } else {
+        (usdc, token, usdc)
+    };
+    let deadline = U256::from((Utc::now() + Duration::seconds(600)).timestamp() as u64);
+
+    if cfg.circle_wallet_exec {
+        let recipient: Address = crate::modules::wallet_routes::address_for_chain(
+            db,
+            user_id,
+            chain,
+            &cfg.circle_wallet_set_id,
+        )
+        .await?
+        .ok_or_else(|| {
+            AppError::ServiceUnavailable(format!(
+                "user has no live {} wallet for non-custodial LB swap",
+                chain.as_str()
+            ))
+        })?
+        .parse()
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("user wallet address unparsable")))?;
+
+        let want = U256::from(amount_in).saturating_mul(U256::from(2u64));
+        let approve_calldata = IERC20Swap::approveCall {
+            spender: router,
+            amount: want,
+        }
+        .abi_encode();
+        crate::modules::wallet::circle_exec::submit_contract_execution(
+            http,
+            cfg,
+            db,
+            user_id,
+            chain,
+            &address_to_hex(approve_token),
+            &hex::encode(approve_calldata),
+            None,
+        )
+        .await?;
+
+        let path = lb_path(token_in, token_out);
+        let swap_calldata = if is_sell {
+            ILBRouter::swapTokensForExactTokensCall {
+                amountOut: U256::from(min_out),
+                amountInMax: U256::from(amount_in),
+                path,
+                to: recipient,
+                deadline,
+            }
+            .abi_encode()
+        } else {
+            ILBRouter::swapExactTokensForTokensCall {
+                amountIn: U256::from(amount_in),
+                amountOutMin: U256::from(min_out),
+                path,
+                to: recipient,
+                deadline,
+            }
+            .abi_encode()
+        };
+        let tx_hash = crate::modules::wallet::circle_exec::submit_contract_execution(
+            http,
+            cfg,
+            db,
+            user_id,
+            chain,
+            &address_to_hex(router),
+            &hex::encode(swap_calldata),
+            None,
+        )
+        .await?;
+        return Ok(RealReceipt {
+            tx_hash,
+            cctp_message_hash: None,
+        });
+    }
+
+    let key_bytes = hex::decode(cfg.chain_private_key_for(chain).trim_start_matches("0x"))
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid private key")))?;
+    let signer = PrivateKeySigner::from_slice(&key_bytes)
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid private key")))?;
+    let wallet = EthereumWallet::from(signer);
+    let provider = ProviderBuilder::new().wallet(wallet).connect_http(
+        cfg.rpc_url_for(chain)
+            .parse()
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
+    );
+    let recipient = provider.default_signer_address();
+
+    let approve_c = IERC20Swap::new(approve_token, &provider);
+    let want = U256::from(amount_in).saturating_mul(U256::from(2u64));
+    let have = approve_c
+        .allowance(recipient, router)
+        .call()
+        .await
+        .unwrap_or(U256::ZERO);
+    if have < want {
+        approve_c
+            .approve(router, want)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("LB approve send: {e}"))?
+            .get_receipt()
+            .await
+            .map_err(|e| anyhow::anyhow!("LB approve receipt: {e}"))?;
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    }
+
+    let router_c = ILBRouter::new(router, &provider);
+    let path = lb_path(token_in, token_out);
+    let receipt = if is_sell {
+        router_c
+            .swapTokensForExactTokens(
+                U256::from(min_out),
+                U256::from(amount_in),
+                path,
+                recipient,
+                deadline,
+            )
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("LB sell swap send: {e}"))?
+            .get_receipt()
+            .await
+            .map_err(|e| anyhow::anyhow!("LB sell swap receipt: {e}"))?
+    } else {
+        router_c
+            .swapExactTokensForTokens(
+                U256::from(amount_in),
+                U256::from(min_out),
+                path,
+                recipient,
+                deadline,
+            )
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("LB buy swap send: {e}"))?
+            .get_receipt()
+            .await
+            .map_err(|e| anyhow::anyhow!("LB buy swap receipt: {e}"))?
+    };
+
+    Ok(RealReceipt {
+        tx_hash: receipt.transaction_hash.to_string(),
+        cctp_message_hash: None,
+    })
+}
+
 #[cfg(feature = "real-swap")]
 async fn real_execute(
     cfg: &Config,
@@ -414,6 +812,25 @@ async fn real_execute(
     };
     // A swap is same-chain: the ticket's quote stamped src==dest at quote time.
     let chain = q.dest_chain;
+
+    // Trader Joe LB (Avax) has its own router ABI — dispatch the whole swap to
+    // the LB path. Every other chain uses the V3-style surface below.
+    if swap_venue(chain) == SwapVenue::TraderJoeLb {
+        return lb_execute(
+            cfg,
+            http,
+            db,
+            user_id,
+            LbSwapArgs {
+                chain,
+                dir,
+                amount_in: q.amount_in,
+                min_out: q.min_out,
+            },
+        )
+        .await;
+    }
+
     let (usdc, token, router, _quoter) = swap_addresses(cfg, chain, &token_symbol)?;
     let amount_in = q.amount_in;
     let min_out = q.min_out;
@@ -663,6 +1080,39 @@ mod tests {
             dest_symbol: Some("ETH".into()),
             amount_usdc: 40.0,
         }
+    }
+
+    #[test]
+    fn avax_routes_to_trader_joe_lb_others_to_uniswap_v3() {
+        assert_eq!(swap_venue(ChainKey::AvaxFuji), SwapVenue::TraderJoeLb);
+        for chain in [
+            ChainKey::Base,
+            ChainKey::EthSepolia,
+            ChainKey::ArbSepolia,
+            ChainKey::OpSepolia,
+            ChainKey::Arc,
+        ] {
+            assert_eq!(swap_venue(chain), SwapVenue::UniswapV3, "{chain:?}");
+        }
+    }
+
+    #[cfg(feature = "real-swap")]
+    #[test]
+    fn avax_lb_venue_capability_tracks_its_lb_router() {
+        let mut cfg = crate::config::test_config();
+        // Unconfigured LB venue → NeedsAddress (fail closed).
+        assert_eq!(
+            capability_for(&cfg, ChainKey::AvaxFuji),
+            AdapterCapability::NeedsAddress
+        );
+        // Wire the LB router + quoter + signer → Live.
+        cfg.trader_joe_lb_router_avax = "0x1111111111111111111111111111111111111111".into();
+        cfg.trader_joe_lb_quoter_avax = "0x2222222222222222222222222222222222222222".into();
+        cfg.chain_private_key_avax = "0xab".into();
+        assert_eq!(
+            capability_for(&cfg, ChainKey::AvaxFuji),
+            AdapterCapability::Live
+        );
     }
 
     #[test]
