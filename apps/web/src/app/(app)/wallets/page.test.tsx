@@ -2,6 +2,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
+import { AccountWalletCard } from "./account-wallet-card";
 import { WalletOperationalPanel } from "./wallet-operational-panel";
 
 beforeAll(() => {
@@ -51,6 +52,30 @@ describe("<WalletOperationalPanel />", () => {
 
     expect(container.textContent).toContain("Wallet ready. Cash is available.");
     expect(button?.disabled).toBe(false);
+
+    act(() => root.unmount());
+  });
+});
+
+describe("<AccountWalletCard />", () => {
+  it("shows a shared account address once for multi-network wallets", () => {
+    const address = "0x8955c4848b7e3ce309700b7001caa2c7df50f7f7";
+    const { container, root } = render(
+      <AccountWalletCard
+        accountAddress={address}
+        networks={["Arc testnet", "Base Sepolia"]}
+        explorerLinks={[
+          { key: "arc", label: "Arc testnet", address },
+          { key: "base", label: "Base Sepolia", address },
+        ]}
+      />,
+    );
+    const text = container.textContent ?? "";
+
+    expect(text).toContain("Use this one address");
+    expect(text).toContain("Arc testnet");
+    expect(text).toContain("Base Sepolia");
+    expect(text.match(new RegExp(address, "g"))).toHaveLength(1);
 
     act(() => root.unmount());
   });

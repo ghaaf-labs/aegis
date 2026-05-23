@@ -24,6 +24,7 @@ import {
   formatGatewayBalanceError,
   walletStatusError,
 } from "@/lib/account-error-copy";
+import { AccountWalletCard } from "./account-wallet-card";
 import { WalletOperationalPanel } from "./wallet-operational-panel";
 
 /**
@@ -363,6 +364,7 @@ export default function WalletPage() {
         networks={allNetworks.map((network) =>
           networkLabel(network.blockchain),
         )}
+        explorerLinks={chains}
       />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -376,6 +378,7 @@ export default function WalletPage() {
             eurc={perChainEurc[c.key] ?? 0}
             eurcUsd={eurcUsd}
             balanceStatus={gatewayBalanceStatus}
+            showFundingAddress={!accountAddress}
           />
         ))}
       </div>
@@ -414,54 +417,6 @@ function networkLabel(blockchain: string) {
   }
 }
 
-function AccountWalletCard({
-  accountAddress,
-  networks,
-}: {
-  accountAddress: string | null;
-  networks: string[];
-}) {
-  return (
-    <BrutalCard>
-      <BrutalCardHeader>
-        <span className="text-sm font-mono text-text-hi">Wallet address</span>
-        <span className="text-xs font-mono text-accent-agent">
-          {networks.length} networks
-        </span>
-      </BrutalCardHeader>
-      <BrutalCardBody className="space-y-3">
-        <p className="text-xs leading-relaxed text-text-lo">
-          Use this address to fund your account. Supported networks are listed
-          below.
-        </p>
-        {accountAddress ? (
-          <code
-            className="block min-w-0 rounded-sharp border border-border-default bg-bg px-3 py-2 text-[11px] font-mono text-text-default break-all"
-            title={accountAddress}
-          >
-            {accountAddress}
-          </code>
-        ) : (
-          <p className="rounded-sharp border border-warn/40 bg-warn/5 px-3 py-2 font-mono text-[11px] text-warn">
-            This account uses separate addresses on some networks. Aegis still
-            shows them as one wallet.
-          </p>
-        )}
-        <div className="flex flex-wrap gap-2">
-          {networks.map((network) => (
-            <span
-              key={network}
-              className="rounded-sharp border border-border-default bg-raised px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-text-lo"
-            >
-              {network}
-            </span>
-          ))}
-        </div>
-      </BrutalCardBody>
-    </BrutalCard>
-  );
-}
-
 interface ChainCardProps {
   chain: ExplorerChain;
   label: string;
@@ -470,6 +425,7 @@ interface ChainCardProps {
   eurc: number;
   eurcUsd: number;
   balanceStatus: "idle" | "loading" | "ready" | "error";
+  showFundingAddress: boolean;
 }
 
 function ChainCard({
@@ -480,6 +436,7 @@ function ChainCard({
   eurc,
   eurcUsd,
   balanceStatus,
+  showFundingAddress,
 }: ChainCardProps) {
   const addressRef = useRef<HTMLElement>(null);
   const [copyState, setCopyState] = useState<
@@ -542,58 +499,60 @@ function ChainCard({
           </div>
         </div>
 
-        <div>
-          <p className="text-[10px] text-text-mut font-mono uppercase tracking-wider mb-1">
-            Funding address
-          </p>
-          <div className="grid gap-2">
-            <code
-              ref={addressRef}
-              tabIndex={0}
-              className="block min-w-0 rounded-sharp border border-border-default bg-bg px-2 py-2 text-[11px] font-mono text-text-default break-all"
-              title={address}
-            >
-              {address}
-            </code>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => void handleCopy()}
-                className="inline-flex min-h-9 items-center justify-center gap-2 rounded-sharp border border-white/10 bg-white/5 px-3 text-xs font-mono text-text-default hover:border-accent-pnl/40 hover:text-accent-pnl"
-                title="Copy address"
-                aria-label={`Copy ${label} address`}
+        {showFundingAddress && (
+          <div>
+            <p className="text-[10px] text-text-mut font-mono uppercase tracking-wider mb-1">
+              Funding address
+            </p>
+            <div className="grid gap-2">
+              <code
+                ref={addressRef}
+                tabIndex={0}
+                className="block min-w-0 rounded-sharp border border-border-default bg-bg px-2 py-2 text-[11px] font-mono text-text-default break-all"
+                title={address}
               >
-                {copyState === "copied" ? (
-                  <Check className="w-3.5 h-3.5 text-accent-pnl" />
-                ) : copyState === "selected" ? (
-                  <Check className="w-3.5 h-3.5 text-warn" />
-                ) : (
-                  <Copy className="w-3.5 h-3.5" />
-                )}
-                {copyState === "copied"
-                  ? "Copied"
-                  : copyState === "selected"
-                    ? "Selected"
-                    : copyState === "failed"
-                      ? "Copy failed"
-                      : "Copy"}
-              </button>
-              {explorerHref && (
-                <a
-                  href={explorerHref}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex min-h-9 items-center justify-center gap-2 rounded-sharp border border-white/10 bg-white/5 px-3 text-xs font-mono text-text-default hover:border-accent-agent/40 hover:text-accent-agent"
-                  title="View on explorer"
-                  aria-label={`View ${label} on explorer`}
+                {address}
+              </code>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleCopy()}
+                  className="inline-flex min-h-9 items-center justify-center gap-2 rounded-sharp border border-white/10 bg-white/5 px-3 text-xs font-mono text-text-default hover:border-accent-pnl/40 hover:text-accent-pnl"
+                  title="Copy address"
+                  aria-label={`Copy ${label} address`}
                 >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                  Explorer
-                </a>
-              )}
+                  {copyState === "copied" ? (
+                    <Check className="w-3.5 h-3.5 text-accent-pnl" />
+                  ) : copyState === "selected" ? (
+                    <Check className="w-3.5 h-3.5 text-warn" />
+                  ) : (
+                    <Copy className="w-3.5 h-3.5" />
+                  )}
+                  {copyState === "copied"
+                    ? "Copied"
+                    : copyState === "selected"
+                      ? "Selected"
+                      : copyState === "failed"
+                        ? "Copy failed"
+                        : "Copy"}
+                </button>
+                {explorerHref && (
+                  <a
+                    href={explorerHref}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex min-h-9 items-center justify-center gap-2 rounded-sharp border border-white/10 bg-white/5 px-3 text-xs font-mono text-text-default hover:border-accent-agent/40 hover:text-accent-agent"
+                    title="View on explorer"
+                    aria-label={`View ${label} on explorer`}
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    Explorer
+                  </a>
+                )}
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </BrutalCardBody>
     </BrutalCard>
   );
