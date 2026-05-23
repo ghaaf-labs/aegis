@@ -1122,11 +1122,9 @@ mod tests {
     }
 
     #[test]
-    fn swap_chain_fails_closed_for_non_execution_or_unset_chains() {
-        // Wallet-supported but non-execution chains must not resolve (OP Sepolia
-        // is the only parseable chain still gated out of execution).
-        assert_eq!(swap_chain(&swap_leg("op-sepolia", "op-sepolia")), None);
-        // Unparsable / unset.
+    fn swap_chain_fails_closed_for_unparsable_or_unset_chains() {
+        // All six EVM testnets are execution chains now; only an unparsable /
+        // non-EVM chain or an unset chain must fail closed.
         assert_eq!(swap_chain(&swap_leg("solana", "solana")), None);
         let mut l = swap_leg("base", "base");
         l.src_chain = None;

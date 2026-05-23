@@ -151,18 +151,22 @@ impl ChainKey {
         }
     }
 
-    /// Whether this chain is wired for live rebalance execution. Arc, Base, and
-    /// Eth Sepolia run the full path (deployed RebalanceExecutor + swap venue);
-    /// Arb Sepolia and Avax Fuji are CCTP source/dest chains under the two-leg
-    /// baseline (plain USDC bridge to the EOA — no executor needed; swaps settle
-    /// on a venue-bearing chain). OP Sepolia stays wallet-only until funded.
-    /// Adding a chain here without the on-chain plumbing would let a plan slip
-    /// past the gate, so this stays in lockstep with
+    /// Whether this chain is wired for live rebalance execution. All six funded
+    /// testnets qualify: Arc/Base/Eth run the full path (deployed
+    /// RebalanceExecutor + swap venue); Arb/Avax/OP are CCTP source/dest chains
+    /// under the two-leg baseline (plain USDC bridge to the EOA — no executor
+    /// needed; swaps settle on a venue-bearing chain). An unparsable / non-EVM
+    /// chain still fails closed (parse returns `None`). Stays in lockstep with
     /// `wallet_routes::EXECUTION_BLOCKCHAINS`.
     pub fn is_execution(&self) -> bool {
         matches!(
             self,
-            Self::Arc | Self::Base | Self::EthSepolia | Self::ArbSepolia | Self::AvaxFuji
+            Self::Arc
+                | Self::Base
+                | Self::EthSepolia
+                | Self::ArbSepolia
+                | Self::AvaxFuji
+                | Self::OpSepolia
         )
     }
 }
@@ -251,21 +255,24 @@ mod tests {
     }
 
     #[test]
-    fn execution_chains_are_arc_base_eth_arb_avax() {
-        // Arc/Base/Eth run the full path; Arb/Avax are CCTP source/dest chains
-        // (two-leg baseline). OP stays non-execution until funded + wired.
+    fn all_six_funded_testnets_are_execution_chains() {
+        // Arc/Base/Eth run the full path; Arb/Avax/OP are CCTP source/dest
+        // chains (two-leg baseline). Unparsable / non-EVM chains still fail
+        // closed via `ChainKey::parse` returning `None`.
         for k in [
             ChainKey::Arc,
             ChainKey::Base,
             ChainKey::EthSepolia,
             ChainKey::ArbSepolia,
             ChainKey::AvaxFuji,
+            ChainKey::OpSepolia,
         ] {
             assert!(k.is_execution(), "{k:?} must be an execution chain");
         }
-        assert!(
-            !ChainKey::OpSepolia.is_execution(),
-            "OP Sepolia must stay non-execution until funded"
+        assert_eq!(
+            ChainKey::parse("solana"),
+            None,
+            "non-EVM chains fail closed"
         );
     }
 }
