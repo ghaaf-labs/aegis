@@ -146,6 +146,13 @@ pub struct AgentDecisionPayload {
     pub calibrated_confidence: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub counterfactual: Option<String>,
+    // Agent-decided allocation (migration 0035). `kind` is
+    // "allocation_proposal" for a Gate-1 proposal (else absent/"rebalance");
+    // `recommended_allocation` is the proposed target weight map {symbol: pct}.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recommended_allocation: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -350,7 +357,9 @@ mod contract_tests {
             raw_confidence: None,
             calibrated_confidence: None,
             counterfactual: None,
-        };
+            kind: None,
+            recommended_allocation: None,
+};
         let v = json(&payload);
         for key in [
             "id",
@@ -414,7 +423,9 @@ mod contract_tests {
             raw_confidence: None,
             calibrated_confidence: None,
             counterfactual: None,
-        });
+            kind: None,
+            recommended_allocation: None,
+});
         let agent_for_other = SseEvent::AgentDecision(AgentDecisionPayload {
             id: uuid::Uuid::nil(),
             portfolio_id: uuid::Uuid::nil(),
@@ -433,7 +444,9 @@ mod contract_tests {
             raw_confidence: None,
             calibrated_confidence: None,
             counterfactual: None,
-        });
+            kind: None,
+            recommended_allocation: None,
+});
         let public_event = SseEvent::PriceTick(PriceTick {
             symbol: "BTC".into(),
             price_usd: 0.0,

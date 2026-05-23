@@ -23,7 +23,7 @@ use super::calibration_train;
 use super::constitution::{self, ClauseViolation, Tier};
 use super::critic as critic_mod;
 use super::memory;
-use super::models::{AgentDecision, AnalyzeRequest};
+use super::models::{AgentDecision, AnalyzeRequest, ProposeAllocationRequest};
 use super::tools;
 use crate::config::ModelRoute;
 use crate::modules::ai::{ChatToolResult, Message, OpenRouterClient, PromptKey};
@@ -555,9 +555,564 @@ pub async fn analyze_portfolio(
             raw_confidence: decision.raw_confidence,
             calibrated_confidence: decision.calibrated_confidence,
             counterfactual: decision.counterfactual.clone(),
+            kind: decision.kind.clone(),
+            recommended_allocation: decision.recommended_allocation.clone(),
         }));
 
     Ok(decision)
+}
+
+// ── Agent-decided allocation (the headline) ─────────────────────────────────
+
+/// Structural + risk guardrails the clamp enforces. Phase 1 extends this with
+/// regime/vol/correlation tilts; Phase 0 keeps the invariant set: a per-asset
+/// cap on volatile sleeves (≤ the constitution's RISK-2 60%) plus a stable +
+/// yield reserve floor derived from the user's risk tolerance.
+#[derive(Debug, Clone, Copy)]
+struct Guardrails {
+    single_asset_cap: f64,
+    stable_floor: f64,
+}
+
+fn derive_guardrails(risk_tolerance: &str) -> Guardrails {
+    match risk_tolerance.to_lowercase().as_str() {
+        "aggressive" => Guardrails {
+            single_asset_cap: 60.0,
+            stable_floor: 5.0,
+        },
+        "moderate" => Guardrails {
+            single_asset_cap: 45.0,
+            stable_floor: 20.0,
+        },
+        // conservative (also the safe default for unknown values)
+        _ => Guardrails {
+            single_asset_cap: 25.0,
+            stable_floor: 50.0,
+        },
+    }
+}
+
+const STABLE_SYMBOLS: &[&str] = &["USDC", "sUSDS", "USYC", "EURC", "aUSDC"];
+
+fn is_stable_symbol(sym: &str) -> bool {
+    STABLE_SYMBOLS.iter().any(|s| s.eq_ignore_ascii_case(sym))
+}
+
+fn round2(x: f64) -> f64 {
+    (x * 100.0).round() / 100.0
+}
+
+/// Deterministic safety net: turn a raw LLM allocation map into a valid target.
+/// Drops non-executable tokens (USDC always allowed) and non-positive weights,
+/// caps any single non-stable asset at the guardrail cap, enforces the
+/// stable/yield reserve floor, normalizes to sum 100, and sweeps the rounding
+/// residual into USDC. Always returns a non-empty map summing to ~100 (USDC-only
+/// in the worst case) — so a bad/refused LLM output can never produce an invalid
+/// or over-concentrated target.
+fn clamp_allocation(
+    raw: &serde_json::Map<String, serde_json::Value>,
+    executable: &[&str],
+    guardrails: Guardrails,
+) -> std::collections::BTreeMap<String, f64> {
+    use std::collections::BTreeMap;
+    let usdc_only = || -> BTreeMap<String, f64> {
+        std::iter::once(("USDC".to_string(), 100.0)).collect()
+    };
+    let exec_ok = |sym: &str| {
+        sym.eq_ignore_ascii_case("USDC") || executable.iter().any(|e| e.eq_ignore_ascii_case(sym))
+    };
+
+    // 1. Keep executable, positive weights (canonicalize USDC casing).
+    let mut weights: BTreeMap<String, f64> = BTreeMap::new();
+    for (sym, v) in raw {
+        let w = v.as_f64().unwrap_or(0.0);
+        if w <= 0.0 || !exec_ok(sym) {
+            continue;
+        }
+        let key = if sym.eq_ignore_ascii_case("USDC") {
+            "USDC".to_string()
+        } else {
+            sym.clone()
+        };
+        *weights.entry(key).or_insert(0.0) += w;
+    }
+    let total: f64 = weights.values().sum();
+    if total <= 0.0 {
+        return usdc_only();
+    }
+
+    // 2. Normalize to sum 100.
+    for w in weights.values_mut() {
+        *w = (*w / total) * 100.0;
+    }
+
+    // 3. Cap each non-stable asset; route the excess into USDC (a stable, so
+    //    this can never re-violate a cap).
+    let mut excess = 0.0;
+    for (k, w) in weights.iter_mut() {
+        if !is_stable_symbol(k) && *w > guardrails.single_asset_cap {
+            excess += *w - guardrails.single_asset_cap;
+            *w = guardrails.single_asset_cap;
+        }
+    }
+    if excess > 0.0 {
+        *weights.entry("USDC".to_string()).or_insert(0.0) += excess;
+    }
+
+    // 4. Enforce the stable/yield reserve floor by scaling non-stables DOWN
+    //    proportionally (never up — so caps still hold) and topping up USDC.
+    let stable_sum: f64 = weights
+        .iter()
+        .filter(|(k, _)| is_stable_symbol(k))
+        .map(|(_, w)| *w)
+        .sum();
+    if stable_sum < guardrails.stable_floor {
+        let nonstable_sum: f64 = weights
+            .iter()
+            .filter(|(k, _)| !is_stable_symbol(k))
+            .map(|(_, w)| *w)
+            .sum();
+        let deficit = (guardrails.stable_floor - stable_sum).min(nonstable_sum);
+        if nonstable_sum > 0.0 && deficit > 0.0 {
+            let scale = (nonstable_sum - deficit) / nonstable_sum;
+            for (k, w) in weights.iter_mut() {
+                if !is_stable_symbol(k) {
+                    *w *= scale;
+                }
+            }
+            *weights.entry("USDC".to_string()).or_insert(0.0) += deficit;
+        }
+    }
+
+    // 5. Round to 0.01 and sweep the residual into USDC so the map sums to 100.
+    for w in weights.values_mut() {
+        *w = round2(*w);
+    }
+    let sum: f64 = weights.values().sum();
+    let residual = round2(100.0 - sum);
+    if residual.abs() >= 0.01 {
+        let usdc = weights.entry("USDC".to_string()).or_insert(0.0);
+        *usdc = round2((*usdc + residual).max(0.0));
+    }
+    weights.retain(|_, w| *w > 0.0);
+    if weights.is_empty() {
+        return usdc_only();
+    }
+    weights
+}
+
+/// Read the user's high-level objective from the goal JSONB (set at onboarding).
+fn goal_objective(goal: &serde_json::Value) -> String {
+    goal.get("objective")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("grow")
+        .to_string()
+}
+
+/// Run the allocator: the agent designs a full target allocation from the
+/// user's objective/horizon/risk + market regime, deterministically clamped to
+/// a valid, executable, non-over-concentrated target. Persists an
+/// `allocation_proposal` decision and broadcasts it over SSE. The user approves
+/// it via [`apply_allocation`].
+pub async fn propose_allocation(
+    state: &AppState,
+    req: ProposeAllocationRequest,
+) -> crate::error::Result<AgentDecision> {
+    use crate::modules::rebalance::registry::{
+        capabilities::RuntimeCapabilities, executable_token_symbols,
+    };
+    let start = Instant::now();
+    let triggered_by = req
+        .triggered_by
+        .clone()
+        .unwrap_or_else(|| "allocation_proposal".to_string());
+
+    let portfolio: Portfolio = sqlx::query_as("SELECT * FROM portfolios WHERE id = $1")
+        .bind(req.portfolio_id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(|| {
+            crate::error::AppError::NotFound(format!("portfolio {}", req.portfolio_id))
+        })?;
+    let allocations: Vec<Allocation> = sqlx::query_as(
+        "SELECT * FROM allocations WHERE portfolio_id = $1 ORDER BY current_weight DESC",
+    )
+    .bind(req.portfolio_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let mut user_profile = fetch_user_profile(state, portfolio.user_id).await?;
+    // The Gate-1 risk dial re-proposes at a different risk level without
+    // mutating the stored goal/profile.
+    if let Some(r) = req.risk_override.as_deref() {
+        let r = r.trim().to_lowercase();
+        if matches!(r.as_str(), "conservative" | "moderate" | "aggressive") {
+            user_profile.risk_tolerance = r;
+        }
+    }
+
+    let snapshot =
+        crate::modules::market_data::service::fetch_snapshot(state.prices.as_ref()).await?;
+    let ai = OpenRouterClient::new(&state.http, &state.config);
+
+    let regime =
+        risk_engine::classify(&ai, &snapshot, state.prompts.as_ref(), Some(&state.db)).await?;
+    let _ = state.sse.send(SseEvent::RegimeFlip(RegimeFlip {
+        from: previous_regime(state, req.portfolio_id).await,
+        to: regime.regime.as_str().to_string(),
+        confidence: regime.confidence,
+        signals: SseRegimeSignals {
+            btc_vol_30d: regime.signals.btc_vol_30d,
+            corr_90d: regime.signals.corr_90d,
+            max_drawdown: regime.signals.max_drawdown,
+        },
+        classified_at: chrono::Utc::now(),
+    }));
+
+    let risk = risk_engine::evaluate(&allocations, &snapshot.assets);
+    let memory_block = memory::build_memory_block(&state.db, req.portfolio_id).await?;
+    let usyc_rate = treasury::service::rate(&state.http, &state.config)
+        .await
+        .map(|r| r.annualized_yield)
+        .unwrap_or(0.0510);
+    let eurc_basis = fx::service::usdc_eurc_basis(state.prices.as_ref(), &state.config)
+        .await
+        .map(|b| b.mid_rate)
+        .unwrap_or(0.92);
+
+    let mut ctx = build_strategist_context(
+        &portfolio,
+        &allocations,
+        &user_profile,
+        &snapshot,
+        &regime,
+        &risk,
+    );
+    ctx.insert("memory", memory_block);
+    ctx.insert("usyc_rate", format!("{:.4}", usyc_rate));
+    ctx.insert("usdc_eurc_basis", format!("{:.4}", eurc_basis));
+    ctx.insert("goal_block", format_goal_block(&portfolio.goal));
+    ctx.insert("objective", goal_objective(&portfolio.goal));
+    let gateway_block = match crate::modules::gateway::service::fetch_balance_for_user(
+        &state.db,
+        &state.http,
+        &state.config,
+        portfolio.user_id,
+    )
+    .await
+    {
+        Ok(b) => format_gateway_block(&b),
+        Err(_) => "Wallet balance: unavailable (Gateway lookup failed).".to_string(),
+    };
+    ctx.insert("wallet_block", gateway_block);
+    ctx.insert("route_capabilities", format_route_capabilities(&state.config));
+
+    let prompt = state.prompts.render(PromptKey::Allocator, &ctx);
+    let resp = ai
+        .chat(
+            ModelRoute::RebalanceReason,
+            vec![
+                Message::system(prompt),
+                Message::user("Design the target allocation as JSON.".to_string()),
+            ],
+        )
+        .await?;
+    let parsed = parse_proposal(&resp.content)?;
+
+    let caps = RuntimeCapabilities::from_config(&state.config);
+    let executable = executable_token_symbols(&caps, &state.config);
+    let guardrails = derive_guardrails(&user_profile.risk_tolerance);
+
+    // Conservative fallback instead of abstain: a low-confidence or empty
+    // proposal falls back to the current target (re-clamped) or USDC-only,
+    // never a no-op — the user always gets something to approve.
+    let low_conf = parsed.confidence < ABSTAIN_CONFIDENCE_THRESHOLD;
+    let raw_map = parsed.recommended_allocation.clone().unwrap_or_default();
+    let clamped = if low_conf || raw_map.is_empty() {
+        match portfolio
+            .goal
+            .get("targetAllocation")
+            .and_then(|v| v.as_object())
+        {
+            Some(obj) if !obj.is_empty() => clamp_allocation(obj, &executable, guardrails),
+            _ => std::iter::once(("USDC".to_string(), 100.0)).collect(),
+        }
+    } else {
+        clamp_allocation(&raw_map, &executable, guardrails)
+    };
+
+    let reasoning = if low_conf {
+        format!(
+            "Low allocator confidence ({:.2}); proposing a conservative reserve allocation. {}",
+            parsed.confidence, parsed.reasoning
+        )
+        .trim()
+        .to_string()
+    } else {
+        parsed.reasoning.clone()
+    };
+    let confidence = parsed.confidence.clamp(0.0, 1.0);
+
+    let alloc_obj: serde_json::Map<String, serde_json::Value> = clamped
+        .iter()
+        .map(|(k, v)| (k.clone(), json!(round2(*v))))
+        .collect();
+    let alloc_value = serde_json::Value::Object(alloc_obj.clone());
+
+    // Constitution check (unconditional) over the clamped allocation. The clamp
+    // already enforces RISK-2 (≤60%), so this is a verification + audit surface;
+    // surfaced in the verdict rather than forcing a revision.
+    let constitution_proposal = StrategistProposal {
+        reasoning: reasoning.clone(),
+        confidence,
+        recommendation: json!({
+            "allocations": clamped
+                .iter()
+                .map(|(k, v)| json!({ "asset": k, "targetWeightPct": v }))
+                .collect::<Vec<_>>(),
+            "expectedMaxDrawdownPct": parsed.expected_max_drawdown_pct,
+        }),
+        recommended_allocation: Some(alloc_obj.clone()),
+        expected_max_drawdown_pct: parsed.expected_max_drawdown_pct,
+    };
+    let violations = evaluate_constitution(
+        &constitution_proposal,
+        &allocations,
+        &portfolio,
+        tier_for_user(&user_profile),
+    );
+    let verdict = if violations.is_empty() {
+        CriticOutput {
+            demands_revision: false,
+            notes: "Constitution clean (allocation clamped to policy).".into(),
+            confidence: 1.0,
+            clause_ids: Vec::new(),
+            verdict: Some("approve".into()),
+        }
+    } else {
+        let ids: Vec<String> = violations.iter().map(|v| v.clause_id.clone()).collect();
+        CriticOutput {
+            demands_revision: false,
+            notes: format!("Constitution advisories after clamp: {}", ids.join(", ")),
+            confidence: 1.0,
+            clause_ids: ids,
+            verdict: Some("advise".into()),
+        }
+    };
+
+    let summary = format!(
+        "Agent target: {}",
+        clamped
+            .iter()
+            .map(|(k, v)| format!("{k} {v:.0}%"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let recommendation_value = json!({
+        "summary": summary,
+        "recommendedAllocation": alloc_value,
+        "expectedMaxDrawdownPct": parsed.expected_max_drawdown_pct,
+    });
+    let critic_value = serde_json::to_value(&verdict)?;
+    let snapshot_value = build_decision_snapshot(&portfolio, &allocations, &snapshot);
+    let latency_ms = start.elapsed().as_millis() as i32;
+
+    let decision: AgentDecision = sqlx::query_as(
+        r#"INSERT INTO agent_decisions
+           (id, portfolio_id, reasoning, recommendation, confidence,
+            triggered_by, model_slug, regime, prompt_tokens, completion_tokens,
+            latency_ms, critic_verdict, snapshot, raw_confidence,
+            calibrated_confidence, counterfactual, kind, recommended_allocation)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+                   $15, $16, $17, $18)
+           RETURNING *"#,
+    )
+    .bind(Uuid::new_v4())
+    .bind(req.portfolio_id)
+    .bind(&reasoning)
+    .bind(&recommendation_value)
+    .bind(confidence)
+    .bind(&triggered_by)
+    .bind(&resp.model_slug)
+    .bind(regime.regime.as_str())
+    .bind(resp.prompt_tokens as i32)
+    .bind(resp.completion_tokens as i32)
+    .bind(latency_ms)
+    .bind(&critic_value)
+    .bind(&snapshot_value)
+    .bind(confidence)
+    .bind(confidence)
+    .bind(Option::<String>::None)
+    .bind("allocation_proposal")
+    .bind(&alloc_value)
+    .fetch_one(&state.db)
+    .await?;
+
+    crate::modules::observability::counters::record_agent_decision();
+
+    let _ = state
+        .sse
+        .send(SseEvent::AgentDecision(AgentDecisionPayload {
+            id: decision.id,
+            portfolio_id: decision.portfolio_id,
+            user_id: portfolio.user_id,
+            reasoning: decision.reasoning.clone(),
+            recommendation: decision.recommendation.clone(),
+            confidence: decision.confidence,
+            triggered_by: decision.triggered_by.clone(),
+            created_at: decision.created_at,
+            model_slug: decision.model_slug.clone(),
+            regime: decision.regime.clone(),
+            prompt_tokens: decision.prompt_tokens,
+            completion_tokens: decision.completion_tokens,
+            latency_ms: decision.latency_ms,
+            critic_verdict: decision.critic_verdict.clone(),
+            raw_confidence: decision.raw_confidence,
+            calibrated_confidence: decision.calibrated_confidence,
+            counterfactual: decision.counterfactual.clone(),
+            kind: decision.kind.clone(),
+            recommended_allocation: decision.recommended_allocation.clone(),
+        }));
+
+    Ok(decision)
+}
+
+/// Row shape for the allocation-proposal ownership/state lookup in
+/// [`apply_allocation`]: (portfolio_id, kind, recommended_allocation, applied_at).
+type AllocationDecisionRow = (
+    Uuid,
+    Option<String>,
+    Option<serde_json::Value>,
+    Option<chrono::DateTime<chrono::Utc>>,
+);
+
+/// Apply an approved allocation proposal: write the agent's target into
+/// `portfolios.goal.targetAllocation` and seed `allocations.target_weight`.
+/// This is the only path (besides onboarding's empty create) that writes the
+/// target — the user owns this decision via Gate-1 approval. Idempotent: a
+/// proposal already applied just returns the current portfolio.
+pub async fn apply_allocation(
+    state: &AppState,
+    decision_id: Uuid,
+    user_id: Uuid,
+) -> crate::error::Result<Portfolio> {
+    use crate::modules::rebalance::registry::{
+        capabilities::RuntimeCapabilities, executable_token_symbols,
+    };
+
+    let row: Option<AllocationDecisionRow> = sqlx::query_as(
+        r#"SELECT d.portfolio_id, d.kind, d.recommended_allocation, d.allocation_applied_at
+           FROM agent_decisions d
+           JOIN portfolios p ON p.id = d.portfolio_id
+           WHERE d.id = $1 AND p.user_id = $2"#,
+    )
+    .bind(decision_id)
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let (portfolio_id, kind, rec_alloc, applied_at) =
+        row.ok_or_else(|| crate::error::AppError::NotFound(format!("decision {decision_id}")))?;
+
+    if kind.as_deref() != Some("allocation_proposal") {
+        return Err(crate::error::AppError::BadRequest(
+            "decision is not an allocation proposal".into(),
+        ));
+    }
+
+    // Idempotent: already applied → return the current portfolio unchanged.
+    if applied_at.is_some() {
+        let p = sqlx::query_as::<_, Portfolio>("SELECT * FROM portfolios WHERE id = $1")
+            .bind(portfolio_id)
+            .fetch_one(&state.db)
+            .await?;
+        return Ok(p);
+    }
+
+    // Re-clamp the stored allocation (defense in depth — never trust a stored
+    // value blindly) against the current executable set + user guardrails.
+    let raw = rec_alloc
+        .as_ref()
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default();
+    let user_profile = fetch_user_profile(state, user_id).await?;
+    let caps = RuntimeCapabilities::from_config(&state.config);
+    let executable = executable_token_symbols(&caps, &state.config);
+    let clamped = clamp_allocation(&raw, &executable, derive_guardrails(&user_profile.risk_tolerance));
+
+    let target_obj: serde_json::Map<String, serde_json::Value> = clamped
+        .iter()
+        .map(|(k, v)| (k.clone(), json!(round2(*v))))
+        .collect();
+    let target_symbols: Vec<String> = clamped.keys().cloned().collect();
+
+    let mut tx = state.db.begin().await?;
+
+    // Merge targetAllocation into the existing goal JSONB (preserve other keys).
+    sqlx::query(
+        "UPDATE portfolios
+            SET goal = jsonb_set(
+                    COALESCE(goal, '{}'::jsonb),
+                    '{targetAllocation}',
+                    $2::jsonb,
+                    true
+                ),
+                updated_at = NOW()
+          WHERE id = $1",
+    )
+    .bind(portfolio_id)
+    .bind(serde_json::Value::Object(target_obj))
+    .execute(&mut *tx)
+    .await?;
+
+    // Seed allocations.target_weight (mirrors portfolio::handlers::create).
+    for (symbol, weight) in &clamped {
+        sqlx::query(
+            "INSERT INTO allocations
+                (id, portfolio_id, asset_symbol, quantity, target_weight, current_weight, value_usd)
+             VALUES ($1, $2, $3, 0, $4, 0, 0)
+             ON CONFLICT (portfolio_id, asset_symbol) DO UPDATE
+                SET target_weight = EXCLUDED.target_weight,
+                    updated_at = NOW()",
+        )
+        .bind(Uuid::new_v4())
+        .bind(portfolio_id)
+        .bind(symbol)
+        .bind(*weight)
+        .execute(&mut *tx)
+        .await?;
+    }
+    // Zero out targets no longer in the allocation, then prune empty rows.
+    sqlx::query(
+        "UPDATE allocations SET target_weight = 0, updated_at = NOW()
+         WHERE portfolio_id = $1 AND asset_symbol <> ALL($2)",
+    )
+    .bind(portfolio_id)
+    .bind(&target_symbols)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "DELETE FROM allocations
+         WHERE portfolio_id = $1 AND target_weight = 0 AND quantity = 0
+           AND value_usd = 0 AND asset_symbol <> ALL($2)",
+    )
+    .bind(portfolio_id)
+    .bind(&target_symbols)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query("UPDATE agent_decisions SET allocation_applied_at = NOW() WHERE id = $1")
+        .bind(decision_id)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+
+    let p = sqlx::query_as::<_, Portfolio>("SELECT * FROM portfolios WHERE id = $1")
+        .bind(portfolio_id)
+        .fetch_one(&state.db)
+        .await?;
+    Ok(p)
 }
 
 // ── Context builders ───────────────────────────────────────────────────────
@@ -1012,6 +1567,13 @@ struct StrategistProposal {
     confidence: f64,
     #[serde(default = "default_recommendation")]
     recommendation: serde_json::Value,
+    /// Allocator output (`PromptKey::Allocator`): the proposed target weights
+    /// {symbol: pct}. Absent on `rebalance`/strategist proposals.
+    #[serde(default, rename = "recommendedAllocation")]
+    recommended_allocation: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Allocator's expected max drawdown for the proposed mix (percent).
+    #[serde(default, rename = "expectedMaxDrawdownPct")]
+    expected_max_drawdown_pct: Option<f64>,
 }
 
 fn default_recommendation() -> serde_json::Value {
@@ -1038,6 +1600,8 @@ fn parse_proposal(raw: &str) -> crate::error::Result<StrategistProposal> {
         reasoning: "Strategist output was unparsable on this pass. Holding the current allocation; retry the action to re-run the agent.".to_string(),
         confidence: 0.4,
         recommendation: default_recommendation(),
+        recommended_allocation: None,
+        expected_max_drawdown_pct: None,
     })
 }
 
@@ -1433,6 +1997,8 @@ mod tests {
             reasoning: "trim BTC".into(),
             confidence: 0.7,
             recommendation: json!({"summary": "Trim BTC", "trades": [], "expectedImpact": {}}),
+            recommended_allocation: None,
+            expected_max_drawdown_pct: None,
         };
         let ctx = build_critic_context(
             &proposal,
@@ -1468,6 +2034,70 @@ mod tests {
             !rendered.contains("{{"),
             "revision prompt has unresolved placeholder(s):\n{rendered}"
         );
+    }
+
+    #[test]
+    fn allocator_prompt_renders_without_unresolved_placeholders() {
+        let reg = PromptRegistry::embedded();
+        let mut ctx = build_strategist_context(
+            &sample_portfolio(),
+            &sample_allocs(),
+            &sample_user(),
+            &sample_snapshot(),
+            &sample_regime(),
+            &sample_risk(),
+        );
+        // Extra inserts the allocator path supplies at runtime.
+        ctx.insert("memory", "(none)".into());
+        ctx.insert("usyc_rate", "0.0510".into());
+        ctx.insert("usdc_eurc_basis", "0.92".into());
+        ctx.insert("goal_block", "grow · horizon 5y · risk moderate".into());
+        ctx.insert("objective", "grow".into());
+        ctx.insert("wallet_block", "Total USDC: 1000.00".into());
+        ctx.insert("route_capabilities", "Executable now: USDC, cbBTC".into());
+        let rendered = reg.render(PromptKey::Allocator, &ctx);
+        assert!(
+            !rendered.contains("{{"),
+            "allocator prompt has unresolved placeholder(s):\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn clamp_allocation_enforces_cap_floor_executable_and_sum() {
+        let raw = json!({ "USDC": 10.0, "cbBTC": 90.0, "SOL": 50.0 })
+            .as_object()
+            .unwrap()
+            .clone();
+        let executable = ["USDC", "cbBTC", "WETH"];
+        let g = derive_guardrails("moderate"); // cap 45, floor 20
+        let out = clamp_allocation(&raw, &executable, g);
+
+        // SOL is not executable → dropped.
+        assert!(!out.contains_key("SOL"));
+        // cbBTC respects the cap even after normalization.
+        assert!(out.get("cbBTC").copied().unwrap_or(0.0) <= g.single_asset_cap + 0.05);
+        // Sums to ~100.
+        let sum: f64 = out.values().sum();
+        assert!((sum - 100.0).abs() < 0.05, "sum={sum}");
+        // Stable/yield floor is met.
+        let stable: f64 = out
+            .iter()
+            .filter(|(k, _)| is_stable_symbol(k))
+            .map(|(_, w)| *w)
+            .sum();
+        assert!(stable >= g.stable_floor - 0.05, "stable={stable}");
+    }
+
+    #[test]
+    fn clamp_allocation_empty_or_garbage_falls_back_to_usdc() {
+        let empty = serde_json::Map::new();
+        let out = clamp_allocation(&empty, &["USDC"], derive_guardrails("conservative"));
+        assert_eq!(out.get("USDC").copied(), Some(100.0));
+
+        // All non-executable → still a valid USDC-only target.
+        let garbage = json!({ "DOGE": 100.0 }).as_object().unwrap().clone();
+        let out = clamp_allocation(&garbage, &["USDC", "cbBTC"], derive_guardrails("aggressive"));
+        assert_eq!(out.get("USDC").copied(), Some(100.0));
     }
 
     #[test]
@@ -1508,6 +2138,8 @@ mod tests {
             reasoning: "test".into(),
             confidence: 0.8,
             recommendation,
+            recommended_allocation: None,
+            expected_max_drawdown_pct: None,
         }
     }
 

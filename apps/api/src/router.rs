@@ -161,6 +161,14 @@ pub async fn build(db: Db, config: Config) -> Router {
             get(agent::handlers::decision_by_id),
         )
         .route("/agent/analyze", post(agent::handlers::analyze))
+        .route(
+            "/agent/propose-allocation",
+            post(agent::handlers::propose_allocation),
+        )
+        .route(
+            "/agent/decisions/:decision_id/approve-allocation",
+            post(agent::handlers::approve_allocation),
+        )
         .route("/users/me/agent", get(agent::pause_handlers::status))
         .route("/users/me/agent/pause", post(agent::pause_handlers::pause))
         .route(
