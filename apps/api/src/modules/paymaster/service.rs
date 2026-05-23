@@ -34,8 +34,57 @@ pub struct FeeEstimate {
     pub is_indicative: bool,
 }
 
-/// Best-effort USDC fee estimate. In mock mode (default for hackathon) the
-/// numbers are deterministic by chain so the UI fee preview is stable.
+/// Representative gas units per action, used to size the live fee estimate.
+const GAS_UNITS_REBALANCE: u64 = 200_000;
+const GAS_UNITS_DEFAULT: u64 = 150_000;
+/// Conservative ETH price (USD) used to convert Base ETH-denominated gas into a
+/// USDC figure. Base gas is paid in ETH and the exact USDC charge comes from
+/// the Circle Paymaster API (premium included), so the Base number stays
+/// flagged `is_indicative` until that API is wired (F-PAYMASTER-1). Arc gas is
+/// native USDC, so its live estimate is exact.
+const ETH_PRICE_USD_HINT: f64 = 3000.0;
+
+fn gas_units_for(action: &str) -> u64 {
+    match action {
+        "rebalance" => GAS_UNITS_REBALANCE,
+        _ => GAS_UNITS_DEFAULT,
+    }
+}
+
+fn stub_fee(chain: PaymasterChain) -> f64 {
+    match chain {
+        PaymasterChain::Arc => 0.012,
+        PaymasterChain::Base => 0.105,
+    }
+}
+
+/// Fetch the current `eth_gasPrice` (wei) from a chain RPC via JSON-RPC.
+async fn fetch_gas_price_wei(rpc_url: &str) -> Option<u128> {
+    if rpc_url.trim().is_empty() {
+        return None;
+    }
+    let client = reqwest::Client::new();
+    let body = serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "eth_gasPrice", "params": []
+    });
+    let resp = client
+        .post(rpc_url)
+        .json(&body)
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+        .ok()?;
+    let v: serde_json::Value = resp.json().await.ok()?;
+    let hex = v.get("result")?.as_str()?;
+    u128::from_str_radix(hex.trim_start_matches("0x"), 16).ok()
+}
+
+/// Best-effort USDC fee estimate. Mock mode returns deterministic stubs (stable
+/// dev preview). In real mode we derive the fee from the chain's live
+/// `eth_gasPrice`: Arc gas is native USDC so the figure is exact
+/// (`is_indicative = false`); Base gas is ETH so we convert via a price hint
+/// and keep the figure `is_indicative` until the Circle Paymaster fee API
+/// lands. Any RPC failure or implausible result falls back to the stub.
 pub async fn estimate(
     config: &Config,
     chain: PaymasterChain,
@@ -45,20 +94,30 @@ pub async fn estimate(
         return Err(AppError::BadRequest("invalid action".into()));
     }
 
-    let fee_usdc = if config.circle_mock {
-        match chain {
-            // Arc: sub-cent native gas, paymaster sponsors fully.
-            PaymasterChain::Arc => 0.012,
-            // Base Sepolia: ERC-4337 paymaster fronts ~$0.10 USDC equivalent.
-            PaymasterChain::Base => 0.105,
-        }
+    let (fee_usdc, is_indicative) = if config.circle_mock {
+        (stub_fee(chain), true)
     } else {
-        // Live fee estimate would hit the paymaster's RPC. Out of scope for
-        // Sprint 2 — we ship the typed surface and stub the value.
-        // Returning the same mock numbers here keeps the contract honest.
-        match chain {
-            PaymasterChain::Arc => 0.012,
-            PaymasterChain::Base => 0.105,
+        let (rpc, native_is_usdc) = match chain {
+            PaymasterChain::Arc => (config.arc_rpc_url.as_str(), true),
+            PaymasterChain::Base => (config.base_rpc_url.as_str(), false),
+        };
+        let units = gas_units_for(action) as f64;
+        match fetch_gas_price_wei(rpc).await {
+            Some(price_wei) => {
+                let native_cost = (price_wei as f64) * units / 1e18;
+                let (fee, indicative) = if native_is_usdc {
+                    (native_cost, false) // Arc: native gas IS USDC.
+                } else {
+                    (native_cost * ETH_PRICE_USD_HINT, true) // Base: ETH→USDC.
+                };
+                // Sanity guard against decimal/units surprises on a new testnet.
+                if fee.is_finite() && fee > 0.0 && fee < 50.0 {
+                    (fee, indicative)
+                } else {
+                    (stub_fee(chain), true)
+                }
+            }
+            None => (stub_fee(chain), true),
         }
     };
 
@@ -67,10 +126,7 @@ pub async fn estimate(
         action: action.to_string(),
         fee_usdc,
         via: "Circle Paymaster",
-        // Both branches return the same stub today — live RPC fee fetch is
-        // tracked under F-PAYMASTER-1. Always flag indicative so the UI
-        // can render an asterisk and tooltip explaining "not a binding quote".
-        is_indicative: true,
+        is_indicative,
     })
 }
 
