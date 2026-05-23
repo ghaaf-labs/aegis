@@ -68,6 +68,9 @@ describe("<AgentReasoningFeed />", () => {
     const { root, container } = render(<AgentReasoningFeed />);
     let text = container.textContent ?? "";
 
+    expect(
+      container.querySelector('button[aria-label="Refresh decisions"]'),
+    ).toBeTruthy();
     expect(text).toContain("Manual");
     expect(text).toContain("0%");
     expect(text).toContain("REVIEW");

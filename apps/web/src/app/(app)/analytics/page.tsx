@@ -194,7 +194,7 @@ export default function AnalyticsPage() {
               Market data via CoinGecko
               {snapshot ? ` · updated ${timeAgo(snapshot.capturedAt)}` : ""}.
               Live prices refresh separately; some aggregate fields may show
-              unavailable when the provider does not supply them.
+              unavailable when the latest snapshot does not include them.
             </p>
           </BrutalCardBody>
         </BrutalCard>

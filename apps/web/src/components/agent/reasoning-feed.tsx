@@ -121,6 +121,7 @@ export function AgentReasoningFeed() {
             onClick={() => void handleRefresh()}
             disabled={refreshing || !portfolio}
             title="Refresh decisions"
+            aria-label="Refresh decisions"
           >
             <RefreshCw
               className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`}
