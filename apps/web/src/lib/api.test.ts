@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { accountApi, walletApi } from "./api";
+import { accountApi, agentApi, walletApi } from "./api";
 
 describe("walletApi.logout", () => {
   afterEach(() => {
@@ -96,6 +96,40 @@ describe("accountApi.exportData", () => {
         credentials: "include",
         body: undefined,
       },
+    );
+  });
+});
+
+describe("agentApi.analyze", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("returns a useful timeout error when recommendation generation hangs", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("Aborted", "AbortError"));
+        });
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = agentApi.analyze("portfolio-1", 25);
+    const assertion = expect(result).rejects.toThrow(
+      "Request timed out. Try again.",
+    );
+    await vi.advanceTimersByTimeAsync(25);
+
+    await assertion;
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:8080/agent/analyze",
+      expect.objectContaining({
+        method: "POST",
+        signal: expect.any(AbortSignal),
+      }),
     );
   });
 });

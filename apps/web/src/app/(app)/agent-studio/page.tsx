@@ -13,6 +13,8 @@ import {
 import { agentApi, userAgentApi } from "@/lib/api";
 import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
 
+const RECOMMENDATION_TIMEOUT_MS = 45_000;
+
 export default function AgentStudioPage() {
   const portfolio = useActivePortfolio();
   const pausedAt = usePortfolioStore((s) => s.agentPausedAt);
@@ -24,6 +26,7 @@ export default function AgentStudioPage() {
   const [busy, setBusy] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const analysisBlocked =
     !portfolio || !wallet || gatewayBalanceStatus !== "ready";
   const analysisBlock = manualAnalysisBlockCopy(
@@ -62,11 +65,16 @@ export default function AgentStudioPage() {
     }
     setAnalyzing(true);
     setError(null);
+    setNotice(null);
     try {
-      const decision = await agentApi.analyze(portfolio.id);
+      const decision = await agentApi.analyze(
+        portfolio.id,
+        RECOMMENDATION_TIMEOUT_MS,
+      );
       addDecision(decision);
+      setNotice("Recommendation ready. Open Dashboard to review it.");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Analysis failed");
+      setError(recommendationErrorCopy(e));
     } finally {
       setAnalyzing(false);
     }
@@ -85,8 +93,8 @@ export default function AgentStudioPage() {
           Agent Studio
         </h1>
         <p className="mt-1 max-w-2xl text-sm text-text-lo">
-          Ask for a fresh recommendation, pause automatic checks, or review the
-          account details the agent uses before suggesting a move.
+          Ask for a recommendation or pause automatic checks. Nothing moves
+          without your approval.
         </p>
       </div>
 
@@ -124,12 +132,12 @@ export default function AgentStudioPage() {
             <span className="text-sm font-mono text-text-hi">
               Fresh recommendation
             </span>
-            <BrutalPill tone="agent">No trades</BrutalPill>
+            <BrutalPill tone="agent">Review only</BrutalPill>
           </BrutalCardHeader>
           <BrutalCardBody className="space-y-4">
             <p className="text-sm leading-relaxed text-text-lo">
-              Reviews your target mix, wallet cash, market data, and recent
-              decisions. It only writes a recommendation; nothing moves.
+              Looks at targets, cash, market data, and recent decisions. It
+              creates a recommendation for you to approve.
             </p>
             {analysisBlocked && (
               <div className="border border-warn/40 bg-warn/5 px-3 py-2 font-mono">
@@ -162,11 +170,19 @@ export default function AgentStudioPage() {
             >
               <Sparkles className="h-4 w-4" />
               {analyzing
-                ? "Checking..."
+                ? "Preparing..."
                 : analysisBlocked
                   ? "Recommendation locked"
                   : "Get recommendation"}
             </BrutalButton>
+            {notice && (
+              <Link
+                href="/dashboard"
+                className="block border border-accent-agent/40 bg-accent-agent/5 px-3 py-2 text-xs font-mono text-accent-agent hover:bg-accent-agent/10"
+              >
+                {notice}
+              </Link>
+            )}
           </BrutalCardBody>
         </BrutalCard>
       </div>
@@ -197,12 +213,26 @@ export default function AgentStudioPage() {
       </BrutalCard>
 
       {error && (
-        <p className="border border-risk/40 bg-risk/5 px-3 py-2 text-xs font-mono text-risk">
+        <p
+          role="alert"
+          className="border border-risk/40 bg-risk/5 px-3 py-2 text-xs font-mono text-risk"
+        >
           {error}
         </p>
       )}
     </div>
   );
+}
+
+function recommendationErrorCopy(error: unknown) {
+  const message = error instanceof Error ? error.message : "";
+  if (message.includes("Request timed out")) {
+    return "Aegis took too long to prepare a recommendation. Try again.";
+  }
+  if (message.startsWith("401:")) {
+    return "Your session expired. Sign in again to continue.";
+  }
+  return message || "Aegis could not prepare a recommendation. Try again.";
 }
 
 function manualAnalysisBlockCopy(

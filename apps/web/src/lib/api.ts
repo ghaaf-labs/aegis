@@ -29,12 +29,19 @@ interface FetchOptions {
   method?: string;
   body?: unknown;
   authed?: boolean;
+  timeoutMs?: number;
 }
 
 async function request<T>(path: string, opts: FetchOptions = {}): Promise<T> {
   const body = opts.body !== undefined ? JSON.stringify(opts.body) : undefined;
+  const controller =
+    opts.timeoutMs !== undefined ? new AbortController() : undefined;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  if (controller && opts.timeoutMs !== undefined) {
+    timeoutId = setTimeout(() => controller.abort(), opts.timeoutMs);
+  }
 
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const init: RequestInit = {
     method: opts.method ?? "GET",
     headers: {
       "Content-Type": "application/json",
@@ -48,17 +55,31 @@ async function request<T>(path: string, opts: FetchOptions = {}): Promise<T> {
     // allow-list (no wildcard).
     credentials: "include",
     body,
-  });
-  if (!res.ok) {
-    const detail = await responseErrorDetail(res);
-    throw new Error(`${res.status}: ${detail}`);
+  };
+  if (controller) init.signal = controller.signal;
+
+  try {
+    const res = await fetch(`${BASE_URL}${path}`, init);
+    if (!res.ok) {
+      const detail = await responseErrorDetail(res);
+      throw new Error(`${res.status}: ${detail}`);
+    }
+    // 204 + zero-length bodies (e.g. DELETE endpoints) have nothing
+    // to parse — return undefined cast to T rather than throwing on JSON parse.
+    if (res.status === 204) return undefined as T;
+    const text = await res.text();
+    if (!text) return undefined as T;
+    return JSON.parse(text) as T;
+  } catch (e) {
+    const errorName =
+      e && typeof e === "object" && "name" in e ? String(e.name) : "";
+    if (errorName === "AbortError") {
+      throw new Error("Request timed out. Try again.");
+    }
+    throw e;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
   }
-  // 204 + zero-length bodies (e.g. DELETE endpoints) have nothing
-  // to parse — return undefined cast to T rather than throwing on JSON parse.
-  if (res.status === 204) return undefined as T;
-  const text = await res.text();
-  if (!text) return undefined as T;
-  return JSON.parse(text) as T;
 }
 
 async function responseErrorDetail(res: Response) {
@@ -347,11 +368,12 @@ export const agentApi = {
     request<AgentDecision>(`/agent/decision/${decisionId}`, {
       authed: true,
     }),
-  analyze: (portfolioId: string) =>
+  analyze: (portfolioId: string, timeoutMs?: number) =>
     request<AgentDecision>("/agent/analyze", {
       method: "POST",
       body: { portfolioId, triggeredBy: "user_request" },
       authed: true,
+      timeoutMs,
     }),
 };
 
