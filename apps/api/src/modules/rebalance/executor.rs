@@ -11,6 +11,7 @@
 use chrono::Utc;
 use uuid::Uuid;
 
+use crate::config::Config;
 use crate::error::{AppError, Result};
 use crate::modules::rebalance::adapters;
 use crate::modules::rebalance::cross_chain::build_hook_payload;
@@ -205,7 +206,7 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
 
     let legs: Vec<LegRow> = sqlx::query_as(
         "SELECT id, leg_index, kind, src_chain, dest_chain, src_symbol,
-                dest_symbol, amount_usdc
+                dest_symbol, amount_usdc, min_out
          FROM rebalance_legs
          WHERE rebalance_id = $1
          ORDER BY leg_index ASC",
@@ -422,17 +423,18 @@ async fn dispatch(
                     "destination wallet address is empty; cannot route mint"
                 )));
             }
-            // USDC-only bridge: zero tokenOut + minOut=0 tells the destination
-            // RebalanceExecutor to skip the swap and just credit USDC. Cross-chain
-            // token hooks are gated upstream (CrossChainTokenSwap blocker).
-            let token_out_zero = "0x0000000000000000000000000000000000000000";
-            let hook = build_hook_payload(
+            // Build the hook from the planned leg. A USDC destination is a plain
+            // bridge (tokenOut == dest USDC → the RebalanceExecutor forwards the
+            // minted USDC). A non-USDC destination is a hooked swap: the
+            // destination RebalanceExecutor swaps USDC→token atomically on mint.
+            let hook = build_cross_chain_hook(
+                &state.config,
                 &recipient,
-                token_out_zero,
-                3000,
-                0,
-                (now.timestamp() + 600) as u64,
-            );
+                ticket.dest_chain(),
+                leg.dest_symbol.as_deref(),
+                leg.min_out,
+                now,
+            )?;
             let r = adapters::cctp::burn(
                 &state.config,
                 &state.http,
@@ -483,6 +485,69 @@ async fn dispatch(
     }
 }
 
+/// Build the 160-byte CCTP V2 hook payload for a cross-chain burn.
+///
+/// USDC destination (or unset symbol): tokenOut = the destination chain's USDC
+/// so the RebalanceExecutor takes its passthrough fast path (no swap, minOut
+/// irrelevant). Non-USDC destination: tokenOut = the token's destination ERC-20
+/// so the executor performs the atomic USDC→token swap on mint. `min_out` is the
+/// planner's slippage-protected target in token units, converted to base units.
+///
+/// Fails closed: a non-USDC destination with no configured ERC-20 (or an
+/// unconfigured destination USDC) returns an error rather than emitting a hook
+/// with a zero tokenOut that the hardened contract would reject/refund anyway.
+fn build_cross_chain_hook(
+    cfg: &Config,
+    recipient: &str,
+    dest_chain: ChainKey,
+    dest_symbol: Option<&str>,
+    min_out: Option<f64>,
+    now: chrono::DateTime<Utc>,
+) -> Result<crate::modules::rebalance::cross_chain::HookPayload> {
+    use crate::modules::rebalance::registry::tokens;
+
+    let deadline = (now.timestamp() + 600) as u64;
+    let symbol = dest_symbol.unwrap_or(tokens::USDC);
+
+    if symbol.eq_ignore_ascii_case(tokens::USDC) {
+        // Plain USDC bridge — tokenOut is the destination USDC; the executor
+        // forwards it directly. minOut is unused on the passthrough path.
+        let usdc = tokens::token(tokens::USDC)
+            .and_then(|t| t.address_for(cfg, dest_chain))
+            .ok_or_else(|| {
+                AppError::Internal(anyhow::anyhow!(
+                    "USDC address unconfigured on {dest_chain:?}; cannot route bridge hook"
+                ))
+            })?;
+        return Ok(build_hook_payload(recipient, usdc, 3000, 0, deadline));
+    }
+
+    let spec = tokens::token(symbol)
+        .ok_or_else(|| AppError::BadRequest(format!("unknown destination token {symbol}")))?;
+    let token_addr = spec.address_for(cfg, dest_chain).ok_or_else(|| {
+        AppError::BadRequest(format!(
+            "{symbol} has no configured ERC-20 on {dest_chain:?}; cross-chain swap cannot route"
+        ))
+    })?;
+
+    // Planner min_out is in whole token units; the contract compares against the
+    // raw on-chain amount, so scale by the token's decimals. Default to 0 when
+    // the planner could not price the leg (the contract still refunds on a real
+    // slippage miss, but a priced min_out is the first line of defense).
+    let min_out_base = min_out
+        .filter(|m| m.is_finite() && *m > 0.0)
+        .map(|m| (m * 10f64.powi(spec.decimals as i32)) as u128)
+        .unwrap_or(0);
+
+    Ok(build_hook_payload(
+        recipient,
+        token_addr,
+        3000,
+        min_out_base,
+        deadline,
+    ))
+}
+
 fn blockchain_for_chain(chain: ChainKey) -> &'static str {
     wallet_routes::blockchain_for_chain(chain)
 }
@@ -509,6 +574,10 @@ struct LegRow {
     src_symbol: Option<String>,
     dest_symbol: Option<String>,
     amount_usdc: f64,
+    /// Planner-computed minimum destination output (token units, slippage
+    /// applied). Set on CrossChainBurn hook-swap legs; `None` for plain
+    /// USDC bridges. Used to size the hook's `min_out`.
+    min_out: Option<f64>,
 }
 
 fn protocol_fee_notional_from_legs(legs: &[LegRow]) -> f64 {
@@ -862,6 +931,7 @@ mod tests {
             src_symbol: None,
             dest_symbol: None,
             amount_usdc,
+            min_out: None,
         }
     }
 
@@ -875,6 +945,7 @@ mod tests {
             src_symbol: Some(src.to_string()),
             dest_symbol: Some(dest.to_string()),
             amount_usdc: 600.0,
+            min_out: None,
         }
     }
 
@@ -921,5 +992,81 @@ mod tests {
         assert_eq!(quantity_for_notional(600.0, 100_000.0), Some(0.006));
         assert_eq!(quantity_for_notional(0.0, 100_000.0), None);
         assert_eq!(quantity_for_notional(600.0, 0.0), None);
+    }
+
+    fn hook_cfg() -> Config {
+        let mut cfg = crate::config::test_config();
+        cfg.usdc_base = "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
+        cfg.weth_base = "0x4200000000000000000000000000000000000006".into();
+        cfg
+    }
+
+    #[test]
+    fn cross_chain_hook_usdc_dest_uses_passthrough() {
+        let cfg = hook_cfg();
+        let hook = build_cross_chain_hook(
+            &cfg,
+            "0xRecipient",
+            ChainKey::Base,
+            Some("USDC"),
+            None,
+            Utc::now(),
+        )
+        .unwrap();
+        // tokenOut == dest USDC → contract takes the passthrough fast path.
+        assert_eq!(hook.token_out, cfg.usdc_base);
+        assert_eq!(hook.min_out, 0);
+    }
+
+    #[test]
+    fn cross_chain_hook_none_symbol_defaults_to_usdc() {
+        let cfg = hook_cfg();
+        let hook =
+            build_cross_chain_hook(&cfg, "0xR", ChainKey::Base, None, None, Utc::now()).unwrap();
+        assert_eq!(hook.token_out, cfg.usdc_base);
+    }
+
+    #[test]
+    fn cross_chain_hook_volatile_dest_uses_token_and_scales_min_out() {
+        let cfg = hook_cfg();
+        // ETH = 18 decimals; planner min_out of 0.5 ETH → 5e17 base units.
+        let hook = build_cross_chain_hook(
+            &cfg,
+            "0xR",
+            ChainKey::Base,
+            Some("ETH"),
+            Some(0.5),
+            Utc::now(),
+        )
+        .unwrap();
+        assert_eq!(hook.token_out, cfg.weth_base);
+        assert_eq!(hook.min_out, 500_000_000_000_000_000);
+        assert_eq!(hook.pool_fee, 3000);
+    }
+
+    #[test]
+    fn cross_chain_hook_fails_closed_without_dest_erc20() {
+        let mut cfg = hook_cfg();
+        cfg.weth_base = String::new();
+        let err = build_cross_chain_hook(
+            &cfg,
+            "0xR",
+            ChainKey::Base,
+            Some("ETH"),
+            Some(0.5),
+            Utc::now(),
+        )
+        .unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+    }
+
+    #[test]
+    fn cross_chain_hook_missing_min_out_defaults_to_zero() {
+        let cfg = hook_cfg();
+        let hook =
+            build_cross_chain_hook(&cfg, "0xR", ChainKey::Base, Some("ETH"), None, Utc::now())
+                .unwrap();
+        assert_eq!(hook.token_out, cfg.weth_base);
+        assert_eq!(hook.min_out, 0);
     }
 }

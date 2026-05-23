@@ -221,17 +221,35 @@ pub fn validate_legs(
         match leg.kind {
             LegKind::CrossChainBurn => {
                 push_cctp_blocker(caps, &mut blockers);
-                // A non-USDC destination means a cross-chain hook swap, which
-                // needs the destination RebalanceExecutor — not wired on testnet.
-                if leg
+                // A non-USDC destination means a cross-chain hook swap: the
+                // destination RebalanceExecutor swaps the minted USDC into the
+                // target token (and refunds USDC on failure). The CCTP blocker
+                // above already requires the destination RebalanceExecutor
+                // address; the remaining requirement is that the target token
+                // has a configured destination ERC-20 the contract can swap
+                // into. Without it the contract has nothing to swap to, so fail
+                // closed here.
+                if let Some(sym) = leg
                     .dest_symbol
                     .as_deref()
-                    .is_some_and(|s| !s.eq_ignore_ascii_case(USDC))
+                    .filter(|s| !s.eq_ignore_ascii_case(USDC))
                 {
-                    blockers.push(RouteBlocker::new(
-                        BlockerCode::CrossChainTokenSwap,
-                        "Cross-chain token buys (bridge + destination swap) are not connected yet. Remove those target sleeves for an executable review.",
-                    ));
+                    let dest_chain = leg
+                        .dest_chain
+                        .as_deref()
+                        .and_then(ChainKey::parse)
+                        .filter(|c| c.is_execution());
+                    let has_dest_erc20 = dest_chain.is_some_and(|c| {
+                        tokens::token(sym).is_some_and(|t| t.address_for(cfg, c).is_some())
+                    });
+                    if !has_dest_erc20 {
+                        blockers.push(RouteBlocker::new(
+                            BlockerCode::CrossChainTokenSwap,
+                            format!(
+                                "{sym} has no configured destination ERC-20, so the cross-chain hook swap cannot route. Remove that target sleeve for an executable review."
+                            ),
+                        ));
+                    }
                 }
             }
             LegKind::CrossChainMint => push_cctp_blocker(caps, &mut blockers),
@@ -495,6 +513,34 @@ mod tests {
         // USYC disabled, EURC KYB-gated → never executable here.
         assert!(!executable_token_symbols(&caps, &cfg).contains(&"USYC"));
         assert!(!executable_token_symbols(&caps, &cfg).contains(&"EURC"));
+    }
+
+    #[test]
+    fn cross_chain_hook_swap_blocked_without_dest_erc20() {
+        // ETH has no configured Base ERC-20 in this cfg → the hook swap cannot
+        // route, so the CrossChainTokenSwap blocker fires.
+        let cfg = real_cfg();
+        let caps = RuntimeCapabilities::from_config(&cfg);
+        let legs = vec![leg(LegKind::CrossChainBurn, "arc", "base", "ETH")];
+        let blockers = validate_legs(&caps, &cfg, &legs);
+        assert!(blockers
+            .iter()
+            .any(|b| b.code == BlockerCode::CrossChainTokenSwap));
+    }
+
+    #[test]
+    fn cross_chain_hook_swap_allowed_with_dest_erc20() {
+        // With a configured Base ERC-20 for the target token, the dedicated
+        // CrossChainTokenSwap blocker no longer fires (CCTP feature gating is a
+        // separate blocker and is allowed to remain).
+        let mut cfg = real_cfg();
+        cfg.weth_base = "0x4200000000000000000000000000000000000006".into();
+        let caps = RuntimeCapabilities::from_config(&cfg);
+        let legs = vec![leg(LegKind::CrossChainBurn, "arc", "base", "ETH")];
+        let blockers = validate_legs(&caps, &cfg, &legs);
+        assert!(!blockers
+            .iter()
+            .any(|b| b.code == BlockerCode::CrossChainTokenSwap));
     }
 
     #[test]
