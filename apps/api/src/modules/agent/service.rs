@@ -570,25 +570,50 @@ pub async fn analyze_portfolio(
 /// yield reserve floor derived from the user's risk tolerance.
 #[derive(Debug, Clone, Copy)]
 struct Guardrails {
+    /// Max weight (%) for any single non-stable asset (≤ RISK-2 60%).
     single_asset_cap: f64,
+    /// Minimum combined weight (%) for the stable/yield reserve sleeve.
     stable_floor: f64,
+    /// Max combined weight (%) across ALL non-stable assets. This is the
+    /// correlation-diversification guardrail: cbBTC/WETH/cbETH move together,
+    /// so the whole crypto sleeve is bounded, not just each leg.
+    volatile_cluster_cap: f64,
 }
 
-fn derive_guardrails(risk_tolerance: &str) -> Guardrails {
-    match risk_tolerance.to_lowercase().as_str() {
-        "aggressive" => Guardrails {
-            single_asset_cap: 60.0,
-            stable_floor: 5.0,
-        },
-        "moderate" => Guardrails {
-            single_asset_cap: 45.0,
-            stable_floor: 20.0,
-        },
-        // conservative (also the safe default for unknown values)
-        _ => Guardrails {
-            single_asset_cap: 25.0,
-            stable_floor: 50.0,
-        },
+/// Regime/vol-aware guardrails. Base caps/floors come from risk tolerance;
+/// `risk_off` raises the stable+yield floor and trims volatile caps, `risk_on`
+/// loosens them, and high BTC realized vol scales the volatile sleeve down.
+fn derive_guardrails(risk_tolerance: &str, regime: &str, btc_vol_30d: f64) -> Guardrails {
+    let (mut single_asset_cap, mut stable_floor, mut volatile_cluster_cap): (f64, f64, f64) =
+        match risk_tolerance.to_lowercase().as_str() {
+            "aggressive" => (60.0, 5.0, 90.0),
+            "moderate" => (45.0, 20.0, 70.0),
+            // conservative (also the safe default for unknown values)
+            _ => (25.0, 50.0, 45.0),
+        };
+    match regime.to_lowercase().as_str() {
+        "risk_off" => {
+            stable_floor = (stable_floor + 20.0).min(80.0);
+            volatile_cluster_cap = (volatile_cluster_cap - 20.0).max(10.0);
+            single_asset_cap = single_asset_cap.min(40.0);
+        }
+        "risk_on" => {
+            stable_floor = (stable_floor - 5.0).max(5.0);
+            volatile_cluster_cap = (volatile_cluster_cap + 10.0).min(95.0);
+        }
+        _ => {}
+    }
+    // High realized vol → trim the volatile sleeve further.
+    if btc_vol_30d > 0.8 {
+        volatile_cluster_cap = (volatile_cluster_cap - 15.0).max(10.0);
+        single_asset_cap = (single_asset_cap - 10.0).max(10.0);
+    }
+    // RISK-2 hard ceiling regardless of inputs.
+    single_asset_cap = single_asset_cap.min(60.0);
+    Guardrails {
+        single_asset_cap,
+        stable_floor,
+        volatile_cluster_cap,
     }
 }
 
@@ -657,6 +682,26 @@ fn clamp_allocation(
     }
     if excess > 0.0 {
         *weights.entry("USDC".to_string()).or_insert(0.0) += excess;
+    }
+
+    // 3b. Cap the combined non-stable (correlated) cluster; route the excess
+    //     into USDC. Scaling down can't re-violate the single-asset cap.
+    let cluster_sum: f64 = weights
+        .iter()
+        .filter(|(k, _)| !is_stable_symbol(k))
+        .map(|(_, w)| *w)
+        .sum();
+    if cluster_sum > guardrails.volatile_cluster_cap && cluster_sum > 0.0 {
+        let scale = guardrails.volatile_cluster_cap / cluster_sum;
+        let mut moved = 0.0;
+        for (k, w) in weights.iter_mut() {
+            if !is_stable_symbol(k) {
+                let nw = *w * scale;
+                moved += *w - nw;
+                *w = nw;
+            }
+        }
+        *weights.entry("USDC".to_string()).or_insert(0.0) += moved;
     }
 
     // 4. Enforce the stable/yield reserve floor by scaling non-stables DOWN
@@ -822,7 +867,11 @@ pub async fn propose_allocation(
 
     let caps = RuntimeCapabilities::from_config(&state.config);
     let executable = executable_token_symbols(&caps, &state.config);
-    let guardrails = derive_guardrails(&user_profile.risk_tolerance);
+    let guardrails = derive_guardrails(
+        &user_profile.risk_tolerance,
+        regime.regime.as_str(),
+        regime.signals.btc_vol_30d,
+    );
 
     // Conservative fallback instead of abstain: a low-confidence or empty
     // proposal falls back to the current target (re-clamped) or USDC-only,
@@ -1038,7 +1087,13 @@ pub async fn apply_allocation(
     let user_profile = fetch_user_profile(state, user_id).await?;
     let caps = RuntimeCapabilities::from_config(&state.config);
     let executable = executable_token_symbols(&caps, &state.config);
-    let clamped = clamp_allocation(&raw, &executable, derive_guardrails(&user_profile.risk_tolerance));
+    // Re-clamp with risk-only baseline guardrails (structural defense-in-depth;
+    // the regime/vol tilts were already applied at propose time).
+    let clamped = clamp_allocation(
+        &raw,
+        &executable,
+        derive_guardrails(&user_profile.risk_tolerance, "neutral", 0.0),
+    );
 
     let target_obj: serde_json::Map<String, serde_json::Value> = clamped
         .iter()
@@ -2069,7 +2124,7 @@ mod tests {
             .unwrap()
             .clone();
         let executable = ["USDC", "cbBTC", "WETH"];
-        let g = derive_guardrails("moderate"); // cap 45, floor 20
+        let g = derive_guardrails("moderate", "neutral", 0.0); // cap 45, floor 20
         let out = clamp_allocation(&raw, &executable, g);
 
         // SOL is not executable → dropped.
@@ -2091,13 +2146,55 @@ mod tests {
     #[test]
     fn clamp_allocation_empty_or_garbage_falls_back_to_usdc() {
         let empty = serde_json::Map::new();
-        let out = clamp_allocation(&empty, &["USDC"], derive_guardrails("conservative"));
+        let out = clamp_allocation(
+            &empty,
+            &["USDC"],
+            derive_guardrails("conservative", "neutral", 0.0),
+        );
         assert_eq!(out.get("USDC").copied(), Some(100.0));
 
         // All non-executable → still a valid USDC-only target.
         let garbage = json!({ "DOGE": 100.0 }).as_object().unwrap().clone();
-        let out = clamp_allocation(&garbage, &["USDC", "cbBTC"], derive_guardrails("aggressive"));
+        let out = clamp_allocation(
+            &garbage,
+            &["USDC", "cbBTC"],
+            derive_guardrails("aggressive", "neutral", 0.0),
+        );
         assert_eq!(out.get("USDC").copied(), Some(100.0));
+    }
+
+    #[test]
+    fn derive_guardrails_tightens_in_risk_off_and_high_vol() {
+        let base = derive_guardrails("aggressive", "neutral", 0.0);
+        let off = derive_guardrails("aggressive", "risk_off", 0.0);
+        assert!(off.stable_floor > base.stable_floor);
+        assert!(off.volatile_cluster_cap < base.volatile_cluster_cap);
+        let high_vol = derive_guardrails("aggressive", "neutral", 1.2);
+        assert!(high_vol.volatile_cluster_cap < base.volatile_cluster_cap);
+        // RISK-2 hard ceiling always holds.
+        assert!(base.single_asset_cap <= 60.0);
+    }
+
+    #[test]
+    fn clamp_allocation_caps_volatile_cluster() {
+        // conservative + risk_off → a low cluster cap; an all-crypto raw is
+        // heavily trimmed back into the stable reserve.
+        let raw = json!({ "cbBTC": 50.0, "WETH": 50.0 })
+            .as_object()
+            .unwrap()
+            .clone();
+        let g = derive_guardrails("conservative", "risk_off", 0.0);
+        let out = clamp_allocation(&raw, &["USDC", "cbBTC", "WETH"], g);
+        let cluster: f64 = out
+            .iter()
+            .filter(|(k, _)| !is_stable_symbol(k))
+            .map(|(_, w)| *w)
+            .sum();
+        assert!(
+            cluster <= g.volatile_cluster_cap + 0.1,
+            "cluster={cluster} cap={}",
+            g.volatile_cluster_cap
+        );
     }
 
     #[test]
