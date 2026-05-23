@@ -232,16 +232,7 @@ export default function PolicyPage() {
       </div>
 
       <footer className="mt-10 border-t border-border-default pt-6 text-xs font-mono text-text-mut">
-        <p>
-          The agent&apos;s hard constraints are published at{" "}
-          <Link
-            href="/about/constitution"
-            className="text-accent-agent hover:underline underline-offset-4"
-          >
-            /about/constitution
-          </Link>
-          . Last reviewed 2026-05-16.
-        </p>
+        <p>Last reviewed 2026-05-16.</p>
       </footer>
     </LandingShell>
   );

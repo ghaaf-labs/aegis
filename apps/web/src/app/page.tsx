@@ -5,17 +5,21 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import {
   ArrowRight,
-  Brain,
-  Shield,
-  TrendingUp,
-  Zap,
   BarChart3,
   Bot,
-  Trophy,
-  FileSpreadsheet,
-  X,
+  Brain,
   ChevronRight,
   ExternalLink,
+  FileSpreadsheet,
+  PieChart,
+  Shield,
+  Sparkles,
+  Target,
+  TrendingUp,
+  Trophy,
+  Wallet,
+  X,
+  Zap,
 } from "lucide-react";
 import { BrutalButton, BrutalPill } from "@aegis/ui";
 import { cn } from "@/lib/utils";
@@ -71,59 +75,75 @@ const TICKER_ITEMS = [
 const FEATURES = [
   {
     icon: Brain,
-    accent: "agent",
     title: "Multi-model agent loop",
     description:
       "DeepSeek proposes, GPT mini critiques, Qwen classifies regime — each routed via OpenRouter. Every decision surfaces the model slug it used.",
   },
   {
     icon: Shield,
-    accent: "agent",
-    title: "USDC-native on Arc + Base",
+    title: "Real on-chain execution",
     description:
-      "Cross-chain rebalancing via CCTP V2 + Hooks. Gas paid in USDC by Circle Paymaster — never bridge ETH again. EURC sleeve via Arc StableFX.",
+      "CCTP V2 bridge, Uniswap V3 swaps on Base, USYC Teller on Arc — route registry validates every leg before approval, never at submit time.",
   },
   {
     icon: Zap,
-    accent: "agent",
     title: "Transparent reasoning",
     description:
       "Every decision ships with the strategist's prose, the critic's verdict, and a public diary — judge the agent on the receipts, not the demo.",
   },
   {
     icon: Bot,
-    accent: "agent",
     title: "You approve every move",
     description:
       "Set your goal once. The agent monitors 24/7 and proposes — you click Approve. Single modal, USDC fee preview, no surprises.",
   },
   {
     icon: TrendingUp,
-    accent: "agent",
     title: "Realtime via SSE",
     description:
-      "Server-sent events stream price ticks, regime flips, agent decisions, and rebalance legs the moment they happen.",
+      "Price ticks, regime flips, agent decisions, and rebalance legs streamed the moment they happen — no polling, no refresh.",
   },
   {
     icon: BarChart3,
-    accent: "pnl",
     title: "Yield on idle USDC",
     description:
       "Park cash in USYC for the Hashnote treasury rate. The strategist factors current yield into every rebalance proposal.",
   },
   {
     icon: FileSpreadsheet,
-    accent: "pnl",
     title: "Tax-loss harvesting + 1099-DA",
     description:
       "The strategist spots open lots at a loss and proposes a harvest. Export a 1099-DA-ready CSV for your accountant.",
   },
   {
     icon: Trophy,
-    accent: "pnl",
     title: "Trustability score + peg defense",
     description:
       "A rolling score grades decisions against realized outcomes. Peg-defense auto-proposes rebalances the moment a stablecoin drifts.",
+  },
+  {
+    icon: Sparkles,
+    title: "Agent Studio",
+    description:
+      "Pause, resume, or trigger the agent on demand. See live capital context — idle cash, invested value, gateway status — before every run.",
+  },
+  {
+    icon: Target,
+    title: "Curated strategies",
+    description:
+      "Start from a battle-tested allocation: Conservative USDC hold, Balanced yield + FX, or Growth USYC heavy. Adopt in one click.",
+  },
+  {
+    icon: Wallet,
+    title: "Multi-chain wallets",
+    description:
+      "Arc + Base wallets in one view. Per-chain USDC, USYC, EURC balances with live route states — Ready, Track only, or Needs KYB.",
+  },
+  {
+    icon: PieChart,
+    title: "Portfolio analytics",
+    description:
+      "Decision quality score, regime overlay, target vs actual allocation drift, and wallet cash breakdown — all in one compact screen.",
   },
 ];
 
@@ -404,9 +424,7 @@ export default function LandingPage() {
         <div className="border-brutal border-border-default bg-surface shadow-brutal">
           {/* Browser chrome */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-border-default bg-raised">
-            <span className="text-xs text-text-mut font-mono">
-              aegis.app/dashboard
-            </span>
+            <span className="text-xs text-text-mut font-mono">dashboard</span>
             <div className="flex items-center gap-2">
               <span className="flex items-center gap-1 text-[10px] font-mono text-accent-agent">
                 <span className="w-1.5 h-1.5 rounded-full bg-accent-agent animate-pulse" />
@@ -730,6 +748,285 @@ export default function LandingPage() {
         </motion.div>
       </section>
 
+      {/* Product tour */}
+      <section className="relative z-10 max-w-6xl mx-auto px-6 pb-24">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          className="text-center mb-12"
+        >
+          <h2 className="text-3xl font-bold font-mono mb-3">
+            Every surface, built for control
+          </h2>
+          <p className="text-text-lo max-w-xl mx-auto">
+            From strategy selection to on-chain execution — every screen is
+            designed around one principle: you stay in control.
+          </p>
+        </motion.div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Strategies mockup */}
+          <motion.div
+            initial={{ opacity: 0, x: -20 }}
+            whileInView={{ opacity: 1, x: 0 }}
+            viewport={{ once: true }}
+            className="border-brutal border-border-default bg-surface overflow-hidden"
+          >
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-border-default bg-raised">
+              <span className="text-[10px] font-mono text-text-mut">
+                strategies
+              </span>
+              <span className="text-[10px] font-mono text-accent-agent">
+                3 curated
+              </span>
+            </div>
+            <div className="p-4 space-y-3">
+              {[
+                {
+                  name: "Conservative Hold",
+                  alloc: "USDC 80% · USYC 20%",
+                  tag: "Low risk",
+                  color: "text-accent-agent",
+                },
+                {
+                  name: "Balanced Yield + FX",
+                  alloc: "USDC 50% · USYC 30% · EURC 20%",
+                  tag: "Medium risk",
+                  color: "text-text-default",
+                },
+                {
+                  name: "Growth USYC Heavy",
+                  alloc: "USDC 20% · USYC 65% · EURC 15%",
+                  tag: "Higher yield",
+                  color: "text-accent-pnl",
+                },
+              ].map((s) => (
+                <div
+                  key={s.name}
+                  className="flex items-center justify-between p-3 border border-border-default bg-raised/50 hover:bg-raised transition-colors"
+                >
+                  <div>
+                    <p className="text-xs font-mono font-semibold text-text-hi">
+                      {s.name}
+                    </p>
+                    <p className="text-[10px] font-mono text-text-mut mt-0.5">
+                      {s.alloc}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={cn(
+                        "text-[10px] font-mono border px-1.5 py-0.5",
+                        s.color === "text-accent-agent"
+                          ? "border-accent-agent/30 text-accent-agent"
+                          : s.color === "text-accent-pnl"
+                            ? "border-accent-pnl/30 text-accent-pnl"
+                            : "border-border-default text-text-lo",
+                      )}
+                    >
+                      {s.tag}
+                    </span>
+                    <span className="text-[10px] font-mono text-accent-agent">
+                      Adopt →
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+
+          {/* Agent Studio + Wallets stack */}
+          <div className="flex flex-col gap-6">
+            {/* Agent Studio mockup */}
+            <motion.div
+              initial={{ opacity: 0, x: 20 }}
+              whileInView={{ opacity: 1, x: 0 }}
+              viewport={{ once: true }}
+              className="border-brutal border-border-default bg-surface overflow-hidden"
+            >
+              <div className="flex items-center justify-between px-4 py-2.5 border-b border-border-default bg-raised">
+                <span className="text-[10px] font-mono text-text-mut">
+                  agent-studio
+                </span>
+                <span className="flex items-center gap-1 text-[10px] font-mono text-accent-pnl">
+                  <span className="w-1.5 h-1.5 rounded-full bg-accent-pnl animate-pulse" />
+                  active
+                </span>
+              </div>
+              <div className="p-4 grid grid-cols-2 gap-3">
+                <div className="border border-border-default bg-raised p-3 space-y-1">
+                  <p className="text-[10px] font-mono text-text-lo uppercase tracking-widest">
+                    Idle cash
+                  </p>
+                  <p className="text-lg font-mono font-bold text-text-hi tabular-nums">
+                    $1,240
+                  </p>
+                  <p className="text-[10px] font-mono text-accent-agent">
+                    ready to deploy
+                  </p>
+                </div>
+                <div className="border border-border-default bg-raised p-3 space-y-1">
+                  <p className="text-[10px] font-mono text-text-lo uppercase tracking-widest">
+                    Invested
+                  </p>
+                  <p className="text-lg font-mono font-bold text-text-hi tabular-nums">
+                    $22,940
+                  </p>
+                  <p className="text-[10px] font-mono text-text-mut">
+                    across 3 assets
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="col-span-2 flex items-center justify-center gap-2 border border-accent-agent/30 bg-accent-agent/5 py-2 text-xs font-mono text-accent-agent hover:bg-accent-agent/10 transition-colors"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Trigger analysis now
+                </button>
+              </div>
+            </motion.div>
+
+            {/* Wallets mockup */}
+            <motion.div
+              initial={{ opacity: 0, x: 20 }}
+              whileInView={{ opacity: 1, x: 0 }}
+              viewport={{ once: true }}
+              transition={{ delay: 0.1 }}
+              className="border-brutal border-border-default bg-surface overflow-hidden"
+            >
+              <div className="flex items-center justify-between px-4 py-2.5 border-b border-border-default bg-raised">
+                <span className="text-[10px] font-mono text-text-mut">
+                  wallets
+                </span>
+                <span className="text-[10px] font-mono text-text-mut">
+                  Arc · Base
+                </span>
+              </div>
+              <div className="p-4 space-y-2">
+                {[
+                  {
+                    token: "USDC",
+                    chain: "Arc",
+                    balance: "$14,990",
+                    route: "READY",
+                    routeColor: "text-accent-pnl border-accent-pnl/30",
+                  },
+                  {
+                    token: "USYC",
+                    chain: "Arc",
+                    balance: "$5,800",
+                    route: "READY",
+                    routeColor: "text-accent-pnl border-accent-pnl/30",
+                  },
+                  {
+                    token: "EURC",
+                    chain: "Arc",
+                    balance: "$3,390",
+                    route: "TRACK ONLY",
+                    routeColor: "text-text-lo border-border-default",
+                  },
+                  {
+                    token: "USDC",
+                    chain: "Base",
+                    balance: "$2,040",
+                    route: "READY",
+                    routeColor: "text-accent-pnl border-accent-pnl/30",
+                  },
+                ].map((row) => (
+                  <div
+                    key={`${row.token}-${row.chain}`}
+                    className="flex items-center justify-between py-1.5"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono font-semibold text-text-hi">
+                        {row.token}
+                      </span>
+                      <span className="text-[10px] font-mono text-text-mut border border-border-default px-1">
+                        {row.chain}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono text-text-default tabular-nums">
+                        {row.balance}
+                      </span>
+                      <span
+                        className={cn(
+                          "text-[9px] font-mono border px-1.5 py-0.5",
+                          row.routeColor,
+                        )}
+                      >
+                        {row.route}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          </div>
+        </div>
+
+        {/* Analytics mockup — full width */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          className="mt-6 border-brutal border-border-default bg-surface overflow-hidden"
+        >
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-border-default bg-raised">
+            <span className="text-[10px] font-mono text-text-mut">
+              analytics · portfolio telemetry
+            </span>
+            <span className="text-[10px] font-mono text-accent-agent">
+              consolidating regime
+            </span>
+          </div>
+          <div className="p-4 grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[
+              {
+                label: "Net worth",
+                value: "$24,180",
+                sub: "↑ +2.4% today",
+                subColor: "text-accent-pnl",
+              },
+              {
+                label: "Decision quality",
+                value: "82%",
+                sub: "avg confidence · 14 decisions",
+                subColor: "text-text-mut",
+              },
+              {
+                label: "Target drift",
+                value: "3.2%",
+                sub: "USDC over-weight",
+                subColor: "text-text-mut",
+              },
+              {
+                label: "BTC dominance",
+                value: "58.4%",
+                sub: "risk-off signal",
+                subColor: "text-text-mut",
+              },
+            ].map((s) => (
+              <div
+                key={s.label}
+                className="border border-border-default bg-raised p-3"
+              >
+                <p className="text-[10px] font-mono text-text-lo uppercase tracking-widest mb-1">
+                  {s.label}
+                </p>
+                <p className="text-xl font-mono font-bold text-text-hi tabular-nums">
+                  {s.value}
+                </p>
+                <p className={cn("text-[10px] font-mono mt-0.5", s.subColor)}>
+                  {s.sub}
+                </p>
+              </div>
+            ))}
+          </div>
+        </motion.div>
+      </section>
+
       {/* Circle stack */}
       <section className="relative z-10 max-w-6xl mx-auto px-6 pb-16">
         <motion.div
@@ -806,41 +1103,26 @@ export default function LandingPage() {
         </motion.div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {FEATURES.map((feature, i) => {
-            const isAgent = feature.accent === "agent";
-            return (
-              <motion.div
-                key={feature.title}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: i * 0.06 }}
-                className="p-5 border-brutal border-border-default bg-surface hover:bg-raised transition-colors group"
-              >
-                <div
-                  className={cn(
-                    "w-9 h-9 rounded-sharp flex items-center justify-center mb-3 border-brutal transition-colors",
-                    isAgent
-                      ? "bg-accent-agent/10 border-accent-agent/20 group-hover:bg-accent-agent/20"
-                      : "bg-accent-pnl/10 border-accent-pnl/20 group-hover:bg-accent-pnl/20",
-                  )}
-                >
-                  <feature.icon
-                    className={cn(
-                      "w-4 h-4",
-                      isAgent ? "text-accent-agent" : "text-accent-pnl",
-                    )}
-                  />
-                </div>
-                <h3 className="font-semibold text-sm text-text-hi mb-1.5 font-mono">
-                  {feature.title}
-                </h3>
-                <p className="text-xs text-text-lo leading-relaxed">
-                  {feature.description}
-                </p>
-              </motion.div>
-            );
-          })}
+          {FEATURES.map((feature, i) => (
+            <motion.div
+              key={feature.title}
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ delay: i * 0.05 }}
+              className="p-5 border-brutal border-border-default bg-surface hover:bg-raised transition-colors group"
+            >
+              <div className="w-9 h-9 rounded-sharp flex items-center justify-center mb-3 border-brutal bg-accent-agent/10 border-accent-agent/20 group-hover:bg-accent-agent/20 transition-colors">
+                <feature.icon className="w-4 h-4 text-accent-agent" />
+              </div>
+              <h3 className="font-semibold text-sm text-text-hi mb-1.5 font-mono">
+                {feature.title}
+              </h3>
+              <p className="text-xs text-text-lo leading-relaxed">
+                {feature.description}
+              </p>
+            </motion.div>
+          ))}
         </div>
       </section>
 

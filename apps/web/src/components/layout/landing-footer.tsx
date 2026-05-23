@@ -2,6 +2,37 @@ import Link from "next/link";
 import { Shield } from "lucide-react";
 import { PRICING_UI_ENABLED } from "@/lib/flags";
 
+const CIRCLE_LINKS = [
+  {
+    label: "Wallets",
+    href: "https://developers.circle.com/wallets",
+  },
+  {
+    label: "Gateway",
+    href: "https://developers.circle.com/gateway",
+  },
+  {
+    label: "CCTP V2",
+    href: "https://developers.circle.com/cctp",
+  },
+  {
+    label: "USYC",
+    href: "https://usyc.docs.hashnote.com",
+  },
+  {
+    label: "Paymaster",
+    href: "https://developers.circle.com/paymaster",
+  },
+  {
+    label: "StableFX",
+    href: "https://developers.circle.com/stablefx",
+  },
+  {
+    label: "Nanopayments",
+    href: "https://developers.circle.com/gateway/nanopayments",
+  },
+];
+
 export function LandingFooter() {
   return (
     <footer className="border-t border-border-default bg-surface px-6 py-10">
@@ -16,13 +47,12 @@ export function LandingFooter() {
           </span>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-8">
-          <div className="space-y-3">
-            <p className="text-xs font-mono text-text-lo uppercase tracking-widest">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-8 mb-8">
+          <div className="space-y-2">
+            <p className="text-xs font-mono text-text-lo uppercase tracking-widest py-1">
               Product
             </p>
             {[
-              { href: "/strategies", label: "Strategies" },
               { href: "/leaderboard", label: "Leaderboard" },
               { href: "/explore", label: "Demo portfolios" },
               ...(PRICING_UI_ENABLED
@@ -32,64 +62,46 @@ export function LandingFooter() {
               <Link
                 key={link.href}
                 href={link.href}
-                className="flex min-h-9 items-center text-xs font-mono text-text-mut hover:text-text-hi transition-colors"
+                className="flex items-center py-1 text-xs font-mono text-text-mut hover:text-text-hi transition-colors"
               >
                 {link.label}
               </Link>
             ))}
           </div>
-          <div className="space-y-3">
-            <p className="text-xs font-mono text-text-lo uppercase tracking-widest">
+
+          <div className="space-y-2">
+            <p className="text-xs font-mono text-text-lo uppercase tracking-widest py-1">
               Transparency
             </p>
             {[
               { href: "/about", label: "About us" },
-              { href: "/about/constitution", label: "Agent constitution" },
               { href: "/about/regime", label: "Regime model" },
               { href: "/policy", label: "Policy" },
             ].map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
-                className="flex min-h-9 items-center text-xs font-mono text-text-mut hover:text-text-hi transition-colors"
+                className="flex items-center py-1 text-xs font-mono text-text-mut hover:text-text-hi transition-colors"
               >
                 {link.label}
               </Link>
             ))}
           </div>
-          <div className="space-y-3">
-            <p className="text-xs font-mono text-text-lo uppercase tracking-widest">
-              Get started
-            </p>
-            {[
-              { href: "/login", label: "Continue" },
-              { href: "/onboarding", label: "Build portfolio" },
-            ].map((link) => (
-              <Link
-                key={link.href}
-                href={link.href}
-                className="flex min-h-9 items-center text-xs font-mono text-text-mut hover:text-text-hi transition-colors"
-              >
-                {link.label}
-              </Link>
-            ))}
-          </div>
-          <div className="space-y-3">
-            <p className="text-xs font-mono text-text-lo uppercase tracking-widest">
+
+          <div className="space-y-2">
+            <p className="text-xs font-mono text-text-lo uppercase tracking-widest py-1">
               Circle stack
             </p>
-            {[
-              "Wallets",
-              "Gateway",
-              "CCTP V2",
-              "USYC",
-              "Paymaster",
-              "StableFX",
-              "Nanopayments",
-            ].map((api) => (
-              <span key={api} className="block text-xs font-mono text-text-mut">
-                {api}
-              </span>
+            {CIRCLE_LINKS.map((link) => (
+              <Link
+                key={link.label}
+                href={link.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center py-1 text-xs font-mono text-text-mut hover:text-text-hi transition-colors"
+              >
+                {link.label}
+              </Link>
             ))}
           </div>
         </div>

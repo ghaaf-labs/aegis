@@ -32,17 +32,18 @@ export function LandingHeader() {
           >
             Explore demo
           </Link>
-          <Link
-            href="/strategies"
-            className="text-xs font-mono text-text-lo hover:text-text-hi transition-colors"
-          >
-            Strategies
-          </Link>
+
           <Link
             href="/leaderboard"
             className="text-xs font-mono text-text-lo hover:text-text-hi transition-colors"
           >
             Leaderboard
+          </Link>
+          <Link
+            href="/about"
+            className="text-xs font-mono text-text-lo hover:text-text-hi transition-colors"
+          >
+            About
           </Link>
           <Link href="/login" className="inline-flex">
             <BrutalButton variant="pnl">Get started</BrutalButton>
