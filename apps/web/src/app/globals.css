@@ -65,6 +65,24 @@
 }
 
 @layer utilities {
+  /*
+   * .touch-target — expands the interactive hit area to ≥44×44px on coarse
+   * pointers (mobile/touch) without changing the visual size. Apply to icon
+   * buttons, nav links, and compact controls that can't reach 44px naturally.
+   * Works via a pseudo-element so siblings are unaffected.
+   */
+  .touch-target {
+    position: relative;
+  }
+  .touch-target::after {
+    content: "";
+    position: absolute;
+    inset: 50% auto auto 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
+
   .glass {
     @apply bg-white/10 backdrop-blur-md border border-white/20;
   }
