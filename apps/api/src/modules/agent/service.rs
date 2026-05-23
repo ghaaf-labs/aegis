@@ -1066,6 +1066,8 @@ type AllocationDecisionRow = (
     Option<String>,
     Option<serde_json::Value>,
     Option<chrono::DateTime<chrono::Utc>>,
+    // The regime the proposal was clamped under (so apply re-clamps identically).
+    Option<String>,
 );
 
 /// Apply an approved allocation proposal: write the agent's target into
@@ -1083,7 +1085,8 @@ pub async fn apply_allocation(
     };
 
     let row: Option<AllocationDecisionRow> = sqlx::query_as(
-        r#"SELECT d.portfolio_id, d.kind, d.recommended_allocation, d.allocation_applied_at
+        r#"SELECT d.portfolio_id, d.kind, d.recommended_allocation,
+                  d.allocation_applied_at, d.regime
            FROM agent_decisions d
            JOIN portfolios p ON p.id = d.portfolio_id
            WHERE d.id = $1 AND p.user_id = $2"#,
@@ -1092,7 +1095,7 @@ pub async fn apply_allocation(
     .bind(user_id)
     .fetch_optional(&state.db)
     .await?;
-    let (portfolio_id, kind, rec_alloc, applied_at) =
+    let (portfolio_id, kind, rec_alloc, applied_at, decision_regime) =
         row.ok_or_else(|| crate::error::AppError::NotFound(format!("decision {decision_id}")))?;
 
     if kind.as_deref() != Some("allocation_proposal") {
@@ -1119,12 +1122,20 @@ pub async fn apply_allocation(
     let user_profile = fetch_user_profile(state, user_id).await?;
     let caps = RuntimeCapabilities::from_config(&state.config);
     let executable = executable_token_symbols(&caps, &state.config);
-    // Re-clamp with risk-only baseline guardrails (structural defense-in-depth;
-    // the regime/vol tilts were already applied at propose time).
+    // Re-clamp as defense-in-depth (never trust a stored value blindly: drop a
+    // token that became non-executable since propose, re-normalize). Use the
+    // *decision's own regime* so the guardrails match the ones the proposal was
+    // clamped under — otherwise a regime-tilted proposal (e.g. a wider risk_on
+    // single-asset cap) would be silently re-tightened under a neutral baseline,
+    // making the adopted target diverge from the one the user/auto-pilot saw.
     let clamped = clamp_allocation(
         &raw,
         &executable,
-        derive_guardrails(&user_profile.risk_tolerance, "neutral", 0.0),
+        derive_guardrails(
+            &user_profile.risk_tolerance,
+            decision_regime.as_deref().unwrap_or("neutral"),
+            0.0,
+        ),
     );
 
     let target_obj: serde_json::Map<String, serde_json::Value> = clamped
@@ -1716,7 +1727,7 @@ fn parse_proposal(raw: &str) -> crate::error::Result<StrategistProposal> {
 
 #[derive(Deserialize, serde::Serialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-struct CriticOutput {
+pub(crate) struct CriticOutput {
     #[serde(default, rename = "demandsRevision", alias = "demands_revision")]
     demands_revision: bool,
     #[serde(default)]
@@ -1733,6 +1744,15 @@ struct CriticOutput {
     /// (with demands_revision) or "approve".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     verdict: Option<String>,
+}
+
+impl CriticOutput {
+    /// True when the verdict cites no violated constitution clauses. The
+    /// autonomous (auto-pilot) path uses this to refuse to adopt/execute a
+    /// flagged allocation.
+    pub(crate) fn constitution_clean(&self) -> bool {
+        self.clause_ids.is_empty()
+    }
 }
 
 /// Map the strategist's structured proposal into the constitution's

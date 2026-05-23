@@ -18,7 +18,9 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::modules::agent::models::{AgentDecision, AnalyzeRequest, ProposeAllocationRequest};
-use crate::modules::agent::service::{analyze_portfolio, apply_allocation, propose_allocation};
+use crate::modules::agent::service::{
+    analyze_portfolio, apply_allocation, propose_allocation, CriticOutput,
+};
 use crate::modules::rebalance::executor::approve_and_execute;
 use crate::modules::rebalance::handlers::{prepare_autonomous_plan, AutonomousPlan};
 use crate::router::AppState;
@@ -216,27 +218,34 @@ async fn run_autopilot(
 }
 
 /// True when the proposal's constitution verdict cites no violated clauses.
-/// `clause_ids` is omitted from the serialized verdict when empty, so an absent
-/// field reads as clean.
+///
+/// The verdict is a serialized [`CriticOutput`], which renders camelCase
+/// (`clauseIds`) and omits the field entirely when empty. We deserialize the
+/// canonical type rather than poking at a raw JSON key so the gate can never
+/// silently drift from the producer's field names again (a prior version read
+/// `clause_ids` and so always passed). A verdict that is absent reads as clean
+/// (nothing flagged); a verdict that is present but fails to parse fails closed
+/// (treated as flagged) on this autonomous execution path.
 fn proposal_constitution_clean(decision: &AgentDecision) -> bool {
     let Some(verdict) = decision.critic_verdict.as_ref() else {
         return true;
     };
-    match verdict.get("clause_ids").and_then(|c| c.as_array()) {
-        Some(ids) => ids.is_empty(),
-        None => true,
+    match serde_json::from_value::<CriticOutput>(verdict.clone()) {
+        Ok(critic) => critic.constitution_clean(),
+        Err(_) => false,
     }
 }
 
 /// Whether a peg-defense rule fired for this user within the fire cooldown — a
-/// proxy for "a depeg is active right now". Best-effort: a query error (e.g. the
-/// peg tables absent) reads as "not active" so it never blocks normal rebalancing.
+/// proxy for "a depeg is active right now". Fails **closed** on the autonomous
+/// path: a query error is treated as "depeg active" so auto-pilot defers rather
+/// than rebalancing into a possibly-destabilized market on incomplete data.
 async fn peg_defense_active(state: &AppState, user_id: Uuid) -> bool {
     if !state.config.peg_defense_enabled {
         return false;
     }
     let cooldown_secs = state.config.peg_fire_cooldown_secs.max(60);
-    sqlx::query_scalar::<_, bool>(
+    match sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(
             SELECT 1 FROM peg_events e
             JOIN peg_rules r ON r.id = e.rule_id
@@ -249,7 +258,17 @@ async fn peg_defense_active(state: &AppState, user_id: Uuid) -> bool {
     .bind(cooldown_secs.to_string())
     .fetch_one(&state.db)
     .await
-    .unwrap_or(false)
+    {
+        Ok(active) => active,
+        Err(e) => {
+            tracing::warn!(
+                ?user_id,
+                error = %e,
+                "auto-pilot: peg-status query failed; treating depeg as active (fail-closed)"
+            );
+            true
+        }
+    }
 }
 
 /// Inspect a single portfolio; return `Some(reason)` if any trigger fires.
@@ -302,4 +321,79 @@ pub async fn evaluate(
     }
 
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use serde_json::json;
+
+    fn decision_with_verdict(verdict: Option<serde_json::Value>) -> AgentDecision {
+        AgentDecision {
+            id: Uuid::new_v4(),
+            portfolio_id: Uuid::new_v4(),
+            reasoning: String::new(),
+            recommendation: json!({}),
+            confidence: 1.0,
+            triggered_by: "test".into(),
+            created_at: Utc::now(),
+            model_slug: None,
+            regime: None,
+            prompt_tokens: None,
+            completion_tokens: None,
+            latency_ms: None,
+            critic_verdict: verdict,
+            snapshot: json!({}),
+            raw_confidence: None,
+            calibrated_confidence: None,
+            counterfactual: None,
+            kind: Some("allocation_proposal".into()),
+            recommended_allocation: None,
+            allocation_applied_at: None,
+        }
+    }
+
+    #[test]
+    fn flagged_clause_ids_block_autonomous_adoption() {
+        // The producer serializes CriticOutput as camelCase `clauseIds`. A
+        // populated list means the constitution flagged the allocation, so the
+        // gate must report "not clean" (auto-pilot leaves it as a review). This
+        // is the regression: the prior gate read `clause_ids` and so always
+        // passed even with `{"clauseIds":["RISK-1"]}`.
+        let decision = decision_with_verdict(Some(json!({
+            "demandsRevision": false,
+            "notes": "Constitution advisories after clamp: RISK-1",
+            "confidence": 1.0,
+            "clauseIds": ["RISK-1"],
+            "verdict": "advise",
+        })));
+        assert!(!proposal_constitution_clean(&decision));
+    }
+
+    #[test]
+    fn clean_verdict_permits_autonomous_adoption() {
+        // A clean verdict omits `clauseIds` entirely (skip_serializing_if).
+        let decision = decision_with_verdict(Some(json!({
+            "demandsRevision": false,
+            "notes": "Constitution clean (allocation clamped to policy).",
+            "confidence": 1.0,
+            "verdict": "approve",
+        })));
+        assert!(proposal_constitution_clean(&decision));
+        // Empty list is equivalent to absent.
+        let empty = decision_with_verdict(Some(json!({ "clauseIds": [] })));
+        assert!(proposal_constitution_clean(&empty));
+    }
+
+    #[test]
+    fn absent_verdict_is_clean_but_unparsable_fails_closed() {
+        // No verdict recorded → nothing flagged → clean.
+        assert!(proposal_constitution_clean(&decision_with_verdict(None)));
+        // A present-but-malformed verdict (not a CriticOutput object) fails
+        // closed on the autonomous path.
+        assert!(!proposal_constitution_clean(&decision_with_verdict(Some(
+            json!("not an object")
+        ))));
+    }
 }
