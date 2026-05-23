@@ -14,10 +14,18 @@ pub struct TrustabilityRow {
     pub user_id: Uuid,
     pub handle: String,
     pub decisions_executed: i64,
+    /// Real, completed decisions in the view's 7-day window — turnover read as
+    /// decisions/week. Mirrors `decisions_executed` (same window); surfaced
+    /// separately so the UI labels it as turnover.
+    #[sqlx(default)]
+    pub decisions_per_week: i64,
     pub distinct_models: i64,
     pub avg_7d_return: f64,
     pub trustability_delta: f64,
     pub last_decision_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Assets under management — SUM of this user's portfolios' total_value_usd.
+    #[sqlx(default)]
+    pub aum_usd: f64,
     /// Most recent model_slug used by this user in the last 7 days.
     /// Powers ModelBadge on the public leaderboard.
     #[sqlx(default)]
@@ -30,8 +38,8 @@ pub struct TrustabilityRow {
 
 pub async fn for_user(db: &PgPool, user_id: Uuid) -> sqlx::Result<Option<TrustabilityRow>> {
     sqlx::query_as::<_, TrustabilityRow>(
-        "SELECT user_id, handle, decisions_executed, distinct_models,
-                avg_7d_return, trustability_delta, last_decision_at
+        "SELECT user_id, handle, decisions_executed, decisions_per_week, distinct_models,
+                avg_7d_return, trustability_delta, last_decision_at, aum_usd
          FROM v_trustability_per_user
          WHERE user_id = $1",
     )
@@ -56,14 +64,16 @@ pub async fn leaderboard(db: &PgPool, limit: i64) -> sqlx::Result<Vec<Trustabili
               AND d.model_slug IS NOT NULL
             ORDER BY p.user_id, d.created_at DESC
         )
-        SELECT 
+        SELECT
             v.user_id,
             v.handle,
             v.decisions_executed,
+            v.decisions_per_week,
             v.distinct_models,
             v.avg_7d_return,
             v.trustability_delta,
             v.last_decision_at,
+            v.aum_usd,
             r.model_slug AS recent_model_slug,
             r.critic_verdict AS recent_critic_verdict
         FROM v_trustability_per_user v
