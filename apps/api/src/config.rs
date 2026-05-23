@@ -72,8 +72,8 @@ pub struct Config {
     /// fresh entitySecretCiphertext for each developer-controlled wallet call.
     pub circle_entity_secret: String,
     /// When true, the wallet module uses an in-process mock provider instead
-    /// of hitting Circle WaaS. Keeps local dev moving when the sandbox is
-    /// unreachable or when running CI without a key.
+    /// of hitting Circle WaaS. Defaults to `false` (real-by-default); set
+    /// `MOCK_CIRCLE=true` in `.env.local` for offline dev or hermetic CI.
     pub circle_mock: bool,
 
     #[allow(dead_code)]
@@ -139,6 +139,27 @@ pub struct Config {
     pub usyc_teller_arc: String,
     #[allow(dead_code)]
     pub usyc_oracle_arc: String,
+    /// Kill-switch for the USYC park/redeem sleeve. Default `false`: the
+    /// Hashnote Teller on Arc testnet is allowlist/KYB-gated (deposits revert
+    /// `0x7f63bd0f`), and Circle's CCTP docs list USYC only on Ethereum/BNB.
+    /// While `false` the route registry marks USYC non-executable (Track-only)
+    /// so it can never be approved or executed. Flip to `true` once the Aegis
+    /// EOA is allowlisted and the real Teller path is wired.
+    pub usyc_enabled: bool,
+
+    // ── Per-chain swap venue (Uniswap V3, Base Sepolia) ────────────────────
+    /// Uniswap V3 QuoterV2 used to price USDC↔token swaps and derive `min_out`.
+    /// Empty ⇒ the swap adapter reports `NeedsAddress` and swaps fail closed.
+    #[allow(dead_code)]
+    pub uniswap_v3_quoter_base: String,
+    /// Uniswap V3 SwapRouter02 used to execute USDC↔token swaps on Base.
+    #[allow(dead_code)]
+    pub uniswap_v3_router_base: String,
+    /// Wrapped-ETH ERC-20 on Base Sepolia — the concrete token behind the
+    /// "ETH" symbol for swap routing. Other volatiles have no canonical Base
+    /// Sepolia ERC-20 + pool, so they fail closed (`NeedsAddress`).
+    #[allow(dead_code)]
+    pub weth_base: String,
 
     // ── Nanopayments (x402) for 25bps protocol fee + referrals ────────────
     #[allow(dead_code)]
@@ -163,7 +184,8 @@ pub struct Config {
     pub admin_user_ids: Vec<uuid::Uuid>,
 
     /// When true, the executor / cross-chain client skip real RPC calls and
-    /// return deterministic mock receipts. Defaults to true so CI is hermetic.
+    /// use mock adapters. Defaults to `false` (real-by-default); set
+    /// `EXECUTION_MOCK=true` (the opt-in test/CI/offline path) to mock execution.
     pub execution_mock: bool,
 
     // ── Sprint 3: scheduler ───────────────────────────────────────────────
@@ -315,7 +337,7 @@ impl Config {
             circle_env: std::env::var("CIRCLE_ENV").unwrap_or_else(|_| "sandbox".into()),
             circle_wallet_set_id: std::env::var("CIRCLE_WALLET_SET_ID").unwrap_or_default(),
             circle_entity_secret: std::env::var("CIRCLE_ENTITY_SECRET").unwrap_or_default(),
-            circle_mock: parse_or("MOCK_CIRCLE", true)?,
+            circle_mock: parse_or("MOCK_CIRCLE", false)?,
 
             arc_rpc_url: std::env::var("ARC_RPC_URL")
                 .unwrap_or_else(|_| "https://testnet.arc.network".into()),
@@ -351,6 +373,11 @@ impl Config {
             usyc_token_arc: std::env::var("USYC_TOKEN_ARC").unwrap_or_default(),
             usyc_teller_arc: std::env::var("USYC_TELLER_ARC").unwrap_or_default(),
             usyc_oracle_arc: std::env::var("USYC_ORACLE_ARC").unwrap_or_default(),
+            usyc_enabled: parse_or("USYC_ENABLED", false)?,
+
+            uniswap_v3_quoter_base: std::env::var("UNISWAP_V3_QUOTER_BASE").unwrap_or_default(),
+            uniswap_v3_router_base: std::env::var("UNISWAP_V3_ROUTER_BASE").unwrap_or_default(),
+            weth_base: std::env::var("WETH_BASE").unwrap_or_default(),
 
             // Nanopayments (x402) for protocol fee (25bps) and referral payouts.
             nanopayments_facilitator_url: std::env::var("NANOPAYMENTS_FACILITATOR_URL")
@@ -368,7 +395,7 @@ impl Config {
                 .filter_map(|s| s.trim().parse::<uuid::Uuid>().ok())
                 .collect(),
 
-            execution_mock: parse_or("EXECUTION_MOCK", true)?,
+            execution_mock: parse_or("EXECUTION_MOCK", false)?,
 
             scheduler_tick_secs: parse_or("SCHEDULER_TICK_SECS", 300)?,
             scheduler_cooldown_secs: parse_or("SCHEDULER_COOLDOWN_SECS", 1800)?,
@@ -548,87 +575,95 @@ fn is_local_http_origin(origin: &str) -> bool {
         || origin.starts_with("http://[::1]")
 }
 
+/// Test-only fully-populated config (mock mode), shared by unit tests across
+/// modules. Lives at module scope so other modules' `#[cfg(test)]` blocks can
+/// build a realistic `Config` via `crate::config::test_config()`.
+#[cfg(test)]
+pub(crate) fn test_config() -> Config {
+    Config {
+        database_url: "postgres://test".into(),
+        jwt_secret: "secret".into(),
+        jwt_expiry_hours: 24,
+        session_idle_timeout_minutes: 30,
+        host: "0.0.0.0".into(),
+        port: 8080,
+        openrouter_api_key: "test".into(),
+        openrouter_base_url: "https://openrouter.ai/api/v1".into(),
+        model_regime: "regime-model".into(),
+        model_strategist: "strategist-model".into(),
+        model_critic: "critic-model".into(),
+        model_tax: "tax-model".into(),
+        model_commentary: "commentary-model".into(),
+        openrouter_app_name: "Aegis".into(),
+        openrouter_app_url: None,
+        coingecko_api_key: None,
+        price_provider_primary: "defillama".into(),
+        price_provider_fallback: "pyth".into(),
+        sse_price_tick_secs: 5,
+        circle_api_key: "circle-key".into(),
+        circle_base_url: "https://api.circle.com".into(),
+        circle_env: "sandbox".into(),
+        circle_wallet_set_id: "00000000-0000-4000-8000-000000000000".into(),
+        circle_entity_secret: "0000000000000000000000000000000000000000000000000000000000000000"
+            .into(),
+        circle_mock: true,
+        arc_rpc_url: "https://testnet.arc.network".into(),
+        base_rpc_url: "https://sepolia.base.org".into(),
+        gateway_poll_secs: 10,
+        faucet_max_usdc_per_day: 100.0,
+        cors_allow_origin: "http://localhost:3000".into(),
+        session_cookie_name: "aegis_session".into(),
+        session_cookie_secure: false,
+        cctp_attestation_url: "https://iris-api-sandbox.circle.com".into(),
+        cctp_attestation_timeout_secs: 180,
+        chain_private_key_arc: String::new(),
+        chain_private_key_base: String::new(),
+        cctp_token_messenger_arc: String::new(),
+        cctp_token_messenger_base: String::new(),
+        cctp_message_transmitter_arc: String::new(),
+        cctp_message_transmitter_base: String::new(),
+        rebalance_executor_arc: String::new(),
+        rebalance_executor_base: String::new(),
+        usdc_arc: String::new(),
+        usdc_base: String::new(),
+        usyc_token_arc: String::new(),
+        usyc_teller_arc: String::new(),
+        usyc_oracle_arc: String::new(),
+        usyc_enabled: false,
+        uniswap_v3_quoter_base: String::new(),
+        uniswap_v3_router_base: String::new(),
+        weth_base: String::new(),
+        nanopayments_facilitator_url: "https://gateway-api-testnet.circle.com".into(),
+        nanopayments_seller_address: String::new(),
+        nanopayments_treasury_address: String::new(),
+        billing_v2_enabled: false,
+        admin_user_ids: vec![],
+        execution_mock: true,
+        scheduler_tick_secs: 300,
+        scheduler_cooldown_secs: 1800,
+        harvest_threshold_usd: 50.0,
+        openrouter_budget_guard_usd: 0.05,
+        stablefx_institutional_access: false,
+        digest_hour_utc: 8,
+        resend_api_key: String::new(),
+        digest_from: "Aegis <noreply@aegis.local>".into(),
+        digest_secret: "test-secret".into(),
+        public_base_url: "http://localhost:3000".into(),
+        api_base_url: "http://localhost:8080".into(),
+        regime_backtest_enabled: true,
+        peg_defense_enabled: true,
+        peg_monitor_tick_secs: 10,
+        peg_fire_cooldown_secs: 1800,
+        tax_export_v1_enabled: true,
+        aum_stream_enabled: false,
+        calibrated_conf_enabled: false,
+        constitution_enabled: false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn test_config() -> Config {
-        Config {
-            database_url: "postgres://test".into(),
-            jwt_secret: "secret".into(),
-            jwt_expiry_hours: 24,
-            session_idle_timeout_minutes: 30,
-            host: "0.0.0.0".into(),
-            port: 8080,
-            openrouter_api_key: "test".into(),
-            openrouter_base_url: "https://openrouter.ai/api/v1".into(),
-            model_regime: "regime-model".into(),
-            model_strategist: "strategist-model".into(),
-            model_critic: "critic-model".into(),
-            model_tax: "tax-model".into(),
-            model_commentary: "commentary-model".into(),
-            openrouter_app_name: "Aegis".into(),
-            openrouter_app_url: None,
-            coingecko_api_key: None,
-            price_provider_primary: "defillama".into(),
-            price_provider_fallback: "pyth".into(),
-            sse_price_tick_secs: 5,
-            circle_api_key: "circle-key".into(),
-            circle_base_url: "https://api.circle.com".into(),
-            circle_env: "sandbox".into(),
-            circle_wallet_set_id: "00000000-0000-4000-8000-000000000000".into(),
-            circle_entity_secret:
-                "0000000000000000000000000000000000000000000000000000000000000000".into(),
-            circle_mock: true,
-            arc_rpc_url: "https://testnet.arc.network".into(),
-            base_rpc_url: "https://sepolia.base.org".into(),
-            gateway_poll_secs: 10,
-            faucet_max_usdc_per_day: 100.0,
-            cors_allow_origin: "http://localhost:3000".into(),
-            session_cookie_name: "aegis_session".into(),
-            session_cookie_secure: false,
-            cctp_attestation_url: "https://iris-api-sandbox.circle.com".into(),
-            cctp_attestation_timeout_secs: 180,
-            chain_private_key_arc: String::new(),
-            chain_private_key_base: String::new(),
-            cctp_token_messenger_arc: String::new(),
-            cctp_token_messenger_base: String::new(),
-            cctp_message_transmitter_arc: String::new(),
-            cctp_message_transmitter_base: String::new(),
-            rebalance_executor_arc: String::new(),
-            rebalance_executor_base: String::new(),
-            usdc_arc: String::new(),
-            usdc_base: String::new(),
-            usyc_token_arc: String::new(),
-            usyc_teller_arc: String::new(),
-            usyc_oracle_arc: String::new(),
-            nanopayments_facilitator_url: "https://gateway-api-testnet.circle.com".into(),
-            nanopayments_seller_address: String::new(),
-            nanopayments_treasury_address: String::new(),
-            billing_v2_enabled: false,
-            admin_user_ids: vec![],
-            execution_mock: true,
-            scheduler_tick_secs: 300,
-            scheduler_cooldown_secs: 1800,
-            harvest_threshold_usd: 50.0,
-            openrouter_budget_guard_usd: 0.05,
-            stablefx_institutional_access: false,
-            digest_hour_utc: 8,
-            resend_api_key: String::new(),
-            digest_from: "Aegis <noreply@aegis.local>".into(),
-            digest_secret: "test-secret".into(),
-            public_base_url: "http://localhost:3000".into(),
-            api_base_url: "http://localhost:8080".into(),
-            regime_backtest_enabled: true,
-            peg_defense_enabled: true,
-            peg_monitor_tick_secs: 10,
-            peg_fire_cooldown_secs: 1800,
-            tax_export_v1_enabled: true,
-            aum_stream_enabled: false,
-            calibrated_conf_enabled: false,
-            constitution_enabled: false,
-        }
-    }
 
     #[test]
     fn validate_rejects_aum_stream_without_billing_v2() {

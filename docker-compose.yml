@@ -29,8 +29,10 @@ services:
 
   api:
     build:
-      context: ./apps/api
-      dockerfile: ../../infra/docker/Dockerfile.api
+      context: .
+      dockerfile: infra/docker/Dockerfile.api
+      args:
+        API_CARGO_FEATURES: ${API_CARGO_FEATURES:-real-cctp real-usyc}
     container_name: aegis-api
     restart: unless-stopped
     env_file: .env

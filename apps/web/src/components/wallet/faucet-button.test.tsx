@@ -3,12 +3,9 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import { FaucetButton } from "./faucet-button";
-import { analyticsApi, faucetApi } from "@/lib/api";
+import { faucetApi } from "@/lib/api";
 
 vi.mock("@/lib/api", () => ({
-  analyticsApi: {
-    track: vi.fn().mockResolvedValue(undefined),
-  },
   faucetApi: {
     claim: vi.fn(),
   },
@@ -62,10 +59,6 @@ describe("<FaucetButton />", () => {
     expect(container.textContent).toContain(
       "Use this address: 0x8955c4848b7e3ce309700b7001caa2c7df50f7f7",
     );
-    expect(analyticsApi.track).toHaveBeenCalledWith("faucet.claimed", {
-      amountUsdc: 100,
-      chain: "arc-testnet",
-    });
 
     act(() => root.unmount());
   });

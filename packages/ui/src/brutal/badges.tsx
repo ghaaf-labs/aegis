@@ -27,20 +27,20 @@ export function ModelBadge({
   );
 }
 
-/**
- * Settlement-chain pill. Product settlement is locked to Arc + Base.
- */
 export function ChainBadge({
   chain,
   className,
 }: {
-  chain: "ARC" | "BASE";
+  chain: string;
   className?: string;
 }) {
-  const stripe = {
-    ARC: "border-accent-pnl/60",
-    BASE: "border-accent-agent/60",
-  }[chain];
+  const label = chain.toUpperCase();
+  const stripe =
+    label === "ARC"
+      ? "border-accent-pnl/60"
+      : label === "BASE"
+        ? "border-accent-agent/60"
+        : "border-border-hi";
   return (
     <span
       className={cn(
@@ -50,7 +50,7 @@ export function ChainBadge({
         className,
       )}
     >
-      {chain}
+      {label}
     </span>
   );
 }

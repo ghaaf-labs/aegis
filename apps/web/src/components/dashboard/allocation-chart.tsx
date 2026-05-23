@@ -5,6 +5,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
 import { formatCurrency, formatPercent } from "@/lib/utils";
 import { derivePortfolioPositionMetrics } from "@/lib/portfolio-values";
+import { targetAllocationsForPortfolio } from "@/components/dashboard/target-allocations";
 import { ProvenanceLine } from "@aegis/ui";
 
 // Chart palette sourced from design-system tokens + complementary shades.
@@ -29,7 +30,7 @@ export function AllocationChart({ compact = false }: Props) {
 
   if (!portfolio) return null;
 
-  const allocations = portfolio.allocations ?? [];
+  const allocations = targetAllocationsForPortfolio(portfolio);
   const metrics = derivePortfolioPositionMetrics(portfolio, snapshot);
 
   const isUninvested = metrics.investedUsd < 0.5; // ~half a dollar of dust
@@ -47,7 +48,7 @@ export function AllocationChart({ compact = false }: Props) {
 
   if (data.length === 0 || data.every((d) => d.value === 0)) {
     return (
-      <Card className="h-full">
+      <Card>
         <CardHeader>
           <CardTitle>Target Mix</CardTitle>
         </CardHeader>
@@ -65,20 +66,21 @@ export function AllocationChart({ compact = false }: Props) {
 
   if (isUninvested) {
     return (
-      <Card className="h-full">
+      <Card>
         <CardHeader className="gap-3">
           <CardTitle className="min-w-0">Target Mix</CardTitle>
           <span className="shrink-0 border border-text-mut/30 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-text-mut">
-            not invested
+            plan only
           </span>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="border border-border-default bg-bg/70 px-3 py-2 font-mono">
             <p className="text-xs font-semibold text-text-hi">
-              Plan only, current value {formatCurrency(0)}
+              Target value after approval
             </p>
             <p className="mt-1 text-[11px] leading-relaxed text-text-lo">
-              These weights become holdings only after funding and approval.
+              Current holdings stay at {formatCurrency(0)} until you approve a
+              plan.
             </p>
           </div>
 
@@ -118,7 +120,7 @@ export function AllocationChart({ compact = false }: Props) {
   }
 
   return (
-    <Card className="h-full">
+    <Card>
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="flex items-center gap-2">
           <span>Allocation</span>

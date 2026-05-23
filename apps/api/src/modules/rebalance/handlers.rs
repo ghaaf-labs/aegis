@@ -4,7 +4,7 @@
 //! portfolio is enforced on each lookup so session A can never read
 //! or execute a rebalance belonging to user B.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use axum::{
     extract::{Path, State},
@@ -14,13 +14,15 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::config::Config;
 use crate::error::{AppError, Result};
 use crate::middleware::auth::Claims;
 use crate::modules::agent::{models::AnalyzeRequest, service::analyze_portfolio};
 use crate::modules::rebalance::{
     executor::{approve_and_execute, create_plan},
-    models::{ChainKey, PlanInput, PlannedLeg},
+    models::{ChainKey, PlanInput, PlannedLeg, ARC_NATIVE_SYMBOLS, BASE_NATIVE_SYMBOLS},
     planner::plan_legs,
+    registry::{capabilities::RuntimeCapabilities, route, route::RouteLeg},
 };
 use crate::modules::wallet_routes;
 use crate::router::AppState;
@@ -603,9 +605,9 @@ async fn approval_safety(state: &AppState, rebalance_id: Uuid) -> Result<Approva
     }
 
     if real_mode {
-        let missing_capabilities = unsupported_real_execution_capabilities(&stored_legs);
+        let missing_capabilities = route_blockers(&state.config, &stored_legs);
         if !missing_capabilities.is_empty() {
-            let message = unsupported_real_execution_message(&missing_capabilities);
+            let message = execution_blocked_message(&missing_capabilities);
             return Ok(ApprovalSafety {
                 approvable: false,
                 code: "EXECUTION_UNAVAILABLE".into(),
@@ -667,79 +669,35 @@ fn legs_match_current(stored: &[LegView], current: &[PlannedLeg]) -> bool {
     })
 }
 
-fn unsupported_real_execution_capabilities(legs: &[LegView]) -> Vec<MissingCapability> {
-    let mut missing = Vec::new();
-
-    if !real_cctp_enabled()
-        && legs
-            .iter()
-            .any(|leg| leg.kind == "cross_chain_burn" || leg.kind == "cross_chain_mint")
-    {
-        missing.push(MissingCapability {
-            code: "REAL_CCTP_FEATURE".into(),
-            label: "CCTP V2 bridge".into(),
-            detail:
-                "API binary is missing --features real-cctp, so Arc/Base bridge legs cannot execute."
-                    .into(),
-        });
-    }
-
-    if legs.iter().any(cross_chain_token_swap_needed) {
-        missing.push(MissingCapability {
-            code: "CROSS_CHAIN_TOKEN_SWAP".into(),
-            label: "Cross-chain token swap".into(),
-            detail:
-                "Real cross-chain token buys need a destination token address and swap adapter before approval can execute."
-                    .into(),
-        });
-    }
-
-    if !real_usyc_enabled()
-        && legs
-            .iter()
-            .any(|leg| leg.kind == "park_usyc" || leg.kind == "redeem_usyc")
-    {
-        missing.push(MissingCapability {
-            code: "REAL_USYC_FEATURE".into(),
-            label: "USYC mint/redeem".into(),
-            detail:
-                "API binary is missing --features real-usyc, so USYC park/redeem legs cannot execute."
-                    .into(),
-        });
-    }
-
-    if legs.iter().any(|leg| leg.kind == "fx_stablefx") {
-        missing.push(MissingCapability {
-            code: "STABLEFX_ADAPTER".into(),
-            label: "StableFX EURC route".into(),
-            detail:
-                "Real StableFX execution is not wired in this build, so EURC legs would otherwise produce synthetic hashes."
-                    .into(),
-        });
-    }
-
-    if legs.iter().any(|leg| leg.kind == "local_swap") {
-        missing.push(MissingCapability {
-            code: "LOCAL_SWAP_ADAPTER".into(),
-            label: "Per-chain swap route".into(),
-            detail:
-                "Real local swap execution is not wired in this build, so swap legs would otherwise produce synthetic hashes."
-                    .into(),
-        });
-    }
-
-    missing
+/// Map the route registry's blockers onto the wire `MissingCapability` shape
+/// the frontend approval modal already renders. Single source of truth: the
+/// same `route::validate_legs` consulted by the executor and the agent.
+fn route_blockers(cfg: &Config, legs: &[LegView]) -> Vec<MissingCapability> {
+    let caps = RuntimeCapabilities::from_config(cfg);
+    let route_legs: Vec<RouteLeg> = legs
+        .iter()
+        .filter_map(|l| {
+            RouteLeg::from_parts(
+                &l.kind,
+                l.src_chain.clone(),
+                l.dest_chain.clone(),
+                l.src_symbol.clone(),
+                l.dest_symbol.clone(),
+                l.amount_usdc,
+            )
+        })
+        .collect();
+    route::validate_legs(&caps, cfg, &route_legs)
+        .into_iter()
+        .map(|b| MissingCapability {
+            code: b.code.wire_code().to_string(),
+            label: b.code.label().to_string(),
+            detail: b.detail,
+        })
+        .collect()
 }
 
-fn cross_chain_token_swap_needed(leg: &LegView) -> bool {
-    leg.kind == "cross_chain_burn"
-        && leg
-            .dest_symbol
-            .as_deref()
-            .is_some_and(|symbol| !symbol.eq_ignore_ascii_case("USDC"))
-}
-
-fn unsupported_real_execution_message(missing: &[MissingCapability]) -> String {
+fn execution_blocked_message(missing: &[MissingCapability]) -> String {
     let labels = missing
         .iter()
         .map(|cap| cap.label.as_str())
@@ -751,16 +709,8 @@ fn unsupported_real_execution_message(missing: &[MissingCapability]) -> String {
         "capabilities"
     };
     format!(
-        "This plan needs unavailable real-execution {noun}: {labels}. Enable the missing adapter/build feature or build a fresh plan without those sleeves before approving."
+        "This review is saved as a draft because {noun} must be ready before money can move: {labels}. Change the target and build a fresh executable review before approving."
     )
-}
-
-fn real_cctp_enabled() -> bool {
-    cfg!(feature = "real-cctp")
-}
-
-fn real_usyc_enabled() -> bool {
-    cfg!(feature = "real-usyc")
 }
 
 fn amount_matches(stored: f64, current: f64) -> bool {
@@ -800,6 +750,7 @@ async fn build_plan_input(state: &AppState, portfolio_id: Uuid) -> Result<PlanIn
             }
         }
     }
+    apply_route_preferences_to_targets(&goal, &mut target_weights);
 
     let relevant_symbols: Vec<String> = allocations
         .iter()
@@ -924,6 +875,60 @@ fn stable_planning_price(symbol: &str) -> Option<f64> {
         "USDC" | "USYC" => Some(1.0),
         _ => None,
     }
+}
+
+fn apply_route_preferences_to_targets(
+    goal: &serde_json::Value,
+    target_weights: &mut HashMap<String, f64>,
+) {
+    let Some(route_preferences) = goal.get("routePreferences") else {
+        return;
+    };
+
+    let allowed_tokens = route_preference_set(route_preferences, "tokens");
+    if !allowed_tokens.is_empty() {
+        target_weights.retain(|symbol, _| {
+            symbol == "USDC" || allowed_tokens.contains(&symbol.to_ascii_uppercase())
+        });
+    }
+
+    let selected_networks = route_preference_set(route_preferences, "networks");
+    if selected_networks.is_empty() {
+        return;
+    }
+
+    let arc_allowed =
+        selected_networks.contains(wallet_routes::ARC_TESTNET) || selected_networks.contains("ARC");
+    let base_allowed = selected_networks.contains(wallet_routes::BASE_SEPOLIA)
+        || selected_networks.contains("BASE");
+    target_weights.retain(|symbol, _| {
+        let symbol = symbol.as_str();
+        if ARC_NATIVE_SYMBOLS.contains(&symbol) {
+            return arc_allowed;
+        }
+        if BASE_NATIVE_SYMBOLS.contains(&symbol) {
+            return base_allowed;
+        }
+        true
+    });
+}
+
+fn route_preference_set(route_preferences: &serde_json::Value, key: &str) -> HashSet<String> {
+    let mut values: HashSet<String> = route_preferences
+        .get(key)
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|v| v.as_str())
+        .map(|v| v.trim().to_ascii_uppercase())
+        .filter(|v| !v.is_empty())
+        .collect();
+    if values.remove("BTC_ETH_SOL") {
+        values.insert("BTC".into());
+        values.insert("ETH".into());
+        values.insert("SOL".into());
+    }
+    values
 }
 
 /// Lookup unified USDC by chain from Circle Gateway. Real execution fails
@@ -1161,23 +1166,52 @@ mod tests {
         );
     }
 
-    fn leg(kind: &str) -> LegView {
-        LegView {
-            id: Uuid::new_v4(),
-            rebalance_id: Uuid::new_v4(),
-            leg_index: 0,
-            kind: kind.to_string(),
-            src_chain: Some("arc".into()),
-            dest_chain: Some("arc".into()),
-            src_symbol: Some("USDC".into()),
-            dest_symbol: Some("USYC".into()),
-            amount_usdc: 10.0,
-            status: "pending".into(),
-            tx_hash: None,
-            failure_reason: None,
-            submitted_at: None,
-            confirmed_at: None,
-        }
+    #[test]
+    fn route_preferences_filter_unselected_target_tokens() {
+        let goal = json!({
+            "targetAllocation": {"USDC": 40, "BTC": 30, "ETH": 20, "USYC": 10},
+            "routePreferences": {
+                "networks": ["ARC-TESTNET", "BASE-SEPOLIA"],
+                "tokens": ["USDC", "USYC"],
+                "watchlist": ["BTC_ETH_SOL"]
+            }
+        });
+        let mut targets = HashMap::from([
+            ("USDC".to_string(), 0.40),
+            ("BTC".to_string(), 0.30),
+            ("ETH".to_string(), 0.20),
+            ("USYC".to_string(), 0.10),
+        ]);
+
+        apply_route_preferences_to_targets(&goal, &mut targets);
+
+        assert!(targets.contains_key("USDC"));
+        assert!(targets.contains_key("USYC"));
+        assert!(!targets.contains_key("BTC"));
+        assert!(!targets.contains_key("ETH"));
+    }
+
+    #[test]
+    fn route_preferences_filter_targets_by_selected_execution_networks() {
+        let goal = json!({
+            "routePreferences": {
+                "networks": ["ARC-TESTNET"],
+                "tokens": ["BTC_ETH_SOL", "USYC", "EURC"]
+            }
+        });
+        let mut targets = HashMap::from([
+            ("BTC".to_string(), 0.30),
+            ("ETH".to_string(), 0.20),
+            ("USYC".to_string(), 0.30),
+            ("EURC".to_string(), 0.20),
+        ]);
+
+        apply_route_preferences_to_targets(&goal, &mut targets);
+
+        assert_eq!(
+            targets.keys().cloned().collect::<HashSet<_>>(),
+            HashSet::from(["USYC".to_string(), "EURC".to_string()])
+        );
     }
 
     fn planned_leg(
@@ -1212,70 +1246,5 @@ mod tests {
             )]),
             "Arc transaction"
         );
-    }
-
-    #[test]
-    fn real_execution_capability_blocks_synthetic_executor_legs() {
-        let missing =
-            unsupported_real_execution_capabilities(&[leg("fx_stablefx"), leg("local_swap")]);
-        assert!(missing.iter().any(|cap| cap.code == "STABLEFX_ADAPTER"));
-        assert!(missing.iter().any(|cap| cap.code == "LOCAL_SWAP_ADAPTER"));
-        assert!(unsupported_real_execution_message(&missing).contains("StableFX"));
-    }
-
-    #[cfg(not(feature = "real-cctp"))]
-    #[test]
-    fn real_execution_capability_blocks_uncompiled_cctp() {
-        let missing = unsupported_real_execution_capabilities(&[leg("cross_chain_burn")]);
-        assert!(missing.iter().any(|cap| cap.code == "REAL_CCTP_FEATURE"));
-    }
-
-    #[test]
-    fn real_execution_capability_blocks_cross_chain_token_swaps() {
-        for symbol in ["BTC", "ETH", "SOL", "USYC", "EURC"] {
-            let mut token_buy = leg("cross_chain_burn");
-            token_buy.dest_symbol = Some(symbol.into());
-            let missing = unsupported_real_execution_capabilities(&[token_buy]);
-
-            assert!(
-                missing
-                    .iter()
-                    .any(|cap| cap.code == "CROSS_CHAIN_TOKEN_SWAP"),
-                "{symbol} cross-chain buys must stay blocked until a real route exists",
-            );
-        }
-    }
-
-    #[test]
-    fn real_execution_capability_allows_cross_chain_usdc_mints() {
-        for symbol in ["USDC", "usdc"] {
-            let mut usdc_bridge = leg("cross_chain_burn");
-            usdc_bridge.dest_symbol = Some(symbol.into());
-            let missing = unsupported_real_execution_capabilities(&[usdc_bridge]);
-
-            assert!(
-                !missing
-                    .iter()
-                    .any(|cap| cap.code == "CROSS_CHAIN_TOKEN_SWAP"),
-                "{symbol} bridge mints should not be treated as token swaps",
-            );
-        }
-    }
-
-    #[cfg(not(feature = "real-usyc"))]
-    #[test]
-    fn real_execution_capability_blocks_uncompiled_usyc() {
-        let missing = unsupported_real_execution_capabilities(&[leg("park_usyc")]);
-        assert!(missing.iter().any(|cap| cap.code == "REAL_USYC_FEATURE"));
-    }
-
-    #[cfg(not(feature = "real-usyc"))]
-    #[test]
-    fn real_execution_capability_reports_all_missing_capabilities() {
-        let missing =
-            unsupported_real_execution_capabilities(&[leg("park_usyc"), leg("fx_stablefx")]);
-        assert_eq!(missing.len(), 2);
-        assert!(unsupported_real_execution_message(&missing).contains("USYC"));
-        assert!(unsupported_real_execution_message(&missing).contains("StableFX"));
     }
 }

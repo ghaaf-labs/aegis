@@ -57,7 +57,15 @@ struct RawChatResponse {
 
 #[derive(Deserialize)]
 struct RawChoice {
-    message: Message,
+    message: RawAssistantMessage,
+}
+
+#[derive(Deserialize)]
+struct RawAssistantMessage {
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    reasoning: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -186,7 +194,10 @@ impl<'a> OpenRouterClient<'a> {
         );
 
         Ok(ChatResponse {
-            content: choice.message.content,
+            content: assistant_text(
+                choice.message.content.as_deref(),
+                choice.message.reasoning.as_deref(),
+            ),
             model_slug,
             prompt_tokens: usage.prompt_tokens,
             completion_tokens: usage.completion_tokens,
@@ -321,11 +332,7 @@ impl<'a> OpenRouterClient<'a> {
             });
         }
 
-        let content = message
-            .get("content")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string();
+        let content = assistant_message_text(&message);
         Ok(ChatToolResult::Final {
             content,
             model_slug,
@@ -335,6 +342,21 @@ impl<'a> OpenRouterClient<'a> {
             cost_usd,
         })
     }
+}
+
+fn assistant_message_text(message: &Value) -> String {
+    assistant_text(
+        message.get("content").and_then(|v| v.as_str()),
+        message.get("reasoning").and_then(|v| v.as_str()),
+    )
+}
+
+fn assistant_text(content: Option<&str>, reasoning: Option<&str>) -> String {
+    content
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| reasoning.filter(|s| !s.trim().is_empty()))
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// F-COST-2 enforcement: log a structured warning when an OpenRouter call's
@@ -441,6 +463,39 @@ mod tests {
         check_budget_guard(0.01, Some(0.05), "deepseek/test", 100);
         check_budget_guard(0.01, Some(0.001), "deepseek/test", 100);
         check_budget_guard(0.01, None, "deepseek/test", 100);
+    }
+
+    #[test]
+    fn assistant_text_prefers_visible_content() {
+        assert_eq!(
+            assistant_text(Some("visible"), Some("reasoning fallback")),
+            "visible"
+        );
+    }
+
+    #[test]
+    fn assistant_text_falls_back_to_reasoning_when_content_is_null_or_empty() {
+        assert_eq!(
+            assistant_text(None, Some("reasoned answer")),
+            "reasoned answer"
+        );
+        assert_eq!(
+            assistant_text(Some("   "), Some("reasoned answer")),
+            "reasoned answer"
+        );
+    }
+
+    #[test]
+    fn assistant_message_text_reads_openrouter_reasoning_fallback() {
+        let message = json!({
+            "role": "assistant",
+            "content": null,
+            "reasoning": "{\"reasoning\":\"hold\",\"confidence\":0.7}"
+        });
+        assert_eq!(
+            assistant_message_text(&message),
+            "{\"reasoning\":\"hold\",\"confidence\":0.7}"
+        );
     }
 
     #[test]

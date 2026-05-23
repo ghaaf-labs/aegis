@@ -4,6 +4,7 @@ import Link from "next/link";
 import {
   ArrowRight,
   CircleAlert,
+  ClipboardCheck,
   TrendingUp,
   TrendingDown,
   Wallet,
@@ -18,6 +19,7 @@ import {
   changeColor,
 } from "@/lib/utils";
 import { derivePortfolioPositionMetrics } from "@/lib/portfolio-values";
+import { targetAllocationsForPortfolio } from "@/components/dashboard/target-allocations";
 
 export function AssetTable() {
   const portfolio = useActivePortfolio();
@@ -68,7 +70,7 @@ export function AssetTable() {
   const walletCashUnavailable = gatewayBalanceStatus === "error";
   const walletCashUsd = walletCashKnown ? unifiedUsdc : 0;
 
-  const allocList = portfolio.allocations ?? [];
+  const allocList = targetAllocationsForPortfolio(portfolio);
   const metrics = derivePortfolioPositionMetrics(portfolio, snapshot);
   const valueBySymbol = Object.fromEntries(
     metrics.positions.map((position) => [position.symbol, position]),
@@ -83,7 +85,7 @@ export function AssetTable() {
       <CardHeader>
         <CardTitle>
           {hasWalletCash
-            ? "Planned Target Mix"
+            ? "After Approval"
             : isUninvested
               ? "Target Mix"
               : "Current Holdings"}
@@ -96,14 +98,13 @@ export function AssetTable() {
               <Wallet className="mt-0.5 h-4 w-4 shrink-0 text-accent-pnl" />
               <div>
                 <p className="text-sm font-mono font-semibold text-text-hi">
-                  {formatCurrency(walletCashUsd)} USDC is still in your wallet,
-                  not invested yet.
+                  {formatCurrency(walletCashUsd)} USDC stays in your wallet
+                  until you approve.
                 </p>
                 <p className="mt-1 text-xs font-mono text-text-lo leading-relaxed">
-                  The rows below show where wallet cash will go after approval.
-                  Any USDC target stays as cash reserve.
+                  This preview shows the target mix before anything moves.
                   {unifiedEurc > 0 &&
-                    " Existing EURC wallet cash stays in Wallet until you approve a move for it."}
+                    " Existing EURC cash stays in Wallet until you approve a move for it."}
                 </p>
               </div>
             </div>
@@ -111,7 +112,7 @@ export function AssetTable() {
               href={`/dashboard/${portfolio.id}`}
               className="inline-flex shrink-0 items-center justify-center gap-2 rounded-sharp border-brutal border-black bg-accent-pnl px-3 py-2 text-xs font-mono font-semibold text-black shadow-brutal-sm hover:shadow-brutal transition-[box-shadow]"
             >
-              Review from dashboard
+              Review plan
               <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
@@ -136,101 +137,110 @@ export function AssetTable() {
         </div>
       )}
       <CardContent className="p-0">
-        <table className="w-full table-fixed">
-          <thead>
-            <tr className="border-b border-white/5">
-              {(hasWalletCash
-                ? ([
-                    ["Asset", ""],
-                    ["Target", ""],
-                    ["Planned outcome", ""],
-                    ["Current holdings", "hidden 2xl:table-cell"],
-                    ["Status", "hidden 2xl:table-cell"],
-                  ] as const)
-                : ([
+        {hasWalletCash ? (
+          <div className="grid gap-2 px-5 pb-5 sm:grid-cols-2 xl:grid-cols-3">
+            {allocList.map((alloc) => {
+              const plannedUsd = walletCashUsd * (alloc.targetWeight / 100);
+              const isUsdcReserve = alloc.symbol === "USDC";
+              return (
+                <div
+                  key={alloc.symbol}
+                  className="rounded-sharp border border-border-default bg-surface p-3 font-mono"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="inline-flex h-7 min-w-10 items-center justify-center rounded-sharp border border-accent-agent/35 bg-accent-agent/10 px-2 text-[10px] font-semibold text-text-hi">
+                        {alloc.symbol}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-text-hi">
+                          {isUsdcReserve
+                            ? "Cash reserve"
+                            : `${alloc.symbol} target`}
+                        </p>
+                        <p className="text-[10px] uppercase tracking-wider text-text-mut">
+                          {alloc.targetWeight.toFixed(0)}% target
+                        </p>
+                      </div>
+                    </div>
+                    <ClipboardCheck className="h-4 w-4 shrink-0 text-accent-agent/70" />
+                  </div>
+                  <div className="mt-4">
+                    <p className="text-xl font-semibold tabular-nums text-text-hi">
+                      {formatCurrency(plannedUsd)}
+                    </p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-text-lo">
+                      {isUsdcReserve
+                        ? "Held as reserve cash."
+                        : "Ready after approval."}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <table className="w-full table-fixed">
+            <thead>
+              <tr className="border-b border-white/5">
+                {(
+                  [
                     ["Asset", ""],
                     ["Price", ""],
                     ["24h", "hidden 2xl:table-cell"],
                     ["Holdings", "hidden 2xl:table-cell"],
                     ["Value", ""],
                     ["Weight vs Target", "hidden 2xl:table-cell"],
-                  ] as const)
-              ).map(([h, cls]) => (
-                <th
-                  key={h}
-                  className={
-                    "px-3 py-3 text-left text-[11px] font-medium text-text-mut uppercase tracking-wider md:px-4 " +
-                    cls
-                  }
-                >
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {(portfolio.allocations ?? []).map((alloc, i) => {
-              const price = priceMap[alloc.symbol];
-              const position = valueBySymbol[alloc.symbol];
-              const currentWeight = position?.currentWeight ?? 0;
-              const liveValueUsd = (price?.priceUsd ?? 0) * alloc.quantity;
-              const valueUsd =
-                position?.valueUsd ??
-                (liveValueUsd > 0 ? liveValueUsd : alloc.valueUsd);
-              const fallbackPriceUsd =
-                alloc.quantity > 0 && alloc.valueUsd > 0
-                  ? alloc.valueUsd / alloc.quantity
-                  : null;
-              const displayPriceUsd = price?.priceUsd ?? fallbackPriceUsd;
-              const plannedUsd = walletCashUsd * (alloc.targetWeight / 100);
-              const isUsdcReserve = hasWalletCash && alloc.symbol === "USDC";
-              const drift = currentWeight - alloc.targetWeight;
-              const driftAbs = Math.abs(drift);
+                  ] as const
+                ).map(([h, cls]) => (
+                  <th
+                    key={h}
+                    className={
+                      "px-3 py-3 text-left text-[11px] font-medium text-text-mut uppercase tracking-wider md:px-4 " +
+                      cls
+                    }
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {allocList.map((alloc, i) => {
+                const price = priceMap[alloc.symbol];
+                const position = valueBySymbol[alloc.symbol];
+                const currentWeight = position?.currentWeight ?? 0;
+                const liveValueUsd = (price?.priceUsd ?? 0) * alloc.quantity;
+                const valueUsd =
+                  position?.valueUsd ??
+                  (liveValueUsd > 0 ? liveValueUsd : alloc.valueUsd);
+                const fallbackPriceUsd =
+                  alloc.quantity > 0 && alloc.valueUsd > 0
+                    ? alloc.valueUsd / alloc.quantity
+                    : null;
+                const displayPriceUsd = price?.priceUsd ?? fallbackPriceUsd;
+                const drift = currentWeight - alloc.targetWeight;
+                const driftAbs = Math.abs(drift);
 
-              return (
-                <tr
-                  key={alloc.symbol}
-                  className={`border-b border-white/3 hover:bg-white/2 transition-colors ${
-                    i === (portfolio.allocations?.length ?? 0) - 1
-                      ? "border-0"
-                      : ""
-                  }`}
-                >
-                  <td className="px-3 py-3.5 md:px-4">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-7 h-7 rounded-sharp bg-accent-agent/10 flex items-center justify-center border border-accent-agent/30">
-                        <span className="text-[10px] font-bold text-text-hi">
-                          {alloc.symbol[0]}
+                return (
+                  <tr
+                    key={alloc.symbol}
+                    className={`border-b border-white/3 hover:bg-white/2 transition-colors ${
+                      i === allocList.length - 1 ? "border-0" : ""
+                    }`}
+                  >
+                    <td className="px-3 py-3.5 md:px-4">
+                      <div className="flex items-center gap-2.5">
+                        <div className="flex h-7 min-w-10 items-center justify-center rounded-sharp border border-accent-agent/30 bg-accent-agent/10 px-1.5">
+                          <span className="text-[9px] font-bold text-text-hi">
+                            {alloc.symbol}
+                          </span>
+                        </div>
+                        <span className="text-sm font-semibold text-text-hi font-mono">
+                          {alloc.symbol}
                         </span>
                       </div>
-                      <span className="text-sm font-semibold text-text-hi font-mono">
-                        {alloc.symbol}
-                      </span>
-                    </div>
-                  </td>
-                  {hasWalletCash ? (
-                    <>
-                      <td className="px-3 py-3.5 text-sm font-mono text-text-hi tabular-nums md:px-4">
-                        {alloc.targetWeight.toFixed(0)}%
-                      </td>
-                      <td className="px-3 py-3.5 text-sm font-semibold text-accent-pnl tabular-nums md:px-4">
-                        {formatCurrency(plannedUsd)}
-                        {isUsdcReserve && (
-                          <span className="mt-0.5 block text-[10px] font-normal text-text-mut">
-                            stays USDC
-                          </span>
-                        )}
-                      </td>
-                      <td className="hidden px-3 py-3.5 text-xs font-mono text-text-lo md:px-4 2xl:table-cell">
-                        {isUninvested ? "none" : formatNumber(alloc.quantity)}
-                      </td>
-                      <td className="hidden px-3 py-3.5 md:px-4 2xl:table-cell">
-                        <span className="text-xs text-text-mut font-mono">
-                          {isUsdcReserve ? "cash reserve" : "awaiting approval"}
-                        </span>
-                      </td>
-                    </>
-                  ) : (
+                    </td>
                     <>
                       <td
                         className={`px-3 py-3.5 text-sm font-medium md:px-4 ${priceColor}`}
@@ -288,17 +298,17 @@ export function AssetTable() {
                         )}
                       </td>
                     </>
-                  )}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
         <div className="px-5 py-2 text-[10px] text-text-mut font-mono border-t border-white/5">
           {hasWalletCash
             ? hasUsdcSleeve
-              ? "USDC target weight stays as cash reserve; other planned values use wallet cash and target weights"
-              : "Planned values use wallet cash and target weights"
+              ? "USDC target stays as reserve cash; other targets wait for approval"
+              : "Targets wait for approval before funds move"
             : walletCashUnavailable
               ? "Wallet cash unavailable; planned values are hidden until the balance check succeeds"
               : !walletCashKnown

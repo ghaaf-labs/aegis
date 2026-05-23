@@ -21,6 +21,18 @@ describe("explorer URL helpers", () => {
     );
   });
 
+  it("builds explorer links for every additional wallet-ready testnet", () => {
+    expect(explorerTxUrl("eth-sepolia", "0xabc")).toBe(
+      "https://sepolia.etherscan.io/tx/0xabc",
+    );
+    expect(explorerAddressUrl("arb-sepolia", "0x123")).toBe(
+      "https://sepolia.arbiscan.io/address/0x123",
+    );
+    expect(explorerAddressUrl("avax-fuji", "0x123")).toBe(
+      "https://testnet.snowtrace.io/address/0x123",
+    );
+  });
+
   it("does not produce broken links for missing inputs", () => {
     expect(explorerTxUrl(null, "0xabc")).toBeNull();
     expect(explorerTxUrl("arc", null)).toBeNull();

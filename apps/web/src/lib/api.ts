@@ -198,7 +198,7 @@ export interface UnifiedBalance {
   unifiedUsdc: number;
   /** Sum of EURC across all chains. */
   unifiedEurc: number;
-  /** USDC per chain — keys are lowercased chain shorthands ("arc", "base"). */
+  /** USDC per chain — keys are lowercased shorthands or Circle chain codes. */
   perChain: Record<string, number>;
   /** EURC per chain — same key set as `perChain`. */
   perChainEurc: Record<string, number>;
@@ -266,6 +266,7 @@ export interface CreatePortfolioInput {
 
 export interface UpdatePortfolioInput {
   name?: string;
+  goal?: PortfolioGoal;
 }
 
 /** Wire shape of an allocation from the backend. The Rust serializer emits

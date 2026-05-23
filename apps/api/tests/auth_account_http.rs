@@ -148,6 +148,50 @@ async fn account_delete_endpoint_refuses_when_balance_cannot_be_verified() {
 }
 
 #[tokio::test]
+async fn tax_summary_lists_every_supported_wallet_route() {
+    let Some(ctx) = TestContext::start().await else {
+        return;
+    };
+    let auth = complete_email_auth(&ctx, &unique_email("tax-routes")).await;
+    let portfolio_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO portfolios (id, user_id, name) VALUES ($1, $2, 'tax routes')")
+        .bind(portfolio_id)
+        .bind(auth.user_id)
+        .execute(&ctx.pool)
+        .await
+        .expect("seed portfolio");
+    seed_supported_wallet_routes(&ctx.pool, auth.user_id).await;
+
+    let summary = ctx
+        .client
+        .get(ctx.url(&format!(
+            "/tax/summary?portfolioId={portfolio_id}&year=2026"
+        )))
+        .header("Cookie", &auth.cookie)
+        .send()
+        .await
+        .expect("tax summary");
+    assert_eq!(summary.status(), StatusCode::OK);
+    let body: Value = summary.json().await.expect("tax summary body");
+    let chains: Vec<&str> = body["wallets"]
+        .as_array()
+        .expect("wallets")
+        .iter()
+        .map(|wallet| wallet["chain"].as_str().expect("chain"))
+        .collect();
+    assert_eq!(
+        chains,
+        vec![
+            "ARC-TESTNET",
+            "BASE-SEPOLIA",
+            "ETH-SEPOLIA",
+            "ARB-SEPOLIA",
+            "AVAX-FUJI",
+        ]
+    );
+}
+
+#[tokio::test]
 async fn wallet_reconciler_heals_pending_wallet_without_user_polling() {
     let Some(ctx) = TestContext::start().await else {
         return;
@@ -176,7 +220,13 @@ async fn wallet_reconciler_heals_pending_wallet_without_user_polling() {
             .fetch_one(&ctx.pool)
             .await
             .expect("wallet route count");
-    assert_eq!(routes, 2);
+    // A healed wallet is provisioned across every supported network, not just
+    // the two execution rails — assert against the registry so this can't go
+    // stale when the supported set changes.
+    assert_eq!(
+        routes,
+        aegis_api::modules::wallet_routes::SUPPORTED_WALLET_BLOCKCHAINS.len() as i64
+    );
 }
 
 struct TestContext {
@@ -415,6 +465,56 @@ async fn seed_real_wallet_routes(pool: &PgPool, user_id: Uuid) {
     }
 }
 
+async fn seed_supported_wallet_routes(pool: &PgPool, user_id: Uuid) {
+    for (blockchain, wallet_id, address) in [
+        (
+            "ARC-TESTNET",
+            "wallet-arc-real",
+            "0x1111111111111111111111111111111111111111",
+        ),
+        (
+            "BASE-SEPOLIA",
+            "wallet-base-real",
+            "0x2222222222222222222222222222222222222222",
+        ),
+        (
+            "ETH-SEPOLIA",
+            "wallet-eth-real",
+            "0x3333333333333333333333333333333333333333",
+        ),
+        (
+            "ARB-SEPOLIA",
+            "wallet-arb-real",
+            "0x4444444444444444444444444444444444444444",
+        ),
+        (
+            "AVAX-FUJI",
+            "wallet-avax-real",
+            "0x5555555555555555555555555555555555555555",
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO user_wallet_networks (
+                user_id, blockchain, circle_wallet_id, address,
+                account_type, wallet_set_id, state
+             )
+             VALUES ($1, $2, $3, $4, 'SCA', 'test-wallet-set', 'LIVE')
+             ON CONFLICT (user_id, blockchain) DO UPDATE
+                SET circle_wallet_id = EXCLUDED.circle_wallet_id,
+                    address = EXCLUDED.address,
+                    wallet_set_id = EXCLUDED.wallet_set_id,
+                    state = EXCLUDED.state",
+        )
+        .bind(user_id)
+        .bind(blockchain)
+        .bind(wallet_id)
+        .bind(address)
+        .execute(pool)
+        .await
+        .expect("seed supported route");
+    }
+}
+
 fn unique_email(prefix: &str) -> String {
     format!("{prefix}-{}@example.com", Uuid::new_v4())
 }
@@ -469,6 +569,10 @@ fn test_config(database_url: &str) -> Config {
         usyc_token_arc: String::new(),
         usyc_teller_arc: String::new(),
         usyc_oracle_arc: String::new(),
+        usyc_enabled: false,
+        uniswap_v3_quoter_base: String::new(),
+        uniswap_v3_router_base: String::new(),
+        weth_base: String::new(),
         nanopayments_facilitator_url: "https://gateway-api-testnet.circle.com".into(),
         nanopayments_seller_address: String::new(),
         nanopayments_treasury_address: String::new(),

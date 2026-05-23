@@ -43,7 +43,7 @@ interface PortfolioState {
   unifiedUsdc: number;
   /** Sum of EURC across every chain the user holds a wallet on. */
   unifiedEurc: number;
-  /** USDC per chain (keys are lowercased short names: "arc", "base"). */
+  /** USDC per wallet route (for example "arc", "base", "eth-sepolia"). */
   perChainUsdc: Record<string, number>;
   /** EURC per chain — same key set as perChainUsdc. */
   perChainEurc: Record<string, number>;

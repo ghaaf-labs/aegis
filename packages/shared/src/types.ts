@@ -61,6 +61,18 @@ export type RiskTolerance = "conservative" | "moderate" | "aggressive";
 
 export type GoalHorizon = "1y" | "3y" | "5y" | "10y" | "20y+";
 
+export interface RoutePreferences {
+  /** Circle chain codes with wallet routes the agent may use for account planning and balance tracking. */
+  networks: string[];
+  /** Circle chain codes still waiting on wallet sync. */
+  networkWatchlist?: string[];
+  /** Asset symbols the agent may consider for target plans; execution still gates per adapter. */
+  tokens: string[];
+  /** Assets the user wants the agent to monitor without using in plans. */
+  watchlist: string[];
+  updatedAt?: string;
+}
+
 export interface PortfolioGoal {
   /** Human label, e.g. "Retirement", "Treasury", "Speculative". */
   name: string;
@@ -75,6 +87,8 @@ export interface PortfolioGoal {
   includeUsyc: boolean;
   /** Always available; default 0 in `targetAllocation`. */
   includeEurc: boolean;
+  /** Agent execution scope chosen from the wallet page. */
+  routePreferences?: RoutePreferences;
   createdAt: string;
 }
 
@@ -401,6 +415,23 @@ export type LegKind =
   | "fx_stablefx";
 
 export type LegStatus = "pending" | "submitted" | "confirmed" | "failed";
+
+/**
+ * Plain-language execution state for a token/route, mirrored from the backend
+ * route registry (`RouteState`). The UI must use exactly these labels so users
+ * never mistake a non-executable route for a working one:
+ * - `ready` — can execute now
+ * - `track-only` — price-tracked but not executable (disabled / KYB-gated)
+ * - `needs-route` — adapter or rail not connected
+ * - `needs-quote` — live route, awaiting a fresh quote
+ * - `needs-address` — live adapter, but the token's on-chain address is unset
+ */
+export type RouteState =
+  | "ready"
+  | "track-only"
+  | "needs-route"
+  | "needs-quote"
+  | "needs-address";
 
 export type RebalanceLifecycle =
   | "planned"

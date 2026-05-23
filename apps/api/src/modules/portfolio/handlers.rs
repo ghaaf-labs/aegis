@@ -167,10 +167,14 @@ pub async fn update(
     Json(body): Json<UpdatePortfolioRequest>,
 ) -> crate::error::Result<Json<Portfolio>> {
     let portfolio = sqlx::query_as::<_, Portfolio>(
-        "UPDATE portfolios SET name = COALESCE($1, name), updated_at = NOW()
-         WHERE id = $2 AND user_id = $3 RETURNING *",
+        "UPDATE portfolios
+         SET name = COALESCE($1, name),
+             goal = COALESCE($2, goal),
+             updated_at = NOW()
+         WHERE id = $3 AND user_id = $4 RETURNING *",
     )
     .bind(body.name)
+    .bind(body.goal)
     .bind(id)
     .bind(claims.sub)
     .fetch_optional(&state.db)

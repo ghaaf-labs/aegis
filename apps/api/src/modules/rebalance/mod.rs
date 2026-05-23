@@ -6,11 +6,14 @@
 //! per-leg SSE events. Handlers expose the user-facing
 //! `plan → review → execute → poll` flow.
 
+pub mod adapters;
 pub mod cross_chain;
 pub mod executor;
 pub mod handlers;
 pub mod models;
 pub mod planner;
+pub mod quote;
+pub mod registry;
 
 #[allow(unused_imports)]
-pub use models::{ChainKey, LegKind, PlanInput, PlannedLeg, Rebalance, RebalanceLeg};
+pub use models::{ChainKey, LegKind, PlanInput, PlannedLeg, Rebalance, RebalanceLeg, TokenClass};

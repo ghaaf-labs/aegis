@@ -360,6 +360,7 @@ describe("<EmailAuthCard />", () => {
     expect(container.textContent).toContain(
       "Signed out. Enter your email to continue.",
     );
+    expect(walletApi.session).not.toHaveBeenCalled();
 
     act(() => root.unmount());
   });
@@ -376,6 +377,7 @@ describe("<EmailAuthCard />", () => {
     expect(container.textContent).toContain("Continue with email");
     expect(container.textContent).toContain("We'll email you a 6-digit code.");
     expect(container.textContent).toContain("Enter your email to continue.");
+    expect(walletApi.session).not.toHaveBeenCalled();
 
     act(() => root.unmount());
   });
@@ -392,6 +394,7 @@ describe("<EmailAuthCard />", () => {
     );
     expect(container.textContent).not.toContain("browser");
     expect(container.textContent).not.toContain("session check");
+    expect(walletApi.session).not.toHaveBeenCalled();
 
     act(() => root.unmount());
   });

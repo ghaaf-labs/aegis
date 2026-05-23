@@ -60,8 +60,8 @@ export default function ExploreIndex() {
             />
             <ExploreMetric
               icon={ShieldCheck}
-              label="Execution"
-              value="blocked"
+              label="Demo mode"
+              value="read only"
               tone="warn"
             />
           </div>
@@ -128,7 +128,7 @@ export default function ExploreIndex() {
                   />
                   <DemoFact
                     label="Approval"
-                    value="not executable in demo"
+                    value="read-only demo"
                     tone="warn"
                   />
                 </div>
@@ -223,7 +223,7 @@ function ExploreRailSvg() {
     <svg
       viewBox="0 0 520 220"
       role="img"
-      aria-label="Demo flow showing curated data, agent reasoning, review gate, and blocked execution"
+      aria-label="Demo flow showing curated data, agent reasoning, review gate, and read-only execution"
       className="h-auto w-full border border-border-default bg-bg"
     >
       <defs>
@@ -264,7 +264,7 @@ function ExploreRailSvg() {
       <g transform="translate(34 166)">
         <RadioTower width="16" height="16" color="#67e8f9" />
         <text x="24" y="13" fill="#a3a3a3" fontFamily="monospace" fontSize="10">
-          demo data never executes trades
+          demo data is read-only
         </text>
       </g>
     </svg>

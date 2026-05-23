@@ -1,0 +1,240 @@
+//! Token registry — the canonical metadata for every symbol Aegis can hold.
+//!
+//! One `TokenSpec` per symbol carries decimals, economic class, the chain it
+//! settles on, and a per-chain ERC-20 address resolver that reads `Config`.
+//! An address that is empty or all-zero (the committed testnet placeholder)
+//! resolves to `None`, which the route registry treats as "no address → fail
+//! closed". This is the single source of truth consulted by the planner,
+//! approval gate, executor, and agent.
+
+use crate::config::Config;
+
+use super::super::models::{ChainKey, TokenClass};
+
+pub const USDC: &str = "USDC";
+pub const USYC: &str = "USYC";
+pub const EURC: &str = "EURC";
+pub const ETH: &str = "ETH";
+
+/// Static metadata for one token. `canonical_chain == None` means the token is
+/// multi-chain (USDC), so it stays wherever the user holds it.
+#[derive(Debug, Clone, Copy)]
+pub struct TokenSpec {
+    pub symbol: &'static str,
+    pub decimals: u8,
+    pub class: TokenClass,
+    pub canonical_chain: Option<ChainKey>,
+    pub supported_chains: &'static [ChainKey],
+}
+
+impl TokenSpec {
+    /// The concrete ERC-20 address for this token on `chain`, or `None` when it
+    /// is unconfigured / a zero placeholder / the token does not live on that
+    /// chain. Callers MUST treat `None` as non-executable.
+    pub fn address_for<'a>(&self, cfg: &'a Config, chain: ChainKey) -> Option<&'a str> {
+        let raw = match (self.symbol, chain) {
+            (USDC, ChainKey::Arc) => cfg.usdc_arc.as_str(),
+            (USDC, ChainKey::Base) => cfg.usdc_base.as_str(),
+            (USYC, ChainKey::Arc) => cfg.usyc_token_arc.as_str(),
+            (ETH, ChainKey::Base) => cfg.weth_base.as_str(),
+            // EURC (Arc StableFX) and the remaining volatiles have no canonical
+            // testnet ERC-20 configured, so they resolve to None and fail closed.
+            _ => return None,
+        };
+        normalize_addr(raw)
+    }
+}
+
+const ARC: &[ChainKey] = &[ChainKey::Arc];
+const BASE: &[ChainKey] = &[ChainKey::Base];
+const ARC_BASE: &[ChainKey] = &[ChainKey::Arc, ChainKey::Base];
+
+/// Every token Aegis prices, tracks, or settles. Decimals match each token's
+/// on-chain ERC-20 (USDC/USYC/EURC = 6; ETH/most ERC-20s = 18; BTC = 8; SOL = 9).
+pub const TOKEN_REGISTRY: &[TokenSpec] = &[
+    TokenSpec {
+        symbol: USDC,
+        decimals: 6,
+        class: TokenClass::Stable,
+        canonical_chain: None,
+        supported_chains: ARC_BASE,
+    },
+    TokenSpec {
+        symbol: USYC,
+        decimals: 6,
+        class: TokenClass::Yield,
+        canonical_chain: Some(ChainKey::Arc),
+        supported_chains: ARC,
+    },
+    TokenSpec {
+        symbol: EURC,
+        decimals: 6,
+        class: TokenClass::FxStable,
+        canonical_chain: Some(ChainKey::Arc),
+        supported_chains: ARC,
+    },
+    TokenSpec {
+        symbol: "BTC",
+        decimals: 8,
+        class: TokenClass::Volatile,
+        canonical_chain: Some(ChainKey::Base),
+        supported_chains: BASE,
+    },
+    TokenSpec {
+        symbol: ETH,
+        decimals: 18,
+        class: TokenClass::Volatile,
+        canonical_chain: Some(ChainKey::Base),
+        supported_chains: BASE,
+    },
+    TokenSpec {
+        symbol: "SOL",
+        decimals: 9,
+        class: TokenClass::Volatile,
+        canonical_chain: Some(ChainKey::Base),
+        supported_chains: BASE,
+    },
+    TokenSpec {
+        symbol: "BNB",
+        decimals: 18,
+        class: TokenClass::Volatile,
+        canonical_chain: Some(ChainKey::Base),
+        supported_chains: BASE,
+    },
+    TokenSpec {
+        symbol: "AVAX",
+        decimals: 18,
+        class: TokenClass::Volatile,
+        canonical_chain: Some(ChainKey::Base),
+        supported_chains: BASE,
+    },
+    TokenSpec {
+        symbol: "MATIC",
+        decimals: 18,
+        class: TokenClass::Volatile,
+        canonical_chain: Some(ChainKey::Base),
+        supported_chains: BASE,
+    },
+    TokenSpec {
+        symbol: "LINK",
+        decimals: 18,
+        class: TokenClass::Volatile,
+        canonical_chain: Some(ChainKey::Base),
+        supported_chains: BASE,
+    },
+    TokenSpec {
+        symbol: "UNI",
+        decimals: 18,
+        class: TokenClass::Volatile,
+        canonical_chain: Some(ChainKey::Base),
+        supported_chains: BASE,
+    },
+];
+
+/// Look up a token by symbol (case-sensitive — symbols are uppercase canonical).
+pub fn token(symbol: &str) -> Option<&'static TokenSpec> {
+    TOKEN_REGISTRY.iter().find(|t| t.symbol == symbol)
+}
+
+/// The chain a symbol settles on for cross-chain planning. USDC (multi-chain)
+/// has no single canonical chain and returns `None`.
+pub fn canonical_chain(symbol: &str) -> Option<ChainKey> {
+    token(symbol).and_then(|t| t.canonical_chain)
+}
+
+/// True when `raw` is a usable address (non-empty, not an all-zero placeholder).
+/// Used by the capability probe for venue/teller addresses that have no
+/// `TokenSpec` of their own.
+pub fn is_real_addr(raw: &str) -> bool {
+    normalize_addr(raw).is_some()
+}
+
+/// Trim, then reject empty strings and all-zero hex placeholders.
+fn normalize_addr(raw: &str) -> Option<&str> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let hex = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"));
+    if let Some(hex) = hex {
+        if !hex.is_empty() && hex.bytes().all(|b| b == b'0') {
+            return None;
+        }
+    }
+    Some(trimmed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_symbol_resolves_with_expected_decimals() {
+        assert_eq!(token(USDC).unwrap().decimals, 6);
+        assert_eq!(token(USYC).unwrap().decimals, 6);
+        assert_eq!(token(EURC).unwrap().decimals, 6);
+        assert_eq!(token("BTC").unwrap().decimals, 8);
+        assert_eq!(token(ETH).unwrap().decimals, 18);
+        assert_eq!(token("SOL").unwrap().decimals, 9);
+        assert!(token("DOGE").is_none());
+    }
+
+    #[test]
+    fn classes_and_canonical_chains_are_correct() {
+        assert_eq!(token(USDC).unwrap().class, TokenClass::Stable);
+        assert_eq!(token(USDC).unwrap().canonical_chain, None);
+        assert_eq!(token(USYC).unwrap().class, TokenClass::Yield);
+        assert_eq!(token(USYC).unwrap().canonical_chain, Some(ChainKey::Arc));
+        assert_eq!(token(EURC).unwrap().class, TokenClass::FxStable);
+        assert_eq!(token(EURC).unwrap().canonical_chain, Some(ChainKey::Arc));
+        assert_eq!(token("BTC").unwrap().class, TokenClass::Volatile);
+        assert_eq!(token(ETH).unwrap().canonical_chain, Some(ChainKey::Base));
+    }
+
+    #[test]
+    fn normalize_addr_rejects_empty_and_zero() {
+        assert_eq!(normalize_addr(""), None);
+        assert_eq!(normalize_addr("   "), None);
+        assert_eq!(
+            normalize_addr("0x0000000000000000000000000000000000000000"),
+            None
+        );
+        assert_eq!(
+            normalize_addr("0X0000000000000000000000000000000000000000"),
+            None
+        );
+        assert_eq!(
+            normalize_addr("0x036CbD53842c5426634e7929541eC2318f3dCF7e"),
+            Some("0x036CbD53842c5426634e7929541eC2318f3dCF7e")
+        );
+    }
+
+    #[test]
+    fn address_for_reads_config_and_normalizes() {
+        let mut cfg = crate::config::test_config();
+        cfg.usdc_base = "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
+        cfg.usdc_arc = "0x0000000000000000000000000000000000000000".into();
+        cfg.weth_base = "0x4200000000000000000000000000000000000006".into();
+
+        let usdc = token(USDC).unwrap();
+        assert_eq!(
+            usdc.address_for(&cfg, ChainKey::Base),
+            Some(cfg.usdc_base.as_str())
+        );
+        // Zero placeholder on Arc resolves to None → fail closed.
+        assert_eq!(usdc.address_for(&cfg, ChainKey::Arc), None);
+
+        let eth = token(ETH).unwrap();
+        assert_eq!(
+            eth.address_for(&cfg, ChainKey::Base),
+            Some(cfg.weth_base.as_str())
+        );
+        // BTC has no configured Base ERC-20 → None.
+        assert_eq!(
+            token("BTC").unwrap().address_for(&cfg, ChainKey::Base),
+            None
+        );
+    }
+}

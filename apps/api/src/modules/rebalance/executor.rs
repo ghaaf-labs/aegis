@@ -9,12 +9,16 @@
 //! double-spend on partial CCTP commits.
 
 use chrono::Utc;
-use sha2::Digest as _;
 use uuid::Uuid;
 
 use crate::error::{AppError, Result};
-use crate::modules::rebalance::cross_chain::{build_hook_payload, CctpClient};
+use crate::modules::rebalance::adapters;
+use crate::modules::rebalance::cross_chain::build_hook_payload;
 use crate::modules::rebalance::models::{ChainKey, LegKind, PlannedLeg};
+use crate::modules::rebalance::quote::ValidatedQuote;
+use crate::modules::rebalance::registry::{
+    capabilities::RuntimeCapabilities, route::RouteLeg, ticket::ExecutionTicket,
+};
 use crate::modules::sse::{RebalanceLegPayload, RebalancePlanPayload, SseEvent};
 use crate::modules::wallet_routes;
 use crate::router::AppState;
@@ -34,16 +38,25 @@ pub async fn create_plan(
 ) -> Result<Uuid> {
     let total_gas_usdc = estimate_total_gas(state, legs).await;
 
+    // Tag the plan with the mode it will execute in so public metrics can count
+    // only real, completed executions (migration 0033).
+    let execution_mode = if state.config.execution_mock || state.config.circle_mock {
+        "mock"
+    } else {
+        "real"
+    };
+
     let mut tx = state.db.begin().await?;
     let rebalance_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO rebalances (portfolio_id, decision_id, status, total_legs, total_gas_usdc)
-         VALUES ($1, $2, 'planned', $3, $4)
+        "INSERT INTO rebalances (portfolio_id, decision_id, status, total_legs, total_gas_usdc, execution_mode)
+         VALUES ($1, $2, 'planned', $3, $4, $5)
          RETURNING id",
     )
     .bind(portfolio_id)
     .bind(decision_id)
     .bind(legs.len() as i32)
     .bind(total_gas_usdc)
+    .bind(execution_mode)
     .fetch_one(&mut *tx)
     .await?;
 
@@ -344,64 +357,84 @@ async fn dispatch(
     user_id: Uuid,
 ) -> Result<(String, Option<String>)> {
     let _ = rebalance_id;
+    let caps = RuntimeCapabilities::from_config(&state.config);
+
+    // Opt-in mock mode (tests/CI/offline dev): simulate every leg with a
+    // clearly-labelled mock receipt. Unreachable when running against real
+    // APIs, so a synthetic hash can never stand in for a real transaction.
+    if !caps.real_mode {
+        let r = adapters::mock_receipt(kind, leg.id);
+        return Ok((r.tx_hash, None));
+    }
+
+    // Real mode: the leg must clear the route registry and (for swaps) carry a
+    // fresh on-chain quote before an `ExecutionTicket` can be minted. There is
+    // no real dispatch path without a ticket, so a fake hash cannot be produced
+    // here by construction. Blocked routes (USYC disabled, StableFX KYB-gated,
+    // missing address/feature/signer) fail closed at `mint`.
+    let route_leg = RouteLeg::from_parts(
+        kind.as_str(),
+        leg.src_chain.clone(),
+        leg.dest_chain.clone(),
+        leg.src_symbol.clone(),
+        leg.dest_symbol.clone(),
+        leg.amount_usdc,
+    )
+    .ok_or_else(|| AppError::Internal(anyhow::anyhow!("unparsable leg kind")))?;
+
+    let now = Utc::now();
+    let src_chain = ChainKey::parse(leg.src_chain.as_deref().unwrap_or(""))
+        .or_else(|| ChainKey::parse(leg.dest_chain.as_deref().unwrap_or("")));
+    let dest_chain = ChainKey::parse(leg.dest_chain.as_deref().unwrap_or("")).or(src_chain);
+    let amount_base = (leg.amount_usdc * 1_000_000.0) as u128;
+
+    let quote = match kind {
+        LegKind::LocalSwap => adapters::swap::quote(&state.config, &route_leg, now).await?,
+        _ => {
+            let s = src_chain.ok_or_else(|| AppError::BadRequest("missing src_chain".into()))?;
+            let d = dest_chain.ok_or_else(|| AppError::BadRequest("missing dest_chain".into()))?;
+            ValidatedQuote::cctp_one_to_one(s, d, amount_base, now)
+        }
+    };
+
+    let ticket = ExecutionTicket::mint(&caps, &state.config, leg.id, &route_leg, quote, now)
+        .map_err(|e| AppError::BadRequest(e.detail()))?;
+
     match kind {
         LegKind::CrossChainBurn => {
-            let src = ChainKey::parse(leg.src_chain.as_deref().unwrap_or(""))
-                .ok_or_else(|| AppError::BadRequest("missing src_chain".into()))?;
-            let dest = ChainKey::parse(leg.dest_chain.as_deref().unwrap_or(""))
-                .ok_or_else(|| AppError::BadRequest("missing dest_chain".into()))?;
-            // Look up the user's destination-chain EOA — this is the
-            // recipient embedded in the hook payload. The minted USDC
-            // arrives at the destination-chain RebalanceExecutor, which
-            // then forwards it here.
-            let recipient = if state.config.execution_mock || state.config.circle_mock {
-                "0x0000000000000000000000000000000000000000".to_string()
-            } else {
-                wallet_routes::address_for_user(
-                    &state.db,
-                    user_id,
-                    blockchain_for_chain(dest),
-                    &state.config.circle_wallet_set_id,
-                )
-                .await
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("recipient lookup: {e}")))?
-                .unwrap_or_default()
-            };
+            // The user's destination-chain EOA is the recipient embedded in the
+            // hook payload; minted USDC lands at the destination RebalanceExecutor
+            // which forwards it here.
+            let recipient = wallet_routes::address_for_user(
+                &state.db,
+                user_id,
+                blockchain_for_chain(ticket.dest_chain()),
+                &state.config.circle_wallet_set_id,
+            )
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("recipient lookup: {e}")))?
+            .unwrap_or_default();
             if recipient.is_empty() {
                 return Err(AppError::Internal(anyhow::anyhow!(
                     "destination wallet address is empty; cannot route mint"
                 )));
             }
-            // The planner doesn't yet resolve dest_symbol (e.g. "BTC") to a
-            // concrete ERC-20 address on the destination chain, and the leg
-            // row doesn't carry the address either. Until the planner stores
-            // (chain, token) tuples, we route USDC-only burns: zero address
-            // tokenOut + minOut=0 tells the destination RebalanceExecutor to
-            // skip the Uniswap leg and just credit USDC. Real volatile-asset
-            // hooks land when the planner gains address lookup.
-            let pool_fee = 3000u32;
+            // USDC-only bridge: zero tokenOut + minOut=0 tells the destination
+            // RebalanceExecutor to skip the swap and just credit USDC. Cross-chain
+            // token hooks are gated upstream (CrossChainTokenSwap blocker).
             let token_out_zero = "0x0000000000000000000000000000000000000000";
             let hook = build_hook_payload(
                 &recipient,
                 token_out_zero,
-                pool_fee,
+                3000,
                 0,
-                (chrono::Utc::now().timestamp() + 600) as u64,
+                (now.timestamp() + 600) as u64,
             );
-            let client = CctpClient::new(&state.http, &state.config);
-            let r = client
-                .deposit_for_burn(src, dest, leg.amount_usdc, &hook)
-                .await?;
-            Ok((r.tx_hash, Some(r.message_hash)))
+            let r = adapters::cctp::burn(&state.config, &state.http, &ticket, &hook).await?;
+            Ok((r.tx_hash, r.cctp_message_hash))
         }
         LegKind::CrossChainMint => {
-            let src = ChainKey::parse(leg.src_chain.as_deref().unwrap_or(""))
-                .ok_or_else(|| AppError::BadRequest("missing src_chain".into()))?;
-            let dest = ChainKey::parse(leg.dest_chain.as_deref().unwrap_or(""))
-                .ok_or_else(|| AppError::BadRequest("missing dest_chain".into()))?;
-            let client = CctpClient::new(&state.http, &state.config);
-            // The companion burn leg already produced a tx_hash; the
-            // executor reads it back from rebalance_legs in production.
+            // The companion burn leg already produced a tx_hash; read it back.
             let burn_hash = sqlx::query_scalar::<_, Option<String>>(
                 "SELECT tx_hash FROM rebalance_legs
                  WHERE rebalance_id = (SELECT rebalance_id FROM rebalance_legs WHERE id = $1)
@@ -414,40 +447,17 @@ async fn dispatch(
             .await?
             .flatten()
             .unwrap_or_default();
-
-            let att = client
-                .wait_for_attestation(src.domain_id(), &burn_hash)
-                .await?;
-            let r = client.receive_message(dest, &att).await?;
+            let r = adapters::cctp::mint(&state.config, &state.http, &ticket, &burn_hash).await?;
             Ok((r.tx_hash, None))
         }
-        LegKind::ParkUsyc => {
-            let r = crate::modules::treasury::service::park_in_usyc(
-                &state.db,
-                &state.config,
-                user_id,
-                leg.amount_usdc,
-            )
-            .await?;
-            let tx = r.tx_hash.unwrap_or_else(|| mock_leg_hash(kind, leg));
-            Ok((tx, None))
+        LegKind::LocalSwap => {
+            let r = adapters::swap::execute(&state.config, &ticket).await?;
+            Ok((r.tx_hash, r.cctp_message_hash))
         }
-        LegKind::RedeemUsyc => {
-            let r = crate::modules::treasury::service::redeem_from_usyc(
-                &state.db,
-                &state.config,
-                user_id,
-                leg.amount_usdc,
-            )
-            .await?;
-            let tx = r.tx_hash.unwrap_or_else(|| mock_leg_hash(kind, leg));
-            Ok((tx, None))
-        }
-        LegKind::LocalSwap | LegKind::FxStablefx => {
-            // Mock receipt — local AMM swap + StableFX lands when the per-chain
-            // executor (Uniswap V3 on Base, Arc StableFX) and FX module mints
-            // real txs. Until then this hash anchors the row to a leg id.
-            Ok((mock_leg_hash(kind, leg), None))
+        // Unreachable: USYC (disabled) and StableFX (KYB-gated) legs fail closed
+        // at `mint` above, so real dispatch never reaches them.
+        LegKind::ParkUsyc | LegKind::RedeemUsyc | LegKind::FxStablefx => {
+            Err(AppError::BadRequest("route is not executable".into()))
         }
     }
 }
@@ -457,14 +467,6 @@ fn blockchain_for_chain(chain: ChainKey) -> &'static str {
         ChainKey::Arc => wallet_routes::ARC_TESTNET,
         ChainKey::Base => wallet_routes::BASE_SEPOLIA,
     }
-}
-
-fn mock_leg_hash(kind: LegKind, leg: &LegRow) -> String {
-    let mut h = sha2::Sha256::new();
-    h.update(kind.as_str().as_bytes());
-    h.update(b":");
-    h.update(leg.id.as_bytes());
-    format!("0x{}", hex::encode(h.finalize()))
 }
 
 fn parse_kind(s: &str) -> Result<LegKind> {

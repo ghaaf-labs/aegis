@@ -44,7 +44,7 @@ anyhow = "1"
 thiserror = "2"
 
 # Utils
-uuid = { version = "1", features = ["v4", "serde"] }
+uuid = { version = "1", features = ["v4", "v5", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
 
@@ -83,6 +83,9 @@ alloy = { version = "2.0.5", features = ["contract", "json", "node-bindings", "s
 default = []
 real-cctp = ["dep:alloy"]
 real-usyc = ["dep:alloy"]
+# Compile the real per-chain swap adapter (Uniswap V3 QuoterV2 + SwapRouter02
+# on Base Sepolia). Without it, USDC↔token swaps fail closed.
+real-swap = ["dep:alloy"]
 
 [dev-dependencies]
 tokio-test = "0.4"

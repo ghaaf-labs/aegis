@@ -66,6 +66,33 @@ impl LegKind {
             Self::FxStablefx => "fx_stablefx",
         }
     }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "local_swap" => Self::LocalSwap,
+            "cross_chain_burn" => Self::CrossChainBurn,
+            "cross_chain_mint" => Self::CrossChainMint,
+            "park_usyc" => Self::ParkUsyc,
+            "redeem_usyc" => Self::RedeemUsyc,
+            "fx_stablefx" => Self::FxStablefx,
+            _ => return None,
+        })
+    }
+}
+
+/// Economic class of a token, used by the route registry to decide which
+/// adapter (and capability checks) a leg touching it must clear.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TokenClass {
+    /// USDC — the settlement unit; bridged via CCTP, never swapped.
+    Stable,
+    /// USYC — yield sleeve, minted/redeemed via the Hashnote Teller.
+    Yield,
+    /// EURC — FX sleeve, swapped via Arc StableFX.
+    FxStable,
+    /// BTC/ETH/SOL/… — market exposure acquired via a per-chain AMM swap.
+    Volatile,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]

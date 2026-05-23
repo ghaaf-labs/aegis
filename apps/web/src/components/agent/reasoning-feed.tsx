@@ -34,7 +34,7 @@ const TRIGGER_LABELS: Record<AgentTrigger, string> = {
   market_movement: "Market Signal",
   scheduled: "Scheduled",
   risk_breach: "Risk Breach",
-  user_request: "Manual",
+  user_request: "User Review",
   regime_flip: "Regime Flip",
   abstain: "Abstain",
   peg_alert: "Peg Defense",
@@ -209,20 +209,20 @@ function DecisionList({
             active={view === "current"}
             onClick={() => setView("current")}
           >
-            Current · {currentDecisions.length}
+            Current{" "}
+            <span className="opacity-60">({currentDecisions.length})</span>
           </DecisionViewButton>
           <DecisionViewButton
             active={view === "audit"}
             onClick={() => setView("audit")}
           >
-            Full audit · {decisions.length}
+            History <span className="opacity-60">({decisions.length})</span>
           </DecisionViewButton>
         </div>
         {view === "current" && auditCount > 0 && (
           <p className="mt-2 text-[10px] font-mono leading-relaxed text-text-mut">
-            {auditCount} historical, rejected, or cash-mismatched{" "}
-            {auditCount === 1 ? "row is" : "rows are"} hidden from current
-            guidance.
+            {auditCount} older or stale{" "}
+            {auditCount === 1 ? "row is" : "rows are"} in History.
           </p>
         )}
       </div>
@@ -230,8 +230,8 @@ function DecisionList({
       {view === "current" && currentDecisions.length === 0 && (
         <div className="px-5 py-8 text-center">
           <p className="text-xs font-mono text-text-lo">
-            No current executable guidance. Historical and rejected proposals
-            are available in Full audit.
+            No current plan. Older and rejected proposals are available in
+            History.
           </p>
         </div>
       )}
@@ -251,7 +251,7 @@ function DecisionList({
             )}
             {blockedCount > 0 && (
               <span className="text-risk">
-                {blockedCount} critic-blocked{" "}
+                {blockedCount} critic-rejected{" "}
                 {blockedCount === 1 ? "proposal" : "proposals"}
               </span>
             )}
@@ -318,24 +318,33 @@ function DecisionViewButton({
 }
 
 /**
- * Buckets consecutive decisions sharing the same recommendation "shape".
- * Two decisions are considered the same if they're both no-trade holds (empty
- * trades array) — that's the loop the agent gets stuck in pre-deploy. Head =
- * most recent in the bucket; `repeats` = older copies collapsed.
+ * Buckets consecutive decisions sharing the same recommendation shape. This
+ * keeps repeated refreshes from making the agent look like it is proposing the
+ * same move twice.
  */
 function groupRepeatedDecisions(decisions: AgentDecision[]) {
   const out: Array<{ head: AgentDecision; repeats: number }> = [];
-  const noTradeShape = (d: AgentDecision) =>
-    (d.recommendation?.trades?.length ?? 0) === 0;
+  const decisionShape = (d: AgentDecision) => {
+    const trades = d.recommendation?.trades ?? [];
+    if (trades.length === 0) return "no-trade-hold";
+    return trades
+      .map((trade) => {
+        const action = normalizedTradeAction(trade);
+        const value = tradeValueUsd(trade);
+        return [
+          action,
+          tradeSymbol(trade),
+          value == null ? "none" : value.toFixed(2),
+          userFacingTradeReason(trade),
+        ].join(":");
+      })
+      .join("|");
+  };
   for (const d of decisions) {
-    const shape = noTradeShape(d) ? "no-trade-hold" : `trades:${d.id}`;
+    const shape = decisionShape(d);
     const last = out[out.length - 1];
-    const lastShape = last
-      ? noTradeShape(last.head)
-        ? "no-trade-hold"
-        : `trades:${last.head.id}`
-      : null;
-    if (last && lastShape === shape && shape === "no-trade-hold") {
+    const lastShape = last ? decisionShape(last.head) : null;
+    if (last && lastShape === shape) {
       last.repeats += 1;
       continue;
     }
@@ -460,7 +469,7 @@ function DecisionRow({
           )}
           {showAuditDetails && blocked && (
             <span className="px-1.5 py-0.5 rounded-sm text-[10px] font-mono border border-rose-500/30 text-risk bg-rose-500/5">
-              Blocked by critic
+              Critic rejected
             </span>
           )}
           {showAuditDetails && legacyLocal && (
@@ -486,8 +495,12 @@ function DecisionRow({
           blocked || legacyLocal || outdated ? "text-text-lo" : "text-text-hi"
         }`}
       >
-        {decision.recommendation?.summary ??
-          (trades.length > 0 ? "Decision needs review" : "No action proposed")}
+        {showAuditDetails
+          ? (decision.recommendation?.summary ??
+            (trades.length > 0
+              ? "Decision needs review"
+              : "No action proposed"))
+          : decisionHeadline(decision)}
       </p>
       {showAuditDetails && blocked && (
         <p className="mb-2 text-[10px] font-mono text-risk">
@@ -518,7 +531,7 @@ function DecisionRow({
       ) : (
         <p className="text-[11px] text-text-mut leading-relaxed">
           {trades.length > 0
-            ? "Review each move before execution."
+            ? "No funds move until you approve."
             : "No movement is proposed right now."}
         </p>
       )}
@@ -545,18 +558,18 @@ function DecisionRow({
                         : "bg-red-500/15 text-risk"
                   }`}
                 >
-                  {action.toUpperCase()}
+                  {tradeActionLabel(action)}
                 </span>
                 <span className="font-mono text-text-hi">
                   {tradeSymbol(trade)}
                 </span>
                 {valueUsd != null && (
-                  <span className="font-mono text-text-lo tabular-nums">
+                  <span className="font-mono text-accent-pnl tabular-nums">
                     {formatCurrency(valueUsd)}
                   </span>
                 )}
                 <span className="text-text-mut truncate">
-                  {tradeReason(trade)}
+                  {userFacingTradeReason(trade)}
                 </span>
               </div>
             );
@@ -712,10 +725,54 @@ function tradeSymbol(trade: TradeLike) {
     : "UNKNOWN";
 }
 
-function tradeReason(trade: TradeLike) {
-  return typeof trade.reason === "string" && trade.reason.trim()
-    ? trade.reason
-    : "Malformed historical trade row";
+function decisionHeadline(decision: AgentDecision) {
+  const trades = decision.recommendation?.trades ?? [];
+  if (trades.length === 0) {
+    return "No move needed";
+  }
+
+  const symbols = Array.from(new Set(trades.map(tradeSymbol))).filter(
+    (symbol) => symbol !== "UNKNOWN",
+  );
+  const totalUsd = trades.reduce((sum, trade) => {
+    const value = tradeValueUsd(trade);
+    return sum + (value ?? 0);
+  }, 0);
+
+  if (totalUsd > 0 && symbols.length > 0) {
+    return `Move ${formatCurrency(totalUsd)} to ${symbols.join(" / ")}`;
+  }
+
+  return "Plan ready for review";
+}
+
+function tradeActionLabel(action: ReturnType<typeof normalizedTradeAction>) {
+  if (action === "buy") return "Move to";
+  if (action === "sell") return "Move from";
+  return "Review";
+}
+
+function userFacingTradeReason(trade: TradeLike) {
+  const raw =
+    typeof trade.reason === "string" && trade.reason.trim()
+      ? trade.reason.trim()
+      : "";
+  const symbol = tradeSymbol(trade);
+  const normalized = raw.toLowerCase();
+
+  if (!raw) return "Needs review";
+  if (normalized.includes("park_usyc") || normalized.includes("usyc")) {
+    return symbol === "USYC" ? "USYC route" : "Yield route";
+  }
+  if (normalized.includes("gateway cash") || normalized.includes("wallet")) {
+    return "Wallet cash";
+  }
+  if (normalized.includes("arc")) return "Arc route";
+  if (normalized.includes("base")) return "Base route";
+  if (normalized.includes("unsupported") || normalized.includes("malformed")) {
+    return "Needs review";
+  }
+  return raw;
 }
 
 function tradeValueUsd(trade: TradeLike) {

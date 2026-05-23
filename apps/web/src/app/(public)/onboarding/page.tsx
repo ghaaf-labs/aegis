@@ -3,7 +3,15 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CircleAlert, Loader2, LogOut, RotateCw, Shield } from "lucide-react";
+import {
+  CheckCircle2,
+  CircleAlert,
+  Loader2,
+  LogOut,
+  RotateCw,
+  Shield,
+  Wallet,
+} from "lucide-react";
 import { BrutalButton } from "@aegis/ui";
 import { logoutFailureMessage } from "@/components/layout/logout-copy";
 import { GoalWizard } from "@/components/onboarding/goal-wizard";
@@ -102,15 +110,18 @@ export default function OnboardingPage() {
   return (
     <main className="relative min-h-screen overflow-hidden bg-bg text-text-default">
       <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:48px_48px]" />
-      <section className="relative mx-auto flex min-h-screen w-full max-w-lg flex-col justify-center px-5 py-8">
-        <Link href="/" className="mx-auto mb-8 inline-flex items-center gap-2">
+      <section className="relative mx-auto flex min-h-screen w-full max-w-5xl flex-col justify-center px-5 py-8">
+        <Link
+          href="/"
+          className="mb-8 inline-flex items-center gap-2 self-center"
+        >
           <div className="flex h-9 w-9 items-center justify-center rounded-sharp border-brutal border-black bg-accent-agent">
             <Shield className="h-4 w-4 text-black" />
           </div>
           <span className="text-lg font-semibold text-text-hi">Aegis</span>
         </Link>
 
-        <div className="mb-5 space-y-2 text-center">
+        <div className="mx-auto mb-5 max-w-2xl space-y-2 text-center">
           <h1 className="font-mono text-3xl font-semibold text-text-hi sm:text-4xl">
             Create your portfolio
           </h1>
@@ -120,52 +131,105 @@ export default function OnboardingPage() {
           </p>
         </div>
 
-        {authState.kind === "checking" && <OnboardingChecking />}
-        {authState.kind === "signed_out" && <OnboardingSignedOut />}
+        {authState.kind === "checking" && (
+          <div className="mx-auto w-full max-w-lg">
+            <OnboardingChecking />
+          </div>
+        )}
+        {authState.kind === "signed_out" && (
+          <div className="mx-auto w-full max-w-lg">
+            <OnboardingSignedOut />
+          </div>
+        )}
         {authState.kind === "wallet_pending" && (
-          <OnboardingAccountPending
-            email={authState.email}
-            refreshing={refreshingAccount}
-            setupError={setupError}
-            loggingOut={loggingOut}
-            logoutError={logoutError}
-            onRetry={() => void refreshAccount()}
-            onLogout={() => void logout()}
-          />
+          <div className="mx-auto w-full max-w-lg">
+            <OnboardingAccountPending
+              email={authState.email}
+              refreshing={refreshingAccount}
+              setupError={setupError}
+              loggingOut={loggingOut}
+              logoutError={logoutError}
+              onRetry={() => void refreshAccount()}
+              onLogout={() => void logout()}
+            />
+          </div>
         )}
         {authState.kind === "ready" && (
-          <>
-            <div className="mb-3 flex min-w-0 items-center justify-between gap-3 border border-border-default bg-surface px-3 py-2 font-mono">
-              <span className="min-w-0 truncate text-[11px] text-text-mut">
-                {formatSignedInEmail(authState.email)}
-              </span>
-              <button
-                type="button"
-                onClick={() => void logout()}
-                disabled={loggingOut}
-                className="inline-flex min-h-8 shrink-0 items-center justify-center gap-1.5 rounded-sharp border border-border-default bg-bg px-2 text-[11px] text-text-lo hover:border-risk/50 hover:bg-risk/5 hover:text-risk disabled:opacity-50"
-              >
-                {loggingOut ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <LogOut className="h-3.5 w-3.5" />
-                )}
-                Log out
-              </button>
-            </div>
-            {logoutError && (
-              <div
-                role="alert"
-                className="mb-4 border border-risk/40 bg-risk/5 px-3 py-2 font-mono text-[11px] text-risk"
-              >
-                {logoutError}
+          <div className="grid gap-4 lg:grid-cols-[minmax(260px,340px)_minmax(0,1fr)] lg:items-start">
+            <div className="space-y-3">
+              <div className="border-brutal border-border-default bg-surface p-4 font-mono">
+                <p className="text-[10px] uppercase tracking-widest text-accent-agent">
+                  Account ready
+                </p>
+                <div className="mt-3 flex items-start gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-sharp border border-accent-pnl/40 bg-accent-pnl/10 text-accent-pnl">
+                    <CheckCircle2 className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-text-hi">
+                      {formatSignedInEmail(authState.email)}
+                    </p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-text-lo">
+                      Set the target mix first. Cash stays in Wallets until you
+                      review and approve a plan.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void logout()}
+                  disabled={loggingOut}
+                  className="mt-4 inline-flex min-h-9 w-full items-center justify-center gap-1.5 rounded-sharp border border-border-default bg-bg px-2 text-[11px] text-text-lo hover:border-risk/50 hover:bg-risk/5 hover:text-risk disabled:opacity-50"
+                >
+                  {loggingOut ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <LogOut className="h-3.5 w-3.5" />
+                  )}
+                  Log out
+                </button>
               </div>
-            )}
+              <div className="border border-border-default bg-surface p-4 font-mono text-xs">
+                <p className="font-semibold text-text-hi">Setup path</p>
+                <div className="mt-3 grid gap-2">
+                  <SetupRow done icon={Shield} label="Email verified" />
+                  <SetupRow done icon={Wallet} label="Wallet ready" />
+                  <SetupRow icon={CheckCircle2} label="Portfolio target" />
+                </div>
+              </div>
+              {logoutError && (
+                <div
+                  role="alert"
+                  className="border border-risk/40 bg-risk/5 px-3 py-2 font-mono text-[11px] text-risk"
+                >
+                  {logoutError}
+                </div>
+              )}
+            </div>
             <GoalWizard />
-          </>
+          </div>
         )}
       </section>
     </main>
+  );
+}
+
+function SetupRow({
+  done = false,
+  icon: Icon,
+  label,
+}: {
+  done?: boolean;
+  icon: typeof Shield;
+  label: string;
+}) {
+  return (
+    <div className="grid min-h-9 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 border border-border-default bg-bg px-2.5 py-2">
+      <Icon
+        className={`h-3.5 w-3.5 ${done ? "text-accent-pnl" : "text-accent-agent"}`}
+      />
+      <span className={done ? "text-text-hi" : "text-text-lo"}>{label}</span>
+    </div>
   );
 }
 

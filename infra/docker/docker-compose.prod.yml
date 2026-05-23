@@ -33,6 +33,8 @@ services:
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.api
+      args:
+        API_CARGO_FEATURES: ${API_CARGO_FEATURES:-real-cctp real-usyc}
     restart: unless-stopped
     depends_on:
       postgres:

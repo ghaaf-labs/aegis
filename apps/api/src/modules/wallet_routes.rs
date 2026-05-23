@@ -5,6 +5,19 @@ use crate::db::Db;
 
 pub const ARC_TESTNET: &str = "ARC-TESTNET";
 pub const BASE_SEPOLIA: &str = "BASE-SEPOLIA";
+pub const ETH_SEPOLIA: &str = "ETH-SEPOLIA";
+pub const ARB_SEPOLIA: &str = "ARB-SEPOLIA";
+pub const AVAX_FUJI: &str = "AVAX-FUJI";
+
+pub const SUPPORTED_WALLET_BLOCKCHAINS: [&str; 5] = [
+    ARC_TESTNET,
+    BASE_SEPOLIA,
+    ETH_SEPOLIA,
+    ARB_SEPOLIA,
+    AVAX_FUJI,
+];
+
+pub const EXECUTION_BLOCKCHAINS: [&str; 2] = [ARC_TESTNET, BASE_SEPOLIA];
 
 pub async fn address_for_user(
     db: &Db,
@@ -26,6 +39,47 @@ pub async fn address_for_user(
     .bind(blockchain)
     .bind(wallet_set_id.trim())
     .fetch_optional(db)
+    .await
+    .map_err(Into::into)
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct WalletRouteAddress {
+    pub blockchain: String,
+    pub address: String,
+}
+
+pub async fn addresses_for_user(
+    db: &Db,
+    user_id: Uuid,
+    wallet_set_id: &str,
+) -> crate::error::Result<Vec<WalletRouteAddress>> {
+    sqlx::query_as::<_, WalletRouteAddress>(
+        "SELECT blockchain, address
+         FROM user_wallet_networks
+         WHERE user_id = $1
+           AND blockchain IN (
+             'ARC-TESTNET',
+             'BASE-SEPOLIA',
+             'ETH-SEPOLIA',
+             'ARB-SEPOLIA',
+             'AVAX-FUJI'
+           )
+           AND account_type = 'SCA'
+           AND state = 'LIVE'
+           AND ($2 = '' OR wallet_set_id = $2)
+         ORDER BY CASE blockchain
+           WHEN 'ARC-TESTNET' THEN 1
+           WHEN 'BASE-SEPOLIA' THEN 2
+           WHEN 'ETH-SEPOLIA' THEN 3
+           WHEN 'ARB-SEPOLIA' THEN 4
+           WHEN 'AVAX-FUJI' THEN 5
+           ELSE 99
+         END",
+    )
+    .bind(user_id)
+    .bind(wallet_set_id.trim())
+    .fetch_all(db)
     .await
     .map_err(Into::into)
 }

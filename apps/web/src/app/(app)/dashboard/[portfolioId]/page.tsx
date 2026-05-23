@@ -12,10 +12,17 @@ import { PerformanceChart } from "@/components/dashboard/performance-chart";
 import { MarketOverview } from "@/components/dashboard/market-overview";
 import { TrustabilityCard } from "@/components/dashboard/trustability-card";
 import { IdleCashCard } from "@/components/dashboard/idle-cash-card";
-import { ValueFlowCard } from "@/components/dashboard/value-flow-card";
+import { targetAllocationsForPortfolio } from "@/components/dashboard/target-allocations";
 import { FaucetButton } from "@/components/wallet/faucet-button";
+import { ApprovalModal } from "@/components/rebalance/approval-modal";
 import { BrutalButton } from "@aegis/ui";
-import { rebalanceApi } from "@/lib/api";
+import {
+  agentApi,
+  rebalanceApi,
+  type RebalanceApprovalSafety,
+  type RebalancePlanResponse,
+} from "@/lib/api";
+import type { AgentDecision } from "@/types";
 import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
 import { formatCurrency } from "@/lib/utils";
 import { derivePortfolioPositionMetrics } from "@/lib/portfolio-values";
@@ -46,6 +53,18 @@ export default function PortfolioDashboardPage() {
   const router = useRouter();
   const [deploying, setDeploying] = useState(false);
   const [deployError, setDeployError] = useState<string | null>(null);
+  const [reviewPlan, setReviewPlan] = useState<RebalancePlanResponse | null>(
+    null,
+  );
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewDecision, setReviewDecision] = useState<AgentDecision | null>(
+    null,
+  );
+  const [approvalSafety, setApprovalSafety] =
+    useState<RebalanceApprovalSafety | null>(null);
+  const [estimatedFeeUsdc, setEstimatedFeeUsdc] = useState(0);
+  const [feeFetchedAt, setFeeFetchedAt] = useState<Date | null>(null);
+  const [reviewMessage, setReviewMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!portfoliosLoaded || activePortfolio) return;
@@ -60,16 +79,10 @@ export default function PortfolioDashboardPage() {
     activePortfolio,
     snapshot,
   );
-  const eurcUsd =
-    snapshot?.assets.find((a) => a.symbol === "EURC")?.priceUsd ?? 1.085;
   const investedUsd = positionMetrics.investedUsd;
   const hasInvestedPositions = investedUsd > 0.5;
   const hasIdleCash =
     gatewayBalanceReady && (unifiedUsdc > 0.5 || unifiedEurc > 0.5);
-  const walletCashUsd =
-    gatewayBalanceReady || gatewayBalanceStatus === "loading"
-      ? unifiedUsdc + unifiedEurc * eurcUsd
-      : 0;
   const showFaucet =
     !!wallet && gatewayBalanceReady && !hasInvestedPositions && !hasIdleCash;
   const showNoIdleCash =
@@ -83,31 +96,10 @@ export default function PortfolioDashboardPage() {
   const maxTargetDriftPct = positionMetrics.maxDriftPct;
   const hasReviewableDrift = maxTargetDriftPct >= 5;
   const isFirstDeploy = investedUsd <= 5;
-  const targetSymbols =
-    activePortfolio?.allocations
-      ?.filter((a) => a.targetWeight > 0 && a.symbol !== "USDC")
-      .map((a) => a.symbol) ?? [];
+  const targetAllocations = targetAllocationsForPortfolio(activePortfolio);
   const usdcTargetWeight =
-    activePortfolio?.allocations?.find((a) => a.symbol === "USDC")
-      ?.targetWeight ?? 0;
-  const targetAssetText =
-    targetSymbols.length > 0
-      ? formatAssetList(targetSymbols)
-      : "the target mix";
+    targetAllocations.find((a) => a.symbol === "USDC")?.targetWeight ?? 0;
   const portfolioTitle = activePortfolio?.name ?? "Portfolio overview";
-  const nextStep = gatewayBalanceUnavailable
-    ? "Retry wallet check"
-    : gatewayBalanceStatus === "idle" || gatewayBalanceStatus === "loading"
-      ? "Checking wallet"
-      : showDeploy
-        ? "Review plan"
-        : showFaucet
-          ? "Add test funds"
-          : showNoIdleCash && hasReviewableDrift
-            ? "Review plan"
-            : hasInvestedPositions
-              ? "Monitoring"
-              : "Set target";
 
   if (!portfoliosLoaded || !activePortfolio) {
     return (
@@ -115,10 +107,10 @@ export default function PortfolioDashboardPage() {
         <div className="max-w-sm border-brutal border-border-default bg-raised p-6 text-center">
           <Loader2 className="mx-auto mb-3 h-5 w-5 animate-spin text-accent-agent" />
           <h1 className="font-mono text-sm font-semibold text-text-hi">
-            Opening your dashboard
+            Loading dashboard
           </h1>
           <p className="mt-2 font-mono text-xs leading-relaxed text-text-lo">
-            Checking your account and portfolio.
+            Loading your portfolio data.
           </p>
         </div>
       </div>
@@ -129,12 +121,29 @@ export default function PortfolioDashboardPage() {
     if (!activePortfolio) return;
     setDeploying(true);
     setDeployError(null);
+    setReviewMessage(null);
     try {
       const planned = await withTimeout(
         rebalanceApi.plan(activePortfolio.id),
         "Plan creation is taking longer than expected. Try again in a moment.",
       );
-      router.push(`/rebalance/${planned.rebalanceId}`);
+      setReviewPlan(planned);
+      setReviewOpen(true);
+      try {
+        const detail = await rebalanceApi.get(planned.rebalanceId);
+        setReviewPlan(rebalancePlanFromDetail(detail));
+        setApprovalSafety(detail.approvalSafety ?? null);
+        setEstimatedFeeUsdc(detail.totalGasUsdc ?? 0);
+        setFeeFetchedAt(new Date());
+        agentApi
+          .decisionById(detail.decisionId)
+          .then(setReviewDecision)
+          .catch(() => setReviewDecision(null));
+      } catch {
+        setApprovalSafety(null);
+        setEstimatedFeeUsdc(0);
+        setFeeFetchedAt(new Date());
+      }
     } catch (e) {
       const raw =
         e instanceof Error ? e.message : "Could not build review plan";
@@ -149,6 +158,7 @@ export default function PortfolioDashboardPage() {
           ? "Aegis could not format the plan. Try Review plan again."
           : raw;
       setDeployError(friendly);
+    } finally {
       setDeploying(false);
     }
   };
@@ -164,14 +174,14 @@ export default function PortfolioDashboardPage() {
         variants={fadeUp}
         className="rounded-sharp border-brutal border-border-default bg-surface p-4 md:p-5"
       >
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <span className="border border-accent-agent/50 bg-accent-agent/10 px-2 py-1 text-[10px] font-mono uppercase text-accent-agent">
                 Dashboard
               </span>
               <span className="max-w-full truncate border border-border-default bg-bg px-2 py-1 text-[10px] font-mono uppercase tracking-widest text-text-mut">
-                Portfolio:{" "}
+                Active portfolio:{" "}
                 <span className="normal-case tracking-normal text-text-hi">
                   {portfolioTitle}
                 </span>
@@ -179,7 +189,7 @@ export default function PortfolioDashboardPage() {
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <h1 className="text-2xl font-semibold text-text-hi font-mono tracking-tight">
-                {nextStep}
+                {portfolioTitle}
               </h1>
             </div>
             <p className="mt-2 max-w-2xl text-xs font-mono leading-relaxed text-text-lo">
@@ -194,34 +204,11 @@ export default function PortfolioDashboardPage() {
               })}
             </p>
           </div>
-          <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:min-w-[520px]">
-            <HeaderStat
-              label="Invested value"
-              value={formatCurrency(investedUsd)}
-            />
-            <HeaderStat
-              label="Wallet cash"
-              value={
-                gatewayBalanceUnavailable
-                  ? "Unavailable"
-                  : gatewayBalanceStatus === "idle" ||
-                      gatewayBalanceStatus === "loading"
-                    ? "Checking"
-                    : formatCurrency(walletCashUsd)
-              }
-              tone={gatewayBalanceReady && walletCashUsd > 5 ? "pnl" : "muted"}
-            />
-            <HeaderStat
-              label="Next step"
-              value={nextStep}
-              tone={showDeploy || hasReviewableDrift ? "agent" : "muted"}
-            />
-            <HeaderStat
-              label="Account"
-              value={wallet ? "Connected" : "Pending"}
-              tone={wallet ? "agent" : "muted"}
-            />
-          </dl>
+          {wallet && (
+            <div className="inline-flex min-h-9 shrink-0 items-center gap-2 self-start rounded-sharp border border-accent-agent/35 bg-accent-agent/5 px-3 font-mono text-[10px] uppercase tracking-widest text-accent-agent lg:self-auto">
+              Account connected
+            </div>
+          )}
         </div>
       </motion.div>
 
@@ -359,56 +346,43 @@ export default function PortfolioDashboardPage() {
       {showDeploy && (
         <motion.div
           variants={fadeUp}
-          className="border-brutal border-accent-pnl bg-accent-pnl/5 p-4 md:p-5 rounded-sharp shadow-brutal-sm"
+          className="border-brutal border-accent-pnl bg-accent-pnl/5 p-4 rounded-sharp shadow-brutal-sm md:p-5"
         >
-          <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(240px,320px)] lg:items-center">
             <div className="min-w-0">
               <p className="text-[10px] font-mono uppercase tracking-widest text-accent-pnl">
-                {isFirstDeploy
-                  ? "Wallet funded · investment not started"
-                  : "Wallet cash available · approval needed"}
+                Next step
               </p>
-              <h2 className="mt-1 text-lg font-mono font-semibold text-text-hi">
+              <h2 className="mt-1 text-xl font-mono font-semibold text-text-hi">
                 {isFirstDeploy
-                  ? `You have ${formatCurrency(deployableUsdc)} USDC ready to invest`
-                  : `${formatCurrency(deployableUsdc)} USDC is still cash in your wallet`}
+                  ? `${formatCurrency(deployableUsdc)} USDC ready to review`
+                  : `${formatCurrency(deployableUsdc)} USDC ready to move`}
               </h2>
-              <p className="text-xs text-text-lo font-mono mt-2 max-w-3xl leading-relaxed">
-                {isFirstDeploy
-                  ? `Right now the USDC is still cash in your wallet. It has not been moved into ${targetAssetText} yet.`
-                  : `${formatCurrency(investedUsd)} is already invested. The remaining USDC is still cash and not following the target mix yet.`}{" "}
-                Review the exact changes first; no trade executes until you
-                approve the next screen.
-                {usdcTargetWeight > 0 && (
-                  <>
-                    {" "}
-                    The {usdcTargetWeight.toFixed(0)}% USDC target stays as a
-                    cash reserve.
-                  </>
-                )}
-                {unifiedEurc > 0 && (
-                  <>
-                    {" "}
-                    Existing EURC wallet cash stays separate until you approve a
-                    move for it.
-                  </>
-                )}
-              </p>
+              <div className="mt-4 grid gap-2 font-mono text-xs sm:grid-cols-3">
+                <MoneyStep active label="Wallet" value="Funded" />
+                <MoneyStep active label="Review" value="You approve" />
+                <MoneyStep label="Invested" value="After approval" />
+              </div>
+              {(usdcTargetWeight > 0 || unifiedEurc > 0) && (
+                <p className="mt-3 font-mono text-[11px] leading-relaxed text-text-lo">
+                  {usdcTargetWeight > 0 &&
+                    `${usdcTargetWeight.toFixed(0)}% remains USDC reserve.`}
+                  {unifiedEurc > 0 &&
+                    " EURC stays separate until a review includes it."}
+                </p>
+              )}
               {deployError && (
                 <p className="text-xs text-risk font-mono mt-2">
                   {deployError}
                 </p>
               )}
+              {reviewMessage && (
+                <p className="mt-2 text-xs font-mono text-accent-agent">
+                  {reviewMessage}
+                </p>
+              )}
             </div>
-            <div className="grid gap-3 sm:grid-cols-[1fr_auto] lg:grid-cols-1 lg:min-w-[260px]">
-              <div className="grid grid-cols-3 gap-2 text-center text-[10px] font-mono">
-                <StepBadge
-                  active
-                  label={isFirstDeploy ? "1 Funded" : "1 Cash ready"}
-                />
-                <StepBadge active={false} label="2 Review" />
-                <StepBadge active={!isFirstDeploy} label="3 Invested" />
-              </div>
+            <div className="grid gap-3">
               <BrutalButton
                 variant="pnl"
                 onClick={() => void handleDeploy()}
@@ -432,23 +406,13 @@ export default function PortfolioDashboardPage() {
         </motion.div>
       )}
 
-      <motion.div variants={fadeUp}>
-        <ValueFlowCard
-          portfolio={activePortfolio}
-          idleUsdc={unifiedUsdc}
-          idleEurc={unifiedEurc}
-          investedUsd={investedUsd}
-          walletCashStatus={gatewayBalanceStatus}
-        />
-      </motion.div>
-
       <motion.div
         variants={fadeUp}
-        className="grid grid-cols-1 items-stretch gap-4 md:grid-cols-2 2xl:grid-cols-4"
+        className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))] items-start gap-4"
       >
         <PortfolioSummaryCard />
         <IdleCashCard />
-        <AllocationChart />
+        {!showDeploy && <AllocationChart />}
         <MarketOverview />
       </motion.div>
 
@@ -467,6 +431,23 @@ export default function PortfolioDashboardPage() {
         <AssetTable />
         <AgentReasoningFeed />
       </motion.div>
+
+      <ApprovalModal
+        open={reviewOpen}
+        plan={reviewPlan}
+        portfolioId={activePortfolio.id}
+        portfolioName={portfolioTitle}
+        estimatedFeeUsdc={estimatedFeeUsdc}
+        feeFetchedAt={feeFetchedAt}
+        feeSource="plan"
+        decision={reviewDecision}
+        approvalSafety={approvalSafety}
+        onApproved={() => {
+          setReviewOpen(false);
+          setReviewMessage("Approved. Execution status will update live.");
+        }}
+        onClose={() => setReviewOpen(false)}
+      />
     </motion.div>
   );
 }
@@ -486,44 +467,6 @@ async function withTimeout<T>(
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
   }
-}
-
-function HeaderStat({
-  label,
-  value,
-  tone = "default",
-}: {
-  label: string;
-  value: string;
-  tone?: "default" | "pnl" | "agent" | "muted";
-}) {
-  const valueClass =
-    tone === "pnl"
-      ? "text-accent-pnl"
-      : tone === "agent"
-        ? "text-accent-agent"
-        : tone === "muted"
-          ? "text-text-lo"
-          : "text-text-hi";
-
-  return (
-    <div className="min-h-[58px] border border-border-default bg-bg/90 px-3 py-2 rounded-sharp">
-      <dt className="text-[10px] font-mono uppercase text-text-mut">{label}</dt>
-      <dd
-        className={`mt-1 break-words text-sm font-mono font-semibold leading-tight tabular-nums ${valueClass}`}
-      >
-        {value}
-      </dd>
-    </div>
-  );
-}
-
-function formatAssetList(symbols: string[]) {
-  const unique = Array.from(new Set(symbols));
-  if (unique.length === 0) return "";
-  if (unique.length === 1) return unique[0] ?? "";
-  if (unique.length === 2) return `${unique[0]} and ${unique[1]}`;
-  return `${unique.slice(0, -1).join(", ")}, and ${unique[unique.length - 1]}`;
 }
 
 function dashboardGuidance({
@@ -547,10 +490,10 @@ function dashboardGuidance({
     return "Wallet balance is unavailable, so cash actions are paused until the balance check succeeds.";
   }
   if (gatewayBalanceStatus === "idle" || gatewayBalanceStatus === "loading") {
-    return "Checking your wallet before showing cash actions.";
+    return "Syncing balances before showing cash actions.";
   }
   if (showDeploy) {
-    return "You have cash ready. Review the plan before anything moves.";
+    return "Cash is ready. Review and approve before anything moves.";
   }
   if (showFaucet) {
     return "Your wallet is empty. Add test USDC, then review the first plan.";
@@ -562,6 +505,39 @@ function dashboardGuidance({
     return "Your portfolio is invested. Aegis is monitoring for drift and new review opportunities.";
   }
   return "Choose a target mix and add funds to start.";
+}
+
+function MoneyStep({
+  active = false,
+  label,
+  value,
+}: {
+  active?: boolean;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div
+      className={
+        "min-h-16 border px-3 py-2 rounded-sharp " +
+        (active
+          ? "border-accent-pnl/50 bg-accent-pnl/10"
+          : "border-border-default bg-bg/80")
+      }
+    >
+      <p className="text-[9px] uppercase tracking-widest text-text-mut">
+        {label}
+      </p>
+      <p
+        className={
+          "mt-1 text-sm font-semibold " +
+          (active ? "text-accent-pnl" : "text-text-lo")
+        }
+      >
+        {value}
+      </p>
+    </div>
+  );
 }
 
 function StepBadge({ active, label }: { active: boolean; label: string }) {
@@ -577,4 +553,24 @@ function StepBadge({ active, label }: { active: boolean; label: string }) {
       {label}
     </span>
   );
+}
+
+function rebalancePlanFromDetail(
+  detail: Awaited<ReturnType<typeof rebalanceApi.get>>,
+): RebalancePlanResponse {
+  return {
+    rebalanceId: detail.id,
+    decisionId: detail.decisionId,
+    executionMode: detail.executionMode,
+    totalLegs: detail.totalLegs,
+    legs: detail.legs.map((leg) => ({
+      legIndex: leg.legIndex,
+      kind: leg.kind,
+      srcChain: leg.srcChain,
+      destChain: leg.destChain,
+      srcSymbol: leg.srcSymbol,
+      destSymbol: leg.destSymbol,
+      amountUsdc: leg.amountUsdc,
+    })),
+  };
 }

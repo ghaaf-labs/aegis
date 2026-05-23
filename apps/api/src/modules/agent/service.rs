@@ -212,6 +212,14 @@ pub async fn analyze_portfolio(
         "harvestable_losses",
         format_harvestable_losses(&harvestable),
     );
+    // Route-execution awareness: the strategist must only propose moving funds
+    // into tokens that can actually execute. Track-only tokens (disabled USYC,
+    // KYB-gated EURC, volatiles without a live swap route) may be discussed but
+    // not traded — the registry would otherwise block them at approval/execute.
+    strategist_ctx.insert(
+        "route_capabilities",
+        format_route_capabilities(&state.config),
+    );
     // Per-user signal: broadcast a tax.harvest.proposed event for any open
     // loss above the configured threshold so the UI surfaces it ahead of the
     // strategist's full reasoning.
@@ -594,6 +602,27 @@ async fn previous_regime(state: &AppState, portfolio_id: Uuid) -> Option<String>
     }
 }
 
+/// Render the route-execution capability block for the strategist prompt:
+/// which tokens can actually be traded vs. which are price-tracked only.
+fn format_route_capabilities(cfg: &crate::config::Config) -> String {
+    use crate::modules::rebalance::registry::{
+        capabilities::RuntimeCapabilities, executable_token_symbols, tokens::TOKEN_REGISTRY,
+    };
+    let caps = RuntimeCapabilities::from_config(cfg);
+    let executable = executable_token_symbols(&caps, cfg);
+    let tracked: Vec<&str> = TOKEN_REGISTRY
+        .iter()
+        .map(|s| s.symbol)
+        .filter(|s| !executable.contains(s))
+        .collect();
+    format!(
+        "- **Executable now** (you MAY propose buying/parking/selling these): {}\n\
+         - **Track-only** (price-tracked but NOT executable — do NOT propose trades into these; mention as context only): {}",
+        executable.join(", "),
+        if tracked.is_empty() { "none".to_string() } else { tracked.join(", ") },
+    )
+}
+
 fn build_strategist_context(
     portfolio: &Portfolio,
     allocations: &[Allocation],
@@ -728,9 +757,57 @@ fn format_goal_block(goal: &serde_json::Value) -> String {
             pairs.join(", ")
         })
         .unwrap_or_default();
+    let route_preferences = goal
+        .get("routePreferences")
+        .map(format_route_preferences)
+        .unwrap_or_default();
     format!(
-        "{name} · horizon {horizon} · risk {risk}{monthly} · USYC opt-in: {usyc} · EURC opt-in: {eurc} · targets: {allocations}"
+        "{name} · horizon {horizon} · risk {risk}{monthly} · USYC opt-in: {usyc} · EURC opt-in: {eurc} · targets: {allocations}{route_preferences}"
     )
+}
+
+fn format_route_preferences(route_preferences: &serde_json::Value) -> String {
+    let networks = json_string_list(route_preferences, "networks");
+    let future_networks = json_string_list(route_preferences, "networkWatchlist");
+    let tokens = json_string_list(route_preferences, "tokens");
+    let watchlist = json_string_list(route_preferences, "watchlist");
+    let networks = if networks.is_empty() {
+        "(none)".into()
+    } else {
+        networks.join(", ")
+    };
+    let future_networks = if future_networks.is_empty() {
+        "(none)".into()
+    } else {
+        future_networks.join(", ")
+    };
+    let tokens = if tokens.is_empty() {
+        "(none)".into()
+    } else {
+        tokens.join(", ")
+    };
+    let watchlist = if watchlist.is_empty() {
+        "(none)".into()
+    } else {
+        watchlist.join(", ")
+    };
+    format!(
+        " · route scope: wallet-ready networks {networks}; rebalance execution rails ARC-TESTNET, BASE-SEPOLIA; wallet-sync queue {future_networks}; target tokens {tokens}; watch {watchlist}"
+    )
+}
+
+fn json_string_list(value: &serde_json::Value, key: &str) -> Vec<String> {
+    value
+        .get(key)
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|v| v.as_str())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Tool-aware strategist call. Runs up to `MAX_TOOL_ITERATIONS - 1` rounds
@@ -1317,11 +1394,21 @@ mod tests {
                 "riskTolerance": "moderate",
                 "targetAllocation": { "BTC": 50, "ETH": 30, "USYC": 20 },
                 "includeUsyc": true,
-                "includeEurc": false
+                "includeEurc": false,
+                "routePreferences": {
+                    "networks": ["ARC-TESTNET", "BASE-SEPOLIA"],
+                    "networkWatchlist": ["ETH-SEPOLIA", "ARB-SEPOLIA", "AVAX-FUJI"],
+                    "tokens": ["USDC", "BTC", "ETH", "SOL", "USYC", "EURC"],
+                    "watchlist": []
+                }
             })),
         );
         ctx.insert("harvestable_losses", "(none)".into());
         ctx.insert("wallet_block", "Wallet balance: $0".into());
+        ctx.insert(
+            "route_capabilities",
+            format_route_capabilities(&crate::config::test_config()),
+        );
         let rendered = reg.render(PromptKey::Strategist, &ctx);
         assert!(
             !rendered.contains("{{"),
@@ -1333,6 +1420,10 @@ mod tests {
         assert!(rendered.contains("conservative"));
         assert!(rendered.contains("60"));
         assert!(rendered.contains("BTC"));
+        assert!(rendered.contains("route scope"));
+        assert!(rendered.contains("BASE-SEPOLIA"));
+        assert!(rendered.contains("AVAX-FUJI"));
+        assert!(rendered.contains("USYC"));
     }
 
     #[test]

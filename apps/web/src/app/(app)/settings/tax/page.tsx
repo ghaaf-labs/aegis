@@ -11,6 +11,7 @@ import {
 } from "@aegis/ui";
 import { taxApi, type TaxShareToken, type TaxSummary } from "@/lib/api";
 import { copyTextToClipboard } from "@/lib/clipboard";
+import { walletRouteLabel } from "@/lib/wallet-routes";
 import { usePortfolioStore } from "@/stores/portfolio";
 
 const TTL_DEFAULT_DAYS = 30;
@@ -213,15 +214,15 @@ export default function TaxSettingsPage() {
                 {summary.wallets.map((w) => (
                   <li
                     key={`${w.chain}-${w.address}`}
-                    className="flex items-center justify-between gap-2 text-xs font-mono"
+                    className="flex flex-col gap-1 text-xs font-mono sm:flex-row sm:items-center sm:justify-between sm:gap-2"
                   >
-                    <span className="text-text-hi">
-                      {w.chain.toUpperCase()} ·{" "}
+                    <span className="min-w-0 text-text-hi">
+                      {walletRouteLabel(w.chain)} ·{" "}
                       <span className="text-text-lo">
                         {w.address.slice(0, 6)}…{w.address.slice(-4)}
                       </span>
                     </span>
-                    <span className="text-text-lo">
+                    <span className="shrink-0 text-text-lo">
                       {taxWalletStatus(w.lotCount, w.lastSyncedAt)}
                     </span>
                   </li>

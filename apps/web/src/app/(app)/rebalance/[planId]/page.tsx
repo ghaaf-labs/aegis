@@ -219,6 +219,7 @@ export default function RebalancePage({ params }: PageProps) {
             rebalanceId={planId}
             sseUrl={SSE_URL}
             executionMode={plan?.executionMode}
+            onStatusChange={setPlanStatus}
           />
         ) : (
           <p className="text-sm text-text-lo">
@@ -262,19 +263,19 @@ function isCrossChainLeg(leg: { kind: string }) {
 function blockedReviewCopy(safety: RebalanceApprovalSafety) {
   switch (safety.code) {
     case "EXECUTION_UNAVAILABLE":
-      return "This review matches the current plan, but the running API cannot execute every leg in real mode. Approval stays locked until the missing adapter or cargo feature is enabled, or the target excludes that sleeve.";
+      return "This review matches the current plan, but one selected route is not ready to move money. Change the target mix, then build a fresh executable review before approving.";
     case "SUPERSEDED":
       return "A newer rebalance review exists for this portfolio. Open the latest review or build a fresh one before approving.";
     case "STALE_PLAN":
       return "Wallet cash or portfolio holdings changed after this review was created. Build a fresh review so the amounts match current execution state.";
     case "BALANCE_UNAVAILABLE":
-      return "Aegis cannot verify wallet cash right now, so real execution approval is locked until the balance check succeeds.";
+      return "Aegis cannot verify wallet cash right now, so real execution approval is paused until the balance check succeeds.";
     case "MOCK_OR_LEGACY_PLAN":
       return "This review was created outside the current real-execution path. Build a fresh review before approving.";
     default:
       return (
         safety.message ||
-        "Approval is blocked for this review. Build a fresh review from Dashboard before executing."
+        "Approval needs changes for this review. Build a fresh review from Dashboard before executing."
       );
   }
 }
