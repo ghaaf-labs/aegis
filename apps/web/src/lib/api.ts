@@ -10,6 +10,7 @@ import type {
   Portfolio,
   PortfolioGoal,
   PricingTier,
+  RiskTolerance,
   Subscription,
   Tier,
   WalletInfo,
@@ -254,8 +255,12 @@ export const accountApi = {
 // ── Portfolio ──────────────────────────────────────────────────────────────
 
 export interface CreatePortfolioInput {
-  name: string;
-  allocations: Array<{
+  /** Optional — the server defaults the name; the agent owns the allocation,
+   * not a user-chosen label. */
+  name?: string;
+  /** Empty by default — onboarding no longer seeds target weights; the agent
+   * proposes them via `agentApi.proposeAllocation` after create. */
+  allocations?: Array<{
     symbol: string;
     quantity: number;
     targetWeight: number;
@@ -377,6 +382,32 @@ export const agentApi = {
       body: { portfolioId, triggeredBy: "user_request" },
       authed: true,
       timeoutMs,
+    }),
+  /** Gate-1 (Part A): the agent designs the target allocation. Returns an
+   * `allocation_proposal` AgentDecision with `recommendedAllocation`. The
+   * optional risk override re-proposes at a different posture (the risk
+   * dial). */
+  proposeAllocation: (
+    portfolioId: string,
+    riskOverride?: RiskTolerance,
+    timeoutMs?: number,
+  ) =>
+    request<AgentDecision>("/agent/propose-allocation", {
+      method: "POST",
+      body: {
+        portfolioId,
+        triggeredBy: "user_request",
+        ...(riskOverride ? { riskOverride } : {}),
+      },
+      authed: true,
+      timeoutMs,
+    }),
+  /** Approve a proposal — writes the agent allocation to
+   * `goal.targetAllocation` and returns the updated Portfolio. */
+  approveAllocation: (decisionId: string) =>
+    request<Portfolio>(`/agent/decisions/${decisionId}/approve-allocation`, {
+      method: "POST",
+      authed: true,
     }),
 };
 

@@ -73,13 +73,21 @@ export interface RoutePreferences {
   updatedAt?: string;
 }
 
+/** What the user is optimizing for. Drives the allocator's risk posture
+ * alongside horizon + risk tolerance. */
+export type PortfolioObjective = "grow" | "preserve" | "income";
+
 export interface PortfolioGoal {
-  /** Human label, e.g. "Retirement", "Treasury", "Speculative". */
-  name: string;
+  /** Optional human label. Server defaults to "Agent-managed portfolio"
+   * when omitted; the agent owns the allocation, not the name. */
+  name?: string;
+  /** What the user is optimizing for (grow / preserve / income). */
+  objective: PortfolioObjective;
   horizon: GoalHorizon;
   riskTolerance: RiskTolerance;
   /** Target weights per symbol; values sum to 100. Sparse — symbols not
-   * listed default to 0%. */
+   * listed default to 0%. **Agent-owned / UI-read-only** — written by the
+   * allocator on approve-allocation, never edited directly by the user. */
   targetAllocation: Partial<Record<AssetSymbol, number>>;
   /** Optional recurring contribution. */
   monthlyContributionUsd?: number;
@@ -203,6 +211,39 @@ export interface AgentDecision {
   /** One-sentence critic counterfactual (e.g. "If regime had stayed RISK_ON,
    *  this rebalance would not fire."). */
   counterfactual?: string;
+
+  // Agent-decided allocation (Part A). An `allocation_proposal` decision
+  // carries the agent's proposed target weights; `rebalance` decisions carry
+  // the trade-level recommendation. Absent on legacy rows (treated as
+  // `rebalance`).
+  /** Discriminates an allocation proposal from a rebalance recommendation. */
+  kind?: "allocation_proposal" | "rebalance";
+  /** Agent's proposed target weights (sum ~100). Present on
+   * `allocation_proposal` decisions. */
+  recommendedAllocation?: Partial<Record<AssetSymbol, number>>;
+  /** Set once the user approves the proposal and `goal.targetAllocation`
+   * is written. Null/absent until approved. */
+  allocationAppliedAt?: string;
+}
+
+/** Gate-1 allocation proposal — the agent-authored target weights the user
+ * approves before any execution plan. A flattened, modal-friendly view of an
+ * `allocation_proposal` AgentDecision. */
+export interface AllocationProposal {
+  decisionId: string;
+  recommendedAllocation: Partial<Record<AssetSymbol, number>>;
+  reasoning: string;
+  confidence: number;
+  modelSlug?: string;
+  regime?: MarketRegime;
+  criticVerdict?: CriticVerdict;
+  rawConfidence?: number;
+  calibratedConfidence?: number;
+  /** Allocator's projected worst-case drawdown for this mix. */
+  expectedMaxDrawdownPct?: number;
+  createdAt: string;
+  /** Set once approved and applied to `goal.targetAllocation`. */
+  appliedAt?: string;
 }
 
 export type AgentTrigger =

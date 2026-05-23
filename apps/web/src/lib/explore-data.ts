@@ -73,6 +73,7 @@ export const DEMO_BUNDLES: Record<string, DemoBundle> = {
   "conservative-retiree": {
     portfolio: p("conservative-retiree", "Conservative Retiree", 125_000, 4.8, {
       name: "Conservative Retiree",
+      objective: "preserve",
       horizon: "20y+",
       riskTolerance: "conservative",
       targetAllocation: { BTC: 20, ETH: 10, USYC: 60, EURC: 10 },
@@ -95,6 +96,7 @@ export const DEMO_BUNDLES: Record<string, DemoBundle> = {
   "aggressive-builder": {
     portfolio: p("aggressive-builder", "Aggressive Builder", 48_000, 31.2, {
       name: "Aggressive Builder",
+      objective: "grow",
       horizon: "5y",
       riskTolerance: "aggressive",
       targetAllocation: { BTC: 45, ETH: 35, SOL: 20 },
@@ -117,6 +119,7 @@ export const DEMO_BUNDLES: Record<string, DemoBundle> = {
   "operating-reserve": {
     portfolio: p("operating-reserve", "Operating Reserve", 2_400_000, -1.4, {
       name: "Operating Reserve",
+      objective: "income",
       horizon: "3y",
       riskTolerance: "moderate",
       targetAllocation: { BTC: 25, ETH: 15, USYC: 40, EURC: 20 },
