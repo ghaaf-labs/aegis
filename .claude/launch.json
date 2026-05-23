@@ -1,0 +1,15 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-lc",
+        "cd /Users/malivix/Documents/dev/aegis-ux/apps/web && exec pnpm dev"
+      ],
+      "port": 3000,
+      "autoPort": false
+    }
+  ]
+}
