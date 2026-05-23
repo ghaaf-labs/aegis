@@ -763,7 +763,7 @@ fn format_route_preferences(route_preferences: &serde_json::Value) -> String {
         watchlist.join(", ")
     };
     format!(
-        " · route scope: wallet-ready networks {networks}; wallet-sync queue {future_networks}; target tokens {tokens}; watch {watchlist}"
+        " · route scope: wallet-ready networks {networks}; rebalance execution rails ARC-TESTNET, BASE-SEPOLIA; wallet-sync queue {future_networks}; target tokens {tokens}; watch {watchlist}"
     )
 }
 

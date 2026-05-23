@@ -62,11 +62,11 @@ export type RiskTolerance = "conservative" | "moderate" | "aggressive";
 export type GoalHorizon = "1y" | "3y" | "5y" | "10y" | "20y+";
 
 export interface RoutePreferences {
-  /** Circle chain codes with wallet routes the agent may use in planning. */
+  /** Circle chain codes with wallet routes the agent may use for account planning and balance tracking. */
   networks: string[];
   /** Circle chain codes still waiting on wallet sync. */
   networkWatchlist?: string[];
-  /** Asset symbols the agent may use for target plans. */
+  /** Asset symbols the agent may consider for target plans; execution still gates per adapter. */
   tokens: string[];
   /** Assets the user wants the agent to monitor without using in plans. */
   watchlist: string[];

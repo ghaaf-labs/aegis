@@ -65,8 +65,10 @@ front-load the Phase-2 non-custodial signer (§4.3) before launch.**
 | **2 (later)** | Circle Modular passkey wallet, same identity         | opt-in "Take self-custody" in Settings | user (passkey + EOA recovery) | §4.3 sketch |
 
 > **Must-verify before build:** Circle developer-controlled wallets support
-> **ARC-TESTNET + BASE-SEPOLIA** as **SCA** with Paymaster/Gas-Station gas
-> abstraction. SCA is mandatory for Paymaster + CCTP V2 Hooks; the provider
+> **ARC-TESTNET + BASE-SEPOLIA + ETH-SEPOLIA + ARB-SEPOLIA + AVAX-FUJI** as
+> **SCA**. Rebalance execution remains gated to Arc/Base until the matching
+> Paymaster/Gas-Station, CCTP V2 Hook executor, RPC, and adapter config is
+> deployed for the other routes. SCA is mandatory for Paymaster + CCTP V2 Hooks; the provider
 > provisions `accountType: SCA` ([`wallet/provider.rs`](../apps/api/src/modules/wallet/provider.rs)).
 
 ---
@@ -221,8 +223,8 @@ Client                         API                         Circle (dev-controlle
   │◄── 200 {challengeId,…} ────│
   │ POST /auth/email/verify ──►│ verify code (single-use)
   │   {code,consent}           │ upsert user, record consent
-  │                            │ create wallet ───────────────► POST .../wallets (SCA, ARC+BASE)
-  │                            │◄────────────────────────────── {arc,base addresses}
+  │                            │ create wallet ───────────────► POST .../wallets (SCA, all supported testnet routes)
+  │                            │◄────────────────────────────── {networks:[arc,base,eth,arb,avax]}
   │                            │ status=active, rotate session,
   │◄── 200 {status,user,wallet}│ Set-Cookie: __Host-…
   │ (app opens)                │
@@ -415,9 +417,10 @@ Verify the code; create-or-restore; provision wallet; open a session.
 ### 8.2 Per-user provisioning (inside `verify` / `session` self-heal)
 
 1. Ensure Circle user/account scaffolding for `users.id` (idempotent).
-2. `create_wallet(user_id)` → **SCA** on **ARC-TESTNET + BASE-SEPOLIA**, signed
-   with entity-secret ciphertext (single-use, replay-safe).
-3. Read back both chain addresses; **upsert one `user_wallet_networks` row per
+2. `create_wallet(user_id)` → **SCA** on **ARC-TESTNET, BASE-SEPOLIA,
+   ETH-SEPOLIA, ARB-SEPOLIA, and AVAX-FUJI**, signed with entity-secret
+   ciphertext (single-use, replay-safe).
+3. Read back all supported chain addresses; **upsert one `user_wallet_networks` row per
    chain** (source of truth, §9.2); set `account_status = active`. Legacy
    `users.arc_address`/`base_address` are projection-only and were nulled for
    pre-cutover rows by migration `0028`.

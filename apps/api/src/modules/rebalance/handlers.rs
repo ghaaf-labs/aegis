@@ -670,6 +670,17 @@ fn legs_match_current(stored: &[LegView], current: &[PlannedLeg]) -> bool {
 fn unsupported_real_execution_capabilities(legs: &[LegView]) -> Vec<MissingCapability> {
     let mut missing = Vec::new();
 
+    let unsupported_chains = unsupported_rebalance_chains(legs);
+    if !unsupported_chains.is_empty() {
+        missing.push(MissingCapability {
+            code: "NON_EXECUTION_CHAIN".into(),
+            label: "Non-execution wallet route".into(),
+            detail: format!(
+                "Wallet routes are live on {unsupported_chains}, but this rebalance executor is wired only for Arc testnet and Base Sepolia."
+            ),
+        });
+    }
+
     if !real_cctp_enabled()
         && legs
             .iter()
@@ -729,6 +740,22 @@ fn unsupported_real_execution_capabilities(legs: &[LegView]) -> Vec<MissingCapab
     }
 
     missing
+}
+
+fn unsupported_rebalance_chains(legs: &[LegView]) -> String {
+    let mut chains: Vec<&str> = legs
+        .iter()
+        .flat_map(|leg| [leg.src_chain.as_deref(), leg.dest_chain.as_deref()])
+        .flatten()
+        .filter(|chain| !is_rebalance_execution_chain(chain))
+        .collect();
+    chains.sort_unstable();
+    chains.dedup();
+    chains.join(", ")
+}
+
+fn is_rebalance_execution_chain(chain: &str) -> bool {
+    matches!(chain, "arc" | "base")
 }
 
 fn cross_chain_token_swap_needed(leg: &LegView) -> bool {
@@ -1244,6 +1271,20 @@ mod tests {
                 "{symbol} cross-chain buys must stay blocked until a real route exists",
             );
         }
+    }
+
+    #[test]
+    fn real_execution_capability_blocks_non_execution_wallet_routes() {
+        let mut eth_leg = leg("cross_chain_burn");
+        eth_leg.src_chain = Some("eth-sepolia".into());
+        eth_leg.dest_chain = Some("base".into());
+        eth_leg.dest_symbol = Some("USDC".into());
+
+        let missing = unsupported_real_execution_capabilities(&[eth_leg]);
+        assert!(
+            missing.iter().any(|cap| cap.code == "NON_EXECUTION_CHAIN"),
+            "non Arc/Base wallet routes must not reach real execution"
+        );
     }
 
     #[test]

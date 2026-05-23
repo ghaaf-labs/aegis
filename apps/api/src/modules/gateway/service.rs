@@ -8,6 +8,7 @@ use crate::config::Config;
 use crate::db::Db;
 use crate::error::AppError;
 use crate::modules::sse::{GatewayBalance as SseGatewayBalance, SseEvent, SseSender};
+use crate::modules::wallet_routes::SUPPORTED_WALLET_BLOCKCHAINS;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -16,7 +17,7 @@ pub struct GatewayBalance {
     pub unified_usdc: f64,
     /// Sum of EURC across every chain.
     pub unified_eurc: f64,
-    /// USDC per chain — keys are lowercased short names ("arc", "base").
+    /// USDC per chain — keys are lowercased short names and Circle chain codes.
     pub per_chain: HashMap<String, f64>,
     /// EURC per chain — same key set as `per_chain`.
     pub per_chain_eurc: HashMap<String, f64>,
@@ -91,7 +92,7 @@ pub async fn fetch_balance_for_user(
         }
         if wallet_state == WalletProvisionState::Partial {
             return Err(AppError::ServiceUnavailable(
-                "Circle Gateway balance is unknown until both wallet addresses are provisioned"
+                "Circle Gateway balance is unknown until all supported wallet routes are provisioned"
                     .into(),
             ));
         }
@@ -161,14 +162,13 @@ fn wallet_provision_state(
         return WalletProvisionState::Missing;
     }
 
-    let has_arc = routes
-        .iter()
-        .any(|route| route_is_ready(route, "ARC-TESTNET", expected_wallet_set_id));
-    let has_base = routes
-        .iter()
-        .any(|route| route_is_ready(route, "BASE-SEPOLIA", expected_wallet_set_id));
+    let all_supported_ready = SUPPORTED_WALLET_BLOCKCHAINS.iter().all(|blockchain| {
+        routes
+            .iter()
+            .any(|route| route_is_ready(route, blockchain, expected_wallet_set_id))
+    });
 
-    if has_arc && has_base {
+    if all_supported_ready {
         WalletProvisionState::Provisioned
     } else {
         WalletProvisionState::Partial
@@ -447,27 +447,13 @@ mod tests {
     }
 
     #[test]
-    fn wallet_provision_state_requires_live_arc_and_base_routes() {
+    fn wallet_provision_state_requires_all_supported_live_routes() {
         assert_eq!(
             wallet_provision_state(&[], "wallet-set"),
             WalletProvisionState::Missing
         );
         assert_eq!(
-            wallet_provision_state(
-                &[
-                    route(
-                        "ARC-TESTNET",
-                        "circle-arc",
-                        "0x1111111111111111111111111111111111111111"
-                    ),
-                    route(
-                        "BASE-SEPOLIA",
-                        "circle-base",
-                        "0x2222222222222222222222222222222222222222"
-                    ),
-                ],
-                "wallet-set"
-            ),
+            wallet_provision_state(&supported_routes(), "wallet-set"),
             WalletProvisionState::Provisioned
         );
         assert_eq!(
@@ -486,6 +472,9 @@ mod tests {
                 &[
                     route("ARC-TESTNET", "mock_wallet_1", "0xARCabc"),
                     route("BASE-SEPOLIA", "mock_wallet_2", "0xBASEabc"),
+                    route("ETH-SEPOLIA", "mock_wallet_3", "0xETHabc"),
+                    route("ARB-SEPOLIA", "mock_wallet_4", "0xARBabc"),
+                    route("AVAX-FUJI", "mock_wallet_5", "0xAVAXabc"),
                 ],
                 "wallet-set"
             ),
@@ -516,5 +505,35 @@ mod tests {
             wallet_set_id: Some("wallet-set".into()),
             state: "LIVE".into(),
         }
+    }
+
+    fn supported_routes() -> Vec<WalletRoute> {
+        vec![
+            route(
+                "ARC-TESTNET",
+                "circle-arc",
+                "0x1111111111111111111111111111111111111111",
+            ),
+            route(
+                "BASE-SEPOLIA",
+                "circle-base",
+                "0x2222222222222222222222222222222222222222",
+            ),
+            route(
+                "ETH-SEPOLIA",
+                "circle-eth",
+                "0x3333333333333333333333333333333333333333",
+            ),
+            route(
+                "ARB-SEPOLIA",
+                "circle-arb",
+                "0x4444444444444444444444444444444444444444",
+            ),
+            route(
+                "AVAX-FUJI",
+                "circle-avax",
+                "0x5555555555555555555555555555555555555555",
+            ),
+        ]
     }
 }

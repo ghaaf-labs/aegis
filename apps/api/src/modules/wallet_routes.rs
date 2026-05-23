@@ -17,6 +17,8 @@ pub const SUPPORTED_WALLET_BLOCKCHAINS: [&str; 5] = [
     AVAX_FUJI,
 ];
 
+pub const EXECUTION_BLOCKCHAINS: [&str; 2] = [ARC_TESTNET, BASE_SEPOLIA];
+
 pub async fn address_for_user(
     db: &Db,
     user_id: Uuid,

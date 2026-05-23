@@ -22,13 +22,13 @@ const NETWORKS = [
     blockchain: "ARC-TESTNET",
     label: "Arc testnet",
     state: "Ready",
-    detail: "Wallet route ready",
+    detail: "Wallet and rebalance execution route ready",
   },
   {
     blockchain: "BASE-SEPOLIA",
     label: "Base Sepolia",
     state: "Ready",
-    detail: "Wallet route ready",
+    detail: "Wallet and rebalance execution route ready",
   },
   {
     blockchain: "ETH-SEPOLIA",
@@ -96,6 +96,7 @@ const TOKENS = [
 ] as const;
 
 const TARGET_TOKEN_IDS = TOKENS.map((token) => token.id);
+const EXECUTION_NETWORK_IDS = ["ARC-TESTNET", "BASE-SEPOLIA"];
 
 const PREF_KEY = "aegis.wallet.route-preferences.v1";
 
@@ -156,6 +157,12 @@ export function NetworkTokenPanel({
   const syncNeededNetworkLabels = selectedLabels(
     NETWORKS,
     futureNetworkIds(liveNetworkIds),
+    (network) => network.blockchain,
+    (network) => network.label,
+  );
+  const executionNetworkLabels = selectedLabels(
+    NETWORKS,
+    liveNetworkIds.filter((id) => EXECUTION_NETWORK_IDS.includes(id)),
     (network) => network.blockchain,
     (network) => network.label,
   );
@@ -252,9 +259,9 @@ export function NetworkTokenPanel({
         <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_20rem]">
           <div className="space-y-3">
             <p className="max-w-3xl text-xs leading-relaxed text-text-lo">
-              Choose wallet routes the agent may use for account planning. Ready
-              routes have an account address. Token execution still requires a
-              live rail, price, and executor check.
+              Choose wallet routes the agent may use for account planning.
+              Wallet-ready routes can receive and track balances. Rebalance
+              execution is currently wired through Arc testnet and Base Sepolia.
             </p>
             <div className="flex flex-wrap gap-2">
               <button
@@ -285,10 +292,18 @@ export function NetworkTokenPanel({
             <dl className="mt-3 space-y-2 text-xs">
               <div className="grid gap-1">
                 <dt className="font-mono uppercase tracking-wider text-text-mut">
-                  Ready networks
+                  Wallet-ready routes
                 </dt>
                 <dd className="text-text-hi">
                   {selectedNetworkLabels || "No live network selected"}
+                </dd>
+              </div>
+              <div className="grid gap-1">
+                <dt className="font-mono uppercase tracking-wider text-text-mut">
+                  Execution rails
+                </dt>
+                <dd className="text-text-hi">
+                  {executionNetworkLabels || "No execution rail ready"}
                 </dd>
               </div>
               <div className="grid gap-1">
@@ -326,7 +341,7 @@ export function NetworkTokenPanel({
           <section aria-label="Network routes" className="space-y-2">
             <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-wider text-text-mut">
               <ShieldCheck className="h-3.5 w-3.5 text-accent-pnl" />
-              Network routes
+              Wallet routes
             </div>
             <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
               {NETWORKS.map((network) => {
@@ -361,7 +376,9 @@ export function NetworkTokenPanel({
                         <p className="mt-1 text-[11px] leading-relaxed text-text-lo">
                           {live
                             ? selected
-                              ? "Included in wallet scope"
+                              ? executionReady(network.blockchain)
+                                ? "Included for wallet tracking and rebalances"
+                                : "Included for wallet tracking; not a rebalance rail"
                               : network.detail
                             : tracked
                               ? "Queued for wallet sync"
@@ -373,7 +390,9 @@ export function NetworkTokenPanel({
                       >
                         {live
                           ? selected
-                            ? "Ready"
+                            ? executionReady(network.blockchain)
+                              ? "Execution"
+                              : "Wallet ready"
                             : network.state
                           : tracked
                             ? "Sync"
@@ -435,9 +454,10 @@ export function NetworkTokenPanel({
           <LockKeyhole className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warn" />
           <p className="min-w-0">
             Selection is an agent instruction, not a bypass. A token action
-            becomes executable only after the wallet network, transfer rail,
-            pricing, and executor tests are all live. Watched items shape
-            analysis only.{" "}
+            becomes executable only after the selected wallet route, Circle
+            transfer rail, pricing, and executor tests are all live. Today,
+            rebalance execution uses Arc testnet and Base Sepolia; other ready
+            routes are for receiving funds and balance tracking.{" "}
             <span className="font-mono uppercase tracking-wider text-text-mut">
               {persistenceLabel}
             </span>
@@ -553,6 +573,10 @@ function futureNetworkIds(liveNetworkIds: string[]): string[] {
   return NETWORKS.map((network) => network.blockchain).filter(
     (id) => !live.has(id),
   );
+}
+
+function executionReady(blockchain: string): boolean {
+  return EXECUTION_NETWORK_IDS.includes(blockchain);
 }
 
 function StatusPill({

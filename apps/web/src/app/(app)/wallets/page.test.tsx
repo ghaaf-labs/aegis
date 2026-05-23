@@ -158,13 +158,17 @@ describe("<NetworkTokenPanel />", () => {
     }
     expect(text).toContain("Agent wallet scope");
     expect(text).toContain("Arc testnet, Base Sepolia");
+    expect(text).toContain("Execution rails");
     expect(text).toContain("No extra token watchlist");
     expect(text).toContain(
       "Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji",
     );
     expect(text).toContain("Saved to active portfolio");
     expect(text).toContain("Wallet route sync required");
-    expect(text).toContain("Included in wallet scope");
+    expect(text).toContain("Included for wallet tracking and rebalances");
+    expect(text).toContain(
+      "rebalance execution uses Arc testnet and Base Sepolia",
+    );
     expect(text).toContain("Needs sync");
 
     for (const tokenCopy of expectedTokens.flat()) {
@@ -228,7 +232,11 @@ describe("<NetworkTokenPanel />", () => {
     expect(text).toContain(
       "Arc testnet, Base Sepolia, Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji",
     );
+    expect(text).toContain("Execution rails");
     expect(text).toContain("All supported routes ready");
+    expect(text).toContain(
+      "Included for wallet tracking; not a rebalance rail",
+    );
     expect(text).not.toContain("Needs sync");
 
     act(() => root.unmount());
