@@ -40,10 +40,21 @@ pub struct PortfolioWithAllocations {
     pub allocations: Vec<Allocation>,
 }
 
+/// Default portfolio name. The product no longer asks the user to name their
+/// portfolio — the agent manages a single goal-based portfolio — so the
+/// onboarding wizard omits `name` and the server fills this in.
+fn default_portfolio_name() -> String {
+    "Agent-managed portfolio".to_string()
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreatePortfolioRequest {
+    /// Optional: the 3-step wizard (objective/horizon/risk) no longer collects a
+    /// name. Defaults server-side so a name-less create body deserializes.
+    #[serde(default = "default_portfolio_name")]
     pub name: String,
+    #[serde(default)]
     pub allocations: Vec<AllocationInput>,
     /// Goal-wizard output, written verbatim to `portfolios.goal` JSONB.
     /// Optional so Sprint 1 callers still work; Sprint 2's wizard always sets it.
