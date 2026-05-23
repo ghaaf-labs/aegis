@@ -44,34 +44,6 @@ pub struct AgentDecision {
     pub counterfactual: Option<String>,
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Recommendation {
-    pub summary: String,
-    pub trades: Vec<ProposedTrade>,
-    pub expected_impact: ExpectedImpact,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProposedTrade {
-    pub symbol: String,
-    pub action: String,
-    pub quantity: f64,
-    pub value_usd: f64,
-    pub reason: String,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExpectedImpact {
-    pub risk_delta: f64,
-    pub diversification_score: f64,
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalyzeRequest {
