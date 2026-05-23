@@ -82,7 +82,11 @@ export default function TransactionsPage() {
             <SummaryPill
               label="Ready"
               value={
-                rows.filter((r) => r.approvalSafety?.approvable === true).length
+                rows.filter(
+                  (r) =>
+                    r.approvalSafety?.approvable === true &&
+                    r.executionMode !== "mock",
+                ).length
               }
               tone="agent"
             />
@@ -376,6 +380,14 @@ function ApprovalStatePill({ row }: { row: RebalanceHistoryRow }) {
       </span>
     );
   }
+  if (row.executionMode === "mock") {
+    return (
+      <span className="inline-flex items-center gap-1 border border-warn/40 bg-warn/10 px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-warn">
+        <AlertTriangle className="h-3 w-3" />
+        Audit only
+      </span>
+    );
+  }
   if (safety?.approvable) {
     return (
       <span className="inline-flex items-center gap-1 border border-accent-agent/40 bg-accent-agent/10 px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-accent-agent">
@@ -459,6 +471,9 @@ function rowMeaning(row: RebalanceHistoryRow) {
   }
   if (status === "failed") {
     return "Execution stopped before all legs confirmed. Open the trace, read the failure reason, then build a fresh review.";
+  }
+  if (row.executionMode === "mock") {
+    return "Historical test review, shown for audit only. It cannot be approved for real execution — build a fresh review before money moves.";
   }
   if (row.approvalSafety?.approvable) {
     return "This is the latest review and can still be approved. Nothing moves until the approval screen is confirmed.";
