@@ -257,6 +257,8 @@ pub async fn build(db: Db, config: Config) -> Router {
         )
         // Public leaderboard — anonymous handles, no auth required.
         .route("/leaderboard", get(trustability::handlers::leaderboard))
+        // Live, DB-backed traction stats for the public landing page.
+        .route("/api/traction", get(observability::handlers::traction))
         // F-REG-4 — public read-only alias for the /about/regime model card.
         .route(
             "/about/regime/latest",
