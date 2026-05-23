@@ -9,7 +9,7 @@ interface WalletRouteMeta {
   executionReady: boolean;
 }
 
-export interface ChainBalanceRow {
+interface ChainBalanceRow {
   key: ExplorerChain;
   label: string;
   shortLabel: string;

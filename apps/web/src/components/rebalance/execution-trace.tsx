@@ -21,7 +21,7 @@ import {
 
 import { LegCard } from "./leg-card";
 
-export interface ExecutionTraceProps {
+interface ExecutionTraceProps {
   rebalanceId: string;
   /** Auth-aware SSE URL (with token query, etc.). */
   sseUrl: string;

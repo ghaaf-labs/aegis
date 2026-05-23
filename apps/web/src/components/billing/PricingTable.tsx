@@ -82,7 +82,7 @@ function formatAumCap(value: number | null): string {
   return `$${value}`;
 }
 
-export interface PricingTableProps {
+interface PricingTableProps {
   tiers?: PricingTier[];
   /** When present, the matching column is decorated with a "Your plan" pill
    * and its CTA is disabled. */

@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { cn } from "@/lib/utils";
 
-export interface DiaryVisibilityToggleProps {
+interface DiaryVisibilityToggleProps {
   initialPublic: boolean;
   onChange: (next: boolean) => Promise<void>;
   walletAddress?: string;

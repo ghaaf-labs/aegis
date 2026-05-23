@@ -26,7 +26,7 @@ function formatPeriod(start: string, end: string): string {
   return `${fmt(s)} – ${fmt(e)}, ${e.getUTCFullYear()}`;
 }
 
-export interface InvoiceListProps {
+interface InvoiceListProps {
   invoices: Invoice[];
   /** Optional title; defaults to "Invoices". */
   title?: string;
