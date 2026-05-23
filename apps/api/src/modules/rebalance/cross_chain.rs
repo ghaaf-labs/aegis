@@ -235,10 +235,7 @@ impl<'a> CctpClient<'a> {
                 .await;
         }
 
-        let private_key = match src {
-            ChainKey::Arc => &self.config.chain_private_key_arc,
-            ChainKey::Base => &self.config.chain_private_key_base,
-        };
+        let private_key = self.config.chain_private_key_for(src);
 
         let key_bytes = hex::decode(private_key.trim_start_matches("0x")).map_err(|_| {
             AppError::Internal(anyhow::anyhow!("invalid hex private key for {:?}", src))
@@ -249,10 +246,7 @@ impl<'a> CctpClient<'a> {
 
         let wallet = EthereumWallet::from(signer);
 
-        let rpc_url = match src {
-            ChainKey::Arc => &self.config.arc_rpc_url,
-            ChainKey::Base => &self.config.base_rpc_url,
-        };
+        let rpc_url = self.config.rpc_url_for(src);
 
         let provider = ProviderBuilder::new().wallet(wallet).connect_http(
             rpc_url
@@ -260,45 +254,27 @@ impl<'a> CctpClient<'a> {
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
         );
 
-        // Choose addresses based on source chain
-        let (token_messenger, usdc, executor_on_dest) = match src {
-            ChainKey::Arc => (
-                self.config
-                    .cctp_token_messenger_arc
-                    .parse::<Address>()
-                    .map_err(|_| {
-                        AppError::Internal(anyhow::anyhow!("bad CCTP TokenMessenger on Arc"))
-                    })?,
-                self.config
-                    .usdc_arc
-                    .parse::<Address>()
-                    .map_err(|_| AppError::Internal(anyhow::anyhow!("bad USDC on Arc")))?,
-                self.config
-                    .rebalance_executor_base
-                    .parse::<Address>()
-                    .map_err(|_| {
-                        AppError::Internal(anyhow::anyhow!("bad RebalanceExecutor on Base"))
-                    })?,
-            ),
-            ChainKey::Base => (
-                self.config
-                    .cctp_token_messenger_base
-                    .parse::<Address>()
-                    .map_err(|_| {
-                        AppError::Internal(anyhow::anyhow!("bad CCTP TokenMessenger on Base"))
-                    })?,
-                self.config
-                    .usdc_base
-                    .parse::<Address>()
-                    .map_err(|_| AppError::Internal(anyhow::anyhow!("bad USDC on Base")))?,
-                self.config
-                    .rebalance_executor_arc
-                    .parse::<Address>()
-                    .map_err(|_| {
-                        AppError::Internal(anyhow::anyhow!("bad RebalanceExecutor on Arc"))
-                    })?,
-            ),
-        };
+        // Source-chain TokenMessenger + USDC, and the destination-chain
+        // RebalanceExecutor that becomes the CCTP mintRecipient.
+        let token_messenger = self
+            .config
+            .cctp_token_messenger_for(src)
+            .parse::<Address>()
+            .map_err(|_| {
+                AppError::Internal(anyhow::anyhow!("bad CCTP TokenMessenger on {:?}", src))
+            })?;
+        let usdc = self
+            .config
+            .usdc_for(src)
+            .parse::<Address>()
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("bad USDC on {:?}", src)))?;
+        let executor_on_dest = self
+            .config
+            .rebalance_executor_for(dest)
+            .parse::<Address>()
+            .map_err(|_| {
+                AppError::Internal(anyhow::anyhow!("bad RebalanceExecutor on {:?}", dest))
+            })?;
 
         // depositForBurn calls `USDC.transferFrom(msg.sender, tokenMessenger,
         // amount + fee)` internally — even with maxFee=0 the contract may
@@ -421,10 +397,7 @@ impl<'a> CctpClient<'a> {
                 .await;
         }
 
-        let private_key = match dest {
-            ChainKey::Arc => &self.config.chain_private_key_arc,
-            ChainKey::Base => &self.config.chain_private_key_base,
-        };
+        let private_key = self.config.chain_private_key_for(dest);
 
         let signer = PrivateKeySigner::from_slice(
             &hex::decode(private_key.trim_start_matches("0x"))
@@ -434,10 +407,7 @@ impl<'a> CctpClient<'a> {
 
         let wallet = EthereumWallet::from(signer);
 
-        let rpc_url = match dest {
-            ChainKey::Arc => &self.config.arc_rpc_url,
-            ChainKey::Base => &self.config.base_rpc_url,
-        };
+        let rpc_url = self.config.rpc_url_for(dest);
 
         let provider = ProviderBuilder::new().wallet(wallet).connect_http(
             rpc_url
@@ -445,22 +415,13 @@ impl<'a> CctpClient<'a> {
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
         );
 
-        let transmitter: Address = match dest {
-            ChainKey::Arc => self
-                .config
-                .cctp_message_transmitter_arc
-                .parse()
-                .map_err(|_| {
-                    AppError::Internal(anyhow::anyhow!("bad MessageTransmitter on Arc"))
-                })?,
-            ChainKey::Base => self
-                .config
-                .cctp_message_transmitter_base
-                .parse()
-                .map_err(|_| {
-                    AppError::Internal(anyhow::anyhow!("bad MessageTransmitter on Base"))
-                })?,
-        };
+        let transmitter: Address = self
+            .config
+            .cctp_message_transmitter_for(dest)
+            .parse()
+            .map_err(|_| {
+                AppError::Internal(anyhow::anyhow!("bad MessageTransmitter on {:?}", dest))
+            })?;
 
         let contract = IMessageTransmitter::new(transmitter, &provider);
 
@@ -508,28 +469,15 @@ impl<'a> CctpClient<'a> {
             ))
         })?;
 
-        let (token_messenger_str, usdc_str, executor_on_dest) = match src {
-            ChainKey::Arc => (
-                &self.config.cctp_token_messenger_arc,
-                &self.config.usdc_arc,
-                self.config
-                    .rebalance_executor_base
-                    .parse::<Address>()
-                    .map_err(|_| {
-                        AppError::Internal(anyhow::anyhow!("bad RebalanceExecutor on Base"))
-                    })?,
-            ),
-            ChainKey::Base => (
-                &self.config.cctp_token_messenger_base,
-                &self.config.usdc_base,
-                self.config
-                    .rebalance_executor_arc
-                    .parse::<Address>()
-                    .map_err(|_| {
-                        AppError::Internal(anyhow::anyhow!("bad RebalanceExecutor on Arc"))
-                    })?,
-            ),
-        };
+        let token_messenger_str = self.config.cctp_token_messenger_for(src);
+        let usdc_str = self.config.usdc_for(src);
+        let executor_on_dest = self
+            .config
+            .rebalance_executor_for(dest)
+            .parse::<Address>()
+            .map_err(|_| {
+                AppError::Internal(anyhow::anyhow!("bad RebalanceExecutor on {:?}", dest))
+            })?;
         let token_messenger: Address = token_messenger_str
             .parse()
             .map_err(|_| AppError::Internal(anyhow::anyhow!("bad CCTP TokenMessenger")))?;
@@ -604,26 +552,10 @@ impl<'a> CctpClient<'a> {
             ))
         })?;
 
-        let (transmitter_str, transmitter) = match dest {
-            ChainKey::Arc => {
-                let s = &self.config.cctp_message_transmitter_arc;
-                (
-                    s,
-                    s.parse::<Address>().map_err(|_| {
-                        AppError::Internal(anyhow::anyhow!("bad MessageTransmitter on Arc"))
-                    })?,
-                )
-            }
-            ChainKey::Base => {
-                let s = &self.config.cctp_message_transmitter_base;
-                (
-                    s,
-                    s.parse::<Address>().map_err(|_| {
-                        AppError::Internal(anyhow::anyhow!("bad MessageTransmitter on Base"))
-                    })?,
-                )
-            }
-        };
+        let transmitter_str = self.config.cctp_message_transmitter_for(dest);
+        let transmitter = transmitter_str.parse::<Address>().map_err(|_| {
+            AppError::Internal(anyhow::anyhow!("bad MessageTransmitter on {:?}", dest))
+        })?;
         let _ = transmitter;
 
         let message_bytes: Bytes = message

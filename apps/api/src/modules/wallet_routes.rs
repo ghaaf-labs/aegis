@@ -2,12 +2,14 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use crate::db::Db;
+use crate::modules::rebalance::models::ChainKey;
 
 pub const ARC_TESTNET: &str = "ARC-TESTNET";
 pub const BASE_SEPOLIA: &str = "BASE-SEPOLIA";
 pub const ETH_SEPOLIA: &str = "ETH-SEPOLIA";
 pub const ARB_SEPOLIA: &str = "ARB-SEPOLIA";
 pub const AVAX_FUJI: &str = "AVAX-FUJI";
+pub const OP_SEPOLIA: &str = "OP-SEPOLIA";
 
 pub const SUPPORTED_WALLET_BLOCKCHAINS: [&str; 5] = [
     ARC_TESTNET,
@@ -18,6 +20,34 @@ pub const SUPPORTED_WALLET_BLOCKCHAINS: [&str; 5] = [
 ];
 
 pub const EXECUTION_BLOCKCHAINS: [&str; 2] = [ARC_TESTNET, BASE_SEPOLIA];
+
+/// Canonical mapping from a `ChainKey` to its Circle wallet `blockchain` slug.
+/// Single source of truth for the executor + the non-custodial `circle_exec`
+/// sender, so a new chain only needs one entry rather than a match per call
+/// site.
+pub fn blockchain_for_chain(chain: ChainKey) -> &'static str {
+    match chain {
+        ChainKey::Arc => ARC_TESTNET,
+        ChainKey::Base => BASE_SEPOLIA,
+        ChainKey::EthSepolia => ETH_SEPOLIA,
+        ChainKey::ArbSepolia => ARB_SEPOLIA,
+        ChainKey::AvaxFuji => AVAX_FUJI,
+        ChainKey::OpSepolia => OP_SEPOLIA,
+    }
+}
+
+/// The user's SCA address on `chain`, resolved via the chain's Circle wallet
+/// `blockchain` slug. Generic counterpart to `arc_address_for_user` /
+/// `base_address_for_user`.
+#[allow(dead_code)]
+pub async fn address_for_chain(
+    db: &Db,
+    user_id: Uuid,
+    chain: ChainKey,
+    wallet_set_id: &str,
+) -> crate::error::Result<Option<String>> {
+    address_for_user(db, user_id, blockchain_for_chain(chain), wallet_set_id).await
+}
 
 pub async fn address_for_user(
     db: &Db,

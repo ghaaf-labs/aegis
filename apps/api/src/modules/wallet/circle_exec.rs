@@ -30,7 +30,7 @@ use crate::config::Config;
 use crate::db::Db;
 use crate::error::{AppError, Result};
 use crate::modules::rebalance::models::ChainKey;
-use crate::modules::wallet_routes::{wallet_id_for_user, ARC_TESTNET, BASE_SEPOLIA};
+use crate::modules::wallet_routes::wallet_id_for_user;
 
 /// Circle W3S developer-controlled wallet contract-execution endpoint
 /// (documented `POST /v1/w3s/developer/transactions/contractExecution`). The
@@ -46,10 +46,7 @@ const POLL_INTERVAL: Duration = Duration::from_secs(3);
 const POLL_TIMEOUT: Duration = Duration::from_secs(180);
 
 fn blockchain_for_chain(chain: ChainKey) -> &'static str {
-    match chain {
-        ChainKey::Arc => ARC_TESTNET,
-        ChainKey::Base => BASE_SEPOLIA,
-    }
+    crate::modules::wallet_routes::blockchain_for_chain(chain)
 }
 
 /// Submit a contract-execution transaction from the user's Circle wallet on
@@ -280,6 +277,7 @@ struct TransactionData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::wallet_routes::{ARC_TESTNET, BASE_SEPOLIA};
 
     #[test]
     fn maps_chain_to_supported_blockchain() {

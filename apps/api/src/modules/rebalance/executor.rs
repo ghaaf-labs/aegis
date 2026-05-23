@@ -116,9 +116,12 @@ async fn estimate_total_gas(state: &AppState, legs: &[PlannedLeg]) -> f64 {
     }
     let mut total = 0.0;
     for c in chains {
+        // Arc gas is native USDC; every other EVM testnet pays ETH-style gas,
+        // so they fall under the Base estimate. Only Arc/Base are executable
+        // today, so the others never actually produce a leg here.
         let chain = match c {
             ChainKey::Arc => PaymasterChain::Arc,
-            ChainKey::Base => PaymasterChain::Base,
+            _ => PaymasterChain::Base,
         };
         if let Ok(e) = estimate(&state.config, chain, "rebalance").await {
             total += e.fee_usdc;
@@ -481,10 +484,7 @@ async fn dispatch(
 }
 
 fn blockchain_for_chain(chain: ChainKey) -> &'static str {
-    match chain {
-        ChainKey::Arc => wallet_routes::ARC_TESTNET,
-        ChainKey::Base => wallet_routes::BASE_SEPOLIA,
-    }
+    wallet_routes::blockchain_for_chain(chain)
 }
 
 fn parse_kind(s: &str) -> Result<LegKind> {

@@ -158,12 +158,15 @@ pub fn validate_legs(
 
     let mut blockers: Vec<RouteBlocker> = Vec::new();
 
-    // Non-execution chains — wallet support is not execution support.
+    // Non-execution chains — wallet support is not execution support. A chain
+    // that parses to a known `ChainKey` but is not yet wired for execution
+    // (no deployed RebalanceExecutor / swap venue) must still fail closed here,
+    // so we gate on `is_execution()` rather than mere parseability.
     let mut non_exec: Vec<String> = legs
         .iter()
         .flat_map(|l| [l.src_chain.clone(), l.dest_chain.clone()])
         .flatten()
-        .filter(|c| ChainKey::parse(c).is_none())
+        .filter(|c| !ChainKey::parse(c).is_some_and(|k| k.is_execution()))
         .collect();
     non_exec.sort();
     non_exec.dedup();
@@ -185,14 +188,18 @@ pub fn validate_legs(
             ));
         }
         // Every leg kind needs at least one Arc/Base execution chain. A leg with
-        // both chains unset (or unparsable) must fail closed here, not late at
-        // submit time.
-        let has_exec_chain = leg.src_chain.as_deref().and_then(ChainKey::parse).is_some()
+        // both chains unset, unparsable, or pointing only at a non-execution
+        // chain must fail closed here, not late at submit time.
+        let has_exec_chain = leg
+            .src_chain
+            .as_deref()
+            .and_then(ChainKey::parse)
+            .is_some_and(|k| k.is_execution())
             || leg
                 .dest_chain
                 .as_deref()
                 .and_then(ChainKey::parse)
-                .is_some();
+                .is_some_and(|k| k.is_execution());
         if !has_exec_chain {
             blockers.push(RouteBlocker::new(
                 BlockerCode::NonExecutionChain,

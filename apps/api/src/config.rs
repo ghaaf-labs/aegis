@@ -1,5 +1,7 @@
 use anyhow::Context;
 
+use crate::modules::rebalance::models::ChainKey;
+
 /// Per-task model resolution: every AI call site declares its `ModelRoute`,
 /// and `Config::model_for(route)` returns the slug. Slugs are env-driven so
 /// switching providers requires zero code changes.
@@ -80,6 +82,14 @@ pub struct Config {
     pub arc_rpc_url: String,
     #[allow(dead_code)]
     pub base_rpc_url: String,
+    #[allow(dead_code)]
+    pub eth_rpc_url: String,
+    #[allow(dead_code)]
+    pub arb_rpc_url: String,
+    #[allow(dead_code)]
+    pub avax_rpc_url: String,
+    #[allow(dead_code)]
+    pub op_rpc_url: String,
 
     /// Cadence for the Gateway unified-balance ticker. Read by S2.6.
     #[allow(dead_code)]
@@ -115,6 +125,16 @@ pub struct Config {
     /// EOA private key for Base Sepolia transactions.
     #[allow(dead_code)]
     pub chain_private_key_base: String,
+    /// EOA private keys for the additional CCTP-V2 testnets. Empty until the
+    /// chain is wired for execution (it stays non-execution while blank).
+    #[allow(dead_code)]
+    pub chain_private_key_eth: String,
+    #[allow(dead_code)]
+    pub chain_private_key_arb: String,
+    #[allow(dead_code)]
+    pub chain_private_key_avax: String,
+    #[allow(dead_code)]
+    pub chain_private_key_op: String,
 
     // Real CCTP + Hook execution addresses (loaded only when real-cctp feature + !mock)
     #[allow(dead_code)]
@@ -122,9 +142,25 @@ pub struct Config {
     #[allow(dead_code)]
     pub cctp_token_messenger_base: String,
     #[allow(dead_code)]
+    pub cctp_token_messenger_eth: String,
+    #[allow(dead_code)]
+    pub cctp_token_messenger_arb: String,
+    #[allow(dead_code)]
+    pub cctp_token_messenger_avax: String,
+    #[allow(dead_code)]
+    pub cctp_token_messenger_op: String,
+    #[allow(dead_code)]
     pub cctp_message_transmitter_arc: String,
     #[allow(dead_code)]
     pub cctp_message_transmitter_base: String,
+    #[allow(dead_code)]
+    pub cctp_message_transmitter_eth: String,
+    #[allow(dead_code)]
+    pub cctp_message_transmitter_arb: String,
+    #[allow(dead_code)]
+    pub cctp_message_transmitter_avax: String,
+    #[allow(dead_code)]
+    pub cctp_message_transmitter_op: String,
     #[allow(dead_code)]
     pub rebalance_executor_arc: String,
     #[allow(dead_code)]
@@ -133,6 +169,14 @@ pub struct Config {
     pub usdc_arc: String,
     #[allow(dead_code)]
     pub usdc_base: String,
+    #[allow(dead_code)]
+    pub usdc_eth: String,
+    #[allow(dead_code)]
+    pub usdc_arb: String,
+    #[allow(dead_code)]
+    pub usdc_avax: String,
+    #[allow(dead_code)]
+    pub usdc_op: String,
     #[allow(dead_code)]
     pub usyc_token_arc: String,
     #[allow(dead_code)]
@@ -362,6 +406,10 @@ impl Config {
                 .unwrap_or_else(|_| "https://testnet.arc.network".into()),
             base_rpc_url: std::env::var("BASE_RPC_URL")
                 .unwrap_or_else(|_| "https://sepolia.base.org".into()),
+            eth_rpc_url: std::env::var("ETH_RPC_URL").unwrap_or_default(),
+            arb_rpc_url: std::env::var("ARB_RPC_URL").unwrap_or_default(),
+            avax_rpc_url: std::env::var("AVAX_RPC_URL").unwrap_or_default(),
+            op_rpc_url: std::env::var("OP_RPC_URL").unwrap_or_default(),
 
             gateway_poll_secs: parse_or("GATEWAY_POLL_SECS", 10)?,
             faucet_max_usdc_per_day: parse_or("FAUCET_MAX_USDC_PER_DAY", 100.0)?,
@@ -376,19 +424,40 @@ impl Config {
             cctp_attestation_timeout_secs: parse_or("CCTP_ATTESTATION_TIMEOUT_SECS", 180)?,
             chain_private_key_arc: std::env::var("CHAIN_PRIVATE_KEY_ARC").unwrap_or_default(),
             chain_private_key_base: std::env::var("CHAIN_PRIVATE_KEY_BASE").unwrap_or_default(),
+            chain_private_key_eth: std::env::var("CHAIN_PRIVATE_KEY_ETH").unwrap_or_default(),
+            chain_private_key_arb: std::env::var("CHAIN_PRIVATE_KEY_ARB").unwrap_or_default(),
+            chain_private_key_avax: std::env::var("CHAIN_PRIVATE_KEY_AVAX").unwrap_or_default(),
+            chain_private_key_op: std::env::var("CHAIN_PRIVATE_KEY_OP").unwrap_or_default(),
 
             // Real execution addresses (only used when EXECUTION_MOCK=false and real-cctp feature)
             cctp_token_messenger_arc: std::env::var("CCTP_TOKEN_MESSENGER_ARC").unwrap_or_default(),
             cctp_token_messenger_base: std::env::var("CCTP_TOKEN_MESSENGER_BASE")
                 .unwrap_or_default(),
+            cctp_token_messenger_eth: std::env::var("CCTP_TOKEN_MESSENGER_ETH").unwrap_or_default(),
+            cctp_token_messenger_arb: std::env::var("CCTP_TOKEN_MESSENGER_ARB").unwrap_or_default(),
+            cctp_token_messenger_avax: std::env::var("CCTP_TOKEN_MESSENGER_AVAX")
+                .unwrap_or_default(),
+            cctp_token_messenger_op: std::env::var("CCTP_TOKEN_MESSENGER_OP").unwrap_or_default(),
             cctp_message_transmitter_arc: std::env::var("CCTP_MESSAGE_TRANSMITTER_ARC")
                 .unwrap_or_default(),
             cctp_message_transmitter_base: std::env::var("CCTP_MESSAGE_TRANSMITTER_BASE")
+                .unwrap_or_default(),
+            cctp_message_transmitter_eth: std::env::var("CCTP_MESSAGE_TRANSMITTER_ETH")
+                .unwrap_or_default(),
+            cctp_message_transmitter_arb: std::env::var("CCTP_MESSAGE_TRANSMITTER_ARB")
+                .unwrap_or_default(),
+            cctp_message_transmitter_avax: std::env::var("CCTP_MESSAGE_TRANSMITTER_AVAX")
+                .unwrap_or_default(),
+            cctp_message_transmitter_op: std::env::var("CCTP_MESSAGE_TRANSMITTER_OP")
                 .unwrap_or_default(),
             rebalance_executor_arc: std::env::var("REBALANCE_EXECUTOR_ARC").unwrap_or_default(),
             rebalance_executor_base: std::env::var("REBALANCE_EXECUTOR_BASE").unwrap_or_default(),
             usdc_arc: std::env::var("USDC_ARC").unwrap_or_default(),
             usdc_base: std::env::var("USDC_BASE").unwrap_or_default(),
+            usdc_eth: std::env::var("USDC_ETH").unwrap_or_default(),
+            usdc_arb: std::env::var("USDC_ARB").unwrap_or_default(),
+            usdc_avax: std::env::var("USDC_AVAX").unwrap_or_default(),
+            usdc_op: std::env::var("USDC_OP").unwrap_or_default(),
             usyc_token_arc: std::env::var("USYC_TOKEN_ARC").unwrap_or_default(),
             usyc_teller_arc: std::env::var("USYC_TELLER_ARC").unwrap_or_default(),
             usyc_oracle_arc: std::env::var("USYC_ORACLE_ARC").unwrap_or_default(),
@@ -552,6 +621,87 @@ impl Config {
             ModelRoute::CritiqueAgent => &self.model_critic,
         }
     }
+
+    /// JSON-RPC URL for `chain`. Empty for chains that have no RPC configured
+    /// (the new CCTP testnets default empty until wired).
+    #[allow(dead_code)]
+    pub fn rpc_url_for(&self, chain: ChainKey) -> &str {
+        match chain {
+            ChainKey::Arc => &self.arc_rpc_url,
+            ChainKey::Base => &self.base_rpc_url,
+            ChainKey::EthSepolia => &self.eth_rpc_url,
+            ChainKey::ArbSepolia => &self.arb_rpc_url,
+            ChainKey::AvaxFuji => &self.avax_rpc_url,
+            ChainKey::OpSepolia => &self.op_rpc_url,
+        }
+    }
+
+    /// EOA signing key (hex) for `chain`. Empty until the chain is funded/wired.
+    #[allow(dead_code)]
+    pub fn chain_private_key_for(&self, chain: ChainKey) -> &str {
+        match chain {
+            ChainKey::Arc => &self.chain_private_key_arc,
+            ChainKey::Base => &self.chain_private_key_base,
+            ChainKey::EthSepolia => &self.chain_private_key_eth,
+            ChainKey::ArbSepolia => &self.chain_private_key_arb,
+            ChainKey::AvaxFuji => &self.chain_private_key_avax,
+            ChainKey::OpSepolia => &self.chain_private_key_op,
+        }
+    }
+
+    /// CCTP V2 TokenMessenger address for `chain`.
+    #[allow(dead_code)]
+    pub fn cctp_token_messenger_for(&self, chain: ChainKey) -> &str {
+        match chain {
+            ChainKey::Arc => &self.cctp_token_messenger_arc,
+            ChainKey::Base => &self.cctp_token_messenger_base,
+            ChainKey::EthSepolia => &self.cctp_token_messenger_eth,
+            ChainKey::ArbSepolia => &self.cctp_token_messenger_arb,
+            ChainKey::AvaxFuji => &self.cctp_token_messenger_avax,
+            ChainKey::OpSepolia => &self.cctp_token_messenger_op,
+        }
+    }
+
+    /// CCTP V2 MessageTransmitter address for `chain`.
+    #[allow(dead_code)]
+    pub fn cctp_message_transmitter_for(&self, chain: ChainKey) -> &str {
+        match chain {
+            ChainKey::Arc => &self.cctp_message_transmitter_arc,
+            ChainKey::Base => &self.cctp_message_transmitter_base,
+            ChainKey::EthSepolia => &self.cctp_message_transmitter_eth,
+            ChainKey::ArbSepolia => &self.cctp_message_transmitter_arb,
+            ChainKey::AvaxFuji => &self.cctp_message_transmitter_avax,
+            ChainKey::OpSepolia => &self.cctp_message_transmitter_op,
+        }
+    }
+
+    /// USDC ERC-20 address for `chain`.
+    #[allow(dead_code)]
+    pub fn usdc_for(&self, chain: ChainKey) -> &str {
+        match chain {
+            ChainKey::Arc => &self.usdc_arc,
+            ChainKey::Base => &self.usdc_base,
+            ChainKey::EthSepolia => &self.usdc_eth,
+            ChainKey::ArbSepolia => &self.usdc_arb,
+            ChainKey::AvaxFuji => &self.usdc_avax,
+            ChainKey::OpSepolia => &self.usdc_op,
+        }
+    }
+
+    /// Destination-chain RebalanceExecutor address (the CCTP mintRecipient for a
+    /// hook-enabled burn). Only Arc and Base have a deployed executor today; the
+    /// rest return empty and fail closed before any burn is attempted.
+    #[allow(dead_code)]
+    pub fn rebalance_executor_for(&self, chain: ChainKey) -> &str {
+        match chain {
+            ChainKey::Arc => &self.rebalance_executor_arc,
+            ChainKey::Base => &self.rebalance_executor_base,
+            ChainKey::EthSepolia
+            | ChainKey::ArbSepolia
+            | ChainKey::AvaxFuji
+            | ChainKey::OpSepolia => "",
+        }
+    }
 }
 
 fn required(key: &str) -> anyhow::Result<String> {
@@ -632,6 +782,10 @@ pub(crate) fn test_config() -> Config {
         circle_mock: true,
         arc_rpc_url: "https://testnet.arc.network".into(),
         base_rpc_url: "https://sepolia.base.org".into(),
+        eth_rpc_url: String::new(),
+        arb_rpc_url: String::new(),
+        avax_rpc_url: String::new(),
+        op_rpc_url: String::new(),
         gateway_poll_secs: 10,
         faucet_max_usdc_per_day: 100.0,
         cors_allow_origin: "http://localhost:3000".into(),
@@ -641,14 +795,30 @@ pub(crate) fn test_config() -> Config {
         cctp_attestation_timeout_secs: 180,
         chain_private_key_arc: String::new(),
         chain_private_key_base: String::new(),
+        chain_private_key_eth: String::new(),
+        chain_private_key_arb: String::new(),
+        chain_private_key_avax: String::new(),
+        chain_private_key_op: String::new(),
         cctp_token_messenger_arc: String::new(),
         cctp_token_messenger_base: String::new(),
+        cctp_token_messenger_eth: String::new(),
+        cctp_token_messenger_arb: String::new(),
+        cctp_token_messenger_avax: String::new(),
+        cctp_token_messenger_op: String::new(),
         cctp_message_transmitter_arc: String::new(),
         cctp_message_transmitter_base: String::new(),
+        cctp_message_transmitter_eth: String::new(),
+        cctp_message_transmitter_arb: String::new(),
+        cctp_message_transmitter_avax: String::new(),
+        cctp_message_transmitter_op: String::new(),
         rebalance_executor_arc: String::new(),
         rebalance_executor_base: String::new(),
         usdc_arc: String::new(),
         usdc_base: String::new(),
+        usdc_eth: String::new(),
+        usdc_arb: String::new(),
+        usdc_avax: String::new(),
+        usdc_op: String::new(),
         usyc_token_arc: String::new(),
         usyc_teller_arc: String::new(),
         usyc_oracle_arc: String::new(),

@@ -100,6 +100,10 @@ pub enum TokenClass {
 pub enum ChainKey {
     Arc,
     Base,
+    EthSepolia,
+    ArbSepolia,
+    AvaxFuji,
+    OpSepolia,
 }
 
 impl ChainKey {
@@ -107,12 +111,23 @@ impl ChainKey {
         match self {
             Self::Arc => "arc",
             Self::Base => "base",
+            Self::EthSepolia => "eth_sepolia",
+            Self::ArbSepolia => "arb_sepolia",
+            Self::AvaxFuji => "avax_fuji",
+            Self::OpSepolia => "op_sepolia",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "arc" | "ARC" => Some(Self::Arc),
-            "base" | "BASE" => Some(Self::Base),
+        // Accept both the canonical snake_case `as_str()` form and the
+        // hyphenated Circle wallet `blockchain` form (e.g. "eth-sepolia"),
+        // so a chain stamped by either layer round-trips.
+        match s.to_ascii_lowercase().replace('-', "_").as_str() {
+            "arc" => Some(Self::Arc),
+            "base" => Some(Self::Base),
+            "eth_sepolia" => Some(Self::EthSepolia),
+            "arb_sepolia" => Some(Self::ArbSepolia),
+            "avax_fuji" => Some(Self::AvaxFuji),
+            "op_sepolia" => Some(Self::OpSepolia),
             _ => None,
         }
     }
@@ -124,9 +139,23 @@ impl ChainKey {
     /// attested message reverted with "Invalid destination domain".
     pub fn domain_id(&self) -> u32 {
         match self {
-            Self::Arc => 26,
+            Self::EthSepolia => 0,
+            Self::AvaxFuji => 1,
+            Self::OpSepolia => 2,
+            Self::ArbSepolia => 3,
             Self::Base => 6,
+            Self::Arc => 26,
         }
+    }
+
+    /// Whether this chain is wired for live rebalance execution. Only Arc and
+    /// Base have a deployed RebalanceExecutor / swap venue today; the rest are
+    /// wallet-supported (USDC custody) but the route registry must fail closed
+    /// for them. Adding a chain here without the on-chain plumbing would let a
+    /// plan slip past the gate, so this stays in lockstep with
+    /// `wallet_routes::EXECUTION_BLOCKCHAINS`.
+    pub fn is_execution(&self) -> bool {
+        matches!(self, Self::Arc | Self::Base)
     }
 }
 
@@ -173,4 +202,56 @@ pub struct PlanInput {
     /// the band for trimming winners (sells), `risk_off` tightens it to
     /// de-risk sooner. `None` ⇒ symmetric `drift_threshold` (neutral).
     pub regime: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cctp_domain_ids_match_circle() {
+        // Circle CCTP V2 domains. A wrong id reverts on-chain with
+        // "Invalid destination domain" (see the Arc=26 history above).
+        assert_eq!(ChainKey::EthSepolia.domain_id(), 0);
+        assert_eq!(ChainKey::AvaxFuji.domain_id(), 1);
+        assert_eq!(ChainKey::OpSepolia.domain_id(), 2);
+        assert_eq!(ChainKey::ArbSepolia.domain_id(), 3);
+        assert_eq!(ChainKey::Base.domain_id(), 6);
+        assert_eq!(ChainKey::Arc.domain_id(), 26);
+    }
+
+    #[test]
+    fn chain_key_round_trips_both_string_forms() {
+        for k in [
+            ChainKey::Arc,
+            ChainKey::Base,
+            ChainKey::EthSepolia,
+            ChainKey::ArbSepolia,
+            ChainKey::AvaxFuji,
+            ChainKey::OpSepolia,
+        ] {
+            assert_eq!(ChainKey::parse(k.as_str()), Some(k));
+        }
+        // Hyphenated Circle wallet `blockchain` form is also accepted.
+        assert_eq!(ChainKey::parse("eth-sepolia"), Some(ChainKey::EthSepolia));
+        assert_eq!(ChainKey::parse("OP-SEPOLIA"), Some(ChainKey::OpSepolia));
+        assert_eq!(ChainKey::parse("solana"), None);
+    }
+
+    #[test]
+    fn only_arc_and_base_are_execution_chains() {
+        assert!(ChainKey::Arc.is_execution());
+        assert!(ChainKey::Base.is_execution());
+        for k in [
+            ChainKey::EthSepolia,
+            ChainKey::ArbSepolia,
+            ChainKey::AvaxFuji,
+            ChainKey::OpSepolia,
+        ] {
+            assert!(
+                !k.is_execution(),
+                "{k:?} must stay non-execution until wired"
+            );
+        }
+    }
 }
