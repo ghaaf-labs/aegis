@@ -211,6 +211,41 @@ describe("<EmailAuthCard />", () => {
     act(() => root.unmount());
   });
 
+  it("marks the code field invalid when the server rejects a code", async () => {
+    mockSearchParams = new URLSearchParams("email=wrong-code@example.com");
+    vi.mocked(walletApi.session).mockRejectedValue(new Error("missing"));
+    vi.mocked(walletApi.startEmail).mockResolvedValue({
+      challengeId: "code-wrong",
+      email: "wrong-code@example.com",
+      expiresAt: new Date(Date.now() + 600_000).toISOString(),
+      resendInSeconds: 30,
+    });
+    vi.mocked(walletApi.verifyEmail).mockRejectedValue(
+      new Error("400: code_invalid"),
+    );
+
+    const { root, container } = render(<EmailAuthCard />);
+    await flushEffects();
+    await click(container, '[data-testid="wallet-auth-submit"]');
+    await flushEffects();
+    await fill(container, '[data-testid="wallet-auth-code"]', "000000");
+    await click(container, '[data-testid="wallet-auth-submit"]');
+    await flushEffects();
+
+    const codeInput = container.querySelector<HTMLInputElement>(
+      '[data-testid="wallet-auth-code"]',
+    );
+    expect(codeInput?.getAttribute("aria-invalid")).toBe("true");
+    expect(codeInput?.getAttribute("aria-describedby")).toBe(
+      "wallet-auth-error",
+    );
+    expect(container.textContent).toContain(
+      "That code did not match. Check it or request a new one.",
+    );
+
+    act(() => root.unmount());
+  });
+
   it("clears stale portfolio state before opening a verified account", async () => {
     mockSearchParams = new URLSearchParams("email=new-owner@example.com");
     act(() => {

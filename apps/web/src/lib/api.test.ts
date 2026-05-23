@@ -59,6 +59,40 @@ describe("walletApi.logout", () => {
   });
 });
 
+describe("walletApi.session", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("does not leave auth screens waiting forever when the API stalls", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("Aborted", "AbortError"));
+        });
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = walletApi.session();
+    const assertion = expect(result).rejects.toThrow(
+      "Request timed out. Try again.",
+    );
+    await vi.advanceTimersByTimeAsync(8_000);
+
+    await assertion;
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:8080/auth/session",
+      expect.objectContaining({
+        method: "GET",
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+});
+
 describe("accountApi.exportData", () => {
   afterEach(() => {
     vi.unstubAllGlobals();

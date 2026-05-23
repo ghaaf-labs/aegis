@@ -154,8 +154,11 @@ export const walletApi = {
       method: "POST",
       body: { challengeId },
     }),
-  session: () =>
-    request<WalletSessionResponse>("/auth/session", { authed: true }),
+  session: (timeoutMs = 8_000) =>
+    request<WalletSessionResponse>("/auth/session", {
+      authed: true,
+      timeoutMs,
+    }),
   logout: async () => {
     const res = await fetch(`${BASE_URL}/auth/logout`, {
       method: "POST",

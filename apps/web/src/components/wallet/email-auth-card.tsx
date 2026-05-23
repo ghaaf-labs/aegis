@@ -297,6 +297,7 @@ export function EmailAuthCard() {
   const emailValid = isValidEmail(normalizedEmail);
   const emailInvalid = normalizedEmail.length > 0 && !emailValid;
   const codeValid = /^\d{6}$/.test(code.trim());
+  const codeInvalid = mode === "verify" && (!!error || (!!code && !codeValid));
   const emailHelpId = "wallet-auth-email-help";
   const emailInvalidId = "wallet-auth-email-invalid";
   const emailInputId = "wallet-auth-email-input";
@@ -436,7 +437,7 @@ export function EmailAuthCard() {
               inputMode="numeric"
               autoComplete="one-time-code"
               placeholder="123456"
-              aria-invalid={!!code && !codeValid}
+              aria-invalid={codeInvalid}
               aria-describedby={error ? errorId : undefined}
               className="min-h-11 w-full rounded-sharp border-brutal border-border-default bg-bg px-3 py-2 font-mono text-base tracking-[0.3em] text-text-hi outline-none focus:border-border-hi sm:text-sm"
             />
