@@ -3,7 +3,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { GoalWizard } from "./goal-wizard";
 import { usePortfolioStore } from "@/stores/portfolio";
-import { analyticsApi, portfolioApi } from "@/lib/api";
+import { agentApi, analyticsApi, portfolioApi } from "@/lib/api";
+import type { AgentDecision, Portfolio } from "@/types";
 
 const push = vi.fn();
 
@@ -16,6 +17,9 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/api", () => ({
   portfolioApi: {
     create: vi.fn(),
+  },
+  agentApi: {
+    proposeAllocation: vi.fn(),
   },
   analyticsApi: {
     track: vi.fn(),
@@ -35,80 +39,124 @@ afterEach(() => {
   window.sessionStorage.clear();
 });
 
+function createdPortfolio(): Portfolio {
+  return {
+    id: "portfolio-1",
+    userId: "user-1",
+    name: "Agent-managed portfolio",
+    totalValueUsd: 0,
+    totalPnlUsd: 0,
+    totalPnlPct: 0,
+    allocations: [],
+    riskScore: 0,
+    goal: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function proposalDecision(): AgentDecision {
+  return {
+    id: "decision-1",
+    portfolioId: "portfolio-1",
+    reasoning: "Allocator designed a balanced mix.",
+    recommendation: {
+      summary: "",
+      trades: [],
+      expectedImpact: { riskDelta: 0, diversificationScore: 0 },
+    },
+    confidence: 0.8,
+    triggeredBy: "user_request",
+    kind: "allocation_proposal",
+    recommendedAllocation: { USDC: 60, BTC: 40 },
+    createdAt: new Date().toISOString(),
+  };
+}
+
 describe("<GoalWizard />", () => {
-  it("announces and focuses the portfolio name when Next is pressed empty", async () => {
+  it("walks objective → horizon → risk and creates an agent-owned portfolio", async () => {
+    vi.mocked(portfolioApi.create).mockResolvedValue(createdPortfolio());
+    vi.mocked(agentApi.proposeAllocation).mockResolvedValue(proposalDecision());
+    vi.mocked(analyticsApi.track).mockResolvedValue(undefined);
+
     const { container, root } = render(<GoalWizard />);
 
-    const next = buttonByText(container, "Next");
+    // Step 1 — objective. Default "grow" is preselected; choose "preserve".
+    expect(
+      container.querySelector('[data-testid="goal-wizard-step-1"]'),
+    ).not.toBeNull();
+    await clickByText(container, "Preserve");
+    await advance(container);
+
+    // Step 2 — horizon.
+    expect(
+      container.querySelector('[data-testid="goal-wizard-step-2"]'),
+    ).not.toBeNull();
+    await clickByText(container, "10 years");
+    await advance(container);
+
+    // Step 3 — risk. Submit.
+    expect(
+      container.querySelector('[data-testid="goal-wizard-step-3"]'),
+    ).not.toBeNull();
+    await clickByText(container, "Conservative");
+
     await act(async () => {
-      next.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      buttonByText(container, "Let the agent design it").click();
+      await flushMicrotasks();
     });
 
-    const name = container.querySelector("#portfolio-name");
-    expect(document.activeElement).toBe(name);
-    expect(name?.getAttribute("aria-invalid")).toBe("true");
-    expect(container.querySelectorAll('[role="alert"]')).toHaveLength(1);
-    expect(container.textContent).toContain(
-      "Enter a portfolio name to continue.",
+    const createCall = vi.mocked(portfolioApi.create).mock.calls[0]?.[0];
+    expect(createCall?.allocations).toEqual([]);
+    expect(createCall?.goal?.targetAllocation).toEqual({});
+    expect(createCall?.goal?.name).toBeUndefined();
+    expect(createCall?.goal?.objective).toBe("preserve");
+    expect(createCall?.goal?.horizon).toBe("10y");
+    expect(createCall?.goal?.riskTolerance).toBe("conservative");
+
+    expect(agentApi.proposeAllocation).toHaveBeenCalledWith("portfolio-1");
+    expect(push).toHaveBeenCalledWith(
+      "/dashboard/portfolio-1?proposal=decision-1",
     );
-    expect(container.textContent).not.toContain("tax export");
 
     act(() => root.unmount());
   });
 
-  it("creates a portfolio with executable route preferences by default", async () => {
-    window.sessionStorage.setItem(
-      "aegis.goal-wizard.draft",
-      JSON.stringify({
-        step: 4,
-        name: "Main portfolio",
-        horizon: "5y",
-        risk: "moderate",
-        allocation: { USDC: 100, BTC: 0, ETH: 0, SOL: 0, EURC: 0 },
-        monthlyContribution: "",
-      }),
+  it("still routes to the dashboard when the proposal call fails", async () => {
+    vi.mocked(portfolioApi.create).mockResolvedValue(createdPortfolio());
+    vi.mocked(agentApi.proposeAllocation).mockRejectedValue(
+      new Error("allocator timeout"),
     );
-    vi.mocked(portfolioApi.create).mockResolvedValue({
-      id: "portfolio-1",
-      userId: "user-1",
-      name: "Main portfolio",
-      totalValueUsd: 0,
-      totalPnlUsd: 0,
-      totalPnlPct: 0,
-      allocations: [],
-      riskScore: 0,
-      goal: null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
     vi.mocked(analyticsApi.track).mockResolvedValue(undefined);
+
     const { container, root } = render(<GoalWizard />);
 
+    await advance(container); // objective
+    await advance(container); // horizon
+
     await act(async () => {
-      buttonByText(container, "Create portfolio").click();
-      await Promise.resolve();
-      await Promise.resolve();
+      buttonByText(container, "Let the agent design it").click();
+      await flushMicrotasks();
     });
 
-    const request = vi.mocked(portfolioApi.create).mock.calls[0]?.[0];
-    expect(request?.goal?.targetAllocation).toEqual({
-      USDC: 100,
-      BTC: 0,
-      ETH: 0,
-      SOL: 0,
-      EURC: 0,
-    });
-    expect(request?.goal?.routePreferences).toEqual({
-      networks: ["ARC-TESTNET", "BASE-SEPOLIA"],
-      networkWatchlist: ["ETH-SEPOLIA", "ARB-SEPOLIA", "AVAX-FUJI"],
-      tokens: ["USDC"],
-      watchlist: ["BTC", "ETH", "SOL", "EURC"],
-    });
+    expect(push).toHaveBeenCalledWith("/dashboard/portfolio-1");
 
     act(() => root.unmount());
   });
 });
+
+async function advance(container: HTMLElement) {
+  await act(async () => {
+    buttonByText(container, "Next").click();
+    await flushMicrotasks();
+  });
+}
+
+async function flushMicrotasks() {
+  await Promise.resolve();
+  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
 
 function render(element: React.ReactElement): {
   container: HTMLDivElement;
@@ -129,4 +177,13 @@ function buttonByText(container: HTMLElement, text: string): HTMLButtonElement {
     throw new Error(`Missing button: ${text}`);
   }
   return button;
+}
+
+async function clickByText(container: HTMLElement, text: string) {
+  await act(async () => {
+    buttonByText(container, text).dispatchEvent(
+      new MouseEvent("click", { bubbles: true }),
+    );
+    await Promise.resolve();
+  });
 }

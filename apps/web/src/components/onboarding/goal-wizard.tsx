@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, RotateCcw, SlidersHorizontal } from "lucide-react";
+import { Sparkles, ShieldCheck, Coins } from "lucide-react";
 import {
   BrutalCard,
   BrutalCardBody,
@@ -11,74 +11,32 @@ import {
 } from "@aegis/ui";
 import type {
   GoalHorizon,
+  PortfolioObjective,
   RiskTolerance,
-  AssetSymbol,
   RoutePreferences,
 } from "@/types";
-import { portfolioApi, analyticsApi } from "@/lib/api";
+import { portfolioApi, agentApi, analyticsApi } from "@/lib/api";
 import { usePortfolioStore } from "@/stores/portfolio";
 
 interface WizardState {
-  step: 1 | 2 | 3 | 4;
-  name: string;
+  step: 1 | 2 | 3;
+  objective: PortfolioObjective;
   horizon: GoalHorizon;
   risk: RiskTolerance;
-  allocation: Partial<Record<AssetSymbol, number>>;
-  monthlyContribution: string;
   submitting: boolean;
   error: string | null;
-  attemptedAdvance: boolean;
 }
 
 const STORAGE_KEY = "aegis.goal-wizard.draft";
 
-/** USYC is not selectable until its real route is verified. */
-const ASSETS: { symbol: AssetSymbol; label: string }[] = [
-  { symbol: "USDC", label: "Cash reserve" },
-  { symbol: "BTC", label: "Bitcoin" },
-  { symbol: "ETH", label: "Ethereum" },
-  { symbol: "SOL", label: "Solana" },
-  { symbol: "EURC", label: "EURC (EUR sleeve)" },
-];
-
-const DEFAULT_ALLOC: Partial<Record<AssetSymbol, number>> = {
-  USDC: 100,
-  BTC: 0,
-  ETH: 0,
-  SOL: 0,
-  EURC: 0,
-};
-
 const DEFAULT_ROUTE_PREFERENCES: RoutePreferences = {
   networks: ["ARC-TESTNET", "BASE-SEPOLIA"],
   networkWatchlist: ["ETH-SEPOLIA", "ARB-SEPOLIA", "AVAX-FUJI"],
-  // Only USDC is executable today. USYC is coming soon, so it is not included
-  // in onboarding targets or watchlists.
+  // The agent designs the target mix after this portfolio is created. Onboarding
+  // seeds no token targets — only the executable networks the agent may use.
   tokens: ["USDC"],
   watchlist: ["BTC", "ETH", "SOL", "EURC"],
 };
-
-const ALLOCATION_PRESETS: Array<{
-  label: string;
-  hint: string;
-  allocation: Partial<Record<AssetSymbol, number>>;
-}> = [
-  {
-    label: "Ready reserve",
-    hint: "Executable USDC only",
-    allocation: DEFAULT_ALLOC,
-  },
-  {
-    label: "Market watch",
-    hint: "USDC core plus tracked markets",
-    allocation: { USDC: 60, BTC: 25, ETH: 15, SOL: 0, EURC: 0 },
-  },
-  {
-    label: "FX watch",
-    hint: "USDC core plus EURC tracking",
-    allocation: { USDC: 80, BTC: 0, ETH: 0, SOL: 0, EURC: 20 },
-  },
-];
 
 export function GoalWizard() {
   const router = useRouter();
@@ -91,15 +49,12 @@ export function GoalWizard() {
         if (raw) {
           const parsed = JSON.parse(raw) as Partial<WizardState>;
           return {
-            step: parsed.step ?? 1,
-            name: parsed.name ?? "",
+            step: clampStep(parsed.step),
+            objective: parsed.objective ?? "grow",
             horizon: parsed.horizon ?? "5y",
             risk: parsed.risk ?? "moderate",
-            allocation: parsed.allocation ?? DEFAULT_ALLOC,
-            monthlyContribution: parsed.monthlyContribution ?? "",
             submitting: false,
             error: null,
-            attemptedAdvance: false,
           };
         }
       } catch {
@@ -108,95 +63,64 @@ export function GoalWizard() {
     }
     return {
       step: 1,
-      name: "",
+      objective: "grow",
       horizon: "5y",
       risk: "moderate",
-      allocation: DEFAULT_ALLOC,
-      monthlyContribution: "",
       submitting: false,
       error: null,
-      attemptedAdvance: false,
     };
   });
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const rest = {
-      step: state.step,
-      name: state.name,
-      horizon: state.horizon,
-      risk: state.risk,
-      allocation: state.allocation,
-      monthlyContribution: state.monthlyContribution,
-    };
-    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(rest));
+    window.sessionStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        step: state.step,
+        objective: state.objective,
+        horizon: state.horizon,
+        risk: state.risk,
+      }),
+    );
   }, [state]);
-
-  const totalAlloc = Object.values(state.allocation).reduce(
-    (a: number, b) => a + (b ?? 0),
-    0,
-  );
-  const allocValid = Math.abs(totalAlloc - 100) < 0.5;
-
-  const canNext =
-    (state.step === 1 && state.name.trim().length >= 2) ||
-    (state.step === 2 && !!state.horizon) ||
-    (state.step === 3 && !!state.risk) ||
-    (state.step === 4 && allocValid);
-  const disabledReason = nextDisabledReason(state, totalAlloc);
 
   const submit = async () => {
     setState((s) => ({ ...s, submitting: true, error: null }));
     try {
-      const monthly = state.monthlyContribution
-        ? Number(state.monthlyContribution)
-        : undefined;
       const goal: import("@/types").PortfolioGoal = {
-        name: state.name.trim(),
+        objective: state.objective,
         horizon: state.horizon,
         riskTolerance: state.risk,
-        targetAllocation: state.allocation,
+        // The agent owns target weights — onboarding leaves them empty.
+        targetAllocation: {},
         includeUsyc: false,
-        includeEurc: (state.allocation.EURC ?? 0) > 0,
+        includeEurc: false,
         routePreferences: DEFAULT_ROUTE_PREFERENCES,
-        ...(monthly !== undefined ? { monthlyContributionUsd: monthly } : {}),
         createdAt: new Date().toISOString(),
       };
-      const allocations = ASSETS.filter(
-        (a) => (state.allocation[a.symbol] ?? 0) > 0,
-      ).map((a) => ({
-        symbol: a.symbol,
-        quantity: 0,
-        targetWeight: state.allocation[a.symbol] ?? 0,
-      }));
 
-      const portfolio = await portfolioApi.create({
-        name: state.name.trim(),
-        allocations,
-        goal,
-      });
-      // POST /portfolios returns the Portfolio row only; allocations live in
-      // a separate table. The dashboard reads `.allocations.length`, so the
-      // wizard merges the just-submitted weights into the store entry to
-      // avoid an empty-state crash before the next GET hydrates real data.
-      addPortfolio({
-        ...portfolio,
-        allocations: allocations.map((a) => ({
-          assetId: a.symbol,
-          symbol: a.symbol,
-          quantity: a.quantity,
-          targetWeight: a.targetWeight,
-          currentWeight: 0,
-          valueUsd: 0,
-        })),
-      });
+      const portfolio = await portfolioApi.create({ allocations: [], goal });
+      addPortfolio({ ...portfolio, allocations: [] });
       await analyticsApi.track("goal.completed", {
         portfolioId: portfolio.id,
+        objective: state.objective,
         horizon: state.horizon,
         risk: state.risk,
       });
+
+      // Hand off to the agent: it designs the allocation, then the dashboard
+      // opens Gate 1 with the proposal.
+      let proposalQuery = "";
+      try {
+        const decision = await agentApi.proposeAllocation(portfolio.id);
+        proposalQuery = `?proposal=${decision.id}`;
+      } catch {
+        // Proposal can be retried from the dashboard ("Re-propose"); don't
+        // block the user on a slow allocator call.
+      }
+
       window.sessionStorage.removeItem(STORAGE_KEY);
-      router.push(`/dashboard/${portfolio.id}`);
+      router.push(`/dashboard/${portfolio.id}${proposalQuery}`);
     } catch (e) {
       setState((s) => ({
         ...s,
@@ -207,19 +131,13 @@ export function GoalWizard() {
   };
 
   const go = (delta: 1 | -1) => {
-    if (delta === 1 && !canNext) {
-      setState((s) => ({ ...s, attemptedAdvance: true }));
-      focusFirstInvalidField(state.step);
-      return;
-    }
-    if (delta === 1 && state.step === 4 && canNext) {
+    if (delta === 1 && state.step === 3) {
       void submit();
       return;
     }
     setState((s) => ({
       ...s,
-      attemptedAdvance: false,
-      step: Math.max(1, Math.min(4, s.step + delta)) as WizardState["step"],
+      step: clampStep(s.step + delta),
     }));
   };
 
@@ -235,7 +153,7 @@ export function GoalWizard() {
             {stepTitle(state.step)}
           </span>
           <span className="shrink-0 font-mono text-[10px] uppercase tracking-widest text-text-mut">
-            {state.step} / 4
+            {state.step} / 3
           </span>
         </div>
         <p className="font-mono text-[11px] leading-relaxed text-text-mut">
@@ -244,10 +162,10 @@ export function GoalWizard() {
       </BrutalCardHeader>
       <BrutalCardBody className="p-4 sm:p-5">
         <div
-          className="mb-4 grid grid-cols-4 gap-2"
+          className="mb-4 grid grid-cols-3 gap-2"
           aria-label="Portfolio setup progress"
         >
-          {[1, 2, 3, 4].map((step) => (
+          {[1, 2, 3].map((step) => (
             <div
               key={step}
               className={`h-1.5 rounded-sharp ${
@@ -258,39 +176,16 @@ export function GoalWizard() {
         </div>
 
         {state.step === 1 && (
-          <NameStep
-            state={state}
-            setState={setState}
-            showError={shouldShowNextHint(state, totalAlloc)}
-            error={disabledReason}
-          />
+          <ObjectiveStep state={state} setState={setState} />
         )}
         {state.step === 2 && <HorizonStep state={state} setState={setState} />}
         {state.step === 3 && <RiskStep state={state} setState={setState} />}
-        {state.step === 4 && (
-          <AllocationStep
-            state={state}
-            setState={setState}
-            totalAlloc={totalAlloc}
-          />
-        )}
 
         {state.error && (
-          <div className="mt-4 text-xs text-risk font-mono">{state.error}</div>
+          <div className="mt-4 text-xs text-risk font-mono" role="alert">
+            {state.error}
+          </div>
         )}
-        {state.step !== 1 &&
-          !canNext &&
-          shouldShowNextHint(state, totalAlloc) &&
-          disabledReason && (
-            <div
-              data-testid="goal-wizard-next-hint"
-              role="alert"
-              aria-live="polite"
-              className="mt-4 border border-warn/40 bg-warn/5 px-3 py-2 text-xs text-warn font-mono"
-            >
-              {disabledReason}
-            </div>
-          )}
 
         <div className="mt-6 grid gap-2 sm:grid-cols-2">
           <BrutalButton
@@ -302,15 +197,15 @@ export function GoalWizard() {
             Back
           </BrutalButton>
           <BrutalButton
-            variant={state.step === 4 ? "pnl" : "agent"}
+            variant="agent"
             className="min-h-11"
             disabled={state.submitting}
             onClick={() => go(1)}
           >
             {state.submitting
-              ? "Creating…"
-              : state.step === 4
-                ? "Create portfolio"
+              ? "Designing allocation…"
+              : state.step === 3
+                ? "Let the agent design it"
                 : "Next"}
           </BrutalButton>
         </div>
@@ -319,46 +214,26 @@ export function GoalWizard() {
   );
 }
 
-function stepTitle(step: 1 | 2 | 3 | 4): string {
+function clampStep(step: number | undefined): WizardState["step"] {
+  if (step === 2) return 2;
+  if (step === 3) return 3;
+  return 1;
+}
+
+function stepTitle(step: 1 | 2 | 3): string {
   return {
-    1: "Name your portfolio",
+    1: "What is this money for?",
     2: "Investment horizon",
     3: "Risk tolerance",
-    4: "Target allocation",
   }[step];
 }
 
-function stepHint(step: 1 | 2 | 3 | 4): string {
+function stepHint(step: 1 | 2 | 3): string {
   return {
-    1: "Give this target a name.",
+    1: "Set the objective. The agent designs the allocation around it.",
     2: "Choose how long this money can stay invested.",
     3: "Pick the risk level the agent should respect.",
-    4: "Set the target mix. You can change it later.",
   }[step];
-}
-
-function nextDisabledReason(state: WizardState, totalAlloc: number) {
-  if (state.step === 1 && state.name.trim().length < 2) {
-    return state.name.trim().length === 0
-      ? "Enter a portfolio name to continue."
-      : "Use at least 2 characters.";
-  }
-  if (state.step === 4 && Math.abs(totalAlloc - 100) >= 0.5) {
-    const diff = Math.abs(100 - totalAlloc).toFixed(0);
-    return totalAlloc < 100
-      ? `Add ${diff}% more allocation, or use Normalize to finish.`
-      : `Remove ${diff}% allocation, or use Normalize to finish.`;
-  }
-  return null;
-}
-
-function shouldShowNextHint(state: WizardState, totalAlloc: number) {
-  const reason = nextDisabledReason(state, totalAlloc);
-  if (!reason) return false;
-  if (state.step === 1) {
-    return state.attemptedAdvance || state.name.trim().length > 0;
-  }
-  return state.attemptedAdvance || state.step === 4;
 }
 
 interface StepProps {
@@ -366,49 +241,62 @@ interface StepProps {
   setState: React.Dispatch<React.SetStateAction<WizardState>>;
 }
 
-function NameStep({
-  state,
-  setState,
-  showError,
-  error,
-}: StepProps & { showError: boolean; error: string | null }) {
+const OBJECTIVES: {
+  value: PortfolioObjective;
+  label: string;
+  hint: string;
+  icon: typeof Sparkles;
+}[] = [
+  {
+    value: "grow",
+    label: "Grow",
+    hint: "Maximize long-term growth",
+    icon: Sparkles,
+  },
+  {
+    value: "preserve",
+    label: "Preserve",
+    hint: "Protect capital, limit drawdown",
+    icon: ShieldCheck,
+  },
+  {
+    value: "income",
+    label: "Income",
+    hint: "Steady yield from stable assets",
+    icon: Coins,
+  },
+];
+
+function ObjectiveStep({ state, setState }: StepProps) {
   return (
-    <div className="space-y-3">
-      <label
-        htmlFor="portfolio-name"
-        className="block text-xs text-text-lo font-mono"
-      >
-        Portfolio name
-      </label>
-      <input
-        id="portfolio-name"
-        type="text"
-        autoFocus
-        value={state.name}
-        onChange={(e) => setState((s) => ({ ...s, name: e.target.value }))}
-        aria-describedby={
-          showError && error
-            ? "portfolio-name-help portfolio-name-error"
-            : "portfolio-name-help"
-        }
-        aria-invalid={showError && !!error}
-        className="min-h-11 w-full rounded-sharp border-brutal border-border-default bg-bg px-3 py-2 font-mono text-base text-text-hi outline-none focus:border-border-hi sm:text-sm"
-        placeholder="Main portfolio"
-        maxLength={48}
-      />
-      <p id="portfolio-name-help" className="text-xs text-text-mut font-mono">
-        You can rename it later.
-      </p>
-      {showError && error && (
-        <p
-          id="portfolio-name-error"
-          role="alert"
-          aria-live="polite"
-          className="text-xs text-warn font-mono"
-        >
-          {error}
-        </p>
-      )}
+    <div className="space-y-2">
+      {OBJECTIVES.map((o) => {
+        const Icon = o.icon;
+        const selected = state.objective === o.value;
+        return (
+          <button
+            type="button"
+            key={o.value}
+            aria-pressed={selected}
+            onClick={() => setState((s) => ({ ...s, objective: o.value }))}
+            className={`flex min-h-12 w-full items-center gap-3 rounded-sharp border-brutal px-3 py-2 text-left font-mono text-sm transition-[box-shadow] ${
+              selected
+                ? "border-accent-agent bg-accent-agent/10 text-text-hi shadow-brutal-sm"
+                : "border-border-default text-text-default hover:border-border-hi"
+            }`}
+          >
+            <Icon
+              className={`h-4 w-4 shrink-0 ${
+                selected ? "text-accent-agent" : "text-text-mut"
+              }`}
+            />
+            <span className="flex flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-3">
+              <span className="font-semibold">{o.label}</span>
+              <span className="text-text-lo">{o.hint}</span>
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -483,182 +371,4 @@ function RiskStep({ state, setState }: StepProps) {
       ))}
     </div>
   );
-}
-
-function AllocationStep({
-  state,
-  setState,
-  totalAlloc,
-}: StepProps & { totalAlloc: number }) {
-  const allocationValid = Math.abs((totalAlloc ?? 0) - 100) < 0.5;
-
-  const setAllocation = (allocation: Partial<Record<AssetSymbol, number>>) => {
-    setState((s) => ({ ...s, allocation }));
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="grid gap-2">
-        <div className="flex items-center gap-2 text-xs text-text-lo font-mono">
-          <SlidersHorizontal className="h-3.5 w-3.5 text-accent-agent" />
-          Pick a preset, then adjust the weights.
-        </div>
-        <p className="text-[11px] font-mono leading-relaxed text-text-mut">
-          USDC can execute now. BTC, ETH, SOL, and EURC are tracked until their
-          live routes are ready. USYC is coming soon.
-        </p>
-        <div className="grid gap-2 sm:grid-cols-3">
-          {ALLOCATION_PRESETS.map((preset) => (
-            <button
-              type="button"
-              key={preset.label}
-              onClick={() => setAllocation(preset.allocation)}
-              className="min-h-[74px] rounded-sharp border border-border-default bg-bg px-3 py-2 text-left font-mono hover:border-accent-agent hover:bg-accent-agent/5"
-            >
-              <span className="block text-xs font-semibold text-text-hi">
-                {preset.label}
-              </span>
-              <span className="mt-1 block text-[11px] leading-snug text-text-mut">
-                {preset.hint}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div
-        className={`flex flex-wrap items-center justify-between gap-3 border px-3 py-2 font-mono ${
-          allocationValid
-            ? "border-accent-pnl/40 bg-accent-pnl/5"
-            : "border-warn/40 bg-warn/5"
-        }`}
-      >
-        <div className="flex items-center gap-2 text-xs">
-          {allocationValid ? (
-            <CheckCircle2 className="h-3.5 w-3.5 text-accent-pnl" />
-          ) : (
-            <SlidersHorizontal className="h-3.5 w-3.5 text-warn" />
-          )}
-          <span className="text-text-lo">
-            Total target{" "}
-            <span className={allocationValid ? "text-accent-pnl" : "text-warn"}>
-              {totalAlloc ?? 0}%
-            </span>{" "}
-            / 100%
-          </span>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => setAllocation(normalizeAllocation(state.allocation))}
-            className="inline-flex min-h-8 items-center gap-1 rounded-sharp border border-border-default bg-bg px-2 text-[11px] text-text-lo hover:border-accent-agent hover:text-accent-agent"
-          >
-            <SlidersHorizontal className="h-3 w-3" />
-            Normalize
-          </button>
-          <button
-            type="button"
-            onClick={() => setAllocation(DEFAULT_ALLOC)}
-            className="inline-flex min-h-8 items-center gap-1 rounded-sharp border border-border-default bg-bg px-2 text-[11px] text-text-lo hover:border-border-hi hover:text-text-hi"
-          >
-            <RotateCcw className="h-3 w-3" />
-            Reset
-          </button>
-        </div>
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        {ASSETS.map((a) => (
-          <div
-            key={a.symbol}
-            className="grid grid-cols-[1fr_auto] gap-3 border border-border-default bg-bg/70 p-3"
-          >
-            <label htmlFor={`alloc-${a.symbol}`} className="min-w-0 font-mono">
-              <span className="block text-sm text-text-hi">{a.symbol}</span>
-              <span className="block text-xs text-text-lo">{a.label}</span>
-            </label>
-            <div className="flex items-center gap-2">
-              <input
-                id={`alloc-${a.symbol}`}
-                aria-label={`${a.symbol} target allocation`}
-                type="number"
-                min={0}
-                max={100}
-                step={5}
-                value={state.allocation[a.symbol] ?? 0}
-                onChange={(e) =>
-                  setState((s) => ({
-                    ...s,
-                    allocation: {
-                      ...s.allocation,
-                      [a.symbol]: Math.max(
-                        0,
-                        Math.min(100, Number(e.target.value) || 0),
-                      ),
-                    },
-                  }))
-                }
-                className="min-h-10 w-20 rounded-sharp border-brutal border-border-default bg-bg px-2 py-1 text-right font-mono text-sm tabular-nums text-text-hi outline-none focus:border-border-hi"
-              />
-              <span className="text-text-mut text-xs">%</span>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="pt-3 border-t border-border-default">
-        <label
-          htmlFor="monthly-contribution"
-          className="block text-xs text-text-lo font-mono mb-2"
-        >
-          Optional: monthly contribution (USD)
-        </label>
-        <input
-          id="monthly-contribution"
-          type="number"
-          min={0}
-          max={1_000_000}
-          step={50}
-          value={state.monthlyContribution}
-          onChange={(e) =>
-            setState((s) => ({ ...s, monthlyContribution: e.target.value }))
-          }
-          className="min-h-10 w-32 rounded-sharp border-brutal border-border-default bg-bg px-2 py-1 text-right font-mono text-sm tabular-nums text-text-hi outline-none focus:border-border-hi"
-          placeholder="0"
-        />
-        <p className="mt-2 text-[11px] text-text-mut font-mono leading-relaxed">
-          Used for planning and projections only; it does not schedule a
-          payment.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function normalizeAllocation(allocation: Partial<Record<AssetSymbol, number>>) {
-  const total = ASSETS.reduce((sum, asset) => {
-    return sum + Math.max(0, allocation[asset.symbol] ?? 0);
-  }, 0);
-
-  if (total <= 0) return DEFAULT_ALLOC;
-
-  const next: Partial<Record<AssetSymbol, number>> = {};
-  let running = 0;
-  ASSETS.forEach((asset, index) => {
-    const raw = Math.max(0, allocation[asset.symbol] ?? 0);
-    const value =
-      index === ASSETS.length - 1
-        ? Math.max(0, 100 - running)
-        : Math.round((raw / total) * 100);
-    next[asset.symbol] = value;
-    running += value;
-  });
-  return next;
-}
-
-function focusFirstInvalidField(step: WizardState["step"]) {
-  if (typeof document === "undefined") return;
-  const targetId = step === 1 ? "portfolio-name" : null;
-  if (!targetId) return;
-  window.setTimeout(() => document.getElementById(targetId)?.focus(), 0);
 }
