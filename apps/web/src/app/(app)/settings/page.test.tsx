@@ -29,7 +29,7 @@ vi.mock("@/lib/api", () => ({
   },
   walletApi: {
     session: vi.fn().mockResolvedValue({
-      user: { email: "verified@example.com" },
+      user: { id: "user-1", email: "verified@example.com" },
     }),
   },
 }));
@@ -44,6 +44,14 @@ vi.mock("@/components/settings/digest-opt-in", () => ({
 
 vi.mock("@/components/settings/diary-visibility-toggle", () => ({
   DiaryVisibilityToggle: () => <div data-testid="diary-toggle" />,
+}));
+
+vi.mock("@/components/settings/plan-usage", () => ({
+  PlanUsage: () => <div data-testid="plan-usage" />,
+}));
+
+vi.mock("@/components/settings/referral-share", () => ({
+  ReferralShare: () => <div data-testid="referral-share" />,
 }));
 
 vi.mock("@/stores/portfolio", () => ({

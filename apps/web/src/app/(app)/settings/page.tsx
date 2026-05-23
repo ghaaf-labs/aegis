@@ -24,6 +24,8 @@ import {
 import { PRICING_UI_ENABLED } from "@/lib/flags";
 import { DigestOptIn } from "@/components/settings/digest-opt-in";
 import { DiaryVisibilityToggle } from "@/components/settings/diary-visibility-toggle";
+import { PlanUsage } from "@/components/settings/plan-usage";
+import { ReferralShare } from "@/components/settings/referral-share";
 import { accountApi, portfolioApi, walletApi } from "@/lib/api";
 import { friendlyAccountError } from "@/lib/account-error-copy";
 import { useApiQuery } from "@/lib/use-api-query";
@@ -501,6 +503,18 @@ export default function SettingsIndex() {
           </div>
         </div>
       </section>
+
+      {wallet && (
+        <section>
+          <h2 className="text-xs uppercase tracking-wider text-text-mut font-mono mb-3 flex items-center gap-2">
+            <CreditCard className="w-3 h-3" /> Plan & referrals
+          </h2>
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            <PlanUsage portfolioId={portfolioId} />
+            <ReferralShare />
+          </div>
+        </section>
+      )}
 
       <section>
         <h2 className="text-xs uppercase tracking-wider text-text-mut font-mono mb-3">
