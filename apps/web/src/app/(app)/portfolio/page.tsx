@@ -47,7 +47,7 @@ export default function PortfolioPage() {
 
   return (
     <div className="max-w-[1400px] mx-auto space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-mono font-semibold text-text-hi tracking-tight">
             My Portfolio
@@ -56,7 +56,7 @@ export default function PortfolioPage() {
             Review positions, targets, and wallet cash before approving a move.
           </p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
           <BrutalButton
             variant="ghost"
             onClick={() => router.push("/onboarding")}
