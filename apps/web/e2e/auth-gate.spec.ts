@@ -10,6 +10,12 @@ const GATED_ROUTES = [
   "/wallets",
   "/settings",
   "/wallet",
+  "/agent-studio",
+  "/agent-logs",
+  "/analytics",
+  "/transactions",
+  "/tax-center",
+  "/settings/billing",
 ];
 
 for (const route of GATED_ROUTES) {
@@ -23,7 +29,15 @@ for (const route of GATED_ROUTES) {
   });
 }
 
-test("A5 — explore is accessible without JWT", async ({ page }) => {
+test("A5 — help page is accessible without JWT", async ({ page }) => {
+  await page.goto("/help");
+  await expect(
+    page.getByRole("heading", { name: /Help/i }).first(),
+  ).toBeVisible();
+  await expect(page).not.toHaveURL(/\/login/);
+});
+
+test("A6 — explore is accessible without JWT", async ({ page }) => {
   await page.goto("/explore");
   await expect(
     page.getByRole("heading", { name: /Explore demo portfolios/i }),
@@ -31,7 +45,7 @@ test("A5 — explore is accessible without JWT", async ({ page }) => {
   await expect(page.getByText(/Sign in to continue/i)).not.toBeVisible();
 });
 
-test("A6 — leaderboard is accessible without JWT", async ({ page }) => {
+test("A7 — leaderboard is accessible without JWT", async ({ page }) => {
   await page.goto("/leaderboard");
   await expect(
     page.getByRole("heading", { name: /Leaderboard/i }),
@@ -39,7 +53,7 @@ test("A6 — leaderboard is accessible without JWT", async ({ page }) => {
   await expect(page.getByText(/Sign in to continue/i)).not.toBeVisible();
 });
 
-test("A7 — fake JWT in localStorage does not bypass auth gate", async ({
+test("A8 — fake JWT in localStorage does not bypass auth gate", async ({
   page,
 }) => {
   await injectTestJwt(page);
