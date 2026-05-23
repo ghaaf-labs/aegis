@@ -93,11 +93,10 @@ export default function AgentSettingsPage() {
               automatic checks are held.
             </p>
             <p>
-              See{" "}
               <a className="text-accent-agent hover:underline" href="/policy">
-                /policy
+                Read the policy
               </a>{" "}
-              for the full outcome posture.
+              for when Aegis can suggest, pause, or prepare a review.
             </p>
           </div>
 
