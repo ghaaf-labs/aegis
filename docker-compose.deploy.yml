@@ -78,6 +78,7 @@ services:
         NEXT_PUBLIC_API_URL: https://${APP_DOMAIN:-aegis.devberlin.de}/api
         NEXT_PUBLIC_SSE_URL: https://${APP_DOMAIN:-aegis.devberlin.de}/api/sse
         NEXT_PUBLIC_APP_URL: https://${APP_DOMAIN:-aegis.devberlin.de}
+        NEXT_PUBLIC_SERVER_API_URL: http://api:8080
     restart: unless-stopped
     ports:
       - "127.0.0.1:3002:3000"
