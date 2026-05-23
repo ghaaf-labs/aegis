@@ -214,6 +214,39 @@ pub struct Config {
     #[allow(dead_code)]
     pub susds_base: String,
 
+    // ── Per-chain Uniswap-V3-compatible swap venues (other execution chains) ─
+    // Aerodrome Slipstream (Base) and Velodrome (OP) expose the same V3-style
+    // exactInput/exactOutputSingle router + QuoterV2 surface, so the existing
+    // `sol!` interface works against their addresses. Eth/Arb use Uniswap V3
+    // proper. Avax's Trader Joe is a Liquidity-Book router (different ABI) and
+    // stays fail-closed (no address wired) until a dedicated adapter lands.
+    // All default empty ⇒ swaps on those chains report `NeedsAddress`.
+    #[allow(dead_code)]
+    pub uniswap_v3_quoter_eth: String,
+    #[allow(dead_code)]
+    pub uniswap_v3_router_eth: String,
+    #[allow(dead_code)]
+    pub uniswap_v3_quoter_arb: String,
+    #[allow(dead_code)]
+    pub uniswap_v3_router_arb: String,
+    #[allow(dead_code)]
+    pub uniswap_v3_quoter_op: String,
+    #[allow(dead_code)]
+    pub uniswap_v3_router_op: String,
+
+    /// Canonical volatile ERC-20s on the additional execution chains. Empty ⇒
+    /// the symbol is track-only on that chain (the registry fails closed).
+    #[allow(dead_code)]
+    pub weth_eth: String,
+    #[allow(dead_code)]
+    pub weth_arb: String,
+    #[allow(dead_code)]
+    pub weth_op: String,
+    #[allow(dead_code)]
+    pub wbtc_eth: String,
+    #[allow(dead_code)]
+    pub wbtc_arb: String,
+
     // ── Nanopayments (x402) for 25bps protocol fee + referrals ────────────
     #[allow(dead_code)]
     pub nanopayments_facilitator_url: String,
@@ -470,6 +503,18 @@ impl Config {
             cbeth_base: std::env::var("CBETH_BASE").unwrap_or_default(),
             susds_base: std::env::var("SUSDS_BASE").unwrap_or_default(),
 
+            uniswap_v3_quoter_eth: std::env::var("UNISWAP_V3_QUOTER_ETH").unwrap_or_default(),
+            uniswap_v3_router_eth: std::env::var("UNISWAP_V3_ROUTER_ETH").unwrap_or_default(),
+            uniswap_v3_quoter_arb: std::env::var("UNISWAP_V3_QUOTER_ARB").unwrap_or_default(),
+            uniswap_v3_router_arb: std::env::var("UNISWAP_V3_ROUTER_ARB").unwrap_or_default(),
+            uniswap_v3_quoter_op: std::env::var("UNISWAP_V3_QUOTER_OP").unwrap_or_default(),
+            uniswap_v3_router_op: std::env::var("UNISWAP_V3_ROUTER_OP").unwrap_or_default(),
+            weth_eth: std::env::var("WETH_ETH").unwrap_or_default(),
+            weth_arb: std::env::var("WETH_ARB").unwrap_or_default(),
+            weth_op: std::env::var("WETH_OP").unwrap_or_default(),
+            wbtc_eth: std::env::var("WBTC_ETH").unwrap_or_default(),
+            wbtc_arb: std::env::var("WBTC_ARB").unwrap_or_default(),
+
             // Nanopayments (x402) for protocol fee (25bps) and referral payouts.
             nanopayments_facilitator_url: std::env::var("NANOPAYMENTS_FACILITATOR_URL")
                 .unwrap_or_else(|_| "https://gateway-api-testnet.circle.com".into()),
@@ -702,6 +747,38 @@ impl Config {
             | ChainKey::OpSepolia => "",
         }
     }
+
+    /// Uniswap-V3-compatible SwapRouter02 address for `chain`. Base = Aerodrome
+    /// Slipstream, OP = Velodrome, Eth/Arb = Uniswap V3 — all share the V3-style
+    /// `exactInputSingle`/`exactOutputSingle` surface. Arc has no AMM swap venue
+    /// (it settles stables / FX, not volatiles) and Avax's Trader Joe is a
+    /// Liquidity-Book router (different ABI), so both return empty and fail
+    /// closed in the swap adapter.
+    #[allow(dead_code)]
+    pub fn swap_router_for(&self, chain: ChainKey) -> &str {
+        match chain {
+            ChainKey::Base => &self.uniswap_v3_router_base,
+            ChainKey::EthSepolia => &self.uniswap_v3_router_eth,
+            ChainKey::ArbSepolia => &self.uniswap_v3_router_arb,
+            ChainKey::OpSepolia => &self.uniswap_v3_router_op,
+            // TODO(traderjoe-lb): Avax Trader Joe uses a Liquidity-Book router
+            // (LBRouter), not the V3 exactInput surface — needs its own adapter.
+            ChainKey::Arc | ChainKey::AvaxFuji => "",
+        }
+    }
+
+    /// Uniswap-V3-compatible QuoterV2 address for `chain` (see `swap_router_for`).
+    #[allow(dead_code)]
+    pub fn swap_quoter_for(&self, chain: ChainKey) -> &str {
+        match chain {
+            ChainKey::Base => &self.uniswap_v3_quoter_base,
+            ChainKey::EthSepolia => &self.uniswap_v3_quoter_eth,
+            ChainKey::ArbSepolia => &self.uniswap_v3_quoter_arb,
+            ChainKey::OpSepolia => &self.uniswap_v3_quoter_op,
+            // TODO(traderjoe-lb): see `swap_router_for`.
+            ChainKey::Arc | ChainKey::AvaxFuji => "",
+        }
+    }
 }
 
 fn required(key: &str) -> anyhow::Result<String> {
@@ -829,6 +906,17 @@ pub(crate) fn test_config() -> Config {
         cbbtc_base: String::new(),
         cbeth_base: String::new(),
         susds_base: String::new(),
+        uniswap_v3_quoter_eth: String::new(),
+        uniswap_v3_router_eth: String::new(),
+        uniswap_v3_quoter_arb: String::new(),
+        uniswap_v3_router_arb: String::new(),
+        uniswap_v3_quoter_op: String::new(),
+        uniswap_v3_router_op: String::new(),
+        weth_eth: String::new(),
+        weth_arb: String::new(),
+        weth_op: String::new(),
+        wbtc_eth: String::new(),
+        wbtc_arb: String::new(),
         nanopayments_facilitator_url: "https://gateway-api-testnet.circle.com".into(),
         nanopayments_seller_address: String::new(),
         nanopayments_treasury_address: String::new(),
@@ -959,5 +1047,23 @@ mod tests {
         cfg.session_cookie_name = "__Host-aegis_session".into();
         let err = cfg.validate().unwrap_err().to_string();
         assert!(err.contains("SESSION_COOKIE_SECURE=true"));
+    }
+
+    #[test]
+    fn swap_venue_helpers_resolve_per_chain() {
+        let mut cfg = test_config();
+        cfg.uniswap_v3_router_base = "0xbase_router".into();
+        cfg.uniswap_v3_quoter_base = "0xbase_quoter".into();
+        cfg.uniswap_v3_router_op = "0xop_router".into();
+        cfg.uniswap_v3_quoter_eth = "0xeth_quoter".into();
+
+        assert_eq!(cfg.swap_router_for(ChainKey::Base), "0xbase_router");
+        assert_eq!(cfg.swap_quoter_for(ChainKey::Base), "0xbase_quoter");
+        assert_eq!(cfg.swap_router_for(ChainKey::OpSepolia), "0xop_router");
+        assert_eq!(cfg.swap_quoter_for(ChainKey::EthSepolia), "0xeth_quoter");
+        // Arc and Avax (Trader Joe LB) have no V3 venue → always empty.
+        assert_eq!(cfg.swap_router_for(ChainKey::Arc), "");
+        assert_eq!(cfg.swap_router_for(ChainKey::AvaxFuji), "");
+        assert_eq!(cfg.swap_quoter_for(ChainKey::AvaxFuji), "");
     }
 }

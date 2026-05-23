@@ -1,4 +1,5 @@
-//! Per-chain swap adapter — real USDC↔token swaps on Uniswap V3 (Base Sepolia).
+//! Per-chain swap adapter — real USDC↔token swaps on a Uniswap-V3-compatible
+//! venue, resolved from the swap leg's chain.
 //!
 //! `quote()` prices a buy via the QuoterV2 and produces a `ValidatedQuote`
 //! with a slippage-adjusted `min_out`; `execute()` performs the swap via
@@ -7,16 +8,26 @@
 //! the route fails closed upstream and these return an error rather than a
 //! synthetic success.
 //!
+//! The venue is resolved per chain via `Config::swap_router_for` /
+//! `swap_quoter_for`: Base = Aerodrome Slipstream, OP = Velodrome,
+//! Eth/Arb = Uniswap V3. All three expose the same V3-style
+//! `exactInputSingle`/`exactOutputSingle` router + QuoterV2 surface, so the
+//! single `sol!` interface below works against any of their addresses. Avax's
+//! Trader Joe is a Liquidity-Book router (different ABI) and stays fail-closed
+//! (see `TODO(traderjoe-lb)` in `config.rs`); Arc has no AMM venue.
+//!
 //! Both directions are wired: buys (USDC → token) via `exactInputSingle` sized
 //! by the USDC budget, and sells (token → USDC) via `exactOutputSingle` sized
 //! by the USDC value the planner wants to realize (no token price needed).
-//! Anything that isn't a USDC↔token swap fails closed upstream.
+//! Anything that isn't a USDC↔token swap (or sits on a non-swap chain) fails
+//! closed upstream.
 
 use chrono::{DateTime, Utc};
 
 use crate::config::Config;
 use crate::error::{AppError, Result};
 
+use super::super::models::ChainKey;
 use super::super::quote::ValidatedQuote;
 use super::super::registry::capabilities::AdapterCapability;
 use super::super::registry::route::RouteLeg;
@@ -31,25 +42,34 @@ const POOL_FEE: u32 = 3000;
 #[cfg(feature = "real-swap")]
 const SLIPPAGE_BPS: u32 = 50;
 
-/// Capability of the per-chain swap venue (Uniswap V3 on Base Sepolia). This is
-/// venue-level; per-token executability (a token's Base ERC-20 + pool) is
-/// resolved in the route rule engine.
+/// Aggregate capability of the swap adapter, anchored on Base (the chain whose
+/// venue is wired today). The route rule engine still resolves per-token
+/// executability against a token's configured ERC-20; per-chain venue readiness
+/// is reported by `capability_for`. Keeping the aggregate Base-anchored means
+/// `RuntimeCapabilities::swap` is byte-for-byte what it was before per-chain
+/// resolution landed.
 pub fn capability(cfg: &Config) -> AdapterCapability {
+    capability_for(cfg, ChainKey::Base)
+}
+
+/// Per-chain swap-venue capability. A chain is `Live` only when `real-swap` is
+/// compiled, its V3-compatible router + quoter are configured, and its signer
+/// is present. Chains with no AMM venue (Arc, Avax/Trader-Joe-LB) report
+/// `NeedsAddress` because their `swap_router_for`/`swap_quoter_for` are empty.
+pub fn capability_for(cfg: &Config, chain: ChainKey) -> AdapterCapability {
     if !cfg!(feature = "real-swap") {
         AdapterCapability::NeedsFeature
-    } else if !tokens::is_real_addr(&cfg.uniswap_v3_quoter_base)
-        || !tokens::is_real_addr(&cfg.uniswap_v3_router_base)
+    } else if !tokens::is_real_addr(cfg.swap_quoter_for(chain))
+        || !tokens::is_real_addr(cfg.swap_router_for(chain))
     {
         AdapterCapability::NeedsAddress
-    } else if cfg.chain_private_key_base.trim().is_empty() {
+    } else if cfg.chain_private_key_for(chain).trim().is_empty() {
         AdapterCapability::NeedsSigner
     } else {
         AdapterCapability::Live
     }
 }
 
-#[cfg(feature = "real-swap")]
-use super::super::models::ChainKey;
 #[cfg(feature = "real-swap")]
 use super::super::quote::MAX_QUOTE_TTL_SECS;
 #[cfg(feature = "real-swap")]
@@ -147,6 +167,18 @@ enum SwapDir {
     Sell(String),
 }
 
+/// The execution chain a swap leg settles on. A swap is same-chain, so we take
+/// the destination (falling back to source) and require it to be a wired
+/// execution chain. Returns `None` for an unset/unparsable/non-execution chain,
+/// which the caller turns into a fail-closed error.
+fn swap_chain(leg: &RouteLeg) -> Option<ChainKey> {
+    leg.dest_chain
+        .as_deref()
+        .or(leg.src_chain.as_deref())
+        .and_then(ChainKey::parse)
+        .filter(|c| c.is_execution())
+}
+
 /// Classify a leg as a buy or sell. Returns `None` for anything that isn't a
 /// USDC↔token swap (e.g. token↔token, which the planner never emits).
 fn swap_direction(src_symbol: Option<&str>, dest_symbol: Option<&str>) -> Option<SwapDir> {
@@ -165,10 +197,13 @@ fn swap_direction(src_symbol: Option<&str>, dest_symbol: Option<&str>) -> Option
 pub async fn quote(cfg: &Config, leg: &RouteLeg, now: DateTime<Utc>) -> Result<ValidatedQuote> {
     let dir = swap_direction(leg.src_symbol.as_deref(), leg.dest_symbol.as_deref())
         .ok_or_else(|| AppError::BadRequest("swap adapter handles USDC↔token swaps only".into()))?;
+    let chain = swap_chain(leg).ok_or_else(|| {
+        AppError::BadRequest("swap leg has no executable same-chain venue".into())
+    })?;
 
     #[cfg(not(feature = "real-swap"))]
     {
-        let _ = (cfg, now, dir);
+        let _ = (cfg, now, dir, chain);
         Err(AppError::Internal(anyhow::anyhow!(
             "real-swap feature not enabled; build with --features real-swap"
         )))
@@ -177,8 +212,8 @@ pub async fn quote(cfg: &Config, leg: &RouteLeg, now: DateTime<Utc>) -> Result<V
     #[cfg(feature = "real-swap")]
     {
         match dir {
-            SwapDir::Buy(token) => real_quote_buy(cfg, &token, leg.amount_usdc, now).await,
-            SwapDir::Sell(token) => real_quote_sell(cfg, &token, leg.amount_usdc, now).await,
+            SwapDir::Buy(token) => real_quote_buy(cfg, chain, &token, leg.amount_usdc, now).await,
+            SwapDir::Sell(token) => real_quote_sell(cfg, chain, &token, leg.amount_usdc, now).await,
         }
     }
 }
@@ -207,45 +242,58 @@ pub async fn execute(
     }
 }
 
+/// Resolve the four on-chain addresses a swap needs on `chain`: USDC, the
+/// non-USDC token's ERC-20, the V3-compatible router, and the quoter. Every
+/// lookup goes through the per-chain `Config` helpers, so the same code path
+/// serves Base (Aerodrome), OP (Velodrome), and Eth/Arb (Uniswap V3). Any
+/// unconfigured address fails closed here rather than reaching the venue.
 #[cfg(feature = "real-swap")]
-fn base_addresses(
+fn swap_addresses(
     cfg: &Config,
+    chain: ChainKey,
     token_symbol: &str,
 ) -> Result<(Address, Address, Address, Address)> {
-    let usdc = cfg
-        .usdc_base
+    let usdc = tokens::token(tokens::USDC)
+        .and_then(|t| t.address_for(cfg, chain))
+        .ok_or_else(|| AppError::BadRequest(format!("USDC has no ERC-20 on {}", chain.as_str())))?
         .parse::<Address>()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("bad USDC on Base")))?;
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("bad USDC on {}", chain.as_str())))?;
     let token = tokens::token(token_symbol)
-        .and_then(|t| t.address_for(cfg, ChainKey::Base))
-        .ok_or_else(|| AppError::BadRequest(format!("{token_symbol} has no Base ERC-20")))?
+        .and_then(|t| t.address_for(cfg, chain))
+        .ok_or_else(|| {
+            AppError::BadRequest(format!(
+                "{token_symbol} has no ERC-20 on {}",
+                chain.as_str()
+            ))
+        })?
         .parse::<Address>()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("bad token address on Base")))?;
-    let router = cfg
-        .uniswap_v3_router_base
-        .parse::<Address>()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("bad Uniswap router on Base")))?;
-    let quoter = cfg
-        .uniswap_v3_quoter_base
-        .parse::<Address>()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("bad Uniswap quoter on Base")))?;
+        .map_err(|_| {
+            AppError::Internal(anyhow::anyhow!("bad token address on {}", chain.as_str()))
+        })?;
+    let router = cfg.swap_router_for(chain).parse::<Address>().map_err(|_| {
+        AppError::Internal(anyhow::anyhow!("bad swap router on {}", chain.as_str()))
+    })?;
+    let quoter = cfg.swap_quoter_for(chain).parse::<Address>().map_err(|_| {
+        AppError::Internal(anyhow::anyhow!("bad swap quoter on {}", chain.as_str()))
+    })?;
     Ok((usdc, token, router, quoter))
 }
 
 #[cfg(feature = "real-swap")]
 async fn real_quote_buy(
     cfg: &Config,
+    chain: ChainKey,
     token_symbol: &str,
     amount_usdc: f64,
     now: DateTime<Utc>,
 ) -> Result<ValidatedQuote> {
-    let (usdc, token, _router, quoter) = base_addresses(cfg, token_symbol)?;
+    let (usdc, token, _router, quoter) = swap_addresses(cfg, chain, token_symbol)?;
     let amount_in = (amount_usdc * 1_000_000.0) as u128;
 
     let provider = ProviderBuilder::new().connect_http(
-        cfg.base_rpc_url
+        cfg.rpc_url_for(chain)
             .parse()
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("bad Base rpc url: {e}")))?,
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
     );
     let q = IQuoterV2::new(quoter, &provider);
     let params = IQuoterV2::QuoteExactInputSingleParams {
@@ -276,8 +324,8 @@ async fn real_quote_buy(
         expires_at: now + Duration::seconds(MAX_QUOTE_TTL_SECS),
         src_token: "USDC".into(),
         dest_token: token_symbol.to_string(),
-        src_chain: ChainKey::Base,
-        dest_chain: ChainKey::Base,
+        src_chain: chain,
+        dest_chain: chain,
         amount_in,
         min_out: min_out.max(1),
         slippage_bps: SLIPPAGE_BPS,
@@ -289,19 +337,20 @@ async fn real_quote_buy(
 #[cfg(feature = "real-swap")]
 async fn real_quote_sell(
     cfg: &Config,
+    chain: ChainKey,
     token_symbol: &str,
     amount_usdc: f64,
     now: DateTime<Utc>,
 ) -> Result<ValidatedQuote> {
-    let (usdc, token, _router, quoter) = base_addresses(cfg, token_symbol)?;
+    let (usdc, token, _router, quoter) = swap_addresses(cfg, chain, token_symbol)?;
     // Realize ~`amount_usdc` of USDC; size the sell by exact-output so we never
     // need the token's spot price.
     let amount_out_usdc = (amount_usdc * 1_000_000.0) as u128;
 
     let provider = ProviderBuilder::new().connect_http(
-        cfg.base_rpc_url
+        cfg.rpc_url_for(chain)
             .parse()
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("bad Base rpc url: {e}")))?,
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
     );
     let q = IQuoterV2::new(quoter, &provider);
     let params = IQuoterV2::QuoteExactOutputSingleParams {
@@ -334,8 +383,8 @@ async fn real_quote_sell(
         expires_at: now + Duration::seconds(MAX_QUOTE_TTL_SECS),
         src_token: token_symbol.to_string(),
         dest_token: "USDC".into(),
-        src_chain: ChainKey::Base,
-        dest_chain: ChainKey::Base,
+        src_chain: chain,
+        dest_chain: chain,
         amount_in: max_in.max(1), // max token to spend
         min_out: amount_out_usdc, // exact USDC realized
         slippage_bps: SLIPPAGE_BPS,
@@ -363,7 +412,9 @@ async fn real_execute(
     let token_symbol = match &dir {
         SwapDir::Buy(t) | SwapDir::Sell(t) => t.clone(),
     };
-    let (usdc, token, router, _quoter) = base_addresses(cfg, &token_symbol)?;
+    // A swap is same-chain: the ticket's quote stamped src==dest at quote time.
+    let chain = q.dest_chain;
+    let (usdc, token, router, _quoter) = swap_addresses(cfg, chain, &token_symbol)?;
     let amount_in = q.amount_in;
     let min_out = q.min_out;
 
@@ -375,9 +426,9 @@ async fn real_execute(
     };
 
     // Part B0 — non-custodial: submit the approve + swap from the user's Circle
-    // developer-controlled wallet. The user's Base wallet is the tx sender, the
-    // token holder, and the swap recipient. Falls through to the EOA path when
-    // the flag is off.
+    // developer-controlled wallet on the swap's chain. The user's wallet is the
+    // tx sender, the token holder, and the swap recipient. Falls through to the
+    // EOA path when the flag is off.
     if cfg.circle_wallet_exec {
         return circle_wallet_swap(
             cfg,
@@ -385,6 +436,7 @@ async fn real_execute(
             db,
             user_id,
             CircleSwapArgs {
+                chain,
                 router,
                 approve_token,
                 token_in,
@@ -397,15 +449,15 @@ async fn real_execute(
         .await;
     }
 
-    let key_bytes = hex::decode(cfg.chain_private_key_base.trim_start_matches("0x"))
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid Base private key")))?;
+    let key_bytes = hex::decode(cfg.chain_private_key_for(chain).trim_start_matches("0x"))
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid private key")))?;
     let signer = PrivateKeySigner::from_slice(&key_bytes)
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid Base private key")))?;
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid private key")))?;
     let wallet = EthereumWallet::from(signer);
     let provider = ProviderBuilder::new().wallet(wallet).connect_http(
-        cfg.base_rpc_url
+        cfg.rpc_url_for(chain)
             .parse()
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("bad Base rpc url: {e}")))?,
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
     );
     let recipient = provider.default_signer_address();
 
@@ -482,6 +534,7 @@ async fn real_execute(
 /// so the Circle-wallet helper doesn't re-derive directions/addresses.
 #[cfg(feature = "real-swap")]
 struct CircleSwapArgs {
+    chain: ChainKey,
     router: Address,
     approve_token: Address,
     token_in: Address,
@@ -493,8 +546,8 @@ struct CircleSwapArgs {
 
 /// Non-custodial swap (Part B0): ABI-encode the input-token `approve` and the
 /// router swap call, then submit each from the user's Circle developer-controlled
-/// wallet on Base. The user's Base wallet is the tx sender, holds the input
-/// token, and is the swap recipient — non-custodial by construction.
+/// wallet on the swap's chain. The user's wallet is the tx sender, holds the
+/// input token, and is the swap recipient — non-custodial by construction.
 #[cfg(feature = "real-swap")]
 async fn circle_wallet_swap(
     cfg: &Config,
@@ -505,19 +558,23 @@ async fn circle_wallet_swap(
 ) -> Result<RealReceipt> {
     use alloy::sol_types::SolCall;
 
-    let recipient: Address = crate::modules::wallet_routes::base_address_for_user(
+    let recipient: Address = crate::modules::wallet_routes::address_for_chain(
         db,
         user_id,
+        args.chain,
         &cfg.circle_wallet_set_id,
     )
     .await?
     .ok_or_else(|| {
-        AppError::ServiceUnavailable("user has no live Base wallet for non-custodial swap".into())
+        AppError::ServiceUnavailable(format!(
+            "user has no live {} wallet for non-custodial swap",
+            args.chain.as_str()
+        ))
     })?
     .parse()
-    .map_err(|_| AppError::Internal(anyhow::anyhow!("user Base wallet address unparsable")))?;
+    .map_err(|_| AppError::Internal(anyhow::anyhow!("user wallet address unparsable")))?;
 
-    let router_str = cfg.uniswap_v3_router_base.clone();
+    let router_str = address_to_hex(args.router);
     let approve_token_str = address_to_hex(args.approve_token);
 
     // 1) approve(router, amount_in*2) from the user's wallet.
@@ -532,7 +589,7 @@ async fn circle_wallet_swap(
         cfg,
         db,
         user_id,
-        ChainKey::Base,
+        args.chain,
         &approve_token_str,
         &hex::encode(approve_calldata),
         None,
@@ -574,7 +631,7 @@ async fn circle_wallet_swap(
         cfg,
         db,
         user_id,
-        ChainKey::Base,
+        args.chain,
         &router_str,
         &hex::encode(swap_calldata),
         None,
@@ -590,4 +647,111 @@ async fn circle_wallet_swap(
 #[cfg(feature = "real-swap")]
 fn address_to_hex(addr: Address) -> String {
     format!("0x{}", hex::encode(addr.as_slice()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::super::models::LegKind;
+    use super::*;
+
+    fn swap_leg(src: &str, dest: &str) -> RouteLeg {
+        RouteLeg {
+            kind: LegKind::LocalSwap,
+            src_chain: Some(src.into()),
+            dest_chain: Some(dest.into()),
+            src_symbol: Some("USDC".into()),
+            dest_symbol: Some("ETH".into()),
+            amount_usdc: 40.0,
+        }
+    }
+
+    #[test]
+    fn swap_chain_resolves_same_chain_execution_legs() {
+        assert_eq!(swap_chain(&swap_leg("base", "base")), Some(ChainKey::Base));
+        assert_eq!(swap_chain(&swap_leg("arc", "arc")), Some(ChainKey::Arc));
+    }
+
+    #[test]
+    fn swap_chain_fails_closed_for_non_execution_or_unset_chains() {
+        // Wallet-supported but non-execution chains must not resolve.
+        assert_eq!(swap_chain(&swap_leg("op-sepolia", "op-sepolia")), None);
+        assert_eq!(swap_chain(&swap_leg("eth-sepolia", "eth-sepolia")), None);
+        // Unparsable / unset.
+        assert_eq!(swap_chain(&swap_leg("solana", "solana")), None);
+        let mut l = swap_leg("base", "base");
+        l.src_chain = None;
+        l.dest_chain = None;
+        assert_eq!(swap_chain(&l), None);
+    }
+
+    #[test]
+    fn capability_for_needs_address_when_venue_empty() {
+        // Default cfg has no venue addresses on any chain.
+        let cfg = crate::config::test_config();
+        for chain in [
+            ChainKey::Base,
+            ChainKey::EthSepolia,
+            ChainKey::ArbSepolia,
+            ChainKey::OpSepolia,
+            ChainKey::Arc,
+            ChainKey::AvaxFuji,
+        ] {
+            let cap = capability_for(&cfg, chain);
+            #[cfg(feature = "real-swap")]
+            assert_eq!(cap, AdapterCapability::NeedsAddress, "{chain:?}");
+            #[cfg(not(feature = "real-swap"))]
+            assert_eq!(cap, AdapterCapability::NeedsFeature, "{chain:?}");
+        }
+    }
+
+    #[cfg(feature = "real-swap")]
+    #[test]
+    fn capability_for_distinguishes_chains_by_their_own_venue() {
+        let mut cfg = crate::config::test_config();
+        // Wire only OP's venue + signer; Base stays unconfigured.
+        cfg.uniswap_v3_router_op = "0x1111111111111111111111111111111111111111".into();
+        cfg.uniswap_v3_quoter_op = "0x2222222222222222222222222222222222222222".into();
+        cfg.chain_private_key_op = "0xab".into();
+        assert_eq!(
+            capability_for(&cfg, ChainKey::OpSepolia),
+            AdapterCapability::Live
+        );
+        // Base still NeedsAddress — proves the resolution is per-chain, not a
+        // single shared venue.
+        assert_eq!(
+            capability_for(&cfg, ChainKey::Base),
+            AdapterCapability::NeedsAddress
+        );
+        // Arc / Avax have no V3 venue at all → NeedsAddress regardless.
+        assert_eq!(
+            capability_for(&cfg, ChainKey::Arc),
+            AdapterCapability::NeedsAddress
+        );
+        assert_eq!(
+            capability_for(&cfg, ChainKey::AvaxFuji),
+            AdapterCapability::NeedsAddress
+        );
+    }
+
+    #[cfg(feature = "real-swap")]
+    #[test]
+    fn swap_addresses_resolve_from_the_legs_chain() {
+        let mut cfg = crate::config::test_config();
+        cfg.usdc_op = "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
+        cfg.weth_op = "0x4200000000000000000000000000000000000006".into();
+        cfg.uniswap_v3_router_op = "0x1111111111111111111111111111111111111111".into();
+        cfg.uniswap_v3_quoter_op = "0x2222222222222222222222222222222222222222".into();
+
+        let (usdc, token, router, quoter) =
+            swap_addresses(&cfg, ChainKey::OpSepolia, "ETH").expect("OP venue resolves");
+        assert_eq!(address_to_hex(usdc), cfg.usdc_op.to_ascii_lowercase());
+        assert_eq!(address_to_hex(token), cfg.weth_op.to_ascii_lowercase());
+        assert_eq!(address_to_hex(router), cfg.uniswap_v3_router_op);
+        assert_eq!(address_to_hex(quoter), cfg.uniswap_v3_quoter_op);
+
+        // Base has no venue configured here → fail closed.
+        assert!(swap_addresses(&cfg, ChainKey::Base, "ETH").is_err());
+        // Avax (Trader Joe LB, no V3 venue) always fails closed.
+        assert!(swap_addresses(&cfg, ChainKey::AvaxFuji, "ETH").is_err());
+    }
 }

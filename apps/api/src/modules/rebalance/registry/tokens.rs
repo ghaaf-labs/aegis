@@ -22,6 +22,8 @@ pub const CBETH: &str = "cbETH";
 /// Sky sUSDS — freely-transferable savings-yield token (DEX-swappable),
 /// the permissionless risk-off yield sleeve (vs. allowlist-gated USYC).
 pub const SUSDS: &str = "sUSDS";
+/// Wrapped BTC — the canonical BTC ERC-20 on Eth/Arb (8 decimals).
+pub const WBTC: &str = "WBTC";
 
 /// Static metadata for one token. `canonical_chain == None` means the token is
 /// multi-chain (USDC), so it stays wherever the user holds it.
@@ -42,14 +44,23 @@ impl TokenSpec {
         let raw = match (self.symbol, chain) {
             (USDC, ChainKey::Arc) => cfg.usdc_arc.as_str(),
             (USDC, ChainKey::Base) => cfg.usdc_base.as_str(),
+            (USDC, ChainKey::EthSepolia) => cfg.usdc_eth.as_str(),
+            (USDC, ChainKey::ArbSepolia) => cfg.usdc_arb.as_str(),
+            (USDC, ChainKey::AvaxFuji) => cfg.usdc_avax.as_str(),
+            (USDC, ChainKey::OpSepolia) => cfg.usdc_op.as_str(),
             (USYC, ChainKey::Arc) => cfg.usyc_token_arc.as_str(),
             (ETH, ChainKey::Base) => cfg.weth_base.as_str(),
+            (ETH, ChainKey::EthSepolia) => cfg.weth_eth.as_str(),
+            (ETH, ChainKey::ArbSepolia) => cfg.weth_arb.as_str(),
+            (ETH, ChainKey::OpSepolia) => cfg.weth_op.as_str(),
+            (WBTC, ChainKey::EthSepolia) => cfg.wbtc_eth.as_str(),
+            (WBTC, ChainKey::ArbSepolia) => cfg.wbtc_arb.as_str(),
             (CBBTC, ChainKey::Base) => cfg.cbbtc_base.as_str(),
             (CBETH, ChainKey::Base) => cfg.cbeth_base.as_str(),
             (SUSDS, ChainKey::Base) => cfg.susds_base.as_str(),
             // EURC (Arc StableFX) and the remaining price-reference symbols have
             // no canonical ERC-20 configured, so they resolve to None and fail
-            // closed (track-only).
+            // closed (track-only). New-chain ERC-20s default empty until set.
             _ => return None,
         };
         normalize_addr(raw)
@@ -58,7 +69,25 @@ impl TokenSpec {
 
 const ARC: &[ChainKey] = &[ChainKey::Arc];
 const BASE: &[ChainKey] = &[ChainKey::Base];
-const ARC_BASE: &[ChainKey] = &[ChainKey::Arc, ChainKey::Base];
+/// USDC is multi-chain across every wallet-supported chain (custody is not the
+/// same as executability — the route engine still gates on `is_execution()`).
+const ALL_CHAINS: &[ChainKey] = &[
+    ChainKey::Arc,
+    ChainKey::Base,
+    ChainKey::EthSepolia,
+    ChainKey::ArbSepolia,
+    ChainKey::AvaxFuji,
+    ChainKey::OpSepolia,
+];
+/// WETH residency — every EVM execution chain that has a V3-compatible venue.
+const WETH_CHAINS: &[ChainKey] = &[
+    ChainKey::Base,
+    ChainKey::EthSepolia,
+    ChainKey::ArbSepolia,
+    ChainKey::OpSepolia,
+];
+/// WBTC residency — Eth + Arb (canonical WBTC ERC-20).
+const WBTC_CHAINS: &[ChainKey] = &[ChainKey::EthSepolia, ChainKey::ArbSepolia];
 
 /// Every token Aegis prices, tracks, or settles. Decimals match each token's
 /// on-chain ERC-20 (USDC/USYC/EURC = 6; ETH/most ERC-20s = 18; BTC = 8; SOL = 9).
@@ -68,7 +97,7 @@ pub const TOKEN_REGISTRY: &[TokenSpec] = &[
         decimals: 6,
         class: TokenClass::Stable,
         canonical_chain: None,
-        supported_chains: ARC_BASE,
+        supported_chains: ALL_CHAINS,
     },
     TokenSpec {
         symbol: USYC,
@@ -95,8 +124,20 @@ pub const TOKEN_REGISTRY: &[TokenSpec] = &[
         symbol: ETH,
         decimals: 18,
         class: TokenClass::Volatile,
+        // Canonically resides on Base (the live volatile venue) for cross-chain
+        // planning, but its WETH ERC-20 is resolvable on every V3-compatible
+        // chain so a same-chain swap on Eth/Arb/OP works once configured.
         canonical_chain: Some(ChainKey::Base),
-        supported_chains: BASE,
+        supported_chains: WETH_CHAINS,
+    },
+    // WBTC — canonical wrapped-BTC ERC-20 on Eth/Arb. Track-only until its
+    // per-chain address is configured (the registry fails closed on empty).
+    TokenSpec {
+        symbol: WBTC,
+        decimals: 8,
+        class: TokenClass::Volatile,
+        canonical_chain: Some(ChainKey::EthSepolia),
+        supported_chains: WBTC_CHAINS,
     },
     // Real, DEX-executable Base sleeves (Uniswap V3 / Aerodrome). These settle
     // on-chain once their Base ERC-20 address is configured — cbBTC = BTC
@@ -271,5 +312,53 @@ mod tests {
             token("BTC").unwrap().address_for(&cfg, ChainKey::Base),
             None
         );
+    }
+
+    #[test]
+    fn usdc_and_weth_resolve_per_chain_on_new_chains() {
+        let mut cfg = crate::config::test_config();
+        cfg.usdc_op = "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
+        cfg.weth_op = "0x4200000000000000000000000000000000000006".into();
+        cfg.wbtc_eth = "0x0000000000000000000000000000000000000abc".into();
+
+        let usdc = token(USDC).unwrap();
+        assert_eq!(
+            usdc.address_for(&cfg, ChainKey::OpSepolia),
+            Some(cfg.usdc_op.as_str())
+        );
+        // Unconfigured chains fail closed.
+        assert_eq!(usdc.address_for(&cfg, ChainKey::ArbSepolia), None);
+
+        let eth = token(ETH).unwrap();
+        assert_eq!(
+            eth.address_for(&cfg, ChainKey::OpSepolia),
+            Some(cfg.weth_op.as_str())
+        );
+        // ETH has no canonical ERC-20 on Avax (no V3 venue) → None.
+        assert_eq!(eth.address_for(&cfg, ChainKey::AvaxFuji), None);
+
+        let wbtc = token(WBTC).unwrap();
+        assert_eq!(
+            wbtc.address_for(&cfg, ChainKey::EthSepolia),
+            Some(cfg.wbtc_eth.as_str())
+        );
+        // WBTC does not live on OP → None.
+        assert_eq!(wbtc.address_for(&cfg, ChainKey::OpSepolia), None);
+    }
+
+    #[test]
+    fn new_chain_erc20s_default_track_only() {
+        // With the committed (empty) defaults, every new-chain ERC-20 resolves
+        // to None so the route registry fails closed.
+        let cfg = crate::config::test_config();
+        for chain in [
+            ChainKey::EthSepolia,
+            ChainKey::ArbSepolia,
+            ChainKey::AvaxFuji,
+            ChainKey::OpSepolia,
+        ] {
+            assert_eq!(token(USDC).unwrap().address_for(&cfg, chain), None);
+            assert_eq!(token(ETH).unwrap().address_for(&cfg, chain), None);
+        }
     }
 }

@@ -310,18 +310,23 @@ fn push_swap_blocker(
             RouteBlocker::new(BlockerCode::LocalSwapAdapter, "Swap route is unavailable."),
         ),
         AdapterCapability::Live => {
-            // Venue is live — the specific token still needs a Base ERC-20.
+            // Venue is live — the specific token still needs an ERC-20 on the
+            // swap leg's chain. A swap is same-chain; resolve it from the leg
+            // and fall back to Base (the chain whose venue is wired today) so a
+            // chain-less leg keeps the prior Base-anchored behavior.
+            let chain = swap_leg_chain(leg).unwrap_or(ChainKey::Base);
             let symbol = swap_token_symbol(leg);
             let has_addr = symbol
                 .and_then(tokens::token)
-                .and_then(|t| t.address_for(cfg, ChainKey::Base))
+                .and_then(|t| t.address_for(cfg, chain))
                 .is_some();
             if !has_addr {
                 out.push(RouteBlocker::new(
                     BlockerCode::SwapTokenAddress,
                     format!(
-                        "{} has no configured Base ERC-20 with a swap pool, so it can only be tracked.",
-                        symbol.unwrap_or("This token")
+                        "{} has no configured {} ERC-20 with a swap pool, so it can only be tracked.",
+                        symbol.unwrap_or("This token"),
+                        chain.as_str(),
                     ),
                 ));
             }
@@ -353,7 +358,18 @@ fn push_usyc_blocker(caps: &RuntimeCapabilities, out: &mut Vec<RouteBlocker>) {
     out.push(blocker);
 }
 
-/// The non-USDC symbol involved in a swap leg (the one that needs a Base ERC-20).
+/// The execution chain a swap leg settles on (a swap is same-chain). Takes the
+/// destination, falling back to source; `None` if neither parses to a wired
+/// execution chain.
+fn swap_leg_chain(leg: &RouteLeg) -> Option<ChainKey> {
+    leg.dest_chain
+        .as_deref()
+        .or(leg.src_chain.as_deref())
+        .and_then(ChainKey::parse)
+        .filter(|c| c.is_execution())
+}
+
+/// The non-USDC symbol involved in a swap leg (the one that needs an ERC-20).
 fn swap_token_symbol(leg: &RouteLeg) -> Option<&str> {
     match leg.dest_symbol.as_deref() {
         Some(s) if !s.eq_ignore_ascii_case(USDC) => Some(s),
