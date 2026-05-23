@@ -138,7 +138,6 @@ export function PortfolioLoader() {
     activePortfolioId,
     isExplore,
     patchPortfolio,
-    pathname,
     setDecisions,
     setGatewayBalanceStatus,
     setPerChain,

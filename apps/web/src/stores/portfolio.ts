@@ -273,6 +273,7 @@ export const usePortfolioStore = create<PortfolioState>()(
           pegAlerts: [],
           agentPausedAt: null,
           sessionActive: false,
+          sessionResolved: false,
         });
       },
     }),
