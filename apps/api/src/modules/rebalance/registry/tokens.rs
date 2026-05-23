@@ -15,6 +15,13 @@ pub const USDC: &str = "USDC";
 pub const USYC: &str = "USYC";
 pub const EURC: &str = "EURC";
 pub const ETH: &str = "ETH";
+/// Coinbase Wrapped BTC — 1:1 BTC, the real executable BTC sleeve on Base.
+pub const CBBTC: &str = "cbBTC";
+/// Coinbase Wrapped Staked ETH — staked-ETH yield sleeve on Base.
+pub const CBETH: &str = "cbETH";
+/// Sky sUSDS — freely-transferable savings-yield token (DEX-swappable),
+/// the permissionless risk-off yield sleeve (vs. allowlist-gated USYC).
+pub const SUSDS: &str = "sUSDS";
 
 /// Static metadata for one token. `canonical_chain == None` means the token is
 /// multi-chain (USDC), so it stays wherever the user holds it.
@@ -37,8 +44,12 @@ impl TokenSpec {
             (USDC, ChainKey::Base) => cfg.usdc_base.as_str(),
             (USYC, ChainKey::Arc) => cfg.usyc_token_arc.as_str(),
             (ETH, ChainKey::Base) => cfg.weth_base.as_str(),
-            // EURC (Arc StableFX) and the remaining volatiles have no canonical
-            // testnet ERC-20 configured, so they resolve to None and fail closed.
+            (CBBTC, ChainKey::Base) => cfg.cbbtc_base.as_str(),
+            (CBETH, ChainKey::Base) => cfg.cbeth_base.as_str(),
+            (SUSDS, ChainKey::Base) => cfg.susds_base.as_str(),
+            // EURC (Arc StableFX) and the remaining price-reference symbols have
+            // no canonical ERC-20 configured, so they resolve to None and fail
+            // closed (track-only).
             _ => return None,
         };
         normalize_addr(raw)
@@ -82,6 +93,30 @@ pub const TOKEN_REGISTRY: &[TokenSpec] = &[
     },
     TokenSpec {
         symbol: ETH,
+        decimals: 18,
+        class: TokenClass::Volatile,
+        canonical_chain: Some(ChainKey::Base),
+        supported_chains: BASE,
+    },
+    // Real, DEX-executable Base sleeves (Uniswap V3 / Aerodrome). These settle
+    // on-chain once their Base ERC-20 address is configured — cbBTC = BTC
+    // exposure, cbETH = staked-ETH yield, sUSDS = savings yield.
+    TokenSpec {
+        symbol: CBBTC,
+        decimals: 8,
+        class: TokenClass::Volatile,
+        canonical_chain: Some(ChainKey::Base),
+        supported_chains: BASE,
+    },
+    TokenSpec {
+        symbol: CBETH,
+        decimals: 18,
+        class: TokenClass::Volatile,
+        canonical_chain: Some(ChainKey::Base),
+        supported_chains: BASE,
+    },
+    TokenSpec {
+        symbol: SUSDS,
         decimals: 18,
         class: TokenClass::Volatile,
         canonical_chain: Some(ChainKey::Base),

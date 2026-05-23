@@ -160,6 +160,15 @@ pub struct Config {
     /// Sepolia ERC-20 + pool, so they fail closed (`NeedsAddress`).
     #[allow(dead_code)]
     pub weth_base: String,
+    /// Coinbase Wrapped BTC ERC-20 on Base (BTC sleeve). Empty ⇒ track-only.
+    #[allow(dead_code)]
+    pub cbbtc_base: String,
+    /// Coinbase Wrapped Staked ETH ERC-20 on Base (staked-ETH yield sleeve).
+    #[allow(dead_code)]
+    pub cbeth_base: String,
+    /// Sky sUSDS ERC-20 on Base (permissionless savings-yield sleeve).
+    #[allow(dead_code)]
+    pub susds_base: String,
 
     // ── Nanopayments (x402) for 25bps protocol fee + referrals ────────────
     #[allow(dead_code)]
@@ -378,6 +387,9 @@ impl Config {
             uniswap_v3_quoter_base: std::env::var("UNISWAP_V3_QUOTER_BASE").unwrap_or_default(),
             uniswap_v3_router_base: std::env::var("UNISWAP_V3_ROUTER_BASE").unwrap_or_default(),
             weth_base: std::env::var("WETH_BASE").unwrap_or_default(),
+            cbbtc_base: std::env::var("CBBTC_BASE").unwrap_or_default(),
+            cbeth_base: std::env::var("CBETH_BASE").unwrap_or_default(),
+            susds_base: std::env::var("SUSDS_BASE").unwrap_or_default(),
 
             // Nanopayments (x402) for protocol fee (25bps) and referral payouts.
             nanopayments_facilitator_url: std::env::var("NANOPAYMENTS_FACILITATOR_URL")
@@ -633,6 +645,9 @@ pub(crate) fn test_config() -> Config {
         uniswap_v3_quoter_base: String::new(),
         uniswap_v3_router_base: String::new(),
         weth_base: String::new(),
+        cbbtc_base: String::new(),
+        cbeth_base: String::new(),
+        susds_base: String::new(),
         nanopayments_facilitator_url: "https://gateway-api-testnet.circle.com".into(),
         nanopayments_seller_address: String::new(),
         nanopayments_treasury_address: String::new(),

@@ -64,6 +64,24 @@ pub const SYMBOLS: &[Symbol] = &[
         cg_id_legacy: "ethereum",
     },
     Symbol {
+        ticker: "cbBTC",
+        defillama_key: "coingecko:coinbase-wrapped-btc",
+        pyth_feed_id: "",
+        cg_id_legacy: "coinbase-wrapped-btc",
+    },
+    Symbol {
+        ticker: "cbETH",
+        defillama_key: "coingecko:coinbase-wrapped-staked-eth",
+        pyth_feed_id: "",
+        cg_id_legacy: "coinbase-wrapped-staked-eth",
+    },
+    Symbol {
+        ticker: "sUSDS",
+        defillama_key: "coingecko:susds",
+        pyth_feed_id: "",
+        cg_id_legacy: "susds",
+    },
+    Symbol {
         ticker: "SOL",
         defillama_key: "coingecko:solana",
         pyth_feed_id: "0xef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d",
