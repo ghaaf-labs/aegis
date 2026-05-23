@@ -5,31 +5,31 @@ import { PRICING_UI_ENABLED } from "@/lib/flags";
 const CIRCLE_LINKS = [
   {
     label: "Wallets",
-    href: "https://developers.circle.com/w3s/docs/programmable-wallets-overview",
+    href: "https://developers.circle.com/wallets",
   },
   {
     label: "Gateway",
-    href: "https://developers.circle.com/w3s/docs/circle-gateway",
+    href: "https://developers.circle.com/gateway",
   },
   {
     label: "CCTP V2",
-    href: "https://developers.circle.com/stablecoins/docs/cctp-getting-started",
+    href: "https://developers.circle.com/cctp",
   },
   {
     label: "USYC",
-    href: "https://developers.circle.com/stablecoins/docs/usyc",
+    href: "https://usyc.docs.hashnote.com",
   },
   {
     label: "Paymaster",
-    href: "https://developers.circle.com/w3s/docs/gas-station",
+    href: "https://developers.circle.com/paymaster",
   },
   {
     label: "StableFX",
-    href: "https://developers.circle.com/w3s/docs/stablefx",
+    href: "https://developers.circle.com/stablefx",
   },
   {
     label: "Nanopayments",
-    href: "https://developers.circle.com/payments/docs/nanopayments",
+    href: "https://developers.circle.com/gateway/nanopayments",
   },
 ];
 
