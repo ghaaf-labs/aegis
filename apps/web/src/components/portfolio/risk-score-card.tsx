@@ -1,9 +1,14 @@
 "use client";
 
 import { Shield } from "lucide-react";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
-import { ProvenanceLine } from "@aegis/ui";
+import {
+  BrutalCard as Card,
+  BrutalCardHeader as CardHeader,
+  BrutalCardTitle as CardTitle,
+  BrutalCardBody as CardContent,
+  ProvenanceLine,
+} from "@aegis/ui";
 
 export function RiskScoreCard() {
   const portfolio = useActivePortfolio();

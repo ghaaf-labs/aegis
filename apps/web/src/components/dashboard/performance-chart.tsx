@@ -9,9 +9,14 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { formatCurrency } from "@/lib/utils";
-import { ProvenanceLine } from "@aegis/ui";
+import {
+  BrutalCard as Card,
+  BrutalCardHeader as CardHeader,
+  BrutalCardTitle as CardTitle,
+  BrutalCardBody as CardContent,
+  ProvenanceLine,
+} from "@aegis/ui";
 
 interface PerformancePoint {
   date: string;

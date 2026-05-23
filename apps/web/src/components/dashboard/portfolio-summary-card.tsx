@@ -1,11 +1,17 @@
 "use client";
 
 import { TrendingUp, TrendingDown, Wallet, CircleAlert } from "lucide-react";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
 import { formatCurrency, formatPercent, changeColor } from "@/lib/utils";
 import { derivePortfolioPositionMetrics } from "@/lib/portfolio-values";
-import { ProvenanceLine, Skeleton } from "@aegis/ui";
+import {
+  BrutalCard as Card,
+  BrutalCardHeader as CardHeader,
+  BrutalCardTitle as CardTitle,
+  BrutalCardBody as CardContent,
+  ProvenanceLine,
+  Skeleton,
+} from "@aegis/ui";
 
 /// EURC's mid-market USD price for the Total Wealth headline. Cheap stable
 /// approximation — the FX module's authoritative rate is read elsewhere.

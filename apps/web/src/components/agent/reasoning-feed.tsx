@@ -14,9 +14,14 @@ import {
   HandIcon,
   AlertTriangle,
 } from "lucide-react";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import {
+  BrutalCard as Card,
+  BrutalCardHeader as CardHeader,
+  BrutalCardTitle as CardTitle,
+  BrutalCardBody as CardContent,
+  BrutalBadge as Badge,
+  BrutalButton,
+} from "@aegis/ui";
 import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
 import { agentApi } from "@/lib/api";
 import { formatCurrency, timeAgo } from "@/lib/utils";
@@ -114,10 +119,9 @@ export function AgentReasoningFeed() {
               {sseConnected ? "STREAM" : "OFFLINE"}
             </span>
           </span>
-          <Button
+          <BrutalButton
             variant="ghost"
-            size="sm"
-            className="text-text-mut hover:text-text-default h-7 px-2"
+            className="border-transparent text-text-mut hover:text-text-default h-7 px-2"
             onClick={() => void handleRefresh()}
             disabled={refreshing || !portfolio}
             title="Refresh decisions"
@@ -126,7 +130,7 @@ export function AgentReasoningFeed() {
             <RefreshCw
               className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`}
             />
-          </Button>
+          </BrutalButton>
         </div>
       </CardHeader>
       <CardContent className="flex-1 p-0 overflow-hidden">

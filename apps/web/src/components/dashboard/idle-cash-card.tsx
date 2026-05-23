@@ -2,14 +2,19 @@
 
 import Link from "next/link";
 import { Wallet, ArrowRight, CircleAlert, Loader2 } from "lucide-react";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { usePortfolioStore } from "@/stores/portfolio";
 import { formatCurrency } from "@/lib/utils";
 import {
   chainBalanceRows,
   walletRouteKeysFromNetworks,
 } from "@/lib/wallet-routes";
-import { ProvenanceLine } from "@aegis/ui";
+import {
+  BrutalCard as Card,
+  BrutalCardHeader as CardHeader,
+  BrutalCardTitle as CardTitle,
+  BrutalCardBody as CardContent,
+  ProvenanceLine,
+} from "@aegis/ui";
 
 export function IdleCashCard() {
   const wallet = usePortfolioStore((s) => s.wallet);
