@@ -14,7 +14,7 @@ use crate::modules::{
     account, agent, ai, analytics, backtest, billing, diary, digest, faucet, fx, gateway,
     market_data, observability, paymaster, portfolio, prices, rebalance, risk_engine, scheduler,
     sse::{self, SseSender},
-    strategies, tax, treasury, trustability, wallet,
+    tax, treasury, trustability, wallet,
 };
 use crate::{config::Config, db::Db};
 
@@ -175,8 +175,6 @@ pub async fn build(db: Db, config: Config) -> Router {
             "/users/me/agent/resume",
             post(agent::pause_handlers::resume),
         )
-        // SM-2 — strategy adoption is authed and replaces the single portfolio target.
-        .route("/strategies/:id/adopt", post(strategies::handlers::adopt))
         .route("/backtest/preview", post(backtest::handlers::preview))
         .route("/trustability/me", get(trustability::handlers::me))
         .route("/billing/referrals", get(billing::handlers::list_referrals))
@@ -257,9 +255,6 @@ pub async fn build(db: Db, config: Config) -> Router {
             "/about/constitution",
             get(agent::constitution_handlers::document),
         )
-        // SM-2 — strategies marketplace public listing.
-        .route("/strategies", get(strategies::handlers::list))
-        .route("/strategies/:id", get(strategies::handlers::get))
         // Public leaderboard — anonymous handles, no auth required.
         .route("/leaderboard", get(trustability::handlers::leaderboard))
         // F-REG-4 — public read-only alias for the /about/regime model card.
