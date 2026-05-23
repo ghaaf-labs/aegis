@@ -162,30 +162,24 @@ export default function AnalyticsPage() {
               label="Fear & greed"
               value={snapshot ? `${snapshot.fearGreedIndex}/100` : "--"}
             />
-            <Row
-              label="BTC dominance"
-              value={
-                snapshot
-                  ? hasBtcDominance
-                    ? `${snapshot.btcDominance.toFixed(1)}%`
-                    : "Unavailable"
-                  : "--"
-              }
-              muted={snapshot ? !hasBtcDominance : true}
-            />
-            <Row
-              label="Market cap"
-              value={
-                snapshot
-                  ? hasMarketCap
+            {(!snapshot || hasBtcDominance) && (
+              <Row
+                label="BTC dominance"
+                value={snapshot ? `${snapshot.btcDominance.toFixed(1)}%` : "--"}
+              />
+            )}
+            {(!snapshot || hasMarketCap) && (
+              <Row
+                label="Market cap"
+                value={
+                  snapshot
                     ? formatCurrency(snapshot.totalMarketCapUsd, {
                         compact: true,
                       })
-                    : "Unavailable"
-                  : "--"
-              }
-              muted={snapshot ? !hasMarketCap : true}
-            />
+                    : "--"
+                }
+              />
+            )}
             <Row
               label="Snapshot"
               value={snapshot ? timeAgo(snapshot.capturedAt) : "Waiting"}
@@ -193,8 +187,7 @@ export default function AnalyticsPage() {
             <p className="border-t border-border-default pt-3 text-[11px] leading-relaxed text-text-mut">
               Market data via CoinGecko
               {snapshot ? ` · updated ${timeAgo(snapshot.capturedAt)}` : ""}.
-              Live prices refresh separately; some aggregate fields may show
-              unavailable when the latest snapshot does not include them.
+              Live prices refresh separately.
             </p>
           </BrutalCardBody>
         </BrutalCard>
