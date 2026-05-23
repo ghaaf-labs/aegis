@@ -132,7 +132,7 @@ export function Header() {
         ) : walletPending ? (
           <Link
             href="/wallets"
-            className="inline-flex min-h-[36px] items-center justify-center gap-2 rounded-sharp border border-warn/40 bg-warn/5 px-3 text-[10px] font-mono uppercase tracking-widest text-warn transition-colors hover:bg-warn/10"
+            className="touch-target inline-flex min-h-[36px] items-center justify-center gap-2 rounded-sharp border border-warn/40 bg-warn/5 px-3 text-[10px] font-mono uppercase tracking-widest text-warn transition-colors hover:bg-warn/10"
           >
             <WalletIcon className="h-3.5 w-3.5" />
             Account setup
@@ -195,7 +195,7 @@ export function Header() {
           <div className="hidden items-center gap-2 sm:flex">
             <Link
               href={authHref("/login", pathname)}
-              className="inline-flex min-h-[36px] items-center justify-center gap-2 rounded-sharp border border-black bg-accent-agent px-3 text-xs font-mono font-semibold text-black shadow-brutal-sm transition-shadow hover:shadow-brutal"
+              className="touch-target inline-flex min-h-[36px] items-center justify-center gap-2 rounded-sharp border border-black bg-accent-agent px-3 text-xs font-mono font-semibold text-black shadow-brutal-sm transition-shadow hover:shadow-brutal"
             >
               <LogIn className="h-3.5 w-3.5" />
               Sign in
@@ -208,7 +208,7 @@ export function Header() {
             data-testid="header-logout-direct"
             onClick={() => void handleLogout()}
             aria-label="Log out"
-            className="min-h-[36px] inline-flex items-center justify-center gap-2 rounded-sharp border border-border-default bg-bg px-2.5 text-xs font-mono text-text-lo hover:border-risk/50 hover:bg-risk/5 hover:text-risk transition-colors"
+            className="touch-target min-h-[36px] inline-flex items-center justify-center gap-2 rounded-sharp border border-border-default bg-bg px-2.5 text-xs font-mono text-text-lo hover:border-risk/50 hover:bg-risk/5 hover:text-risk transition-colors"
           >
             <LogOut className="w-3.5 h-3.5" aria-hidden="true" />
             <span className="hidden sm:inline">Log out</span>
@@ -218,7 +218,7 @@ export function Header() {
           <div ref={userRef} className="relative">
             <button
               onClick={() => setUserOpen((v) => !v)}
-              className="w-7 h-7 rounded-sharp bg-accent-agent flex items-center justify-center border-brutal border-black hover:opacity-90"
+              className="touch-target w-7 h-7 rounded-sharp bg-accent-agent flex items-center justify-center border-brutal border-black hover:opacity-90"
               title="Account menu"
               aria-label="Account menu"
               aria-haspopup="menu"

@@ -1,35 +1,50 @@
 import Link from "next/link";
-import { Shield } from "lucide-react";
+import { ExternalLink, Shield } from "lucide-react";
 import { PRICING_UI_ENABLED } from "@/lib/flags";
 
-const CIRCLE_LINKS = [
+const CIRCLE_LINKS: {
+  label: string;
+  href: string;
+  ariaLabel: string;
+  comingSoon?: true;
+}[] = [
   {
     label: "Wallets",
     href: "https://developers.circle.com/wallets",
+    ariaLabel: "Circle Wallets documentation (opens in new tab)",
   },
   {
     label: "Gateway",
     href: "https://developers.circle.com/gateway",
+    ariaLabel: "Circle Gateway documentation (opens in new tab)",
   },
   {
     label: "CCTP V2",
     href: "https://developers.circle.com/cctp",
+    ariaLabel: "Circle CCTP V2 documentation (opens in new tab)",
   },
   {
     label: "USYC",
     href: "https://usyc.docs.hashnote.com",
+    ariaLabel:
+      "USYC by Hashnote documentation (opens in new tab) — coming soon",
+    comingSoon: true,
   },
   {
     label: "Paymaster",
     href: "https://developers.circle.com/paymaster",
+    ariaLabel: "Circle Paymaster documentation (opens in new tab)",
   },
   {
     label: "StableFX",
     href: "https://developers.circle.com/stablefx",
+    ariaLabel: "Circle StableFX documentation (opens in new tab) — coming soon",
+    comingSoon: true,
   },
   {
     label: "Nanopayments",
     href: "https://developers.circle.com/gateway/nanopayments",
+    ariaLabel: "Circle Nanopayments documentation (opens in new tab)",
   },
 ];
 
@@ -62,7 +77,7 @@ export function LandingFooter() {
               <Link
                 key={link.href}
                 href={link.href}
-                className="flex items-center py-1 text-xs font-mono text-text-mut hover:text-text-hi transition-colors"
+                className="touch-target flex items-center py-1 text-xs font-mono text-text-mut hover:text-text-hi transition-colors"
               >
                 {link.label}
               </Link>
@@ -81,7 +96,7 @@ export function LandingFooter() {
               <Link
                 key={link.href}
                 href={link.href}
-                className="flex items-center py-1 text-xs font-mono text-text-mut hover:text-text-hi transition-colors"
+                className="touch-target flex items-center py-1 text-xs font-mono text-text-mut hover:text-text-hi transition-colors"
               >
                 {link.label}
               </Link>
@@ -93,15 +108,25 @@ export function LandingFooter() {
               Circle stack
             </p>
             {CIRCLE_LINKS.map((link) => (
-              <Link
+              <a
                 key={link.label}
                 href={link.href}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex items-center py-1 text-xs font-mono text-text-mut hover:text-text-hi transition-colors"
+                aria-label={link.ariaLabel}
+                className="touch-target flex items-center gap-1.5 py-1 text-xs font-mono text-text-mut hover:text-text-hi transition-colors"
               >
                 {link.label}
-              </Link>
+                {link.comingSoon && (
+                  <span className="text-[9px] font-mono uppercase tracking-widest text-text-mut border border-border-default px-1 py-px leading-none">
+                    soon
+                  </span>
+                )}
+                <ExternalLink
+                  className="w-2.5 h-2.5 shrink-0 opacity-50"
+                  aria-hidden="true"
+                />
+              </a>
             ))}
           </div>
         </div>

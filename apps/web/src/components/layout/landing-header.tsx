@@ -14,7 +14,11 @@ export function LandingHeader() {
         aria-label="Site navigation"
         className="flex items-center justify-between px-6 py-4 max-w-7xl mx-auto"
       >
-        <Link href="/" className="flex min-h-9 items-center gap-2 group">
+        <Link
+          href="/"
+          aria-label="Aegis home"
+          className="touch-target flex min-h-9 items-center gap-2 group"
+        >
           <div className="w-8 h-8 rounded-sharp bg-accent-agent flex items-center justify-center border-brutal border-black shrink-0">
             <Shield className="w-4 h-4 text-black" />
           </div>
@@ -29,7 +33,7 @@ export function LandingHeader() {
             <Link
               href="/pricing"
               aria-current={pathname === "/pricing" ? "page" : undefined}
-              className="text-xs font-mono text-text-lo hover:text-text-hi transition-colors"
+              className="touch-target text-xs font-mono text-text-lo hover:text-text-hi transition-colors"
             >
               Pricing
             </Link>
@@ -41,14 +45,14 @@ export function LandingHeader() {
                 ? "page"
                 : undefined
             }
-            className="text-xs font-mono text-text-lo hover:text-text-hi transition-colors"
+            className="touch-target text-xs font-mono text-text-lo hover:text-text-hi transition-colors"
           >
             Explore demo
           </Link>
           <Link
             href="/leaderboard"
             aria-current={pathname === "/leaderboard" ? "page" : undefined}
-            className="text-xs font-mono text-text-lo hover:text-text-hi transition-colors"
+            className="touch-target text-xs font-mono text-text-lo hover:text-text-hi transition-colors"
           >
             Leaderboard
           </Link>
@@ -59,7 +63,7 @@ export function LandingHeader() {
                 ? "page"
                 : undefined
             }
-            className="text-xs font-mono text-text-lo hover:text-text-hi transition-colors"
+            className="touch-target text-xs font-mono text-text-lo hover:text-text-hi transition-colors"
           >
             About
           </Link>

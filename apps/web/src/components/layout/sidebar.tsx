@@ -281,7 +281,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
             type="button"
             onClick={onClose}
             aria-label="Close navigation"
-            className="ml-auto p-2 rounded-sharp text-text-lo hover:text-text-hi hover:bg-raised transition-colors"
+            className="touch-target ml-auto p-2 rounded-sharp text-text-lo hover:text-text-hi hover:bg-raised transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
@@ -498,7 +498,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
             <div className="grid gap-2">
               <Link
                 href={authHref("/login", pathname)}
-                className="inline-flex min-h-[36px] items-center justify-center rounded-sharp border border-black bg-accent-agent px-2 text-center text-[11px] font-mono font-semibold text-black shadow-brutal-sm hover:shadow-brutal"
+                className="touch-target inline-flex min-h-[36px] items-center justify-center rounded-sharp border border-black bg-accent-agent px-2 text-center text-[11px] font-mono font-semibold text-black shadow-brutal-sm hover:shadow-brutal"
               >
                 Sign in
               </Link>
@@ -548,7 +548,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
               onClick={() => void handleLogout()}
               title="Log out"
               aria-label="Log out"
-              className="w-full min-h-[36px] inline-flex items-center justify-center gap-2 rounded-sharp border border-border-default bg-bg px-3 text-xs font-mono text-text-lo hover:border-risk/50 hover:bg-risk/5 hover:text-risk transition-colors"
+              className="touch-target w-full min-h-[36px] inline-flex items-center justify-center gap-2 rounded-sharp border border-border-default bg-bg px-3 text-xs font-mono text-text-lo hover:border-risk/50 hover:bg-risk/5 hover:text-risk transition-colors"
             >
               <LogOut className="w-3.5 h-3.5" aria-hidden="true" />
               Log out

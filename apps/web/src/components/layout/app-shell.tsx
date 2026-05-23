@@ -166,7 +166,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             aria-label={open ? "Close navigation" : "Open navigation"}
             aria-expanded={open}
             aria-controls="mobile-nav-dialog"
-            className="inline-flex min-h-[42px] min-w-[42px] items-center justify-center rounded-sharp border-brutal border-border-default bg-raised"
+            className="touch-target inline-flex min-h-[42px] min-w-[42px] items-center justify-center rounded-sharp border-brutal border-border-default bg-raised"
           >
             {open ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
           </button>
@@ -183,8 +183,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               href={mobileAction.href}
               className={
                 mobileAction.tone === "warn"
-                  ? "inline-flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-sharp border border-warn/40 bg-warn/5 px-2.5 font-mono text-[10px] uppercase tracking-widest text-warn"
-                  : "inline-flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-sharp border border-black bg-accent-agent px-2.5 font-mono text-[10px] font-semibold uppercase tracking-widest text-black shadow-brutal-sm"
+                  ? "touch-target inline-flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-sharp border border-warn/40 bg-warn/5 px-2.5 font-mono text-[10px] uppercase tracking-widest text-warn"
+                  : "touch-target inline-flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-sharp border border-black bg-accent-agent px-2.5 font-mono text-[10px] font-semibold uppercase tracking-widest text-black shadow-brutal-sm"
               }
             >
               {mobileAction.tone === "warn" ? (
