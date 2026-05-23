@@ -24,6 +24,7 @@ import {
   formatGatewayBalanceError,
   walletStatusError,
 } from "@/lib/account-error-copy";
+import { WalletOperationalPanel } from "./wallet-operational-panel";
 
 /**
  * Dedicated wallet view — one account wallet, with per-network token balances
@@ -257,6 +258,7 @@ export default function WalletPage() {
 
       <WalletOperationalPanel
         gatewayBalanceStatus={gatewayBalanceStatus}
+        idleCashUsd={totalUsdEquivalent}
         refreshingGateway={refreshingGateway}
         onRefreshGateway={() => void refreshGatewayBalance()}
       />
@@ -378,52 +380,6 @@ export default function WalletPage() {
         ))}
       </div>
     </div>
-  );
-}
-
-function WalletOperationalPanel({
-  gatewayBalanceStatus,
-  refreshingGateway,
-  onRefreshGateway,
-}: {
-  gatewayBalanceStatus: "idle" | "loading" | "ready" | "error";
-  refreshingGateway: boolean;
-  onRefreshGateway: () => void;
-}) {
-  const gatewayLoading =
-    gatewayBalanceStatus === "idle" || gatewayBalanceStatus === "loading";
-  return (
-    <section className="border-brutal border-border-default bg-surface p-4 font-mono shadow-brutal">
-      <div>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-[10px] uppercase tracking-widest text-accent-agent">
-              Wallet status
-            </p>
-            <h2 className="mt-1 text-base font-semibold text-text-hi">
-              Wallet is ready. Aegis is checking available cash.
-            </h2>
-          </div>
-          <button
-            type="button"
-            onClick={onRefreshGateway}
-            disabled={refreshingGateway || gatewayLoading}
-            className="inline-flex min-h-9 items-center justify-center gap-2 rounded-sharp border border-border-default bg-bg px-3 text-xs text-text-lo hover:border-accent-agent/40 hover:text-accent-agent disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {refreshingGateway || gatewayLoading ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <RotateCw className="h-3.5 w-3.5" />
-            )}
-            {gatewayLoading ? "Checking balance" : "Refresh balance"}
-          </button>
-        </div>
-        <p className="mt-3 text-xs leading-relaxed text-text-lo">
-          Copy your address any time. If a balance check fails, Aegis says cash
-          is unknown instead of showing a false zero.
-        </p>
-      </div>
-    </section>
   );
 }
 
