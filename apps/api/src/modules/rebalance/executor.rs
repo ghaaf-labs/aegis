@@ -62,11 +62,23 @@ pub async fn create_plan(
     .await?;
 
     for leg in legs {
+        // Stamp the deterministic idempotency key at plan time so a resumed or
+        // retried walk recomputes the same value and the UNIQUE index rejects a
+        // double-submit. The key is fixed by the plan, not by the submit, so it
+        // is stable across attempts.
+        let idempotency_key = idempotency_key_for_leg(
+            rebalance_id,
+            leg.leg_index,
+            leg.kind.as_str(),
+            leg.src_symbol.as_deref(),
+            leg.dest_symbol.as_deref(),
+            leg.amount_usdc,
+        );
         sqlx::query(
             "INSERT INTO rebalance_legs
                (rebalance_id, leg_index, kind, src_chain, dest_chain,
-                src_symbol, dest_symbol, amount_usdc, min_out, status)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending')",
+                src_symbol, dest_symbol, amount_usdc, min_out, status, idempotency_key)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', $10)",
         )
         .bind(rebalance_id)
         .bind(leg.leg_index)
@@ -77,6 +89,7 @@ pub async fn create_plan(
         .bind(leg.dest_symbol.as_deref())
         .bind(leg.amount_usdc)
         .bind(leg.min_out)
+        .bind(&idempotency_key)
         .execute(&mut *tx)
         .await?;
     }
@@ -206,7 +219,7 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
 
     let legs: Vec<LegRow> = sqlx::query_as(
         "SELECT id, leg_index, kind, src_chain, dest_chain, src_symbol,
-                dest_symbol, amount_usdc, min_out
+                dest_symbol, amount_usdc, min_out, status
          FROM rebalance_legs
          WHERE rebalance_id = $1
          ORDER BY leg_index ASC",
@@ -215,14 +228,45 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
     .fetch_all(&state.db)
     .await?;
 
+    // Track which legs have already settled this run so a failure can decide
+    // whether funds moved (and the leg should strand) or not.
+    let mut confirmed_so_far: Vec<LegRow> = Vec::new();
+
     for leg in &legs {
         let kind = parse_kind(&leg.kind)?;
+
+        // Reconcile-on-restart: a resumed or retried walk must never re-submit a
+        // leg that already confirmed. The per-leg DB state machine is the source
+        // of truth — skip confirmed legs so a confirmed CCTP burn/swap is never
+        // double-submitted. (Stranded legs also confirmed their fund movement;
+        // they're left as-is for the follow-up replan, not retried here.)
+        if leg.status == "confirmed" {
+            confirmed_so_far.push(leg.clone());
+            continue;
+        }
+
+        // Bump the attempt counter on every submit so retries are observable and
+        // a runaway leg can be capped. Done before the network call so a crash
+        // mid-submit still records the attempt.
+        bump_attempt_count(state, leg.id).await?;
         mark_leg_submitted(state, rebalance_id, leg.id, user_id, leg).await?;
 
         let (tx_hash, cctp_hash) = match dispatch(state, rebalance_id, kind, leg, user_id).await {
             Ok(v) => v,
             Err(e) => {
-                mark_leg_failed(state, rebalance_id, leg.id, user_id, leg, &format!("{e}")).await?;
+                let reason = format!("{e}");
+                if leg_strands_funds_on_failure(kind, &confirmed_so_far) {
+                    // Funds already moved (e.g. a bridge mint landed USDC) but
+                    // the final action failed. Strand the asset as idle cash in
+                    // the user's wallet instead of bricking the plan; a
+                    // follow-up rebalance replans the remaining delta.
+                    mark_leg_stranded(state, rebalance_id, leg.id, user_id, leg, &reason).await?;
+                    if let Err(strand_err) = record_strand_as_cash(state, portfolio_id, leg).await {
+                        tracing::warn!(leg_id=?leg.id, error=%strand_err, "recovery: strand-as-cash writeback failed");
+                    }
+                } else {
+                    mark_leg_failed(state, rebalance_id, leg.id, user_id, leg, &reason).await?;
+                }
                 return Err(e);
             }
         };
@@ -237,6 +281,7 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
             cctp_hash.as_deref(),
         )
         .await?;
+        confirmed_so_far.push(leg.clone());
 
         let mut holdings_changed = false;
 
@@ -564,7 +609,7 @@ fn parse_kind(s: &str) -> Result<LegKind> {
     })
 }
 
-#[derive(sqlx::FromRow)]
+#[derive(sqlx::FromRow, Clone)]
 struct LegRow {
     id: Uuid,
     leg_index: i32,
@@ -578,6 +623,11 @@ struct LegRow {
     /// applied). Set on CrossChainBurn hook-swap legs; `None` for plain
     /// USDC bridges. Used to size the hook's `min_out`.
     min_out: Option<f64>,
+    /// Per-leg state-machine status (`pending`/`submitted`/`confirmed`/`failed`).
+    /// Read on every walk so a resumed plan can skip legs already confirmed
+    /// rather than re-submitting them.
+    #[sqlx(default)]
+    status: String,
 }
 
 fn protocol_fee_notional_from_legs(legs: &[LegRow]) -> f64 {
@@ -585,6 +635,106 @@ fn protocol_fee_notional_from_legs(legs: &[LegRow]) -> f64 {
         .filter(|leg| leg.kind != LegKind::CrossChainMint.as_str())
         .map(|leg| leg.amount_usdc)
         .sum()
+}
+
+/// Deterministic per-leg fingerprint for idempotent submit + resume.
+///
+/// Two walks of the same plan (a retry after a transient failure, or a resume
+/// after a crash) recompute the *same* key for the same logical leg, so the
+/// `(rebalance_id, idempotency_key)` UNIQUE index recognizes it instead of
+/// admitting a duplicate. The amount is rounded to whole USDC cents so a price
+/// re-fetch that nudges the notional by a fraction of a cent doesn't mint a new
+/// key for what is the same leg.
+///
+/// Shape: `rebalance_id:leg_index:kind:src>dest:rounded_amount`.
+fn idempotency_key_for_leg(
+    rebalance_id: Uuid,
+    leg_index: i32,
+    kind: &str,
+    src_symbol: Option<&str>,
+    dest_symbol: Option<&str>,
+    amount_usdc: f64,
+) -> String {
+    let src = src_symbol.unwrap_or("none");
+    let dest = dest_symbol.unwrap_or("none");
+    let rounded_cents = (amount_usdc * 100.0).round() as i64;
+    format!("{rebalance_id}:{leg_index}:{kind}:{src}>{dest}:{rounded_cents}")
+}
+
+/// A leg whose funds moved but whose final action failed — its asset is stranded
+/// as idle USDC in the user's wallet. Used by `remaining_delta_after_strand` to
+/// replan the still-needed exposure.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StrandedLeg {
+    pub dest_symbol: String,
+    pub amount_usdc: f64,
+}
+
+/// The exposure a follow-up rebalance still needs after some legs stranded.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemainingDelta {
+    pub dest_symbol: String,
+    pub amount_usdc: f64,
+}
+
+/// Given the original plan and which legs stranded (funds landed as idle USDC
+/// instead of reaching their destination asset), compute the per-symbol
+/// exposure a follow-up rebalance still needs to acquire.
+///
+/// Pure: no DB, no side effects — this is the verifiable core of recovery. The
+/// returned deltas are *not* auto-executed; they surface for user approval via
+/// the same two-gate model. A stranded leg's USDC is already sitting in the
+/// wallet, so the follow-up only needs to re-acquire the destination asset for
+/// the stranded notional (the bridge/sell portion of the plan has already
+/// settled). USDC destinations and non-positive amounts are dropped — there's
+/// nothing to re-buy. Same-symbol strands are summed so a split buy that
+/// stranded on two chains replans as one delta. Output is sorted by symbol for
+/// determinism.
+pub fn remaining_delta_after_strand(stranded: &[StrandedLeg]) -> Vec<RemainingDelta> {
+    use std::collections::BTreeMap;
+
+    let mut by_symbol: BTreeMap<String, f64> = BTreeMap::new();
+    for leg in stranded {
+        if leg.amount_usdc <= 0.0 {
+            continue;
+        }
+        if leg.dest_symbol.eq_ignore_ascii_case("USDC") || leg.dest_symbol.is_empty() {
+            continue;
+        }
+        *by_symbol.entry(leg.dest_symbol.clone()).or_insert(0.0) += leg.amount_usdc;
+    }
+
+    by_symbol
+        .into_iter()
+        .map(|(dest_symbol, amount_usdc)| RemainingDelta {
+            dest_symbol,
+            amount_usdc,
+        })
+        .collect()
+}
+
+/// Whether a failed leg leaves funds stranded as idle USDC in the user's wallet.
+///
+/// A `cross_chain_mint` whose companion burn already settled means USDC has
+/// landed at the destination; if the *acquiring* action (the hook swap on the
+/// burn, or a follow-on local swap) then fails, that USDC is stranded — not
+/// lost. We mark the leg `stranded_asset` and record the USDC as cash rather
+/// than failing the whole plan. A pre-funds-moved failure (e.g. the burn itself
+/// reverts, or a local swap reverts before any token leaves the wallet) is a
+/// clean halt with nothing stranded.
+fn leg_strands_funds_on_failure(kind: LegKind, prior_confirmed: &[LegRow]) -> bool {
+    match kind {
+        // The mint's USDC only lands if its companion burn confirmed first.
+        LegKind::CrossChainMint => prior_confirmed
+            .iter()
+            .any(|l| l.kind == LegKind::CrossChainBurn.as_str()),
+        // A buy-side hook swap on a burn leg: if the burn settled but the
+        // destination swap reverts, the minted USDC strands at the executor.
+        LegKind::CrossChainBurn => false,
+        // Local swap / park / FX: funds leave the wallet atomically with the
+        // acquire, so a revert returns the USDC — nothing stranded.
+        LegKind::LocalSwap | LegKind::ParkUsyc | LegKind::RedeemUsyc | LegKind::FxStablefx => false,
+    }
 }
 
 async fn mark_leg_submitted(
@@ -670,6 +820,87 @@ async fn mark_leg_failed(
         Some(reason),
     );
     Ok(())
+}
+
+/// Increment the leg's submit attempt counter. Called before each network
+/// dispatch so retries are observable and a runaway leg can be capped.
+async fn bump_attempt_count(state: &AppState, leg_id: Uuid) -> Result<()> {
+    sqlx::query("UPDATE rebalance_legs SET attempt_count = attempt_count + 1 WHERE id = $1")
+        .bind(leg_id)
+        .execute(&state.db)
+        .await?;
+    Ok(())
+}
+
+/// Mark a leg whose funds moved but whose final action failed. The leg is
+/// `failed` (it did not reach its destination asset) and `stranded_asset` (its
+/// USDC is now idle cash in the user's wallet). Surfaced for a follow-up
+/// approval-gated replan rather than bricking the whole plan.
+async fn mark_leg_stranded(
+    state: &AppState,
+    rebalance_id: Uuid,
+    leg_id: Uuid,
+    user_id: Uuid,
+    leg: &LegRow,
+    reason: &str,
+) -> Result<()> {
+    sqlx::query(
+        "UPDATE rebalance_legs
+            SET status = 'failed', stranded_asset = TRUE, failure_reason = $2
+          WHERE id = $1",
+    )
+    .bind(leg_id)
+    .bind(reason)
+    .execute(&state.db)
+    .await?;
+    broadcast_leg(
+        state,
+        rebalance_id,
+        leg_id,
+        user_id,
+        leg,
+        "failed",
+        None,
+        Some(reason),
+    );
+    Ok(())
+}
+
+/// Record a stranded leg's USDC as an idle cash position. The minted USDC stays
+/// in the user's wallet, so add it to the USDC allocation rather than letting it
+/// vanish from the portfolio view. Best-effort: failures log and continue (the
+/// leg is already marked stranded for the replan).
+async fn record_strand_as_cash(state: &AppState, portfolio_id: Uuid, leg: &LegRow) -> Result<()> {
+    if leg.amount_usdc <= 0.0 {
+        return Ok(());
+    }
+    let result = sqlx::query(
+        "UPDATE allocations
+            SET quantity = quantity + $2,
+                value_usd = (quantity + $2) * 1.0,
+                updated_at = NOW()
+          WHERE portfolio_id = $1 AND asset_symbol = 'USDC'",
+    )
+    .bind(portfolio_id)
+    .bind(leg.amount_usdc)
+    .execute(&state.db)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        sqlx::query(
+            "INSERT INTO allocations (id, portfolio_id, asset_symbol, quantity,
+                                       target_weight, current_weight, value_usd)
+             VALUES ($1, $2, 'USDC', $3, 0, 0, $3)
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(Uuid::new_v4())
+        .bind(portfolio_id)
+        .bind(leg.amount_usdc)
+        .execute(&state.db)
+        .await?;
+    }
+
+    recompute_portfolio_values(state, portfolio_id).await
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -932,6 +1163,7 @@ mod tests {
             dest_symbol: None,
             amount_usdc,
             min_out: None,
+            status: "pending".into(),
         }
     }
 
@@ -946,6 +1178,14 @@ mod tests {
             dest_symbol: Some(dest.to_string()),
             amount_usdc: 600.0,
             min_out: None,
+            status: "pending".into(),
+        }
+    }
+
+    fn strand(dest: &str, amount: f64) -> StrandedLeg {
+        StrandedLeg {
+            dest_symbol: dest.to_string(),
+            amount_usdc: amount,
         }
     }
 
@@ -1068,5 +1308,185 @@ mod tests {
                 .unwrap();
         assert_eq!(hook.token_out, cfg.weth_base);
         assert_eq!(hook.min_out, 0);
+    }
+
+    // ── Idempotency key derivation ────────────────────────────────────────
+
+    #[test]
+    fn idempotency_key_is_deterministic_for_same_leg() {
+        let id = Uuid::new_v4();
+        let a = idempotency_key_for_leg(id, 2, "local_swap", Some("USDC"), Some("ETH"), 600.0);
+        let b = idempotency_key_for_leg(id, 2, "local_swap", Some("USDC"), Some("ETH"), 600.0);
+        assert_eq!(a, b, "same logical leg must derive the same key");
+        assert_eq!(a, format!("{id}:2:local_swap:USDC>ETH:60000"));
+    }
+
+    #[test]
+    fn idempotency_key_rounds_subcent_amount_drift_to_same_key() {
+        // A price re-fetch nudges the notional by a fraction of a cent on a
+        // resume; the rounded key must still match so we don't double-submit.
+        let id = Uuid::new_v4();
+        let a = idempotency_key_for_leg(id, 0, "local_swap", Some("USDC"), Some("BTC"), 600.001);
+        let b = idempotency_key_for_leg(id, 0, "local_swap", Some("USDC"), Some("BTC"), 599.999);
+        assert_eq!(a, b, "sub-cent drift must collapse to the same key");
+    }
+
+    #[test]
+    fn idempotency_key_differs_across_legs_and_plans() {
+        let id1 = Uuid::new_v4();
+        let id2 = Uuid::new_v4();
+        let base = idempotency_key_for_leg(id1, 0, "local_swap", Some("USDC"), Some("ETH"), 100.0);
+        // Different leg index.
+        assert_ne!(
+            base,
+            idempotency_key_for_leg(id1, 1, "local_swap", Some("USDC"), Some("ETH"), 100.0)
+        );
+        // Different kind.
+        assert_ne!(
+            base,
+            idempotency_key_for_leg(id1, 0, "cross_chain_burn", Some("USDC"), Some("ETH"), 100.0)
+        );
+        // Different token pair.
+        assert_ne!(
+            base,
+            idempotency_key_for_leg(id1, 0, "local_swap", Some("USDC"), Some("BTC"), 100.0)
+        );
+        // Different amount (≥ 1 cent).
+        assert_ne!(
+            base,
+            idempotency_key_for_leg(id1, 0, "local_swap", Some("USDC"), Some("ETH"), 100.5)
+        );
+        // Different rebalance.
+        assert_ne!(
+            base,
+            idempotency_key_for_leg(id2, 0, "local_swap", Some("USDC"), Some("ETH"), 100.0)
+        );
+    }
+
+    #[test]
+    fn idempotency_key_handles_missing_symbols() {
+        let id = Uuid::new_v4();
+        let k = idempotency_key_for_leg(id, 3, "cross_chain_mint", None, None, 250.0);
+        assert_eq!(k, format!("{id}:3:cross_chain_mint:none>none:25000"));
+    }
+
+    // ── Resume / skip-confirmed (status-driven, DB-free portion) ──────────
+
+    #[test]
+    fn confirmed_leg_status_marks_skip_on_resume() {
+        // The resume guard keys off leg.status == "confirmed". A confirmed leg
+        // must be skippable; a pending one must not.
+        let mut confirmed = swap_leg("USDC", "ETH");
+        confirmed.status = "confirmed".into();
+        assert_eq!(confirmed.status, "confirmed");
+
+        let pending = swap_leg("USDC", "ETH");
+        assert_eq!(pending.status, "pending");
+        assert_ne!(pending.status, "confirmed");
+    }
+
+    // ── Strand decision (which failures leave funds stranded) ─────────────
+
+    #[test]
+    fn mint_failure_after_burn_strands_funds() {
+        // A burn already confirmed → the mint's USDC has landed; a mint failure
+        // strands that USDC as cash.
+        let prior = vec![leg(LegKind::CrossChainBurn, 500.0)];
+        assert!(leg_strands_funds_on_failure(
+            LegKind::CrossChainMint,
+            &prior
+        ));
+    }
+
+    #[test]
+    fn mint_failure_without_prior_burn_does_not_strand() {
+        // No companion burn confirmed → no USDC moved; a clean halt.
+        let prior: Vec<LegRow> = vec![];
+        assert!(!leg_strands_funds_on_failure(
+            LegKind::CrossChainMint,
+            &prior
+        ));
+    }
+
+    #[test]
+    fn local_swap_and_burn_failures_do_not_strand() {
+        // Local swap / park / FX revert atomically — USDC returns to the wallet.
+        // A burn failure means no USDC ever left, so nothing is stranded either.
+        let prior = vec![leg(LegKind::CrossChainBurn, 500.0)];
+        for kind in [
+            LegKind::LocalSwap,
+            LegKind::ParkUsyc,
+            LegKind::RedeemUsyc,
+            LegKind::FxStablefx,
+            LegKind::CrossChainBurn,
+        ] {
+            assert!(
+                !leg_strands_funds_on_failure(kind, &prior),
+                "{kind:?} must not strand on failure"
+            );
+        }
+    }
+
+    // ── Recovery: remaining-delta replan ──────────────────────────────────
+
+    #[test]
+    fn remaining_delta_re_buys_each_stranded_asset() {
+        let stranded = vec![strand("ETH", 300.0), strand("BTC", 200.0)];
+        let remaining = remaining_delta_after_strand(&stranded);
+        // Sorted by symbol for determinism: BTC then ETH.
+        assert_eq!(
+            remaining,
+            vec![
+                RemainingDelta {
+                    dest_symbol: "BTC".into(),
+                    amount_usdc: 200.0
+                },
+                RemainingDelta {
+                    dest_symbol: "ETH".into(),
+                    amount_usdc: 300.0
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn remaining_delta_sums_same_symbol_strands() {
+        // A split buy that stranded on two chains replans as one delta.
+        let stranded = vec![strand("ETH", 120.0), strand("ETH", 80.0)];
+        let remaining = remaining_delta_after_strand(&stranded);
+        assert_eq!(
+            remaining,
+            vec![RemainingDelta {
+                dest_symbol: "ETH".into(),
+                amount_usdc: 200.0
+            }]
+        );
+    }
+
+    #[test]
+    fn remaining_delta_drops_usdc_and_nonpositive() {
+        // USDC strands are already cash (nothing to re-buy); zero/negative
+        // amounts are noise.
+        let stranded = vec![
+            strand("USDC", 500.0),
+            strand("usdc", 100.0),
+            strand("ETH", 0.0),
+            strand("BTC", -10.0),
+            strand("", 50.0),
+            strand("SOL", 75.0),
+        ];
+        let remaining = remaining_delta_after_strand(&stranded);
+        assert_eq!(
+            remaining,
+            vec![RemainingDelta {
+                dest_symbol: "SOL".into(),
+                amount_usdc: 75.0
+            }]
+        );
+    }
+
+    #[test]
+    fn remaining_delta_empty_when_nothing_stranded() {
+        assert!(remaining_delta_after_strand(&[]).is_empty());
     }
 }
