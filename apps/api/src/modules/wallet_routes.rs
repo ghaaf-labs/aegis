@@ -5,6 +5,17 @@ use crate::db::Db;
 
 pub const ARC_TESTNET: &str = "ARC-TESTNET";
 pub const BASE_SEPOLIA: &str = "BASE-SEPOLIA";
+pub const ETH_SEPOLIA: &str = "ETH-SEPOLIA";
+pub const ARB_SEPOLIA: &str = "ARB-SEPOLIA";
+pub const AVAX_FUJI: &str = "AVAX-FUJI";
+
+pub const SUPPORTED_WALLET_BLOCKCHAINS: [&str; 5] = [
+    ARC_TESTNET,
+    BASE_SEPOLIA,
+    ETH_SEPOLIA,
+    ARB_SEPOLIA,
+    AVAX_FUJI,
+];
 
 pub async fn address_for_user(
     db: &Db,

@@ -18,6 +18,7 @@ use crate::config::Config;
 use crate::db::Db;
 use crate::error::AppError;
 use crate::modules::sse::{SseEvent, SseSender};
+use crate::modules::wallet_routes::{ARC_TESTNET, BASE_SEPOLIA, SUPPORTED_WALLET_BLOCKCHAINS};
 
 const AUTH_CODE_EXPIRY_MINUTES: i64 = 10;
 const AUTH_CODE_RESEND_COOLDOWN_SECONDS: u64 = 30;
@@ -734,6 +735,33 @@ impl<'a> WalletService<'a> {
                        AND n.state = 'LIVE'
                        AND (NULLIF($1, '') IS NULL OR n.wallet_set_id = NULLIF($1, ''))
                    )
+                   OR NOT EXISTS (
+                     SELECT 1
+                     FROM user_wallet_networks n
+                     WHERE n.user_id = u.id
+                       AND n.blockchain = 'ETH-SEPOLIA'
+                       AND n.account_type = 'SCA'
+                       AND n.state = 'LIVE'
+                       AND (NULLIF($1, '') IS NULL OR n.wallet_set_id = NULLIF($1, ''))
+                   )
+                   OR NOT EXISTS (
+                     SELECT 1
+                     FROM user_wallet_networks n
+                     WHERE n.user_id = u.id
+                       AND n.blockchain = 'ARB-SEPOLIA'
+                       AND n.account_type = 'SCA'
+                       AND n.state = 'LIVE'
+                       AND (NULLIF($1, '') IS NULL OR n.wallet_set_id = NULLIF($1, ''))
+                   )
+                   OR NOT EXISTS (
+                     SELECT 1
+                     FROM user_wallet_networks n
+                     WHERE n.user_id = u.id
+                       AND n.blockchain = 'AVAX-FUJI'
+                       AND n.account_type = 'SCA'
+                       AND n.state = 'LIVE'
+                       AND (NULLIF($1, '') IS NULL OR n.wallet_set_id = NULLIF($1, ''))
+                   )
                  )
                ORDER BY COALESCE(u.wallet_provision_next_retry_at, u.updated_at), u.updated_at
                LIMIT $2"#,
@@ -1035,10 +1063,10 @@ fn wallet_from_networks(
 ) -> Option<WalletInfo> {
     let arc = networks
         .iter()
-        .find(|network| network.blockchain == "ARC-TESTNET" || network.blockchain == "ARC")?;
+        .find(|network| network.blockchain == ARC_TESTNET || network.blockchain == "ARC")?;
     let base = networks
         .iter()
-        .find(|network| network.blockchain == "BASE-SEPOLIA" || network.blockchain == "BASE")?;
+        .find(|network| network.blockchain == BASE_SEPOLIA || network.blockchain == "BASE")?;
     Some(WalletInfo {
         wallet_id: arc.wallet_id.clone(),
         arc_address: arc.address.clone(),
@@ -1049,18 +1077,18 @@ fn wallet_from_networks(
 }
 
 fn network_routes_need_provider_sync(wallet: &WalletInfo, expected_wallet_set_id: &str) -> bool {
-    if expected_wallet_set_id.trim().is_empty() || wallet.networks.len() < 2 {
+    if expected_wallet_set_id.trim().is_empty()
+        || wallet.networks.len() < SUPPORTED_WALLET_BLOCKCHAINS.len()
+    {
         return true;
     }
-    let has_arc = wallet
-        .networks
-        .iter()
-        .any(|network| network.blockchain == "ARC-TESTNET");
-    let has_base = wallet
-        .networks
-        .iter()
-        .any(|network| network.blockchain == "BASE-SEPOLIA");
-    if !has_arc || !has_base {
+    let missing_supported_route = SUPPORTED_WALLET_BLOCKCHAINS.iter().any(|blockchain| {
+        !wallet
+            .networks
+            .iter()
+            .any(|network| network.blockchain == *blockchain)
+    });
+    if missing_supported_route {
         return true;
     }
     let mut ids = std::collections::HashSet::new();
@@ -1354,5 +1382,49 @@ mod tests {
             err,
             AppError::BadRequest(message) if message == "code_expired"
         ));
+    }
+
+    #[test]
+    fn provider_sync_requires_every_supported_wallet_route() {
+        let wallet = wallet_with_routes(&[ARC_TESTNET, BASE_SEPOLIA]);
+        assert!(network_routes_need_provider_sync(&wallet, "wallet-set"));
+
+        let wallet = wallet_with_routes(&SUPPORTED_WALLET_BLOCKCHAINS);
+        assert!(!network_routes_need_provider_sync(&wallet, "wallet-set"));
+    }
+
+    #[test]
+    fn provider_sync_rejects_mock_or_placeholder_supported_routes() {
+        let mut wallet = wallet_with_routes(&SUPPORTED_WALLET_BLOCKCHAINS);
+        wallet.networks[2].wallet_id = "mock_wallet_1".into();
+        assert!(network_routes_need_provider_sync(&wallet, "wallet-set"));
+
+        let mut wallet = wallet_with_routes(&SUPPORTED_WALLET_BLOCKCHAINS);
+        wallet.networks[3].state = "PENDING".into();
+        assert!(network_routes_need_provider_sync(&wallet, "wallet-set"));
+    }
+
+    fn wallet_with_routes(blockchains: &[&str]) -> WalletInfo {
+        let networks: Vec<WalletNetwork> = blockchains
+            .iter()
+            .enumerate()
+            .map(|(index, blockchain)| WalletNetwork {
+                blockchain: (*blockchain).into(),
+                wallet_id: format!("circle-wallet-{index}"),
+                address: format!("0x{index:040x}"),
+                account_type: "SCA".into(),
+                state: "LIVE".into(),
+            })
+            .collect();
+        WalletInfo {
+            wallet_id: networks
+                .first()
+                .map(|network| network.wallet_id.clone())
+                .unwrap_or_default(),
+            arc_address: "0x0000000000000000000000000000000000000000".into(),
+            base_address: "0x0000000000000000000000000000000000000001".into(),
+            networks,
+            created_at: Utc::now(),
+        }
     }
 }

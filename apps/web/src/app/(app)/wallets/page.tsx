@@ -450,6 +450,15 @@ function supportedNetworkRoute(blockchain: string): {
     case "BASE-SEPOLIA":
     case "BASE":
       return { key: "base", label: "Base Sepolia" };
+    case "ETH-SEPOLIA":
+    case "ETH":
+      return { key: "eth-sepolia", label: "Ethereum Sepolia" };
+    case "ARB-SEPOLIA":
+    case "ARB":
+      return { key: "arb-sepolia", label: "Arbitrum Sepolia" };
+    case "AVAX-FUJI":
+    case "AVAX":
+      return { key: "avax-fuji", label: "Avalanche Fuji" };
     default:
       return null;
   }
@@ -463,6 +472,10 @@ function networkLabel(blockchain: string) {
       return "Base Sepolia";
     case "ETH-SEPOLIA":
       return "Ethereum Sepolia";
+    case "ARB-SEPOLIA":
+      return "Arbitrum Sepolia";
+    case "AVAX-FUJI":
+      return "Avalanche Fuji";
     case "MATIC-AMOY":
       return "Polygon Amoy";
     default:

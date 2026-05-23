@@ -145,35 +145,27 @@ describe("<NetworkTokenPanel />", () => {
       "Avalanche Fuji",
     ];
     const expectedTokens = [
-      ["USDC", "Cash · Funding, transfer, and reserve route is live", "Ready"],
-      [
-        "BTC / ETH / SOL",
-        "Market targets · Tracked for agent planning until swaps are live",
-        "Planned",
-      ],
-      [
-        "USYC",
-        "Yield · Tracked until real yield execution is enabled",
-        "Planned",
-      ],
-      [
-        "EURC",
-        "FX sleeve · Tracked until StableFX execution is enabled",
-        "Planned",
-      ],
+      ["USDC", "Cash · Funding, transfer, and reserve route is live"],
+      ["BTC", "Market target · Pricing and swap planning available"],
+      ["ETH", "Market target · Pricing and swap planning available"],
+      ["SOL", "Market target · Pricing and swap planning available"],
+      ["USYC", "Yield target · Planner supports park and redeem routes"],
+      ["EURC", "FX target · Planner supports the StableFX sleeve"],
     ];
 
     for (const network of expectedNetworks) {
       expect(text).toContain(network);
     }
-    expect(text).toContain("Agent can execute now");
+    expect(text).toContain("Agent wallet scope");
     expect(text).toContain("Arc testnet, Base Sepolia");
-    expect(text).toContain("No planned token tracked");
-    expect(text).toContain("No future route tracked");
+    expect(text).toContain("No extra token watchlist");
+    expect(text).toContain(
+      "Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji",
+    );
     expect(text).toContain("Saved to active portfolio");
-    expect(text).toContain("Track for future execution");
-    expect(text).toContain("Included in executable scope");
-    expect(text).toContain("Planned");
+    expect(text).toContain("Wallet route sync required");
+    expect(text).toContain("Included in wallet scope");
+    expect(text).toContain("Needs sync");
 
     for (const tokenCopy of expectedTokens.flat()) {
       expect(text).toContain(tokenCopy);
@@ -187,19 +179,101 @@ describe("<NetworkTokenPanel />", () => {
     });
 
     const suggestedText = container.textContent ?? "";
-    expect(suggestedText).toContain("BTC / ETH / SOL, USYC, EURC");
+    expect(suggestedText).toContain("USDC, BTC, ETH, SOL, USYC, EURC");
     expect(suggestedText).toContain(
       "Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji",
     );
     expect(onPreferencesChange).toHaveBeenCalledWith({
       networks: ["ARC-TESTNET", "BASE-SEPOLIA"],
       networkWatchlist: ["ETH-SEPOLIA", "ARB-SEPOLIA", "AVAX-FUJI"],
-      tokens: ["USDC"],
-      watchlist: ["BTC_ETH_SOL", "USYC", "EURC"],
+      tokens: ["USDC", "BTC", "ETH", "SOL", "USYC", "EURC"],
+      watchlist: [],
     });
     expect(
       window.localStorage.getItem("aegis.wallet.route-preferences.v1"),
-    ).toContain("BTC_ETH_SOL");
+    ).toContain("BTC");
+
+    act(() => root.unmount());
+  });
+
+  it("marks every provisioned Circle wallet chain as ready", () => {
+    const { container, root } = render(
+      <NetworkTokenPanel
+        networks={[
+          {
+            blockchain: "ARC-TESTNET",
+            address: "0x8955c4848b7e3ce309700b7001caa2c7df50f7f7",
+          },
+          {
+            blockchain: "BASE-SEPOLIA",
+            address: "0x8955c4848b7e3ce309700b7001caa2c7df50f7f7",
+          },
+          {
+            blockchain: "ETH-SEPOLIA",
+            address: "0x8955c4848b7e3ce309700b7001caa2c7df50f7f7",
+          },
+          {
+            blockchain: "ARB-SEPOLIA",
+            address: "0x8955c4848b7e3ce309700b7001caa2c7df50f7f7",
+          },
+          {
+            blockchain: "AVAX-FUJI",
+            address: "0x8955c4848b7e3ce309700b7001caa2c7df50f7f7",
+          },
+        ]}
+      />,
+    );
+    const text = container.textContent ?? "";
+
+    expect(text).toContain(
+      "Arc testnet, Base Sepolia, Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji",
+    );
+    expect(text).toContain("All supported routes ready");
+    expect(text).not.toContain("Needs sync");
+
+    act(() => root.unmount());
+  });
+
+  it("promotes previously watched networks once their wallet routes exist", () => {
+    const { container, root } = render(
+      <NetworkTokenPanel
+        networks={[
+          {
+            blockchain: "ARC-TESTNET",
+            address: "0x8955c4848b7e3ce309700b7001caa2c7df50f7f7",
+          },
+          {
+            blockchain: "BASE-SEPOLIA",
+            address: "0x8955c4848b7e3ce309700b7001caa2c7df50f7f7",
+          },
+          {
+            blockchain: "ETH-SEPOLIA",
+            address: "0x8955c4848b7e3ce309700b7001caa2c7df50f7f7",
+          },
+          {
+            blockchain: "ARB-SEPOLIA",
+            address: "0x8955c4848b7e3ce309700b7001caa2c7df50f7f7",
+          },
+          {
+            blockchain: "AVAX-FUJI",
+            address: "0x8955c4848b7e3ce309700b7001caa2c7df50f7f7",
+          },
+        ]}
+        initialPreferences={{
+          networks: ["ARC-TESTNET", "BASE-SEPOLIA"],
+          networkWatchlist: ["ETH-SEPOLIA", "ARB-SEPOLIA", "AVAX-FUJI"],
+          tokens: ["USDC"],
+          watchlist: ["BTC_ETH_SOL", "USYC", "EURC"],
+        }}
+      />,
+    );
+    const text = container.textContent ?? "";
+
+    expect(text).toContain(
+      "Arc testnet, Base Sepolia, Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji",
+    );
+    expect(text).toContain("USDC, BTC, ETH, SOL, USYC, EURC");
+    expect(text).toContain("All supported routes ready");
 
     act(() => root.unmount());
   });

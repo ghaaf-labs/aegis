@@ -763,7 +763,7 @@ fn format_route_preferences(route_preferences: &serde_json::Value) -> String {
         watchlist.join(", ")
     };
     format!(
-        " · route scope: executable networks {networks}; planned networks {future_networks}; executable tokens {tokens}; watch {watchlist}"
+        " · route scope: wallet-ready networks {networks}; wallet-sync queue {future_networks}; target tokens {tokens}; watch {watchlist}"
     )
 }
 
@@ -1369,8 +1369,8 @@ mod tests {
                 "routePreferences": {
                     "networks": ["ARC-TESTNET", "BASE-SEPOLIA"],
                     "networkWatchlist": ["ETH-SEPOLIA", "ARB-SEPOLIA", "AVAX-FUJI"],
-                    "tokens": ["USDC"],
-                    "watchlist": ["BTC_ETH_SOL", "USYC", "EURC"]
+                    "tokens": ["USDC", "BTC", "ETH", "SOL", "USYC", "EURC"],
+                    "watchlist": []
                 }
             })),
         );
@@ -1390,7 +1390,7 @@ mod tests {
         assert!(rendered.contains("route scope"));
         assert!(rendered.contains("BASE-SEPOLIA"));
         assert!(rendered.contains("AVAX-FUJI"));
-        assert!(rendered.contains("BTC_ETH_SOL"));
+        assert!(rendered.contains("USYC"));
     }
 
     #[test]

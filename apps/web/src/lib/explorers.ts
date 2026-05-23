@@ -1,8 +1,16 @@
-export type ExplorerChain = "arc" | "base";
+export type ExplorerChain =
+  | "arc"
+  | "base"
+  | "eth-sepolia"
+  | "arb-sepolia"
+  | "avax-fuji";
 
 const EXPLORER_BASE_URL: Record<ExplorerChain, string> = {
   arc: "https://testnet.arcscan.app",
   base: "https://sepolia.basescan.org",
+  "eth-sepolia": "https://sepolia.etherscan.io",
+  "arb-sepolia": "https://sepolia.arbiscan.io",
+  "avax-fuji": "https://testnet.snowtrace.io",
 };
 
 export function explorerTxUrl(
