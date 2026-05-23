@@ -684,6 +684,16 @@ fn unsupported_real_execution_capabilities(legs: &[LegView]) -> Vec<MissingCapab
         });
     }
 
+    if legs.iter().any(cross_chain_token_swap_needed) {
+        missing.push(MissingCapability {
+            code: "CROSS_CHAIN_TOKEN_SWAP".into(),
+            label: "Cross-chain token swap".into(),
+            detail:
+                "Real cross-chain token buys need a destination token address and swap adapter before approval can execute."
+                    .into(),
+        });
+    }
+
     if !real_usyc_enabled()
         && legs
             .iter()
@@ -719,6 +729,14 @@ fn unsupported_real_execution_capabilities(legs: &[LegView]) -> Vec<MissingCapab
     }
 
     missing
+}
+
+fn cross_chain_token_swap_needed(leg: &LegView) -> bool {
+    leg.kind == "cross_chain_burn"
+        && leg
+            .dest_symbol
+            .as_deref()
+            .is_some_and(|symbol| symbol != "USDC")
 }
 
 fn unsupported_real_execution_message(missing: &[MissingCapability]) -> String {
@@ -1210,6 +1228,28 @@ mod tests {
     fn real_execution_capability_blocks_uncompiled_cctp() {
         let missing = unsupported_real_execution_capabilities(&[leg("cross_chain_burn")]);
         assert!(missing.iter().any(|cap| cap.code == "REAL_CCTP_FEATURE"));
+    }
+
+    #[test]
+    fn real_execution_capability_blocks_cross_chain_token_swaps() {
+        let mut eth_buy = leg("cross_chain_burn");
+        eth_buy.dest_symbol = Some("ETH".into());
+        let missing = unsupported_real_execution_capabilities(&[eth_buy]);
+
+        assert!(missing
+            .iter()
+            .any(|cap| cap.code == "CROSS_CHAIN_TOKEN_SWAP"));
+    }
+
+    #[test]
+    fn real_execution_capability_allows_cross_chain_usdc_mints() {
+        let mut usdc_bridge = leg("cross_chain_burn");
+        usdc_bridge.dest_symbol = Some("USDC".into());
+        let missing = unsupported_real_execution_capabilities(&[usdc_bridge]);
+
+        assert!(!missing
+            .iter()
+            .any(|cap| cap.code == "CROSS_CHAIN_TOKEN_SWAP"));
     }
 
     #[cfg(not(feature = "real-usyc"))]

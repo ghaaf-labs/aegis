@@ -25,6 +25,7 @@ import {
   walletStatusError,
 } from "@/lib/account-error-copy";
 import { AccountWalletCard } from "./account-wallet-card";
+import { NetworkTokenPanel } from "./network-token-panel";
 import { WalletOperationalPanel } from "./wallet-operational-panel";
 
 /**
@@ -366,6 +367,8 @@ export default function WalletPage() {
         )}
         explorerLinks={chains}
       />
+
+      <NetworkTokenPanel networks={allNetworks} />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {chains.map((c) => (

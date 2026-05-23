@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import { AccountWalletCard } from "./account-wallet-card";
+import { NetworkTokenPanel } from "./network-token-panel";
 import { WalletOperationalPanel } from "./wallet-operational-panel";
 
 const clipboardMock = vi.hoisted(() => ({
@@ -110,6 +111,37 @@ describe("<AccountWalletCard />", () => {
     expect(container.textContent).toContain("Address selected");
     expect(container.textContent).toContain(address);
     expect(clipboardMock.copyTextToClipboard).toHaveBeenCalledWith(address);
+
+    act(() => root.unmount());
+  });
+});
+
+describe("<NetworkTokenPanel />", () => {
+  it("marks only provisioned routes as live and keeps unsupported tokens blocked", () => {
+    const { container, root } = render(
+      <NetworkTokenPanel
+        networks={[
+          {
+            blockchain: "ARC-TESTNET",
+            address: "0x8955c4848b7e3ce309700b7001caa2c7df50f7f7",
+          },
+          {
+            blockchain: "BASE-SEPOLIA",
+            address: "0x8955c4848b7e3ce309700b7001caa2c7df50f7f7",
+          },
+        ]}
+      />,
+    );
+    const text = container.textContent ?? "";
+
+    expect(text).toContain("Arc testnet");
+    expect(text).toContain("Base Sepolia");
+    expect(text).toContain("Ethereum Sepolia");
+    expect(text).toContain("Not enabled for this wallet");
+    expect(text).toContain("BTC / ETH / SOL");
+    expect(text).toContain("Needs live swap routes before approval");
+    expect(text).toContain("USDC");
+    expect(text).toContain("Usable");
 
     act(() => root.unmount());
   });
