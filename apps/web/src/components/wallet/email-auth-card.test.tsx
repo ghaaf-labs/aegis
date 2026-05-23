@@ -98,6 +98,11 @@ describe("<EmailAuthCard />", () => {
     expect(input?.getAttribute("aria-describedby")).toContain(
       "wallet-auth-email-invalid",
     );
+    expect(
+      container
+        .querySelector("#wallet-auth-email-invalid")
+        ?.getAttribute("role"),
+    ).toBe("alert");
     expect(submit?.disabled).toBe(true);
 
     act(() => root.unmount());

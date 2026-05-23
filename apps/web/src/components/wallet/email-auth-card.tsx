@@ -399,6 +399,7 @@ export function EmailAuthCard() {
             {emailInvalid && (
               <p
                 id={emailInvalidId}
+                role="alert"
                 className="mt-2 font-mono text-[11px] leading-relaxed text-warn"
               >
                 Enter a valid email address.
