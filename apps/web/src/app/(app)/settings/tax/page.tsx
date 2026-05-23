@@ -14,11 +14,6 @@ import { usePortfolioStore } from "@/stores/portfolio";
 
 const TTL_DEFAULT_DAYS = 30;
 
-/**
- * Pro-tier tax export surface. The frontend never enforces the tier gate
- * — A3's middleware does — but the page degrades to "no tokens, no
- * portfolios" copy when the API returns empty / 404.
- */
 export default function TaxSettingsPage() {
   const portfolios = usePortfolioStore((s) => s.portfolios);
   const activeId = usePortfolioStore((s) => s.activePortfolioId);
@@ -108,7 +103,7 @@ export default function TaxSettingsPage() {
       setMockExcluded(m);
       setConfirmOpen(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "download failed");
+      setError(e instanceof Error ? e.message : "Could not download report.");
     } finally {
       setDownloading(false);
     }
@@ -127,7 +122,7 @@ export default function TaxSettingsPage() {
       await taxApi.createShare(portfolioId, year, TTL_DEFAULT_DAYS);
       await reloadShares();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "share creation failed");
+      setError(e instanceof Error ? e.message : "Could not create share link.");
     } finally {
       setCreating(false);
     }
@@ -139,7 +134,7 @@ export default function TaxSettingsPage() {
       await taxApi.revokeShare(tokenId);
       await reloadShares();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "revoke failed");
+      setError(e instanceof Error ? e.message : "Could not revoke share link.");
     }
   };
 
@@ -150,7 +145,7 @@ export default function TaxSettingsPage() {
           Tax center
         </h1>
         <p className="text-sm text-text-lo mt-1">
-          Download settled activity or create a temporary accountant link.
+          Download settled activity or share a read-only accountant link.
         </p>
       </div>
 
@@ -173,7 +168,7 @@ export default function TaxSettingsPage() {
                 {!mounted ? (
                   <option value="">Loading…</option>
                 ) : portfolios.length === 0 ? (
-                  <option value="">(no portfolios)</option>
+                  <option value="">No portfolios yet</option>
                 ) : (
                   portfolios.map((p) => (
                     <option key={p.id} value={p.id}>
@@ -249,8 +244,8 @@ export default function TaxSettingsPage() {
 
           {mockExcluded !== null && mockExcluded > 0 ? (
             <p className="text-xs font-mono text-text-lo">
-              {mockExcluded} non-real entries excluded · only settled moves
-              appear in the export.
+              {mockExcluded} draft or test rows excluded. Only settled moves
+              appear in the report.
             </p>
           ) : null}
         </BrutalCardBody>
