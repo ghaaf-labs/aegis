@@ -32,7 +32,9 @@ const config = {
         "text-hi": "#FFFFFF",
         "text-default": "#E5E5E5",
         "text-lo": "#8A8A8A",
-        "text-mut": "#5A5A5A",
+        // #7C7C7C clears WCAG AA (~4.6:1) on the #0A0A0A app background;
+        // the prior #5A5A5A was only ~2.9:1 and failed on small microcopy.
+        "text-mut": "#7C7C7C",
 
         // Shadcn legacy tokens (kept while components migrate).
         border: "hsl(var(--border))",
