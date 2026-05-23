@@ -728,9 +728,49 @@ fn format_goal_block(goal: &serde_json::Value) -> String {
             pairs.join(", ")
         })
         .unwrap_or_default();
+    let route_preferences = goal
+        .get("routePreferences")
+        .map(format_route_preferences)
+        .unwrap_or_default();
     format!(
-        "{name} · horizon {horizon} · risk {risk}{monthly} · USYC opt-in: {usyc} · EURC opt-in: {eurc} · targets: {allocations}"
+        "{name} · horizon {horizon} · risk {risk}{monthly} · USYC opt-in: {usyc} · EURC opt-in: {eurc} · targets: {allocations}{route_preferences}"
     )
+}
+
+fn format_route_preferences(route_preferences: &serde_json::Value) -> String {
+    let networks = json_string_list(route_preferences, "networks");
+    let tokens = json_string_list(route_preferences, "tokens");
+    let watchlist = json_string_list(route_preferences, "watchlist");
+    let networks = if networks.is_empty() {
+        "(none)".into()
+    } else {
+        networks.join(", ")
+    };
+    let tokens = if tokens.is_empty() {
+        "(none)".into()
+    } else {
+        tokens.join(", ")
+    };
+    let watchlist = if watchlist.is_empty() {
+        "(none)".into()
+    } else {
+        watchlist.join(", ")
+    };
+    format!(" · route scope: networks {networks}; executable tokens {tokens}; watch {watchlist}")
+}
+
+fn json_string_list(value: &serde_json::Value, key: &str) -> Vec<String> {
+    value
+        .get(key)
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|v| v.as_str())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Tool-aware strategist call. Runs up to `MAX_TOOL_ITERATIONS - 1` rounds
@@ -1317,7 +1357,12 @@ mod tests {
                 "riskTolerance": "moderate",
                 "targetAllocation": { "BTC": 50, "ETH": 30, "USYC": 20 },
                 "includeUsyc": true,
-                "includeEurc": false
+                "includeEurc": false,
+                "routePreferences": {
+                    "networks": ["ARC-TESTNET", "BASE-SEPOLIA"],
+                    "tokens": ["USDC"],
+                    "watchlist": ["BTC_ETH_SOL", "USYC", "EURC"]
+                }
             })),
         );
         ctx.insert("harvestable_losses", "(none)".into());
@@ -1333,6 +1378,9 @@ mod tests {
         assert!(rendered.contains("conservative"));
         assert!(rendered.contains("60"));
         assert!(rendered.contains("BTC"));
+        assert!(rendered.contains("route scope"));
+        assert!(rendered.contains("BASE-SEPOLIA"));
+        assert!(rendered.contains("BTC_ETH_SOL"));
     }
 
     #[test]

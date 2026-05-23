@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   Check,
@@ -17,13 +17,14 @@ import { BrutalCard, BrutalCardBody, BrutalCardHeader } from "@aegis/ui";
 import { FaucetButton } from "@/components/wallet/faucet-button";
 import { usePortfolioStore } from "@/stores/portfolio";
 import { formatCurrency } from "@/lib/utils";
-import { gatewayApi, walletApi } from "@/lib/api";
+import { gatewayApi, portfolioApi, walletApi } from "@/lib/api";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { explorerAddressUrl, type ExplorerChain } from "@/lib/explorers";
 import {
   formatGatewayBalanceError,
   walletStatusError,
 } from "@/lib/account-error-copy";
+import type { PortfolioGoal, RoutePreferences } from "@/types";
 import { AccountWalletCard } from "./account-wallet-card";
 import { NetworkTokenPanel } from "./network-token-panel";
 import { WalletOperationalPanel } from "./wallet-operational-panel";
@@ -34,6 +35,8 @@ import { WalletOperationalPanel } from "./wallet-operational-panel";
  */
 export default function WalletPage() {
   const wallet = usePortfolioStore((s) => s.wallet);
+  const portfolios = usePortfolioStore((s) => s.portfolios);
+  const activePortfolioId = usePortfolioStore((s) => s.activePortfolioId);
   const unifiedUsdc = usePortfolioStore((s) => s.unifiedUsdc);
   const unifiedEurc = usePortfolioStore((s) => s.unifiedEurc);
   const perChainUsdc = usePortfolioStore((s) => s.perChainUsdc);
@@ -43,6 +46,7 @@ export default function WalletPage() {
   const snapshot = usePortfolioStore((s) => s.marketSnapshot);
   const sessionActive = usePortfolioStore((s) => s.sessionActive);
   const setWallet = usePortfolioStore((s) => s.setWallet);
+  const patchPortfolio = usePortfolioStore((s) => s.patchPortfolio);
   const setUnifiedUsdc = usePortfolioStore((s) => s.setUnifiedUsdc);
   const setUnifiedEurc = usePortfolioStore((s) => s.setUnifiedEurc);
   const setPerChain = usePortfolioStore((s) => s.setPerChain);
@@ -54,6 +58,12 @@ export default function WalletPage() {
   const [refreshingGateway, setRefreshingGateway] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const activePortfolio = useMemo(
+    () =>
+      portfolios.find((portfolio) => portfolio.id === activePortfolioId) ??
+      null,
+    [activePortfolioId, portfolios],
+  );
 
   useEffect(() => {
     setSavedEmail(window.localStorage.getItem("aegis_email") ?? "");
@@ -85,6 +95,37 @@ export default function WalletPage() {
       setRefreshingGateway(false);
     }
   }, [setGatewayBalanceStatus, setPerChain, setUnifiedEurc, setUnifiedUsdc]);
+  const saveRoutePreferences = useCallback(
+    (preferences: RoutePreferences) => {
+      if (!activePortfolio?.goal) {
+        return;
+      }
+
+      const routePreferences: RoutePreferences = {
+        ...preferences,
+        updatedAt: new Date().toISOString(),
+      };
+      const goal: PortfolioGoal = {
+        ...activePortfolio.goal,
+        routePreferences,
+      };
+
+      patchPortfolio(activePortfolio.id, { goal });
+      void portfolioApi
+        .update(activePortfolio.id, { goal })
+        .then(() => {
+          setStatusError(null);
+          setStatusMessage("Agent route preferences saved to this portfolio.");
+        })
+        .catch(() => {
+          setStatusMessage(null);
+          setStatusError(
+            "Route preference saved on this device, but Aegis could not save it to the portfolio.",
+          );
+        });
+    },
+    [activePortfolio, patchPortfolio],
+  );
 
   if (!wallet) {
     const continueHref = sessionActive
@@ -368,7 +409,16 @@ export default function WalletPage() {
         explorerLinks={chains}
       />
 
-      <NetworkTokenPanel networks={allNetworks} />
+      <NetworkTokenPanel
+        networks={allNetworks}
+        initialPreferences={activePortfolio?.goal?.routePreferences}
+        persistenceLabel={
+          activePortfolio?.goal
+            ? "Saved to active portfolio"
+            : "Saved on this device"
+        }
+        onPreferencesChange={saveRoutePreferences}
+      />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {chains.map((c) => (

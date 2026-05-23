@@ -20,6 +20,7 @@ beforeAll(() => {
 
 afterEach(() => {
   document.body.innerHTML = "";
+  window.localStorage.clear();
   vi.clearAllMocks();
 });
 
@@ -117,7 +118,8 @@ describe("<AccountWalletCard />", () => {
 });
 
 describe("<NetworkTokenPanel />", () => {
-  it("marks only provisioned routes as live and keeps unsupported tokens blocked", () => {
+  it("lets the user choose live execution routes and track blocked tokens", async () => {
+    const onPreferencesChange = vi.fn();
     const { container, root } = render(
       <NetworkTokenPanel
         networks={[
@@ -130,6 +132,8 @@ describe("<NetworkTokenPanel />", () => {
             address: "0x8955c4848b7e3ce309700b7001caa2c7df50f7f7",
           },
         ]}
+        persistenceLabel="Saved to active portfolio"
+        onPreferencesChange={onPreferencesChange}
       />,
     );
     const text = container.textContent ?? "";
@@ -141,31 +145,82 @@ describe("<NetworkTokenPanel />", () => {
       "Avalanche Fuji",
     ];
     const expectedTokens = [
-      ["USDC", "Cash · Funding source and reserve target", "Usable"],
+      [
+        "USDC",
+        "Cash · Funding, bridge, and reserve route is live",
+        "Executable",
+      ],
       [
         "BTC / ETH / SOL",
-        "Market targets · Needs live swap routes before approval",
-        "Blocked",
+        "Market targets · Track intent until live swap routes are ready",
+        "Watch only",
       ],
-      ["USYC", "Yield · Needs live yield route before approval", "Blocked"],
-      ["EURC", "FX sleeve · Needs live FX route before approval", "Blocked"],
+      [
+        "USYC",
+        "Yield · Track intent until real yield execution is enabled",
+        "Watch only",
+      ],
+      [
+        "EURC",
+        "FX sleeve · Track intent until StableFX execution is enabled",
+        "Watch only",
+      ],
     ];
 
     for (const network of expectedNetworks) {
       expect(text).toContain(network);
     }
-    expect(text).toContain("Not enabled for this wallet");
-    expect(text.match(/Live/g)).toHaveLength(2);
-    expect(text.match(/Off/g)).toHaveLength(3);
+    expect(text).toContain("Agent can execute now");
+    expect(text).toContain("Arc testnet, Base Sepolia");
+    expect(text).toContain("No blocked token tracked");
+    expect(text).toContain("Saved to active portfolio");
+    expect(text).toContain("Circle-supported; Aegis route not opened yet");
+    expect(text.match(/Selected/g)).toHaveLength(2);
+    expect(text.match(/Needs route/g)).toHaveLength(3);
 
     for (const tokenCopy of expectedTokens.flat()) {
       expect(text).toContain(tokenCopy);
     }
-    expect(text.match(/Blocked/g)).toHaveLength(3);
+    expect(text.match(/Watch only/g)).toHaveLength(3);
+
+    const disabledRoutes = Array.from(
+      container.querySelectorAll<HTMLButtonElement>("button:disabled"),
+    ).filter((button) =>
+      ["Ethereum Sepolia", "Arbitrum Sepolia", "Avalanche Fuji"].some((label) =>
+        button.textContent?.includes(label),
+      ),
+    );
+    expect(disabledRoutes).toHaveLength(3);
+
+    await act(async () => {
+      findButton(container, "Agent suggestion").click();
+      await Promise.resolve();
+    });
+
+    const suggestedText = container.textContent ?? "";
+    expect(suggestedText).toContain("BTC / ETH / SOL, USYC, EURC");
+    expect(onPreferencesChange).toHaveBeenCalledWith({
+      networks: ["ARC-TESTNET", "BASE-SEPOLIA"],
+      tokens: ["USDC"],
+      watchlist: ["BTC_ETH_SOL", "USYC", "EURC"],
+    });
+    expect(
+      window.localStorage.getItem("aegis.wallet.route-preferences.v1"),
+    ).toContain("BTC_ETH_SOL");
 
     act(() => root.unmount());
   });
 });
+
+function findButton(container: HTMLElement, text: string): HTMLButtonElement {
+  const button = Array.from(
+    container.querySelectorAll<HTMLButtonElement>("button"),
+  ).find((candidate) => candidate.textContent?.includes(text));
+  if (!button) {
+    throw new Error(`Button not found: ${text}`);
+  }
+  return button;
+}
 
 function render(element: React.ReactElement): {
   container: HTMLDivElement;

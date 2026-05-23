@@ -63,6 +63,9 @@ pub struct AllocationInput {
 #[serde(rename_all = "camelCase")]
 pub struct UpdatePortfolioRequest {
     pub name: Option<String>,
+    /// Full goal replacement. Used by account surfaces that attach agent
+    /// preferences such as allowed wallet routes.
+    pub goal: Option<serde_json::Value>,
     #[allow(dead_code)]
     pub allocations: Option<Vec<AllocationInput>>,
 }
@@ -96,6 +99,27 @@ mod tests {
         assert_eq!(parsed.allocations.len(), 2);
         assert_eq!(parsed.allocations[1].target_weight, 0.5);
         assert!(parsed.goal.is_some());
+    }
+
+    #[test]
+    fn update_portfolio_request_accepts_goal_patch() {
+        let json = r#"{
+            "goal": {
+                "name": "Treasury",
+                "routePreferences": {
+                    "networks": ["ARC-TESTNET", "BASE-SEPOLIA"],
+                    "tokens": ["USDC"],
+                    "watchlist": ["USYC", "EURC"]
+                }
+            }
+        }"#;
+        let parsed: UpdatePortfolioRequest = serde_json::from_str(json).unwrap();
+        let goal = parsed.goal.expect("goal patch");
+        assert_eq!(
+            goal.pointer("/routePreferences/tokens/0")
+                .and_then(|v| v.as_str()),
+            Some("USDC")
+        );
     }
 
     #[test]

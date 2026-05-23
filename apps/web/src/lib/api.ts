@@ -266,6 +266,7 @@ export interface CreatePortfolioInput {
 
 export interface UpdatePortfolioInput {
   name?: string;
+  goal?: PortfolioGoal;
 }
 
 /** Wire shape of an allocation from the backend. The Rust serializer emits

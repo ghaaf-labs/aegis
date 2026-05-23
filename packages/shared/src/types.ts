@@ -61,6 +61,16 @@ export type RiskTolerance = "conservative" | "moderate" | "aggressive";
 
 export type GoalHorizon = "1y" | "3y" | "5y" | "10y" | "20y+";
 
+export interface RoutePreferences {
+  /** Circle chain codes the agent may use for executable plans. */
+  networks: string[];
+  /** Asset symbols the agent may use in executable plans. */
+  tokens: string[];
+  /** Non-executable assets the user wants the agent to monitor for future support. */
+  watchlist: string[];
+  updatedAt?: string;
+}
+
 export interface PortfolioGoal {
   /** Human label, e.g. "Retirement", "Treasury", "Speculative". */
   name: string;
@@ -75,6 +85,8 @@ export interface PortfolioGoal {
   includeUsyc: boolean;
   /** Always available; default 0 in `targetAllocation`. */
   includeEurc: boolean;
+  /** Agent execution scope chosen from the wallet page. */
+  routePreferences?: RoutePreferences;
   createdAt: string;
 }
 
