@@ -42,14 +42,14 @@ export default function HelpPage() {
               One dollar can be in only one place
             </h2>
             <p className="max-w-2xl text-sm leading-relaxed text-text-lo">
-              Cash waits in Wallets. Approved moves become invested positions on
-              Dashboard and Portfolio. Transactions shows what is waiting,
-              running, finished, or no longer usable.
+              Wallet cash stays in Wallets until you approve a move. Approved
+              moves become positions on Dashboard and Portfolio. Transactions
+              shows what is waiting, running, finished, or no longer usable.
             </p>
             <div className="grid gap-2 text-[11px] font-mono sm:grid-cols-3">
-              <HelpFact label="Wallet" value="idle USDC / EURC" />
-              <HelpFact label="Portfolio" value="invested value" />
-              <HelpFact label="Approvals" value="blocked vs executable" />
+              <HelpFact label="Wallet" value="cash available" />
+              <HelpFact label="Portfolio" value="approved positions" />
+              <HelpFact label="Approvals" value="ready or blocked" />
             </div>
           </div>
           <HelpFlowSvg />
@@ -141,7 +141,7 @@ function HelpFlowSvg() {
           to="0"
         />
       </path>
-      <MapNode x={28} y={52} label="Wallet" sublabel="idle cash" tone="money" />
+      <MapNode x={28} y={52} label="Wallet" sublabel="cash" tone="money" />
       <MapNode
         x={292}
         y={22}
@@ -175,7 +175,7 @@ function HelpFlowSvg() {
           cash now
         </text>
         <text x="12" y="22" fill="#8a8a8a" fontFamily="monospace" fontSize="9">
-          after OK
+          after approval
         </text>
       </g>
     </svg>

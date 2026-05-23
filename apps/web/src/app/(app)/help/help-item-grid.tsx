@@ -56,9 +56,9 @@ export function HelpItemGrid() {
   const sessionResolved = usePortfolioStore((s) => s.sessionResolved);
 
   const accessLabel = !sessionResolved
-    ? "Checking access…"
+    ? "Account page"
     : sessionActive
-      ? "In your account"
+      ? "Ready to open"
       : "Sign in to open";
 
   return (
