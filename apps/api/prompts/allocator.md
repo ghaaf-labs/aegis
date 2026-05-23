@@ -74,6 +74,15 @@ context only.
 
 {{ route_capabilities }}
 
+### Tax-loss harvesting (per-user)
+
+These holdings are at an unrealized loss. When the new target implies trimming a
+position, prefer realizing a loss-leg first — it offsets gains and is surfaced
+for the user's approval. Skip when below threshold or for an aggressive user
+with no offsetting gains.
+
+{{ harvestable_losses }}
+
 ## How to think
 
 Translate the objective + horizon + risk into a defensible mix, then tilt it for

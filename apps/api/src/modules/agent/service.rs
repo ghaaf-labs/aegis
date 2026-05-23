@@ -852,6 +852,36 @@ pub async fn propose_allocation(
     };
     ctx.insert("wallet_block", gateway_block);
     ctx.insert("route_capabilities", format_route_capabilities(&state.config));
+    // Tax-loss harvesting (RFB #4): make the allocator aware of positions
+    // sitting at an unrealized loss so it can prefer trimming them when moving
+    // toward the new target. The realized harvest is surfaced for approval via
+    // the existing rebalance plan (Gate 2) — nothing executes unapproved.
+    let harvestable = crate::modules::tax::service::harvestable_losses(
+        state,
+        portfolio.user_id,
+        req.portfolio_id,
+    )
+    .await
+    .unwrap_or_default();
+    let threshold = state.config.harvest_threshold_usd;
+    for loss in &harvestable {
+        if loss.unrealized_loss_usd >= threshold {
+            let _ = state.sse.send(SseEvent::TaxHarvestProposed(
+                crate::modules::sse::TaxHarvestPayload {
+                    user_id: portfolio.user_id,
+                    portfolio_id: req.portfolio_id,
+                    allocation_id: loss.allocation_id,
+                    symbol: loss.symbol.clone(),
+                    unrealized_loss_usd: loss.unrealized_loss_usd,
+                    proposed_at: chrono::Utc::now(),
+                },
+            ));
+        }
+    }
+    ctx.insert(
+        "harvestable_losses",
+        format_harvestable_losses(&harvestable),
+    );
 
     let prompt = state.prompts.render(PromptKey::Allocator, &ctx);
     let resp = ai
@@ -2110,6 +2140,7 @@ mod tests {
         ctx.insert("objective", "grow".into());
         ctx.insert("wallet_block", "Total USDC: 1000.00".into());
         ctx.insert("route_capabilities", "Executable now: USDC, cbBTC".into());
+        ctx.insert("harvestable_losses", "(none)".into());
         let rendered = reg.render(PromptKey::Allocator, &ctx);
         assert!(
             !rendered.contains("{{"),
