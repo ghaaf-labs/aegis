@@ -46,7 +46,13 @@ export function LegCard({
   txHash,
   failureReason,
 }: LegCardProps) {
-  const explorer = explorerTxUrl(destChain ?? srcChain, txHash);
+  // A CCTP burn executes on the source chain; the mint and single-chain legs
+  // execute on the destination, so link each tx to the chain it actually ran on.
+  const explorerChain =
+    kind === "cross_chain_burn"
+      ? (srcChain ?? destChain)
+      : (destChain ?? srcChain);
+  const explorer = explorerTxUrl(explorerChain, txHash);
   return (
     <div
       data-testid="leg-card"
