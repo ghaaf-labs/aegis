@@ -65,7 +65,7 @@ test("X5 — strategies guest CTA links to login", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: /Strategies/i }),
   ).toBeVisible();
-  const cta = page.getByRole("link", { name: /Continue with email/i }).first();
+  const cta = page.getByRole("link", { name: /Sign in/i }).first();
   await expect(cta).toBeVisible();
   const href = await cta.getAttribute("href");
   expect(href).toMatch(/\/login/);
