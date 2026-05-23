@@ -12,11 +12,11 @@ const securityHeaders = [
     key: "Content-Security-Policy",
     value: [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'", // unsafe-inline/eval required by Next.js/Turbopack in dev
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://static.cloudflareinsights.com", // unsafe-inline/eval required by Next.js/Turbopack in dev
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
       "img-src 'self' data: https://assets.coingecko.com https://coin-images.coingecko.com",
-      "connect-src 'self' https://openrouter.ai https://api.circle.com https://eu.infisical.com",
+      "connect-src 'self' https://openrouter.ai https://api.circle.com https://eu.infisical.com https://cloudflareinsights.com",
       "frame-ancestors 'none'",
     ].join("; "),
   },
