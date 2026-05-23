@@ -9,6 +9,12 @@ import type { AgentDecision, Portfolio } from "@/types";
 export interface DemoBundle {
   portfolio: Portfolio;
   decisions: AgentDecision[];
+  /**
+   * Asset symbols that are illustrative only — the live route registry does
+   * not yet execute them. The detail UI should badge these "coming soon".
+   * Optional; absent means all sleeves in the portfolio are live-executable.
+   */
+  unsupportedSleeves?: string[];
 }
 
 const NOW = "2026-05-14T12:00:00Z";
@@ -85,13 +91,14 @@ export const DEMO_BUNDLES: Record<string, DemoBundle> = {
       d(
         "demo-decision-cr-1",
         "conservative-retiree",
-        "Vol-of-vol spiking; risk-off classifier confidence 0.81. Lean further into USYC, keep BTC drift under 25%. Holder's horizon (20y+) tolerates the muted upside in exchange for the drawdown protection USYC offers.",
+        "Vol-of-vol spiking; risk-off classifier confidence 0.81. In this simulated scenario the agent illustrates shifting further into a yield-bearing sleeve, keeping BTC drift under 25%. The holder's horizon (20y+) tolerates muted upside in exchange for drawdown protection. Note: USYC and EURC sleeves are coming soon — shown here as simulation only.",
         "risk_off",
         0.79,
         "anthropic/claude-opus-4-7",
-        "Park 5% more in USYC; trim ETH back to target.",
+        "Illustrative: increase yield sleeve; trim ETH back to target.",
       ),
     ],
+    unsupportedSleeves: ["USYC", "EURC"],
   },
   "aggressive-builder": {
     portfolio: p("aggressive-builder", "Aggressive Builder", 48_000, 31.2, {
@@ -131,13 +138,14 @@ export const DEMO_BUNDLES: Record<string, DemoBundle> = {
       d(
         "demo-decision-td-1",
         "operating-reserve",
-        "Neutral regime with correlation ticking up; cash earning 5.1% on USYC is hard to beat at this risk level. Add an EURC sleeve to diversify operating-currency exposure.",
+        "Neutral regime with correlation ticking up. In this simulated scenario the agent illustrates a USYC yield sleeve and an EURC sleeve to diversify operating-currency exposure. Note: USYC and EURC sleeves are coming soon — shown here as simulation only.",
         "neutral",
         0.81,
         "anthropic/claude-opus-4-7",
-        "Hold; sweep idle USDC into USYC weekly.",
+        "Hold; illustrative: sweep idle USDC into yield sleeve (coming soon).",
       ),
     ],
+    unsupportedSleeves: ["USYC", "EURC"],
   },
 };
 

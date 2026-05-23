@@ -195,7 +195,11 @@ describe("<NetworkTokenPanel />", () => {
       expect(text).toContain(tokenCopy);
     }
 
-    expect(container.querySelectorAll("button:disabled")).toHaveLength(0);
+    const disabledButtons = Array.from(
+      container.querySelectorAll<HTMLButtonElement>("button:disabled"),
+    );
+    expect(disabledButtons).toHaveLength(1);
+    expect(disabledButtons[0]?.textContent).toContain("Coming soon");
 
     await act(async () => {
       findButton(container, "Agent suggestion").click();
