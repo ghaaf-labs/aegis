@@ -18,12 +18,25 @@ const jetbrainsMono = JetBrains_Mono({
   display: "swap",
 });
 
+const isIndexable =
+  process.env.VERCEL_ENV === "production" ||
+  process.env.NEXT_PUBLIC_SITE_INDEXABLE === "true";
+
 export const metadata: Metadata = {
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
+  ),
   title: "Aegis — AI Portfolio Manager",
   description:
     "AI-powered adaptive crypto portfolio management. Autonomously monitors, rebalances, and explains your investments.",
   keywords: ["crypto", "portfolio", "AI", "rebalancing", "DeFi"],
-  robots: { index: false, follow: false },
+  robots: isIndexable
+    ? { index: true, follow: true }
+    : { index: false, follow: false },
+  icons: {
+    icon: "/icon.svg",
+    apple: "/apple-icon.svg",
+  },
   openGraph: {
     title: "Aegis — AI Portfolio Manager",
     description: "AI-powered adaptive crypto portfolio management.",

@@ -59,6 +59,19 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  async redirects() {
+    return [
+      { source: "/strategies", destination: "/dashboard", permanent: true },
+      { source: "/builder", destination: "/dashboard", permanent: true },
+      {
+        source: "/portfolio-builder",
+        destination: "/dashboard",
+        permanent: true,
+      },
+      { source: "/routes", destination: "/dashboard", permanent: true },
+      { source: "/support", destination: "/help", permanent: true },
+    ];
+  },
   async rewrites() {
     return [
       {
