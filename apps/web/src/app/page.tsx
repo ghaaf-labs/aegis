@@ -79,9 +79,9 @@ const FEATURES = [
   {
     icon: Shield,
     accent: "agent",
-    title: "USDC-native on Arc + Base",
+    title: "Real on-chain execution",
     description:
-      "Cross-chain rebalancing via CCTP V2 + Hooks. Gas paid in USDC by Circle Paymaster — never bridge ETH again. EURC sleeve via Arc StableFX.",
+      "CCTP V2 bridge, Uniswap V3 swaps on Base, and USYC Teller on Arc — route registry validates every leg before approval, never at submit time.",
   },
   {
     icon: Zap,
@@ -106,21 +106,21 @@ const FEATURES = [
   },
   {
     icon: BarChart3,
-    accent: "pnl",
+    accent: "agent",
     title: "Yield on idle USDC",
     description:
       "Park cash in USYC for the Hashnote treasury rate. The strategist factors current yield into every rebalance proposal.",
   },
   {
     icon: FileSpreadsheet,
-    accent: "pnl",
+    accent: "agent",
     title: "Tax-loss harvesting + 1099-DA",
     description:
       "The strategist spots open lots at a loss and proposes a harvest. Export a 1099-DA-ready CSV for your accountant.",
   },
   {
     icon: Trophy,
-    accent: "pnl",
+    accent: "agent",
     title: "Trustability score + peg defense",
     description:
       "A rolling score grades decisions against realized outcomes. Peg-defense auto-proposes rebalances the moment a stablecoin drifts.",
@@ -404,9 +404,7 @@ export default function LandingPage() {
         <div className="border-brutal border-border-default bg-surface shadow-brutal">
           {/* Browser chrome */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-border-default bg-raised">
-            <span className="text-xs text-text-mut font-mono">
-              aegis.app/dashboard
-            </span>
+            <span className="text-xs text-text-mut font-mono">dashboard</span>
             <div className="flex items-center gap-2">
               <span className="flex items-center gap-1 text-[10px] font-mono text-accent-agent">
                 <span className="w-1.5 h-1.5 rounded-full bg-accent-agent animate-pulse" />
