@@ -14,7 +14,9 @@ test("decision trace shows a graceful empty state for unknown ids", async ({
   await expect(page.getByRole("link", { name: /leaderboard/i })).toBeVisible();
 });
 
-test("constitution anchor links resolve", async ({ page }) => {
-  await page.goto("/about/constitution");
-  await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
+test("about page renders team and hero", async ({ page }) => {
+  await page.goto("/about");
+  await expect(page.getByRole("heading", { name: /AEGIS/i })).toBeVisible();
+  await expect(page.getByText(/Mahdi Zarrintareh/i)).toBeVisible();
+  await expect(page.getByText(/Mohammad Jalili/i)).toBeVisible();
 });
