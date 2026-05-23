@@ -55,9 +55,22 @@ export default function StrategiesPage() {
       </div>
 
       {error && (
-        <p className="text-xs font-mono text-risk">
-          Failed to load strategies: {error.message}
-        </p>
+        <section className="border-brutal border-risk/40 bg-risk/5 p-4 font-mono text-sm text-text-lo">
+          <p className="font-semibold text-text-hi">
+            Couldn&apos;t load strategies
+          </p>
+          <p className="mt-1 text-xs leading-relaxed">
+            Aegis couldn&apos;t reach the strategy catalog. Refresh to try
+            again, or{" "}
+            <Link
+              href="/onboarding"
+              className="text-accent-agent hover:underline"
+            >
+              build a custom portfolio
+            </Link>{" "}
+            instead.
+          </p>
+        </section>
       )}
       {adoptError && (
         <p className="text-xs font-mono text-risk">
@@ -93,7 +106,7 @@ export default function StrategiesPage() {
 
       {isLoading && !data ? (
         <p className="text-xs font-mono text-text-mut">Loading…</p>
-      ) : (data ?? []).length === 0 ? (
+      ) : error ? null : (data ?? []).length === 0 ? (
         <section className="border-brutal border-border-default bg-raised p-8 text-center space-y-2">
           <p className="text-sm font-mono text-text-lo">
             No strategies available yet — check back soon.
