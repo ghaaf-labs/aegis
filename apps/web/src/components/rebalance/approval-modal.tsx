@@ -334,6 +334,20 @@ export function ApprovalModal({
             </div>
           )}
 
+          {!approvalBlocked && plan.totalLegs > 0 && (
+            <div className="mb-3 border border-accent-pnl/30 bg-accent-pnl/5 px-3 py-2 font-mono text-[11px] text-text-lo">
+              <p className="text-[10px] uppercase tracking-wider text-accent-pnl">
+                Guardrails passed
+              </p>
+              <p className="mt-1 leading-relaxed">
+                Within the safety clamps — ≤60% single asset, stable reserve
+                floor, $5 minimum move, executable routes only
+                {decision?.regime ? `, ${decision.regime} regime bands` : ""}.
+                Nothing moves until you approve.
+              </p>
+            </div>
+          )}
+
           {decision &&
             (() => {
               const headline = pickHeadlineConfidence(decision);
@@ -627,7 +641,7 @@ export function ApprovalModal({
                 "px-4 py-2 text-sm font-semibold border-2",
                 approvalBlocked
                   ? "bg-warn/20 text-warn border-warn/40"
-                  : "bg-emerald-500 text-black border-emerald-300 hover:bg-emerald-400",
+                  : "bg-emerald-500 text-black border-emerald-300 hover:bg-emerald-400", // PnL exception: approve = move funds, green per dual-accent rule
                 "transition-colors",
                 "disabled:opacity-50 disabled:cursor-not-allowed",
               )}

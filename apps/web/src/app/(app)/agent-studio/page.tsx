@@ -21,10 +21,8 @@ import {
 } from "@aegis/ui";
 import { agentApi, userAgentApi } from "@/lib/api";
 import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
-import {
-  deriveIdleCashUsd,
-  derivePortfolioPositionMetrics,
-} from "@/lib/portfolio-values";
+import { derivePortfolioPositionMetrics } from "@/lib/portfolio-values";
+import { totalWalletCashUsd } from "@/lib/cash-model";
 
 const RECOMMENDATION_TIMEOUT_MS = 45_000;
 
@@ -43,7 +41,7 @@ export default function AgentStudioPage() {
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const idleCashUsd = deriveIdleCashUsd(
+  const idleCashUsd = totalWalletCashUsd(
     unifiedUsdc,
     unifiedEurc,
     marketSnapshot,

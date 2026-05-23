@@ -216,9 +216,14 @@ export function AssetTable() {
                 const position = valueBySymbol[alloc.symbol];
                 const currentWeight = position?.currentWeight ?? 0;
                 const liveValueUsd = (price?.priceUsd ?? 0) * alloc.quantity;
+                // USDC is held as wallet cash, not a confirmed position, so its
+                // `alloc.valueUsd`/quantity are 0 — show the live wallet-cash
+                // balance instead of $0.00.
                 const valueUsd =
-                  position?.valueUsd ??
-                  (liveValueUsd > 0 ? liveValueUsd : alloc.valueUsd);
+                  alloc.symbol === "USDC"
+                    ? walletCashUsd
+                    : (position?.valueUsd ??
+                      (liveValueUsd > 0 ? liveValueUsd : alloc.valueUsd));
                 const fallbackPriceUsd =
                   alloc.quantity > 0 && alloc.valueUsd > 0
                     ? alloc.valueUsd / alloc.quantity

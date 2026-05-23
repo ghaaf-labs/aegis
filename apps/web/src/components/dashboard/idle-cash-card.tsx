@@ -2,8 +2,11 @@
 
 import Link from "next/link";
 import { Wallet, ArrowRight, CircleAlert, Loader2 } from "lucide-react";
-import { usePortfolioStore } from "@/stores/portfolio";
-import { formatCurrency } from "@/lib/utils";
+import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
+import { formatCurrency, timeAgo } from "@/lib/utils";
+import { deriveCashSplit } from "@/lib/cash-model";
+import { derivePortfolioPositionMetrics } from "@/lib/portfolio-values";
+import { targetAllocationsForPortfolio } from "@/components/dashboard/target-allocations";
 import {
   chainBalanceRows,
   walletRouteKeysFromNetworks,
@@ -18,17 +21,31 @@ import {
 
 export function IdleCashCard() {
   const wallet = usePortfolioStore((s) => s.wallet);
+  const portfolio = useActivePortfolio();
   const unifiedUsdc = usePortfolioStore((s) => s.unifiedUsdc);
   const unifiedEurc = usePortfolioStore((s) => s.unifiedEurc);
   const perChainUsdc = usePortfolioStore((s) => s.perChainUsdc);
   const perChainEurc = usePortfolioStore((s) => s.perChainEurc);
   const gatewayBalanceStatus = usePortfolioStore((s) => s.gatewayBalanceStatus);
   const gatewayBalanceError = usePortfolioStore((s) => s.gatewayBalanceError);
+  const gatewayBalanceUpdatedAt = usePortfolioStore(
+    (s) => s.gatewayBalanceUpdatedAt,
+  );
   const snapshot = usePortfolioStore((s) => s.marketSnapshot);
 
-  const eurcUsd =
-    snapshot?.assets.find((a) => a.symbol === "EURC")?.priceUsd ?? 1.085;
-  const totalUsd = unifiedUsdc + unifiedEurc * eurcUsd;
+  const investedUsd = derivePortfolioPositionMetrics(
+    portfolio,
+    snapshot,
+  ).investedUsd;
+  const cashSplit = deriveCashSplit({
+    unifiedUsdc,
+    unifiedEurc,
+    targetAllocations: targetAllocationsForPortfolio(portfolio),
+    investedUsd,
+    snapshot,
+  });
+  const eurcUsd = cashSplit.eurcUsd;
+  const totalUsd = cashSplit.totalWalletUsd;
   const hasIdleCash = totalUsd > 0.5;
   const balanceLoading =
     gatewayBalanceStatus === "idle" || gatewayBalanceStatus === "loading";
@@ -106,6 +123,29 @@ export function IdleCashCard() {
           </div>
         )}
 
+        {!balanceUnavailable &&
+          !balanceLoading &&
+          cashSplit.hasUsdcReserveTarget && (
+            <div className="grid grid-cols-2 gap-1.5">
+              <div className="border border-border-default bg-bg/70 px-2.5 py-2">
+                <p className="font-mono text-[10px] uppercase tracking-wider text-text-mut">
+                  USDC reserve · target {cashSplit.usdcTargetWeight.toFixed(0)}%
+                </p>
+                <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-text-hi">
+                  {formatCurrency(cashSplit.reserveUsd, { compact: true })}
+                </p>
+              </div>
+              <div className="border border-accent-pnl/30 bg-accent-pnl/5 px-2.5 py-2">
+                <p className="font-mono text-[10px] uppercase tracking-wider text-accent-pnl">
+                  Deployable surplus
+                </p>
+                <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-accent-pnl">
+                  {formatCurrency(cashSplit.deployableUsd, { compact: true })}
+                </p>
+              </div>
+            </div>
+          )}
+
         <div className="grid gap-1.5">
           {visibleBalanceRows.map((row) => (
             <div
@@ -164,10 +204,16 @@ export function IdleCashCard() {
           <ProvenanceLine
             source={
               balanceUnavailable
-                ? "wallet balance service · check failed"
-                : "wallet balance service · current total"
+                ? "balances as reported by Circle · check failed"
+                : "balances as reported by Circle"
             }
-            freshness={balanceUnavailable ? "needs retry" : "live"}
+            freshness={
+              balanceUnavailable
+                ? "needs retry"
+                : gatewayBalanceUpdatedAt
+                  ? `refreshed ${timeAgo(new Date(gatewayBalanceUpdatedAt).toISOString())}`
+                  : "live"
+            }
             className={balanceUnavailable ? "text-warn" : undefined}
           />
         </div>

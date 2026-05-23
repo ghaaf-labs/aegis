@@ -50,6 +50,9 @@ interface PortfolioState {
   /** Whether the latest wallet cash balance fetch is known-good. */
   gatewayBalanceStatus: "idle" | "loading" | "ready" | "error";
   gatewayBalanceError: string | null;
+  /** Epoch ms of the last successful balance update (SSE or fetch). Powers the
+   * "balances as reported by Circle · refreshed Ns ago" provenance line. */
+  gatewayBalanceUpdatedAt: number | null;
   /** Most-recent strategist tool invocations (capped at 20). */
   toolInvocations: AgentToolInvoked[];
   /** Most-recent abstain events (capped at 10). */
@@ -134,6 +137,7 @@ export const usePortfolioStore = create<PortfolioState>()(
       perChainEurc: {},
       gatewayBalanceStatus: "idle",
       gatewayBalanceError: null,
+      gatewayBalanceUpdatedAt: null,
       toolInvocations: [],
       abstains: [],
       rebalanceStatuses: {},
@@ -211,7 +215,11 @@ export const usePortfolioStore = create<PortfolioState>()(
       setUnifiedUsdc: (unifiedUsdc) => set({ unifiedUsdc }),
       setUnifiedEurc: (unifiedEurc) => set({ unifiedEurc }),
       setPerChain: (perChainUsdc, perChainEurc) =>
-        set({ perChainUsdc, perChainEurc }),
+        set({
+          perChainUsdc,
+          perChainEurc,
+          gatewayBalanceUpdatedAt: Date.now(),
+        }),
       setGatewayBalanceStatus: (gatewayBalanceStatus, gatewayBalanceError) =>
         set({
           gatewayBalanceStatus,
@@ -261,6 +269,7 @@ export const usePortfolioStore = create<PortfolioState>()(
           perChainEurc: {},
           gatewayBalanceStatus: "idle",
           gatewayBalanceError: null,
+          gatewayBalanceUpdatedAt: null,
           isRebalancing: false,
           selectedDecisionId: null,
           sseConnected: false,

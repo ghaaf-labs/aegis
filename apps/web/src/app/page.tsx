@@ -845,13 +845,13 @@ export default function LandingPage() {
                 <div className="p-4 grid grid-cols-2 gap-3">
                   <div className="border border-border-default bg-raised p-3 space-y-1">
                     <p className="text-[10px] font-mono text-text-lo uppercase tracking-widest">
-                      Idle cash
+                      Deployable surplus
                     </p>
                     <p className="text-lg font-mono font-bold text-text-hi tabular-nums">
                       $1,240
                     </p>
                     <p className="text-[10px] font-mono text-accent-agent">
-                      ready to deploy
+                      above the USDC reserve
                     </p>
                   </div>
                   <div className="border border-border-default bg-raised p-3 space-y-1">

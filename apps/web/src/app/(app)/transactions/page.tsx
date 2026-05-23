@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock3,
+  ExternalLink,
   ListChecks,
   Route,
   ShieldCheck,
@@ -18,19 +19,31 @@ import {
   BrutalCardHeader,
   BrutalPill,
 } from "@aegis/ui";
-import { rebalanceApi, type RebalanceApprovalSafety } from "@/lib/api";
+import {
+  rebalanceApi,
+  walletsApi,
+  type RebalanceApprovalSafety,
+  type WalletLedgerEntry,
+} from "@/lib/api";
 import { formatCurrency, timeAgo } from "@/lib/utils";
+import { walletRouteBadgeLabel } from "@/lib/wallet-routes";
 import { useActivePortfolio } from "@/stores/portfolio";
 
 type RebalanceHistoryRow = Awaited<
   ReturnType<typeof rebalanceApi.history>
 >[number];
 
+type LedgerTab = "onchain" | "plans";
+
 export default function TransactionsPage() {
   const portfolio = useActivePortfolio();
+  const [tab, setTab] = useState<LedgerTab>("onchain");
   const [rows, setRows] = useState<RebalanceHistoryRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [ledger, setLedger] = useState<WalletLedgerEntry[]>([]);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [ledgerError, setLedgerError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!portfolio) return;
@@ -58,61 +71,378 @@ export default function TransactionsPage() {
     };
   }, [portfolio]);
 
+  // The on-chain ledger is per-wallet (all chains), not per-portfolio, so it
+  // loads independently of the active portfolio.
+  useEffect(() => {
+    let cancelled = false;
+    setLedgerLoading(true);
+    setLedgerError(null);
+    walletsApi
+      .transactions()
+      .then((entries) => {
+        if (!cancelled) setLedger(entries);
+      })
+      .catch((e) => {
+        if (!cancelled)
+          setLedgerError(
+            e instanceof Error
+              ? e.message
+              : "On-chain transactions are unavailable right now.",
+          );
+      })
+      .finally(() => {
+        if (!cancelled) setLedgerLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <div className="mx-auto max-w-[1400px] space-y-6">
       <div>
         <p className="text-[10px] font-mono uppercase tracking-widest text-accent-agent">
-          Execution ledger
+          On-chain ledger
         </p>
         <h1 className="mt-1 flex items-center gap-2 text-2xl font-mono font-semibold tracking-tight text-text-hi">
           <ListChecks className="h-5 w-5 text-accent-agent" />
           Transactions
         </h1>
         <p className="mt-1 max-w-2xl text-sm text-text-lo">
-          Approved moves appear here. Reviews that are waiting, need changes, or
-          finished stay separate so it is clear what actually moved money.
+          Every real on-chain move across your wallets — funding, CCTP bridges,
+          swaps, approvals — with explorer links. Rebalance-plan history is a
+          filter below.
         </p>
-        {rows.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-mono">
-            <SummaryPill
-              label="Completed"
-              value={rows.filter((r) => r.status === "completed").length}
-              tone="pnl"
-            />
-            <SummaryPill
-              label="Ready"
-              value={
-                rows.filter(
-                  (r) =>
-                    r.approvalSafety?.approvable === true &&
-                    r.executionMode !== "mock",
-                ).length
-              }
-              tone="agent"
-            />
-            <SummaryPill
-              label="Needs changes"
-              value={
-                rows.filter((r) => r.approvalSafety?.approvable === false)
-                  .length
-              }
-              tone="warn"
-            />
-            <SummaryPill
-              label="Failed"
-              value={rows.filter((r) => r.status === "failed").length}
-              tone="risk"
-            />
-          </div>
-        )}
       </div>
+
+      <div
+        role="tablist"
+        aria-label="Transaction view"
+        className="flex flex-wrap gap-2"
+      >
+        <TabButton
+          active={tab === "onchain"}
+          onClick={() => setTab("onchain")}
+          label="On-chain"
+          count={ledger.length}
+        />
+        <TabButton
+          active={tab === "plans"}
+          onClick={() => setTab("plans")}
+          label="Rebalance plans"
+          count={rows.length}
+        />
+      </div>
+
+      {tab === "onchain" ? (
+        <OnChainLedger
+          entries={ledger}
+          loading={ledgerLoading}
+          error={ledgerError}
+        />
+      ) : (
+        <PlanHistory
+          portfolio={portfolio}
+          rows={rows}
+          loading={loading}
+          error={error}
+        />
+      )}
+    </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  label,
+  count,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  count: number;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={`inline-flex min-h-9 items-center gap-2 border px-3 font-mono text-xs ${
+        active
+          ? "border-accent-agent bg-accent-agent/10 text-accent-agent"
+          : "border-border-default bg-bg text-text-lo hover:border-border-hi hover:text-text-hi"
+      }`}
+    >
+      {label}
+      <span className="rounded-sharp bg-white/5 px-1.5 py-0.5 text-[10px] tabular-nums text-text-mut">
+        {count}
+      </span>
+    </button>
+  );
+}
+
+function OnChainLedger({
+  entries,
+  loading,
+  error,
+}: {
+  entries: WalletLedgerEntry[];
+  loading: boolean;
+  error: string | null;
+}) {
+  return (
+    <BrutalCard>
+      <BrutalCardHeader>
+        <span className="text-sm font-mono text-text-hi">
+          All-wallet activity
+        </span>
+        <span className="text-[11px] font-mono text-text-lo">
+          {loading ? "Loading..." : `${entries.length} transactions`}
+        </span>
+      </BrutalCardHeader>
+      <BrutalCardBody>
+        {error && (
+          <p
+            aria-live="polite"
+            className="mb-3 border border-risk/40 bg-risk/5 px-3 py-2 text-xs font-mono text-risk"
+          >
+            {error}
+          </p>
+        )}
+        {loading ? (
+          <LoadingState />
+        ) : entries.length === 0 ? (
+          <EmptyState
+            title="No on-chain transactions yet"
+            body="Fund a wallet or approve a plan. Deposits, bridges, swaps, and approvals across every chain appear here with explorer links."
+            href="/wallets"
+            cta="Open wallets"
+          />
+        ) : (
+          <>
+            <div className="space-y-3 md:hidden">
+              {entries.map((entry) => (
+                <LedgerCard key={entry.id} entry={entry} />
+              ))}
+            </div>
+            <div className="hidden overflow-x-auto md:block">
+              <table className="w-full text-left text-xs font-mono">
+                <thead className="border-b border-border-default text-text-mut">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">Type</th>
+                    <th className="px-3 py-2 font-medium">Chain</th>
+                    <th className="px-3 py-2 font-medium">Token</th>
+                    <th className="px-3 py-2 font-medium text-right">Amount</th>
+                    <th className="px-3 py-2 font-medium">Status</th>
+                    <th className="px-3 py-2 font-medium">When</th>
+                    <th className="px-3 py-2 font-medium text-right">
+                      Explorer
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {entries.map((entry) => (
+                    <LedgerRow key={entry.id} entry={entry} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </BrutalCardBody>
+    </BrutalCard>
+  );
+}
+
+function LedgerRow({ entry }: { entry: WalletLedgerEntry }) {
+  return (
+    <tr className="border-b border-white/5 align-top last:border-b-0 hover:bg-white/[0.02]">
+      <td className="px-3 py-3">
+        <KindPill kind={entry.kind} />
+      </td>
+      <td className="px-3 py-3 text-text-hi">
+        {walletRouteBadgeLabel(entry.chain)}
+      </td>
+      <td className="px-3 py-3 text-text-default">{entry.token ?? "—"}</td>
+      <td className="px-3 py-3 text-right tabular-nums text-text-default">
+        {entry.amount ?? "—"}
+      </td>
+      <td className="px-3 py-3">
+        <LedgerStatusPill status={entry.status} />
+      </td>
+      <td className="px-3 py-3 text-text-lo">
+        {entry.date ? timeAgo(entry.date) : "—"}
+      </td>
+      <td className="px-3 py-3 text-right">
+        {entry.explorerUrl ? (
+          <a
+            href={entry.explorerUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex min-h-8 items-center gap-1 text-accent-agent hover:underline"
+          >
+            View
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        ) : (
+          <span className="text-text-mut">—</span>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+function LedgerCard({ entry }: { entry: WalletLedgerEntry }) {
+  return (
+    <article className="border border-border-default bg-bg p-3 font-mono text-xs">
+      <div className="flex items-start justify-between gap-3">
+        <KindPill kind={entry.kind} />
+        <LedgerStatusPill status={entry.status} />
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <MobileFact label="Chain" value={walletRouteBadgeLabel(entry.chain)} />
+        <MobileFact label="Token" value={entry.token ?? "—"} />
+        <MobileFact label="Amount" value={entry.amount ?? "—"} />
+        <MobileFact
+          label="When"
+          value={entry.date ? timeAgo(entry.date) : "—"}
+        />
+      </div>
+      {entry.explorerUrl && (
+        <a
+          href={entry.explorerUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-3 inline-flex min-h-9 w-full items-center justify-center gap-2 border border-accent-agent/40 bg-accent-agent/10 px-3 text-[11px] font-semibold text-accent-agent"
+        >
+          View on explorer
+          <ExternalLink className="h-3 w-3" />
+        </a>
+      )}
+    </article>
+  );
+}
+
+function KindPill({ kind }: { kind: WalletLedgerEntry["kind"] }) {
+  const meta: Record<
+    WalletLedgerEntry["kind"],
+    { label: string; className: string }
+  > = {
+    deposit: {
+      label: "Deposit",
+      className: "border-accent-pnl/40 bg-accent-pnl/10 text-accent-pnl",
+    },
+    bridge: {
+      label: "Bridge",
+      className: "border-accent-agent/40 bg-accent-agent/10 text-accent-agent",
+    },
+    swap: {
+      label: "Swap",
+      className: "border-accent-agent/40 bg-accent-agent/10 text-accent-agent",
+    },
+    approve: {
+      label: "Approve",
+      className: "border-border-default bg-bg text-text-lo",
+    },
+    outbound: {
+      label: "Outbound",
+      className: "border-warn/40 bg-warn/10 text-warn",
+    },
+    contract: {
+      label: "Contract",
+      className: "border-border-default bg-bg text-text-lo",
+    },
+  };
+  const { label, className } = meta[kind] ?? meta.contract;
+  return (
+    <span
+      className={`inline-flex items-center gap-1 border px-1.5 py-0.5 text-[10px] uppercase tracking-widest ${className}`}
+    >
+      {label}
+    </span>
+  );
+}
+
+function LedgerStatusPill({ status }: { status: string }) {
+  const lower = status.toLowerCase();
+  if (lower === "complete" || lower === "confirmed" || lower === "completed") {
+    return (
+      <BrutalPill tone="pnl">
+        <CheckCircle2 className="h-3 w-3" />
+        Confirmed
+      </BrutalPill>
+    );
+  }
+  if (lower === "failed" || lower === "cancelled" || lower === "denied") {
+    return (
+      <span className="inline-flex items-center gap-1 border border-risk/40 bg-risk/10 px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-risk">
+        <XCircle className="h-3 w-3" />
+        {status || "failed"}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 border border-warn/40 bg-warn/10 px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-warn">
+      <Clock3 className="h-3 w-3" />
+      {status || "pending"}
+    </span>
+  );
+}
+
+function PlanHistory({
+  portfolio,
+  rows,
+  loading,
+  error,
+}: {
+  portfolio: ReturnType<typeof useActivePortfolio>;
+  rows: RebalanceHistoryRow[];
+  loading: boolean;
+  error: string | null;
+}) {
+  return (
+    <>
+      {rows.length > 0 && (
+        <div className="flex flex-wrap gap-2 text-[10px] font-mono">
+          <SummaryPill
+            label="Completed"
+            value={rows.filter((r) => r.status === "completed").length}
+            tone="pnl"
+          />
+          <SummaryPill
+            label="Ready"
+            value={
+              rows.filter(
+                (r) =>
+                  r.approvalSafety?.approvable === true &&
+                  r.executionMode !== "mock",
+              ).length
+            }
+            tone="agent"
+          />
+          <SummaryPill
+            label="Needs changes"
+            value={
+              rows.filter((r) => r.approvalSafety?.approvable === false).length
+            }
+            tone="warn"
+          />
+          <SummaryPill
+            label="Failed"
+            value={rows.filter((r) => r.status === "failed").length}
+            tone="risk"
+          />
+        </div>
+      )}
 
       <LedgerFlowSvg />
 
       {!portfolio ? (
         <EmptyState
           title="No portfolio yet"
-          body="Create a portfolio target before Aegis can build transaction history."
+          body="Create a portfolio target before Aegis can build rebalance-plan history."
           href="/onboarding"
           cta="Create portfolio"
         />
@@ -120,7 +450,7 @@ export default function TransactionsPage() {
         <BrutalCard>
           <BrutalCardHeader>
             <span className="text-sm font-mono text-text-hi">
-              {portfolio.name} activity
+              {portfolio.name} plans
             </span>
             <span className="text-[11px] font-mono text-text-lo">
               {loading ? "Loading..." : `${rows.length} rows`}
@@ -139,8 +469,8 @@ export default function TransactionsPage() {
               <LoadingState />
             ) : rows.length === 0 ? (
               <EmptyState
-                title="No transactions yet"
-                body="Build a review from Dashboard or Portfolio. After you approve it, the move appears here."
+                title="No rebalance plans yet"
+                body="Build a review from Dashboard or Portfolio. After you approve it, the plan appears here."
                 href="/portfolio"
                 cta="Review portfolio"
               />
@@ -183,7 +513,7 @@ export default function TransactionsPage() {
           </BrutalCardBody>
         </BrutalCard>
       )}
-    </div>
+    </>
   );
 }
 

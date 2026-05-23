@@ -13,13 +13,18 @@ export default function AgentSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [autoPilot, setAutoPilot] = useState(false);
+  const [autoPilotBusy, setAutoPilotBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     userAgentApi
       .status()
       .then((s) => {
-        if (!cancelled) setPausedAt(s.pausedAt);
+        if (!cancelled) {
+          setPausedAt(s.pausedAt);
+          setAutoPilot(s.autoPilotEnabled);
+        }
       })
       .catch((e) => {
         if (!cancelled)
@@ -47,6 +52,19 @@ export default function AgentSettingsPage() {
       setBusy(false);
     }
   }, [pausedAt, setPausedAt]);
+
+  const toggleAutoPilot = useCallback(async () => {
+    setAutoPilotBusy(true);
+    setError(null);
+    try {
+      const next = await userAgentApi.setAutoPilot(!autoPilot);
+      setAutoPilot(next.autoPilotEnabled);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Auto-pilot toggle failed");
+    } finally {
+      setAutoPilotBusy(false);
+    }
+  }, [autoPilot]);
 
   const isPaused = pausedAt !== null;
 
@@ -103,6 +121,43 @@ export default function AgentSettingsPage() {
           {error && (
             <p role="alert" className="text-xs text-risk font-mono">
               {error}
+            </p>
+          )}
+        </BrutalCardBody>
+      </BrutalCard>
+
+      <BrutalCard>
+        <BrutalCardBody className="flex flex-col gap-4">
+          <div className="flex items-baseline justify-between gap-4">
+            <div>
+              <p className="text-xs font-mono uppercase tracking-widest text-text-mut">
+                Auto-pilot
+              </p>
+              <p className="mt-1 text-xl font-mono font-semibold text-text-hi">
+                {loading ? "Loading…" : autoPilot ? "On" : "Off"}
+              </p>
+              <p className="mt-1 max-w-xl text-xs leading-relaxed text-text-lo">
+                {autoPilot
+                  ? "The agent deploys and rebalances on its own within the safety clamps (≤60% single asset, stable floor, $5 dust minimum, peg defense, constitution, route-registry fail-closed). No approval modal — moves appear in the activity feed and Transactions."
+                  : "Off: the agent prepares moves and shows you one clean review→approve screen before anything executes."}
+              </p>
+            </div>
+            <BrutalButton
+              variant={autoPilot ? "danger" : "agent"}
+              onClick={() => void toggleAutoPilot()}
+              disabled={loading || autoPilotBusy || isPaused}
+            >
+              {autoPilotBusy
+                ? "Working…"
+                : autoPilot
+                  ? "Turn off auto-pilot"
+                  : "Turn on auto-pilot"}
+            </BrutalButton>
+          </div>
+          {isPaused && (
+            <p className="border-t border-border-default pt-4 text-xs text-text-lo">
+              Auto-pilot is inert while the agent is paused. Resume the agent to
+              let it act on its own.
             </p>
           )}
         </BrutalCardBody>

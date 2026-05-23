@@ -26,13 +26,16 @@ import { BrutalButton } from "@aegis/ui";
 import {
   agentApi,
   rebalanceApi,
+  userAgentApi,
   type RebalanceApprovalSafety,
   type RebalancePlanResponse,
 } from "@/lib/api";
+import { dismissProposal, isProposalDismissed } from "@/lib/proposal-dismissal";
 import type { AgentDecision } from "@/types";
 import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
 import { formatCurrency } from "@/lib/utils";
 import { derivePortfolioPositionMetrics } from "@/lib/portfolio-values";
+import { deriveCashSplit } from "@/lib/cash-model";
 
 const stagger = { visible: { transition: { staggerChildren: 0.08 } } };
 const fadeUp = {
@@ -79,9 +82,24 @@ export default function PortfolioDashboardPage() {
   const [proposalDecision, setProposalDecision] =
     useState<AgentDecision | null>(null);
   const [proposalOpen, setProposalOpen] = useState(false);
-  const [proposalDismissed, setProposalDismissed] = useState(false);
   const [reproposing, setReproposing] = useState(false);
+  // Auto-pilot ON suppresses the Gate-1 modal entirely — proposals auto-apply
+  // and the result shows in the activity feed + Transactions, no modal.
+  const [autoPilotEnabled, setAutoPilotEnabled] = useState(false);
   const proposalParam = searchParams?.get("proposal") ?? null;
+
+  useEffect(() => {
+    let cancelled = false;
+    userAgentApi
+      .autoPilot()
+      .then((s) => {
+        if (!cancelled) setAutoPilotEnabled(s.autoPilotEnabled);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Latest agent allocation proposal for this portfolio that has not been
   // applied yet. Gate 1 opens on this ahead of the deploy flow.
@@ -94,9 +112,11 @@ export default function PortfolioDashboardPage() {
     ) ?? null;
 
   // Resolve a `?proposal=` deep-link (from onboarding) into a decision, since
-  // the freshly created proposal may not be in the store yet.
+  // the freshly created proposal may not be in the store yet. A deep-link is an
+  // explicit intent to view, so it bypasses the dismissal memory (but not
+  // auto-pilot, which never shows the modal).
   useEffect(() => {
-    if (!proposalParam || proposalDismissed) return;
+    if (!proposalParam || autoPilotEnabled) return;
     if (proposalDecision?.id === proposalParam) return;
     const fromStore = decisions.find((d) => d.id === proposalParam);
     if (fromStore) {
@@ -116,17 +136,19 @@ export default function PortfolioDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [proposalParam, proposalDecision?.id, proposalDismissed, decisions]);
+  }, [proposalParam, proposalDecision?.id, autoPilotEnabled, decisions]);
 
   // Fall back to the store's latest unapplied proposal when there is no
-  // explicit deep-link.
+  // explicit deep-link. A proposal the user already dismissed (persisted by
+  // decision id) does NOT re-open on refetch / SSE / remount, and with
+  // auto-pilot ON no Gate-1 modal opens at all.
   useEffect(() => {
-    if (proposalParam || proposalDismissed || proposalOpen) return;
-    if (pendingProposal) {
+    if (proposalParam || proposalOpen || autoPilotEnabled) return;
+    if (pendingProposal && !isProposalDismissed(pendingProposal.id)) {
       setProposalDecision(pendingProposal);
       setProposalOpen(true);
     }
-  }, [proposalParam, proposalDismissed, proposalOpen, pendingProposal]);
+  }, [proposalParam, proposalOpen, autoPilotEnabled, pendingProposal]);
 
   useEffect(() => {
     if (!portfoliosLoaded || activePortfolio) return;
@@ -134,7 +156,6 @@ export default function PortfolioDashboardPage() {
     router.replace(fallback ? `/dashboard/${fallback}` : "/onboarding");
   }, [activePortfolio, portfolios, portfoliosLoaded, router]);
 
-  const deployableUsdc = unifiedUsdc;
   const gatewayBalanceReady = gatewayBalanceStatus === "ready";
   const gatewayBalanceUnavailable = gatewayBalanceStatus === "error";
   const positionMetrics = derivePortfolioPositionMetrics(
@@ -143,6 +164,19 @@ export default function PortfolioDashboardPage() {
   );
   const investedUsd = positionMetrics.investedUsd;
   const hasInvestedPositions = investedUsd > 0.5;
+  const targetAllocations = targetAllocationsForPortfolio(activePortfolio);
+  // Only the idle USDC ABOVE the intended USDC reserve is actually deployable;
+  // the rest is the target cash reserve. The shared cash-model helper is the
+  // single source of this split across the whole platform.
+  const cashSplit = deriveCashSplit({
+    unifiedUsdc,
+    unifiedEurc,
+    targetAllocations,
+    investedUsd,
+    snapshot,
+  });
+  const usdcTargetWeight = cashSplit.usdcTargetWeight;
+  const deployableUsdc = cashSplit.deployableUsd;
   const hasIdleCash =
     gatewayBalanceReady && (unifiedUsdc > 0.5 || unifiedEurc > 0.5);
   const showFaucet =
@@ -158,9 +192,6 @@ export default function PortfolioDashboardPage() {
   const maxTargetDriftPct = positionMetrics.maxDriftPct;
   const hasReviewableDrift = maxTargetDriftPct >= 5;
   const isFirstDeploy = investedUsd <= 5;
-  const targetAllocations = targetAllocationsForPortfolio(activePortfolio);
-  const usdcTargetWeight =
-    targetAllocations.find((a) => a.symbol === "USDC")?.targetWeight ?? 0;
   const portfolioTitle = AGENT_PORTFOLIO_NAME;
   const agentModelSlug = proposalDecision?.modelSlug;
   const agentRegime = proposalDecision?.regime;
@@ -172,7 +203,6 @@ export default function PortfolioDashboardPage() {
     try {
       const decision = await agentApi.proposeAllocation(activePortfolio.id);
       setProposalDecision(decision);
-      setProposalDismissed(false);
       setProposalOpen(true);
     } catch {
       /* surfaced via the modal/feed; keep the dashboard responsive */
@@ -528,16 +558,16 @@ export default function PortfolioDashboardPage() {
       </motion.div>
 
       <AllocationProposalModal
-        open={proposalOpen && !proposalDismissed}
+        open={proposalOpen && !autoPilotEnabled}
         portfolioId={activePortfolio.id}
         decision={proposalDecision}
         onClose={() => {
           setProposalOpen(false);
-          setProposalDismissed(true);
+          dismissProposal(proposalDecision?.id);
         }}
         onApproved={() => {
           setProposalOpen(false);
-          setProposalDismissed(true);
+          dismissProposal(proposalDecision?.id);
           void handleDeploy();
         }}
       />

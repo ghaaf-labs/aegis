@@ -209,6 +209,27 @@ export const gatewayApi = {
   balance: () => request<UnifiedBalance>("/gateway/balance", { authed: true }),
 };
 
+/** One normalized on-chain transaction across all the user's chain wallets. */
+export interface WalletLedgerEntry {
+  id: string;
+  date: string | null;
+  /** Explorer chain key: arc | base | eth-sepolia | arb-sepolia | avax-fuji. */
+  chain: string;
+  kind: "deposit" | "bridge" | "swap" | "approve" | "outbound" | "contract";
+  token: string | null;
+  amount: string | null;
+  status: string;
+  txHash: string | null;
+  explorerUrl: string | null;
+}
+
+export const walletsApi = {
+  /** Real multi-wallet on-chain ledger (deposits, bridges, swaps, approvals)
+   * pulled from Circle across every provisioned chain. Empty in mock mode. */
+  transactions: () =>
+    request<WalletLedgerEntry[]>("/wallets/transactions", { authed: true }),
+};
+
 // ── Account ────────────────────────────────────────────────────────────────
 
 export interface AccountExportResponse {
@@ -413,6 +434,9 @@ export const agentApi = {
 
 export interface AgentPauseStatus {
   pausedAt: string | null;
+  /** When true, the agent executes its rebalances on its own within the
+   * guardrails instead of only surfacing a per-move review. */
+  autoPilotEnabled: boolean;
 }
 
 export const userAgentApi = {
@@ -425,6 +449,16 @@ export const userAgentApi = {
   resume: () =>
     request<AgentPauseStatus>("/users/me/agent/resume", {
       method: "POST",
+      authed: true,
+    }),
+  /** Read the auto-pilot flag (the dashboard toggle polls this). */
+  autoPilot: () =>
+    request<AgentPauseStatus>("/users/me/agent/auto-pilot", { authed: true }),
+  /** Flip auto-pilot ON/OFF. ON → autonomous execution within guardrails. */
+  setAutoPilot: (enabled: boolean) =>
+    request<AgentPauseStatus>("/users/me/agent/auto-pilot", {
+      method: "POST",
+      body: { enabled },
       authed: true,
     }),
 };
