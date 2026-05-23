@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(scripts/dev.sh:*)",
+      "Bash(./scripts/dev.sh:*)",
+      "Bash(make:*)",
+      "Bash(cargo build:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(cargo test:*)",
+      "Bash(cargo run:*)",
+      "Bash(cargo sqlx:*)",
+      "Bash(pnpm:*)",
+      "Bash(forge build:*)",
+      "Bash(forge test:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(tmux ls)",
+      "Bash(tmux capture-pane:*)"
+    ]
+  }
+}
