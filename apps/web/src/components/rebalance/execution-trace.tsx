@@ -337,8 +337,7 @@ function ShareBlock({ decisionId }: { decisionId: string }) {
           Rebalance complete
         </p>
         <p className="text-[11px] text-accent-agent/60 mt-0.5">
-          Share what the agent did — the OG card pulls the regime + outcome
-          automatically.
+          Share what the agent did — the preview image fills in automatically.
         </p>
       </div>
       <button
