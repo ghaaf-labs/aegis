@@ -185,7 +185,7 @@ export default function AnalyticsPage() {
               value={snapshot ? timeAgo(snapshot.capturedAt) : "Waiting"}
             />
             <p className="border-t border-border-default pt-3 text-[11px] leading-relaxed text-text-mut">
-              Market data via CoinGecko
+              Market data
               {snapshot ? ` · updated ${timeAgo(snapshot.capturedAt)}` : ""}.
               Live prices refresh separately.
             </p>
