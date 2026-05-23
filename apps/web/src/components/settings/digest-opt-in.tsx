@@ -5,14 +5,9 @@ import { Mail } from "lucide-react";
 import { digestApi, analyticsApi } from "@/lib/api";
 
 interface Props {
-  /** Pre-fill the email field. Pulled from the user's wallet profile. */
   defaultEmail?: string;
 }
 
-/**
- * Subscribe to the agent's daily digest email. Re-rendered on success with a
- * confirmation pill so the user sees the opt-in landed.
- */
 export function DigestOptIn({ defaultEmail = "" }: Props) {
   const [email, setEmail] = useState(defaultEmail);
   const [busy, setBusy] = useState(false);
@@ -54,9 +49,7 @@ export function DigestOptIn({ defaultEmail = "" }: Props) {
         )}
       </div>
       <p className="text-[11px] text-text-lo leading-relaxed">
-        One short email per day: regime read, what the agent did (or held off
-        on), and what to watch. Unsubscribe with a single click — the link is in
-        every email.
+        One short daily summary. Unsubscribe from any email.
       </p>
       {!subscribed && (
         <>

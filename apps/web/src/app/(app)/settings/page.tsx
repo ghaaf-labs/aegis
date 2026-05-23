@@ -74,6 +74,15 @@ export default function SettingsIndex() {
     "idle" | "sending" | "verifying" | "sent" | "updated" | "error"
   >("idle");
   const [emailMessage, setEmailMessage] = useState("");
+  const normalizedNewEmail = newEmail.trim().toLowerCase();
+  const canRequestEmailUpdate =
+    isValidEmail(normalizedNewEmail) &&
+    normalizedNewEmail !== storedEmail.trim().toLowerCase();
+  const emailActionDisabled =
+    emailStatus === "sending" ||
+    emailStatus === "verifying" ||
+    (!emailChallenge && !canRequestEmailUpdate);
+
   useEffect(() => {
     let cancelled = false;
     const remembered = localStorage.getItem("aegis_email") ?? "";
@@ -130,16 +139,20 @@ export default function SettingsIndex() {
   };
 
   const requestEmailUpdate = async () => {
-    const normalized = newEmail.trim().toLowerCase();
-    if (!isValidEmail(normalized)) {
+    if (!isValidEmail(normalizedNewEmail)) {
       setEmailStatus("error");
       setEmailMessage("Enter a valid email address.");
+      return;
+    }
+    if (normalizedNewEmail === storedEmail.trim().toLowerCase()) {
+      setEmailStatus("error");
+      setEmailMessage("Use a different email address.");
       return;
     }
     setEmailStatus("sending");
     setEmailMessage("");
     try {
-      const response = await accountApi.startEmailUpdate(normalized);
+      const response = await accountApi.startEmailUpdate(normalizedNewEmail);
       setEmailChallenge({
         id: response.challengeId,
         email: response.email,
@@ -192,13 +205,13 @@ export default function SettingsIndex() {
       href: "/transactions",
       icon: ListChecks,
       title: "Transactions",
-      description: "Rebalance plans, approval status, and execution history",
+      description: "Reviews, approvals, and completed moves",
     },
     {
       href: "/analytics",
       icon: BarChart3,
       title: "Analytics",
-      description: "Net worth, target allocation, regime, and confidence",
+      description: "Value, targets, and recent performance",
     },
     {
       href: "/settings/agent",
@@ -210,13 +223,13 @@ export default function SettingsIndex() {
       href: "/agent-logs",
       icon: SquareTerminal,
       title: "Agent logs",
-      description: "Model slugs, confidence, critic notes, and decisions",
+      description: "Past recommendations and status",
     },
     {
       href: "/agent-studio",
       icon: Bot,
       title: "Agent Studio",
-      description: "Manual analysis, pause controls, and agent inputs",
+      description: "Ask for a recommendation",
     },
     {
       href: "/settings/peg",
@@ -284,17 +297,23 @@ export default function SettingsIndex() {
               <Mail className="mt-0.5 h-4 w-4 shrink-0 text-accent-agent" />
               <div className="min-w-0 flex-1">
                 <p className="font-mono text-sm font-semibold text-text-hi">
-                  Email
+                  Change email
                 </p>
                 <p className="mt-1 break-all font-mono text-[11px] leading-relaxed text-text-lo">
                   {storedEmail || "No email found in this browser."}
                 </p>
                 <p className="mt-2 font-mono text-[11px] leading-relaxed text-text-mut">
-                  Enter a new email and verify the 6-digit code sent there.
+                  Enter a new email. We will send a 6-digit code.
                 </p>
                 <input
                   value={newEmail}
-                  onChange={(e) => setNewEmail(e.target.value)}
+                  onChange={(e) => {
+                    setNewEmail(e.target.value);
+                    if (emailStatus === "error") {
+                      setEmailStatus("idle");
+                      setEmailMessage("");
+                    }
+                  }}
                   type="email"
                   inputMode="email"
                   autoComplete="email"
@@ -327,9 +346,7 @@ export default function SettingsIndex() {
                       ? confirmEmailUpdate()
                       : requestEmailUpdate())
                   }
-                  disabled={
-                    emailStatus === "sending" || emailStatus === "verifying"
-                  }
+                  disabled={emailActionDisabled}
                   className="mt-3 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-sharp border-brutal border-black bg-accent-agent px-4 font-mono text-sm font-semibold text-black shadow-brutal-sm hover:shadow-brutal disabled:opacity-50"
                 >
                   {emailStatus === "sending" || emailStatus === "verifying" ? (
@@ -339,6 +356,11 @@ export default function SettingsIndex() {
                   )}
                   {emailChallenge ? "Verify email" : "Send code"}
                 </button>
+                {!emailChallenge && !emailMessage && (
+                  <p className="mt-2 font-mono text-[11px] leading-relaxed text-text-mut">
+                    Use a different valid email.
+                  </p>
+                )}
                 {emailMessage && (
                   <p
                     aria-live="polite"
@@ -358,10 +380,10 @@ export default function SettingsIndex() {
               <Download className="mt-0.5 h-4 w-4 shrink-0 text-accent-agent" />
               <div className="min-w-0 flex-1">
                 <p className="font-mono text-sm font-semibold text-text-hi">
-                  Export data
+                  Export account data
                 </p>
                 <p className="mt-1 font-mono text-[11px] leading-relaxed text-text-lo">
-                  We email you a private download link when the export is ready.
+                  Get a private download link by email.
                 </p>
                 <button
                   type="button"
@@ -398,8 +420,8 @@ export default function SettingsIndex() {
                   Close account
                 </p>
                 <p className="mt-1 font-mono text-[11px] leading-relaxed text-text-lo">
-                  This signs you out and starts account deletion. Wallet
-                  balances must be empty first.
+                  This signs you out and starts deletion. Wallet balances must
+                  be empty first.
                 </p>
                 <button
                   type="button"
