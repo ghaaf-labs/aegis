@@ -420,6 +420,9 @@ async fn propose_defensive_plan(
         drift_threshold: 0.0,
         dust_threshold_usd: 5.0,
         prices,
+        // A depeg is a risk-off event; tag the plan accordingly (moot at
+        // drift_threshold 0, but keeps the signal honest).
+        regime: Some("risk_off".to_string()),
     };
 
     let legs = plan_legs(&input);

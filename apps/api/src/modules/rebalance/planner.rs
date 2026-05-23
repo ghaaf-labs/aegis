@@ -51,9 +51,27 @@ pub fn plan_legs(input: &PlanInput) -> Vec<PlannedLeg> {
         symbol_deltas(input)
     };
 
+    // "Let winners run" — regime-aware asymmetric drift bands. A winner that
+    // grew above its target produces a SELL delta (weight_drift < 0); in
+    // `risk_on` we widen its band so we don't trim a rallying position too
+    // eagerly, and in `risk_off` we tighten it to de-risk sooner. Buys (adding
+    // to underweight sleeves, weight_drift > 0) always use the base threshold.
+    // First-deploy is exempt (every leg should fire).
+    let (sell_band, buy_band) = if first_deploy {
+        (0.0, 0.0)
+    } else {
+        match input.regime.as_deref() {
+            Some("risk_on") => (input.drift_threshold * 2.0, input.drift_threshold),
+            Some("risk_off") => (input.drift_threshold * 0.5, input.drift_threshold),
+            _ => (input.drift_threshold, input.drift_threshold),
+        }
+    };
     let mut deltas: Vec<SymbolDelta> = deltas_source
         .into_iter()
-        .filter(|d| d.weight_drift.abs() >= input.drift_threshold)
+        .filter(|d| {
+            let band = if d.weight_drift < 0.0 { sell_band } else { buy_band };
+            d.weight_drift.abs() >= band
+        })
         .filter(|d| d.value_delta_usd.abs() >= input.dust_threshold_usd)
         .collect();
 
@@ -369,6 +387,7 @@ mod tests {
             drift_threshold: 0.05,
             dust_threshold_usd: 5.0,
             prices: HashMap::new(),
+            regime: None,
         }
     }
 
@@ -394,9 +413,33 @@ mod tests {
             drift_threshold: 0.01,
             dust_threshold_usd: 50.0,
             prices: HashMap::new(),
+            regime: None,
         };
         // Both deltas are $10 — below the $50 dust floor.
         assert!(plan_legs(&i).is_empty());
+    }
+
+    #[test]
+    fn risk_on_lets_winners_run() {
+        // BTC sits 8% above target (a winner). Neutral trims it; risk_on's
+        // widened sell band (2x = 10%) leaves it to run.
+        let mut i = input(
+            10_000.0,
+            &[("BTC", 0.58), ("USDC", 0.42)],
+            &[("BTC", 0.50), ("USDC", 0.50)],
+            0.0,
+            0.0,
+        );
+        let trims_btc = |legs: &[PlannedLeg]| {
+            legs.iter()
+                .any(|l| l.src_symbol.as_deref() == Some("BTC"))
+        };
+        assert!(trims_btc(&plan_legs(&i)), "neutral should trim the winner");
+        i.regime = Some("risk_on".into());
+        assert!(
+            !trims_btc(&plan_legs(&i)),
+            "risk_on should let the winner run (no BTC trim)"
+        );
     }
 
     #[test]

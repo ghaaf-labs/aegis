@@ -168,4 +168,9 @@ pub struct PlanInput {
     /// Used by the planner to compute realistic min_out for cross-chain hook legs
     /// and local swaps in real execution mode.
     pub prices: std::collections::HashMap<String, f64>,
+    /// Latest classified market regime ("risk_on" | "neutral" | "risk_off").
+    /// Drives the asymmetric "let winners run" drift bands: `risk_on` widens
+    /// the band for trimming winners (sells), `risk_off` tightens it to
+    /// de-risk sooner. `None` ⇒ symmetric `drift_threshold` (neutral).
+    pub regime: Option<String>,
 }

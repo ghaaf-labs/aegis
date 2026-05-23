@@ -807,6 +807,17 @@ async fn build_plan_input(state: &AppState, portfolio_id: Uuid) -> Result<PlanIn
         invested_weights
     };
 
+    // Latest classified regime drives the "let winners run" asymmetric bands.
+    let regime: Option<String> = sqlx::query_scalar(
+        "SELECT regime FROM agent_decisions
+         WHERE portfolio_id = $1 AND regime IS NOT NULL
+         ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(portfolio_id)
+    .fetch_optional(&state.db)
+    .await?
+    .flatten();
+
     Ok(PlanInput {
         portfolio_value_usd: plan_value_usd,
         current_weights,
@@ -815,6 +826,7 @@ async fn build_plan_input(state: &AppState, portfolio_id: Uuid) -> Result<PlanIn
         drift_threshold: 0.05,
         dust_threshold_usd: 5.0,
         prices,
+        regime,
     })
 }
 
@@ -1132,6 +1144,7 @@ mod tests {
             drift_threshold: 0.05,
             dust_threshold_usd: 5.0,
             prices: HashMap::new(),
+            regime: None,
         };
         assert!(noop_plan_message(&empty).contains("no confirmed positions"));
 
@@ -1146,6 +1159,7 @@ mod tests {
             drift_threshold: 0.05,
             dust_threshold_usd: 5.0,
             prices: HashMap::new(),
+            regime: None,
         };
         assert!(noop_plan_message(&on_target).contains("already within"));
     }

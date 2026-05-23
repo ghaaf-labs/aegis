@@ -156,6 +156,7 @@ async fn main() -> anyhow::Result<()> {
         drift_threshold: 0.05,
         dust_threshold_usd: 1.0,
         prices: HashMap::new(),
+        regime: None,
     };
     let legs = plan_legs(&input);
     info!(legs_count = legs.len(), "planner emitted legs");
