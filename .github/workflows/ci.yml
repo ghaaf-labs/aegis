@@ -307,8 +307,8 @@ jobs:
       - name: Build API image
         uses: docker/build-push-action@v5
         with:
-          context: apps/api
-          file: apps/api/Dockerfile
+          context: .
+          file: infra/docker/Dockerfile.api
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max

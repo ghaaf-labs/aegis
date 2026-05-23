@@ -17,16 +17,6 @@ services:
       timeout: 5s
       retries: 5
 
-  redis:
-    image: redis:7-alpine
-    container_name: aegis-redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    command: redis-server --appendonly yes
-    volumes:
-      - redis_data:/data
-
   api:
     build:
       context: .
@@ -46,4 +36,3 @@ services:
 
 volumes:
   postgres_data:
-  redis_data:
