@@ -220,7 +220,13 @@ async fn wallet_reconciler_heals_pending_wallet_without_user_polling() {
             .fetch_one(&ctx.pool)
             .await
             .expect("wallet route count");
-    assert_eq!(routes, 2);
+    // A healed wallet is provisioned across every supported network, not just
+    // the two execution rails — assert against the registry so this can't go
+    // stale when the supported set changes.
+    assert_eq!(
+        routes,
+        aegis_api::modules::wallet_routes::SUPPORTED_WALLET_BLOCKCHAINS.len() as i64
+    );
 }
 
 struct TestContext {
