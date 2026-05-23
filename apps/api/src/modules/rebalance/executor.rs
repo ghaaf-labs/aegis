@@ -430,7 +430,15 @@ async fn dispatch(
                 0,
                 (now.timestamp() + 600) as u64,
             );
-            let r = adapters::cctp::burn(&state.config, &state.http, &ticket, &hook).await?;
+            let r = adapters::cctp::burn(
+                &state.config,
+                &state.http,
+                &state.db,
+                user_id,
+                &ticket,
+                &hook,
+            )
+            .await?;
             Ok((r.tx_hash, r.cctp_message_hash))
         }
         LegKind::CrossChainMint => {
@@ -447,11 +455,21 @@ async fn dispatch(
             .await?
             .flatten()
             .unwrap_or_default();
-            let r = adapters::cctp::mint(&state.config, &state.http, &ticket, &burn_hash).await?;
+            let r = adapters::cctp::mint(
+                &state.config,
+                &state.http,
+                &state.db,
+                user_id,
+                &ticket,
+                &burn_hash,
+            )
+            .await?;
             Ok((r.tx_hash, None))
         }
         LegKind::LocalSwap => {
-            let r = adapters::swap::execute(&state.config, &ticket).await?;
+            let r =
+                adapters::swap::execute(&state.config, &state.http, &state.db, user_id, &ticket)
+                    .await?;
             Ok((r.tx_hash, r.cctp_message_hash))
         }
         // Unreachable: USYC (disabled) and StableFX (KYB-gated) legs fail closed

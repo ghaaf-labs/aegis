@@ -164,9 +164,7 @@ fn swap_direction(src_symbol: Option<&str>, dest_symbol: Option<&str>) -> Option
 /// Price a USDC↔token swap (buy or sell) and build a fresh `ValidatedQuote`.
 pub async fn quote(cfg: &Config, leg: &RouteLeg, now: DateTime<Utc>) -> Result<ValidatedQuote> {
     let dir = swap_direction(leg.src_symbol.as_deref(), leg.dest_symbol.as_deref())
-        .ok_or_else(|| {
-            AppError::BadRequest("swap adapter handles USDC↔token swaps only".into())
-        })?;
+        .ok_or_else(|| AppError::BadRequest("swap adapter handles USDC↔token swaps only".into()))?;
 
     #[cfg(not(feature = "real-swap"))]
     {
@@ -185,11 +183,19 @@ pub async fn quote(cfg: &Config, leg: &RouteLeg, now: DateTime<Utc>) -> Result<V
     }
 }
 
-/// Execute a USDC→token buy authorized by `ticket`.
-pub async fn execute(cfg: &Config, ticket: &ExecutionTicket) -> Result<RealReceipt> {
+/// Execute a USDC↔token swap authorized by `ticket`. `db` + `user_id` are only
+/// read in the non-custodial (`circle_wallet_exec`) path, where the swap is
+/// submitted from the user's Circle developer-controlled wallet.
+pub async fn execute(
+    cfg: &Config,
+    http: &reqwest::Client,
+    db: &crate::db::Db,
+    user_id: uuid::Uuid,
+    ticket: &ExecutionTicket,
+) -> Result<RealReceipt> {
     #[cfg(not(feature = "real-swap"))]
     {
-        let _ = (cfg, ticket);
+        let _ = (cfg, http, db, user_id, ticket);
         Err(AppError::Internal(anyhow::anyhow!(
             "real-swap feature not enabled; build with --features real-swap"
         )))
@@ -197,7 +203,7 @@ pub async fn execute(cfg: &Config, ticket: &ExecutionTicket) -> Result<RealRecei
 
     #[cfg(feature = "real-swap")]
     {
-        real_execute(cfg, ticket).await
+        real_execute(cfg, http, db, user_id, ticket).await
     }
 }
 
@@ -330,8 +336,8 @@ async fn real_quote_sell(
         dest_token: "USDC".into(),
         src_chain: ChainKey::Base,
         dest_chain: ChainKey::Base,
-        amount_in: max_in.max(1),  // max token to spend
-        min_out: amount_out_usdc,  // exact USDC realized
+        amount_in: max_in.max(1), // max token to spend
+        min_out: amount_out_usdc, // exact USDC realized
         slippage_bps: SLIPPAGE_BPS,
         deadline: (now + Duration::seconds(600)).timestamp() as u64,
         provider: "uniswap-v3".into(),
@@ -339,7 +345,13 @@ async fn real_quote_sell(
 }
 
 #[cfg(feature = "real-swap")]
-async fn real_execute(cfg: &Config, ticket: &ExecutionTicket) -> Result<RealReceipt> {
+async fn real_execute(
+    cfg: &Config,
+    http: &reqwest::Client,
+    db: &crate::db::Db,
+    user_id: uuid::Uuid,
+    ticket: &ExecutionTicket,
+) -> Result<RealReceipt> {
     use alloy::network::EthereumWallet;
     use alloy::providers::WalletProvider;
     use alloy::signers::local::PrivateKeySigner;
@@ -355,6 +367,36 @@ async fn real_execute(cfg: &Config, ticket: &ExecutionTicket) -> Result<RealRece
     let amount_in = q.amount_in;
     let min_out = q.min_out;
 
+    // The router pulls the INPUT token: USDC on a buy, the sold token on a sell.
+    let (token_in, token_out, approve_token) = if is_sell {
+        (token, usdc, token)
+    } else {
+        (usdc, token, usdc)
+    };
+
+    // Part B0 — non-custodial: submit the approve + swap from the user's Circle
+    // developer-controlled wallet. The user's Base wallet is the tx sender, the
+    // token holder, and the swap recipient. Falls through to the EOA path when
+    // the flag is off.
+    if cfg.circle_wallet_exec {
+        return circle_wallet_swap(
+            cfg,
+            http,
+            db,
+            user_id,
+            CircleSwapArgs {
+                router,
+                approve_token,
+                token_in,
+                token_out,
+                amount_in,
+                min_out,
+                is_sell,
+            },
+        )
+        .await;
+    }
+
     let key_bytes = hex::decode(cfg.chain_private_key_base.trim_start_matches("0x"))
         .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid Base private key")))?;
     let signer = PrivateKeySigner::from_slice(&key_bytes)
@@ -366,13 +408,6 @@ async fn real_execute(cfg: &Config, ticket: &ExecutionTicket) -> Result<RealRece
             .map_err(|e| AppError::Internal(anyhow::anyhow!("bad Base rpc url: {e}")))?,
     );
     let recipient = provider.default_signer_address();
-
-    // The router pulls the INPUT token: USDC on a buy, the sold token on a sell.
-    let (token_in, token_out, approve_token) = if is_sell {
-        (token, usdc, token)
-    } else {
-        (usdc, token, usdc)
-    };
 
     // Approve the input token to the router (with headroom) if allowance short.
     let approve_c = IERC20Swap::new(approve_token, &provider);
@@ -441,4 +476,118 @@ async fn real_execute(cfg: &Config, ticket: &ExecutionTicket) -> Result<RealRece
         tx_hash: receipt.transaction_hash.to_string(),
         cctp_message_hash: None,
     })
+}
+
+/// Resolved on-chain args for a non-custodial swap. Built once in `real_execute`
+/// so the Circle-wallet helper doesn't re-derive directions/addresses.
+#[cfg(feature = "real-swap")]
+struct CircleSwapArgs {
+    router: Address,
+    approve_token: Address,
+    token_in: Address,
+    token_out: Address,
+    amount_in: u128,
+    min_out: u128,
+    is_sell: bool,
+}
+
+/// Non-custodial swap (Part B0): ABI-encode the input-token `approve` and the
+/// router swap call, then submit each from the user's Circle developer-controlled
+/// wallet on Base. The user's Base wallet is the tx sender, holds the input
+/// token, and is the swap recipient — non-custodial by construction.
+#[cfg(feature = "real-swap")]
+async fn circle_wallet_swap(
+    cfg: &Config,
+    http: &reqwest::Client,
+    db: &crate::db::Db,
+    user_id: uuid::Uuid,
+    args: CircleSwapArgs,
+) -> Result<RealReceipt> {
+    use alloy::sol_types::SolCall;
+
+    let recipient: Address = crate::modules::wallet_routes::base_address_for_user(
+        db,
+        user_id,
+        &cfg.circle_wallet_set_id,
+    )
+    .await?
+    .ok_or_else(|| {
+        AppError::ServiceUnavailable("user has no live Base wallet for non-custodial swap".into())
+    })?
+    .parse()
+    .map_err(|_| AppError::Internal(anyhow::anyhow!("user Base wallet address unparsable")))?;
+
+    let router_str = cfg.uniswap_v3_router_base.clone();
+    let approve_token_str = address_to_hex(args.approve_token);
+
+    // 1) approve(router, amount_in*2) from the user's wallet.
+    let want = U256::from(args.amount_in).saturating_mul(U256::from(2u64));
+    let approve_calldata = IERC20Swap::approveCall {
+        spender: args.router,
+        amount: want,
+    }
+    .abi_encode();
+    crate::modules::wallet::circle_exec::submit_contract_execution(
+        http,
+        cfg,
+        db,
+        user_id,
+        ChainKey::Base,
+        &approve_token_str,
+        &hex::encode(approve_calldata),
+        None,
+    )
+    .await?;
+
+    // 2) the swap itself (exact-output sell or exact-input buy).
+    let fee = POOL_FEE.try_into().expect("fee fits uint24");
+    let zero_limit = alloy::primitives::Uint::<160, 3>::ZERO;
+    let swap_calldata = if args.is_sell {
+        ISwapRouter02::exactOutputSingleCall {
+            params: ISwapRouter02::ExactOutputSingleParams {
+                tokenIn: args.token_in,
+                tokenOut: args.token_out,
+                fee,
+                recipient,
+                amountOut: U256::from(args.min_out),
+                amountInMaximum: U256::from(args.amount_in),
+                sqrtPriceLimitX96: zero_limit,
+            },
+        }
+        .abi_encode()
+    } else {
+        ISwapRouter02::exactInputSingleCall {
+            params: ISwapRouter02::ExactInputSingleParams {
+                tokenIn: args.token_in,
+                tokenOut: args.token_out,
+                fee,
+                recipient,
+                amountIn: U256::from(args.amount_in),
+                amountOutMinimum: U256::from(args.min_out),
+                sqrtPriceLimitX96: zero_limit,
+            },
+        }
+        .abi_encode()
+    };
+    let tx_hash = crate::modules::wallet::circle_exec::submit_contract_execution(
+        http,
+        cfg,
+        db,
+        user_id,
+        ChainKey::Base,
+        &router_str,
+        &hex::encode(swap_calldata),
+        None,
+    )
+    .await?;
+
+    Ok(RealReceipt {
+        tx_hash,
+        cctp_message_hash: None,
+    })
+}
+
+#[cfg(feature = "real-swap")]
+fn address_to_hex(addr: Address) -> String {
+    format!("0x{}", hex::encode(addr.as_slice()))
 }

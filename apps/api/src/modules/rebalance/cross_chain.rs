@@ -24,7 +24,7 @@ use alloy::{
     providers::{ProviderBuilder, WalletProvider},
     signers::local::PrivateKeySigner,
     sol,
-    sol_types::SolValue,
+    sol_types::{SolCall, SolValue},
 };
 
 #[cfg(feature = "real-cctp")]
@@ -146,11 +146,37 @@ pub struct Attestation {
 pub struct CctpClient<'a> {
     http: &'a reqwest::Client,
     config: &'a Config,
+    /// Execution context for the non-custodial path (Part B0). When set and
+    /// `config.circle_wallet_exec` is true, burn/mint/approve are submitted from
+    /// the user's Circle developer-controlled wallet instead of the backend EOA.
+    /// Optional so the offline/mock tests construct a client without a DB.
+    user: Option<UserExecContext<'a>>,
+}
+
+#[derive(Clone, Copy)]
+struct UserExecContext<'a> {
+    // Read only by the real-cctp non-custodial path; the default build attaches
+    // the context but never dereferences it.
+    #[cfg_attr(not(feature = "real-cctp"), allow(dead_code))]
+    db: &'a crate::db::Db,
+    #[cfg_attr(not(feature = "real-cctp"), allow(dead_code))]
+    user_id: uuid::Uuid,
 }
 
 impl<'a> CctpClient<'a> {
     pub fn new(http: &'a reqwest::Client, config: &'a Config) -> Self {
-        Self { http, config }
+        Self {
+            http,
+            config,
+            user: None,
+        }
+    }
+
+    /// Attach the owning user + DB so the non-custodial (`circle_wallet_exec`)
+    /// path can resolve the user's Circle wallet as the tx sender.
+    pub fn with_user(mut self, db: &'a crate::db::Db, user_id: uuid::Uuid) -> Self {
+        self.user = Some(UserExecContext { db, user_id });
+        self
     }
 
     /// Burn `amount_usdc` USDC on `src` and mint the same amount on `dest`
@@ -198,6 +224,16 @@ impl<'a> CctpClient<'a> {
         use alloy::network::EthereumWallet;
 
         let amount = (amount_usdc * 1_000_000.0) as u128;
+
+        // Part B0 — non-custodial: submit the approve + burn from the user's
+        // Circle developer-controlled wallet (entity-secret signed) instead of
+        // the backend EOA. The user's wallet is the tx sender and holds the
+        // funds. Falls through to the EOA path when the flag is off.
+        if self.config.circle_wallet_exec {
+            return self
+                .circle_wallet_deposit_for_burn(src, dest, amount, hook)
+                .await;
+        }
 
         let private_key = match src {
             ChainKey::Arc => &self.config.chain_private_key_arc,
@@ -378,6 +414,13 @@ impl<'a> CctpClient<'a> {
     ) -> Result<String> {
         use alloy::network::EthereumWallet;
 
+        // Part B0 — non-custodial: mint via the user's Circle wallet.
+        if self.config.circle_wallet_exec {
+            return self
+                .circle_wallet_receive_message(dest, message, attestation)
+                .await;
+        }
+
         let private_key = match dest {
             ChainKey::Arc => &self.config.chain_private_key_arc,
             ChainKey::Base => &self.config.chain_private_key_base,
@@ -438,6 +481,175 @@ impl<'a> CctpClient<'a> {
             .map_err(|e| AppError::Internal(anyhow::anyhow!("get_receipt error: {e}")))?;
 
         Ok(receipt.transaction_hash.to_string())
+    }
+
+    /// Non-custodial burn (Part B0): ABI-encode the USDC `approve` and
+    /// `depositForBurnWithHook` calls and submit each from the user's Circle
+    /// developer-controlled wallet. The user's wallet is the tx sender (and, in
+    /// this model, the USDC holder), so the bridge is non-custodial.
+    ///
+    /// Unlike the EOA path we cannot read the burn receipt's `MessageSent` log
+    /// directly (Circle returns a tx hash, not decoded logs). That is fine: the
+    /// attestation lookup is keyed by the burn `transactionHash`, not by this
+    /// `message_hash`, which is only persisted as an identifier. We derive a
+    /// deterministic identifier from the tx hash so the receipt shape matches
+    /// the EOA path.
+    #[cfg(feature = "real-cctp")]
+    async fn circle_wallet_deposit_for_burn(
+        &self,
+        src: ChainKey,
+        dest: ChainKey,
+        amount: u128,
+        hook: &HookPayload,
+    ) -> Result<BurnReceipt> {
+        let user = self.user.ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "circle_wallet_exec set but no user context attached to CctpClient"
+            ))
+        })?;
+
+        let (token_messenger_str, usdc_str, executor_on_dest) = match src {
+            ChainKey::Arc => (
+                &self.config.cctp_token_messenger_arc,
+                &self.config.usdc_arc,
+                self.config
+                    .rebalance_executor_base
+                    .parse::<Address>()
+                    .map_err(|_| {
+                        AppError::Internal(anyhow::anyhow!("bad RebalanceExecutor on Base"))
+                    })?,
+            ),
+            ChainKey::Base => (
+                &self.config.cctp_token_messenger_base,
+                &self.config.usdc_base,
+                self.config
+                    .rebalance_executor_arc
+                    .parse::<Address>()
+                    .map_err(|_| {
+                        AppError::Internal(anyhow::anyhow!("bad RebalanceExecutor on Arc"))
+                    })?,
+            ),
+        };
+        let token_messenger: Address = token_messenger_str
+            .parse()
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("bad CCTP TokenMessenger")))?;
+        let usdc: Address = usdc_str
+            .parse()
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("bad USDC address")))?;
+
+        // 1) approve(tokenMessenger, amount*2) — same headroom as the EOA path.
+        let approve_amount = U256::from(amount).saturating_mul(U256::from(2u64));
+        let approve_calldata = IERC20::approveCall {
+            spender: token_messenger,
+            amount: approve_amount,
+        }
+        .abi_encode();
+        crate::modules::wallet::circle_exec::submit_contract_execution(
+            self.http,
+            self.config,
+            user.db,
+            user.user_id,
+            src,
+            usdc_str,
+            &hex::encode(approve_calldata),
+            None,
+        )
+        .await?;
+
+        // 2) depositForBurnWithHook — identical args to the EOA path.
+        const MIN_FINALITY_STANDARD: u32 = 2000;
+        let destination_caller = alloy::primitives::FixedBytes::<32>::ZERO;
+        let burn_calldata = ICCTPV2TokenMessenger::depositForBurnWithHookCall {
+            amount: U256::from(amount),
+            destinationDomain: dest.domain_id(),
+            mintRecipient: executor_on_dest.into_word(),
+            burnToken: usdc,
+            destinationCaller: destination_caller,
+            maxFee: U256::ZERO,
+            minFinalityThreshold: MIN_FINALITY_STANDARD,
+            hookData: encode_hook_payload(hook),
+        }
+        .abi_encode();
+        let tx_hash = crate::modules::wallet::circle_exec::submit_contract_execution(
+            self.http,
+            self.config,
+            user.db,
+            user.user_id,
+            src,
+            token_messenger_str,
+            &hex::encode(burn_calldata),
+            None,
+        )
+        .await?;
+
+        let message_hash = format!("0x{}", hex::encode(Sha256::digest(tx_hash.as_bytes())));
+        Ok(BurnReceipt {
+            tx_hash,
+            message_hash,
+        })
+    }
+
+    /// Non-custodial mint (Part B0): ABI-encode `receiveMessage(message,
+    /// attestation)` and submit it from the user's Circle wallet on `dest`.
+    #[cfg(feature = "real-cctp")]
+    async fn circle_wallet_receive_message(
+        &self,
+        dest: ChainKey,
+        message: &str,
+        attestation: &str,
+    ) -> Result<String> {
+        let user = self.user.ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "circle_wallet_exec set but no user context attached to CctpClient"
+            ))
+        })?;
+
+        let (transmitter_str, transmitter) = match dest {
+            ChainKey::Arc => {
+                let s = &self.config.cctp_message_transmitter_arc;
+                (
+                    s,
+                    s.parse::<Address>().map_err(|_| {
+                        AppError::Internal(anyhow::anyhow!("bad MessageTransmitter on Arc"))
+                    })?,
+                )
+            }
+            ChainKey::Base => {
+                let s = &self.config.cctp_message_transmitter_base;
+                (
+                    s,
+                    s.parse::<Address>().map_err(|_| {
+                        AppError::Internal(anyhow::anyhow!("bad MessageTransmitter on Base"))
+                    })?,
+                )
+            }
+        };
+        let _ = transmitter;
+
+        let message_bytes: Bytes = message
+            .parse()
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid message hex")))?;
+        let attestation_bytes: Bytes = attestation
+            .parse()
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid attestation hex")))?;
+
+        let calldata = IMessageTransmitter::receiveMessageCall {
+            message: message_bytes,
+            attestation: attestation_bytes,
+        }
+        .abi_encode();
+
+        crate::modules::wallet::circle_exec::submit_contract_execution(
+            self.http,
+            self.config,
+            user.db,
+            user.user_id,
+            dest,
+            transmitter_str,
+            &hex::encode(calldata),
+            None,
+        )
+        .await
     }
 
     pub async fn wait_for_attestation(

@@ -2,7 +2,10 @@
 //! destination. Wraps [`CctpClient`] (which holds the real alloy path behind
 //! `real-cctp`) and reports its capability from `Config`.
 
+use uuid::Uuid;
+
 use crate::config::Config;
+use crate::db::Db;
 use crate::error::Result;
 
 use super::super::cross_chain::{CctpClient, HookPayload};
@@ -44,10 +47,12 @@ pub fn capability(cfg: &Config) -> AdapterCapability {
 pub async fn burn(
     cfg: &Config,
     http: &reqwest::Client,
+    db: &Db,
+    user_id: Uuid,
     ticket: &ExecutionTicket,
     hook: &HookPayload,
 ) -> Result<RealReceipt> {
-    let client = CctpClient::new(http, cfg);
+    let client = CctpClient::new(http, cfg).with_user(db, user_id);
     let r = client
         .deposit_for_burn(
             ticket.src_chain(),
@@ -67,10 +72,12 @@ pub async fn burn(
 pub async fn mint(
     cfg: &Config,
     http: &reqwest::Client,
+    db: &Db,
+    user_id: Uuid,
     ticket: &ExecutionTicket,
     burn_tx_hash: &str,
 ) -> Result<RealReceipt> {
-    let client = CctpClient::new(http, cfg);
+    let client = CctpClient::new(http, cfg).with_user(db, user_id);
     let att = client
         .wait_for_attestation(ticket.src_chain().domain_id(), burn_tx_hash)
         .await?;
