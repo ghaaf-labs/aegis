@@ -224,6 +224,9 @@ export interface AgentDecision {
   /** Set once the user approves the proposal and `goal.targetAllocation`
    * is written. Null/absent until approved. */
   allocationAppliedAt?: string;
+  /** Allocator's projected worst-case drawdown for the proposed mix.
+   * Present on `allocation_proposal` decisions. */
+  expectedMaxDrawdownPct?: number;
 }
 
 /** Gate-1 allocation proposal — the agent-authored target weights the user
