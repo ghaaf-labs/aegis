@@ -42,7 +42,7 @@ In order:
 2. **Email support** — `support@aegis.local` (placeholder; will be set on the production domain at first paid user). Reply within 1 business day. Include the rebalance UUID or the decision page URL.
 3. **Operator escalation** — if a support reply doesn't resolve the issue within 5 business days, the case is reviewed manually by the operator on call and either refunded under §1 or denied with a written rationale.
 
-We do not yet have a regulator-recognized arbitration path. This will change when we onboard a first design partner with explicit compliance scope (see [`docs/06-traction.md`](./06-traction.md)).
+We do not yet have a regulator-recognized arbitration path. This will change when we onboard a first design partner with explicit compliance scope (see [`docs/08-traction.md`](./08-traction.md)).
 
 ## 5. Constitution clauses
 
