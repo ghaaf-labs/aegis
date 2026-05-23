@@ -10,7 +10,7 @@
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
-Please report security issues by emailing **security@ghaaf.dev**. Include:
+Please report security issues by emailing **security@ghaaf.org**. Include:
 
 - A description of the vulnerability and its potential impact
 - Steps to reproduce or a proof-of-concept

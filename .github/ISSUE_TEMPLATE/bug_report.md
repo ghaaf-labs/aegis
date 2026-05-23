@@ -22,4 +22,4 @@ What you expected to happen.
 **Additional context**
 Any other context, logs, or screenshots.
 
-> ⚠️ If this is a security vulnerability, do NOT open an issue. Email security@ghaaf.dev instead. See [SECURITY.md](../../SECURITY.md).
+> ⚠️ If this is a security vulnerability, do NOT open an issue. Email security@ghaaf.org instead. See [SECURITY.md](../../SECURITY.md).

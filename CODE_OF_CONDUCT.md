@@ -22,7 +22,7 @@ We pledge to make participation in this project a harassment-free experience for
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported by contacting the project team at **conduct@ghaaf.dev**. All complaints will be reviewed promptly and confidentially.
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported by contacting the project team at **contact@ghaaf.org**. All complaints will be reviewed promptly and confidentially.
 
 ## Attribution
 
