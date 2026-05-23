@@ -92,7 +92,7 @@ export default function AboutPage() {
       {/* ── Team ─────────────────────────────────────────────────── */}
       <section className="mb-16">
         <p className="text-[10px] font-mono uppercase tracking-widest text-text-lo mb-6">
-          // team
+          {/* team */}
         </p>
 
         <div className="grid gap-px sm:grid-cols-2 border-brutal border-border-default overflow-hidden">
@@ -176,7 +176,7 @@ export default function AboutPage() {
       {/* ── Stack ─────────────────────────────────────────────────── */}
       <section>
         <p className="text-[10px] font-mono uppercase tracking-widest text-text-lo mb-4">
-          // built with
+          {/* built with */}
         </p>
         <div className="flex flex-wrap gap-2">
           {STACK.map((tech) => (
