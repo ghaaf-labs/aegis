@@ -366,7 +366,7 @@ export default function PortfolioDashboardPage() {
                   variant="pnl"
                   onClick={() => void handleDeploy()}
                   disabled={deploying}
-                  className="w-full py-1.5"
+                  className="w-full py-2"
                 >
                   {deploying ? (
                     <>
