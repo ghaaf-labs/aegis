@@ -81,6 +81,7 @@ export const config = {
     "/agent-logs/:path*",
     "/agent-studio/:path*",
     "/settings/:path*",
+    "/tax/:path*",
     "/tax-center/:path*",
     "/rebalance/:path*",
     "/onboarding/:path*",

@@ -10,6 +10,7 @@ const PROTECTED_APP_PREFIXES = [
   "/agent-logs",
   "/agent-studio",
   "/settings",
+  "/tax",
   "/tax-center",
   "/rebalance",
   "/onboarding",
@@ -35,6 +36,9 @@ export function safeNextPath(path: string | null | undefined) {
   if (path.length > 2048) return null;
   if (pathname === "/wallet") {
     return path.replace(/^\/wallet(?=[?#]|$)/, "/wallets");
+  }
+  if (pathname === "/tax") {
+    return path.replace(/^\/tax(?=[?#]|$)/, "/tax-center");
   }
   return path;
 }

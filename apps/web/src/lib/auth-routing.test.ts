@@ -10,6 +10,8 @@ describe("auth route protection", () => {
     expect(isProtectedAppPath("/dashboard")).toBe(true);
     expect(isProtectedAppPath("/dashboard/abc")).toBe(true);
     expect(isProtectedAppPath("/rebalance/plan-1")).toBe(true);
+    expect(isProtectedAppPath("/tax")).toBe(true);
+    expect(isProtectedAppPath("/tax-center")).toBe(true);
     expect(isProtectedAppPath("/settings/tax")).toBe(true);
   });
 
@@ -34,6 +36,11 @@ describe("auth route protection", () => {
   it("normalizes the legacy wallet destination", () => {
     expect(safeNextPath("/wallet")).toBe("/wallets");
     expect(safeNextPath("/wallet?tab=cash")).toBe("/wallets?tab=cash");
+  });
+
+  it("normalizes the legacy tax destination", () => {
+    expect(safeNextPath("/tax")).toBe("/tax-center");
+    expect(safeNextPath("/tax?year=2026")).toBe("/tax-center?year=2026");
   });
 
   it("builds a login redirect with the original protected destination", () => {
