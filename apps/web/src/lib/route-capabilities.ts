@@ -1,4 +1,8 @@
-export const EXECUTION_NETWORK_IDS = ["ARC-TESTNET", "BASE-SEPOLIA"] as const;
+// Chains with a full local execution venue (hold + swap + bridge). Eth/Arb/Avax
+// are provisioned and CCTP-bridgeable — their USDC IS used in rebalances, just
+// auto-consolidated to one of these — but they have no local swap venue, so they
+// are not "venue ready". Internal to `executionReady`; not a public export.
+const EXECUTION_NETWORK_IDS = ["ARC-TESTNET", "BASE-SEPOLIA"] as const;
 
 export const NETWORK_ROUTE_OPTIONS = [
   {
@@ -16,19 +20,19 @@ export const NETWORK_ROUTE_OPTIONS = [
   {
     blockchain: "ETH-SEPOLIA",
     label: "Ethereum Sepolia",
-    detail: "Wallet address can be synced; rebalance rail comes later",
+    detail: "Synced; USDC here is auto-consolidated to Arc/Base for rebalances",
     executionReady: false,
   },
   {
     blockchain: "ARB-SEPOLIA",
     label: "Arbitrum Sepolia",
-    detail: "Wallet address can be synced; rebalance rail comes later",
+    detail: "Synced; USDC here is auto-consolidated to Arc/Base for rebalances",
     executionReady: false,
   },
   {
     blockchain: "AVAX-FUJI",
     label: "Avalanche Fuji",
-    detail: "Wallet address can be synced; rebalance rail comes later",
+    detail: "Synced; USDC here is auto-consolidated to Arc/Base for rebalances",
     executionReady: false,
   },
 ] as const;
@@ -85,7 +89,8 @@ export const TOKEN_ROUTE_OPTIONS = [
     symbol: "EURC",
     label: "FX target",
     state: "Track only",
-    detail: "FX tracking is ready; Arc StableFX execution is KYB-gated",
+    detail:
+      "FX tracking is ready; EURC executes on the Base USDC/EURC pool when the swap rail is live",
     executable: false,
     targetable: true,
   },
@@ -104,9 +109,6 @@ export const COMING_SOON_TOKEN_IDS = TOKEN_ROUTE_OPTIONS.filter(
   (token) => !token.targetable,
 ).map((token) => token.id);
 
-export type NetworkRouteOption = (typeof NETWORK_ROUTE_OPTIONS)[number];
-export type TokenRouteOption = (typeof TOKEN_ROUTE_OPTIONS)[number];
-
 export function executionReady(blockchain: string): boolean {
   return EXECUTION_NETWORK_IDS.includes(
     blockchain as (typeof EXECUTION_NETWORK_IDS)[number],
@@ -123,8 +125,4 @@ export function tokenTargetable(tokenId: string): boolean {
   return TOKEN_ROUTE_OPTIONS.some(
     (token) => token.id === tokenId && token.targetable,
   );
-}
-
-export function tokenRouteOption(symbol: string): TokenRouteOption | undefined {
-  return TOKEN_ROUTE_OPTIONS.find((token) => token.id === symbol);
 }

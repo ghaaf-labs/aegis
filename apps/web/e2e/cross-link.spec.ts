@@ -60,15 +60,13 @@ test("X4 — leaderboard row links to diary page", async ({ page }) => {
   }
 });
 
-test("X5 — strategies guest CTA links to login", async ({ page }) => {
+test("X5 — /strategies redirects away (marketplace removed)", async ({
+  page,
+}) => {
+  // The Strategies marketplace was removed; the route is a permanent redirect
+  // to /dashboard, so it must no longer render a Strategies surface.
   await page.goto("/strategies");
-  await expect(
-    page.getByRole("heading", { name: /Strategies/i }),
-  ).toBeVisible();
-  const cta = page.getByRole("link", { name: /Sign in/i }).first();
-  await expect(cta).toBeVisible();
-  const href = await cta.getAttribute("href");
-  expect(href).toMatch(/\/login/);
+  await expect(page).not.toHaveURL(/\/strategies$/);
 });
 
 test("X6 — /signup forwards to /login with preserved query params", async ({

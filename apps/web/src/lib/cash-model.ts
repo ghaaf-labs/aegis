@@ -36,10 +36,9 @@ export interface CashSplit {
   deployableUsd: number;
 }
 
-/** Live EURC mark from the snapshot, or the stable fallback. */
-export function eurcUsdPrice(
-  snapshot: MarketSnapshot | null | undefined,
-): number {
+/** Live EURC mark from the snapshot, or the stable fallback. Internal — exposed
+ * to callers only through `totalWalletCashUsd` / `deriveCashSplit`. */
+function eurcUsdPrice(snapshot: MarketSnapshot | null | undefined): number {
   return (
     snapshot?.assets.find((asset) => asset.symbol === "EURC")?.priceUsd ??
     EURC_USD_FALLBACK

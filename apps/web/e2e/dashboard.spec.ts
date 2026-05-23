@@ -59,7 +59,6 @@ test("D7 — sidebar nav items are all present", async ({ page }) => {
     page.getByRole("link", { name: "Wallet", exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("link", { name: /Portfolio/i })).toBeVisible();
-  await expect(page.getByRole("link", { name: /Strategies/i })).toBeVisible();
   await expect(page.getByRole("link", { name: /Settings/i })).toBeVisible();
 });
 

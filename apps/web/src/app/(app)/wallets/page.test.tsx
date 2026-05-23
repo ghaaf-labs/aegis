@@ -164,7 +164,7 @@ describe("<NetworkTokenPanel />", () => {
       ],
       [
         "EURC",
-        "FX target · FX tracking is ready; Arc StableFX execution is KYB-gated",
+        "FX target · FX tracking is ready; EURC executes on the Base USDC/EURC pool when the swap rail is live",
       ],
     ];
 

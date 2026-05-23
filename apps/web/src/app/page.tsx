@@ -171,7 +171,7 @@ const CIRCLE_STACK = [
   {
     name: "Circle Paymaster",
     sub: "Gas abstraction",
-    desc: "Protocol fees and gas paid in USDC — users never touch ETH.",
+    desc: "Protocol fees settle in USDC. On Arc, gas is paid in USDC too — no native ETH to manage.",
   },
   {
     name: "Arc StableFX",
@@ -212,7 +212,7 @@ const HOW_IT_WORKS = [
     items: [
       "Single approval modal — no config maze",
       "USDC fee preview via Nanopayments",
-      "Gas covered by Circle Paymaster",
+      "USDC-native gas on Arc via Circle Paymaster",
       "Executed on Arc + Base via CCTP V2",
     ],
   },
