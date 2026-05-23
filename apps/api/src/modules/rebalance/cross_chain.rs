@@ -157,8 +157,11 @@ const MIN_FINALITY_FAST: u32 = 1000;
 struct CctpFeeEntry {
     #[serde(rename = "finalityThreshold")]
     finality_threshold: u32,
+    /// bps — may be fractional (e.g. Arb→Base returns `1.3`), so it must
+    /// deserialize as a float, not a u32 (a u32 silently fails the whole
+    /// response decode and drops the burn to slow standard finality).
     #[serde(rename = "minimumFee")]
-    minimum_fee: u32,
+    minimum_fee: f64,
 }
 
 /// The chosen burn parameters: a finality threshold plus the fee (in bps) Circle
@@ -167,14 +170,14 @@ struct CctpFeeEntry {
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct BurnFeeChoice {
     finality_threshold: u32,
-    fee_bps: u32,
+    fee_bps: f64,
 }
 
 impl BurnFeeChoice {
     #[cfg_attr(not(any(feature = "real-cctp", test)), allow(dead_code))]
     const STANDARD: Self = Self {
         finality_threshold: MIN_FINALITY_STANDARD,
-        fee_bps: 0,
+        fee_bps: 0.0,
     };
 }
 
@@ -196,14 +199,13 @@ fn select_burn_fee(entries: &[CctpFeeEntry]) -> BurnFeeChoice {
 /// Compute the absolute on-chain `maxFee` (USDC, 6 decimals) from a burn
 /// `amount` and a fee in bps, rounding up so the burn never under-quotes.
 #[cfg_attr(not(any(feature = "real-cctp", test)), allow(dead_code))]
-fn max_fee_for(amount: u128, fee_bps: u32) -> u128 {
-    if fee_bps == 0 {
+fn max_fee_for(amount: u128, fee_bps: f64) -> u128 {
+    if fee_bps <= 0.0 {
         return 0;
     }
-    amount
-        .saturating_mul(fee_bps as u128)
-        .div_ceil(10_000)
-        .max(1)
+    // amount * fee_bps / 10_000, rounded up so the burn never under-quotes.
+    let fee = (amount as f64) * fee_bps / 10_000.0;
+    (fee.ceil() as u128).max(1)
 }
 
 pub struct CctpClient<'a> {
@@ -910,10 +912,12 @@ mod tests {
     #[test]
     fn fee_table_selects_fast_threshold_and_uses_parsed_fee() {
         // Sample shape of Circle's GET /v2/burn/USDC/fees/{src}/{dest} body:
-        // one row per finality threshold, fee in bps under `minimumFee`.
+        // one row per finality threshold, fee in bps under `minimumFee`. The fast
+        // fee can be FRACTIONAL (Arb→Base really returns 1.3) — a u32 here would
+        // fail the whole decode and silently drop to slow standard finality.
         let body = r#"[
             {"finalityThreshold": 2000, "minimumFee": 0},
-            {"finalityThreshold": 1000, "minimumFee": 1}
+            {"finalityThreshold": 1000, "minimumFee": 1.3}
         ]"#;
         let entries: Vec<CctpFeeEntry> = serde_json::from_str(body).expect("fee body parses");
         let choice = select_burn_fee(&entries);
@@ -921,11 +925,14 @@ mod tests {
             choice.finality_threshold, MIN_FINALITY_FAST,
             "fast threshold must be selected when present"
         );
-        assert_eq!(choice.fee_bps, 1, "parsed minimumFee must drive the maxFee");
+        assert_eq!(
+            choice.fee_bps, 1.3,
+            "parsed (fractional) minimumFee must drive the maxFee"
+        );
 
-        // 100 USDC (6dp) at 1bps = 0.01 USDC = 10_000 base units (rounded up).
+        // 100 USDC (6dp) at 1.3bps = 0.013 USDC = 13_000 base units (rounded up).
         let amount = 100_000_000u128;
-        assert_eq!(max_fee_for(amount, choice.fee_bps), 10_000);
+        assert_eq!(max_fee_for(amount, choice.fee_bps), 13_000);
     }
 
     #[test]
