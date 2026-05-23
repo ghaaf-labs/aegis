@@ -68,7 +68,7 @@ export default async function ExploreDemoPage({ params }: PageProps) {
           <h1 className="text-2xl font-mono font-semibold text-text-hi tracking-tight">
             {portfolio.name}
           </h1>
-          <ProvenanceLine source="curated demo · mock-data.ts" />
+          <ProvenanceLine source="curated demo" />
         </div>
         <div className="text-right">
           <p className="text-xs text-text-mut font-mono">PORTFOLIO VALUE</p>
