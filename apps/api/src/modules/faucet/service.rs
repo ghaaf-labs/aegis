@@ -71,9 +71,7 @@ pub async fn claim(
     let max = config.faucet_max_usdc_per_day;
     let remaining = (max - used).max(0.0);
     if remaining <= 0.0 {
-        return Err(AppError::BadRequest(format!(
-            "faucet rate limit reached: {max:.0} USDC per 24h"
-        )));
+        return Err(AppError::TooManyRequests("faucet_daily_limit".into()));
     }
 
     let amount = remaining.min(100.0);

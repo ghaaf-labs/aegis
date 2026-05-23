@@ -244,6 +244,11 @@ fn too_many_requests_detail(message: &str) -> ErrorDetail {
     }
 
     match message {
+        "faucet_daily_limit" => ErrorDetail {
+            code: "faucet_daily_limit",
+            message: "You already requested today's test USDC. Open the faucet directly or try again tomorrow.",
+            retry_after: Some(60 * 60 * 24),
+        },
         "too_many_attempts" => ErrorDetail {
             code: "too_many_attempts",
             message: "Too many tries. Request a new code.",
@@ -376,6 +381,14 @@ mod tests {
             response.headers().get("x-ratelimit-remaining").unwrap(),
             HeaderValue::from_static("0")
         );
+    }
+
+    #[test]
+    fn faucet_limit_is_actionable_rate_limit() {
+        let detail = ErrorDetail::from(&AppError::TooManyRequests("faucet_daily_limit".into()));
+        assert_eq!(detail.code, "faucet_daily_limit");
+        assert!(detail.message.contains("test USDC"));
+        assert_eq!(detail.retry_after, Some(60 * 60 * 24));
     }
 
     #[test]

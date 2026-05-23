@@ -18,6 +18,7 @@ import { FaucetButton } from "@/components/wallet/faucet-button";
 import { usePortfolioStore } from "@/stores/portfolio";
 import { formatCurrency } from "@/lib/utils";
 import { gatewayApi, walletApi } from "@/lib/api";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { explorerAddressUrl, type ExplorerChain } from "@/lib/explorers";
 import {
   formatGatewayBalanceError,
@@ -535,16 +536,10 @@ function ChainCard({
 
   const handleCopy = async () => {
     try {
-      if (!navigator.clipboard?.writeText) throw new Error("clipboard missing");
-      await navigator.clipboard.writeText(address);
+      await copyTextToClipboard(address);
       setCopyState("copied");
       setTimeout(() => setCopyState("idle"), 1800);
     } catch {
-      if (copyAddressFallback(address)) {
-        setCopyState("copied");
-        setTimeout(() => setCopyState("idle"), 1800);
-        return;
-      }
       if (selectAddress(addressRef.current)) {
         setCopyState("selected");
         setTimeout(() => setCopyState("idle"), 2600);
@@ -646,24 +641,6 @@ function ChainCard({
       </BrutalCardBody>
     </BrutalCard>
   );
-}
-
-function copyAddressFallback(address: string) {
-  const textarea = document.createElement("textarea");
-  textarea.value = address;
-  textarea.setAttribute("readonly", "");
-  textarea.style.position = "fixed";
-  textarea.style.left = "-9999px";
-  textarea.style.top = "0";
-  document.body.appendChild(textarea);
-  textarea.select();
-  try {
-    return document.execCommand("copy");
-  } catch {
-    return false;
-  } finally {
-    document.body.removeChild(textarea);
-  }
 }
 
 function selectAddress(node: HTMLElement | null) {

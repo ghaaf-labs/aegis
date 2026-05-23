@@ -13,6 +13,7 @@ import { buildShareIntent } from "@/lib/share";
 import type { ChainKey, LegStatus } from "@/types";
 import { usePortfolioStore } from "@/stores/portfolio";
 import { explorerTxUrl } from "@/lib/explorers";
+import { copyTextToClipboard } from "@/lib/clipboard";
 
 import { LegCard } from "./leg-card";
 
@@ -54,6 +55,9 @@ export function ExecutionTrace({
   const [decisionId, setDecisionId] = useState<string | null>(null);
   const [portfolioId, setPortfolioId] = useState<string | null>(null);
   const [settlementTx, setSettlementTx] = useState<string | null>(null);
+  const [txCopyState, setTxCopyState] = useState<"idle" | "copied" | "failed">(
+    "idle",
+  );
   const [synced, setSynced] = useState(false);
   const [resolvedExecutionMode, setResolvedExecutionMode] = useState<
     "mock" | "real" | undefined
@@ -62,6 +66,18 @@ export function ExecutionTrace({
   const setUnifiedUsdc = usePortfolioStore((s) => s.setUnifiedUsdc);
   const setUnifiedEurc = usePortfolioStore((s) => s.setUnifiedEurc);
   const setPerChain = usePortfolioStore((s) => s.setPerChain);
+
+  const copySettlementTx = async () => {
+    if (!settlementTx) return;
+    try {
+      await copyTextToClipboard(settlementTx);
+      setTxCopyState("copied");
+      setTimeout(() => setTxCopyState("idle"), 1500);
+    } catch {
+      setTxCopyState("failed");
+      setTimeout(() => setTxCopyState("idle"), 2600);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -275,12 +291,15 @@ export function ExecutionTrace({
                   </span>
                 )}
                 <button
-                  onClick={() => {
-                    void navigator.clipboard.writeText(settlementTx);
-                  }}
+                  onClick={() => void copySettlementTx()}
                   className="ml-1 px-1.5 py-0.5 text-[10px] border border-amber-500/40 hover:bg-amber-500/10 rounded"
+                  aria-label="Copy settlement transaction"
                 >
-                  copy
+                  {txCopyState === "copied"
+                    ? "copied"
+                    : txCopyState === "failed"
+                      ? "copy failed"
+                      : "copy"}
                 </button>
               </>
             ) : (

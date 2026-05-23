@@ -10,6 +10,7 @@ import {
   BrutalPill,
 } from "@aegis/ui";
 import { taxApi, type TaxShareToken, type TaxSummary } from "@/lib/api";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { usePortfolioStore } from "@/stores/portfolio";
 
 const TTL_DEFAULT_DAYS = 30;
@@ -34,7 +35,7 @@ export default function TaxSettingsPage() {
   const [error, setError] = useState<string | null>(null);
   const copyShare = useCallback(async (id: string, shareUrl: string) => {
     try {
-      await copyText(shareUrl);
+      await copyTextToClipboard(shareUrl);
       setError(null);
       setCopiedId(id);
       setTimeout(() => setCopiedId(null), 1800);
@@ -420,26 +421,4 @@ function taxWalletStatus(lotCount: number, lastSyncedAt: string | null) {
     ? new Date(lastSyncedAt).toLocaleDateString()
     : "sync pending";
   return `${lotCount} records · ${syncDate}`;
-}
-
-async function copyText(value: string) {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(value);
-      return;
-    } catch {
-      // Fallback below handles embedded browsers that block clipboard writes.
-    }
-  }
-
-  const textarea = document.createElement("textarea");
-  textarea.value = value;
-  textarea.setAttribute("readonly", "");
-  textarea.style.position = "fixed";
-  textarea.style.left = "-9999px";
-  document.body.appendChild(textarea);
-  textarea.select();
-  const copied = document.execCommand("copy");
-  textarea.remove();
-  if (!copied) throw new Error("copy failed");
 }

@@ -4,12 +4,16 @@ import { useState } from "react";
 import { Coins, ExternalLink, Copy, Check } from "lucide-react";
 import { BrutalButton, ProvenanceLine } from "@aegis/ui";
 import { faucetApi, analyticsApi, type FaucetClaim } from "@/lib/api";
+import { copyTextToClipboard } from "@/lib/clipboard";
 
 export function FaucetButton() {
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<FaucetClaim | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
+    "idle",
+  );
+  const showFaucetLink = error?.includes("already requested") ?? false;
 
   const claim = async () => {
     setSubmitting(true);
@@ -27,7 +31,7 @@ export function FaucetButton() {
         window.open(r.claimUrl, "_blank", "noopener,noreferrer");
       }
     } catch (e) {
-      setError((e as Error).message);
+      setError(faucetErrorMessage(e));
     } finally {
       setSubmitting(false);
     }
@@ -35,9 +39,14 @@ export function FaucetButton() {
 
   const copyAddress = async () => {
     if (!result?.arcAddress) return;
-    await navigator.clipboard.writeText(result.arcAddress);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    try {
+      await copyTextToClipboard(result.arcAddress);
+      setCopyState("copied");
+      setTimeout(() => setCopyState("idle"), 1500);
+    } catch {
+      setCopyState("failed");
+      setTimeout(() => setCopyState("idle"), 2600);
+    }
   };
 
   if (result) {
@@ -62,14 +71,23 @@ export function FaucetButton() {
               className="inline-flex items-center gap-1 text-[11px] font-mono text-text-lo hover:text-text-hi"
               title="Copy ARC address"
             >
-              {copied ? (
+              {copyState === "copied" ? (
                 <Check className="w-3 h-3 text-accent-pnl" />
               ) : (
                 <Copy className="w-3 h-3" />
               )}
-              {result.arcAddress?.slice(0, 8)}…{result.arcAddress?.slice(-4)}
+              {copyState === "copied"
+                ? "Copied"
+                : copyState === "failed"
+                  ? "Copy failed"
+                  : `${result.arcAddress?.slice(0, 8)}…${result.arcAddress?.slice(-4)}`}
             </button>
           </div>
+          {copyState === "failed" ? (
+            <p className="max-w-full break-all text-[11px] text-risk font-mono">
+              Copy failed. Use this address: {result.arcAddress}
+            </p>
+          ) : null}
           <p className="text-[11px] text-text-mut font-mono">
             Paste the address above into the faucet, select the available test
             network, and claim. Balance refreshes within ~30s.
@@ -99,7 +117,29 @@ export function FaucetButton() {
         {submitting ? "Claiming…" : "Get test USDC"}
       </BrutalButton>
       <ProvenanceLine source="test faucet · 100 USDC/day" />
+      {showFaucetLink ? (
+        <a
+          href="https://faucet.circle.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-xs font-mono text-accent-agent hover:underline"
+        >
+          <ExternalLink className="w-3 h-3" />
+          Open faucet
+        </a>
+      ) : null}
       {error && <span className="text-xs text-risk font-mono">{error}</span>}
     </div>
   );
+}
+
+function faucetErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (
+    message.includes("faucet_daily_limit") ||
+    message.includes("already requested today's test USDC")
+  ) {
+    return "You already requested today's test USDC. Open the faucet directly or try again tomorrow.";
+  }
+  return message.replace(/^[0-9]{3}: /, "");
 }
