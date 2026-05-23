@@ -50,7 +50,7 @@ mkdir -p "$LOG_DIR" "$LOCK_DIR"
 svc_inner() {
   local body
   if [ "$1" = api ]; then
-    body="cd $(printf %q "$ROOT/apps/api") && exec env API_HOST=127.0.0.1 API_PORT=$API_PORT ${DEV_API_CMD:-cargo run}"
+    body="cd $(printf %q "$ROOT/apps/api") && exec env API_HOST=127.0.0.1 API_PORT=$API_PORT ${DEV_API_CMD:-cargo run --bin aegis-api}"
   else
     body="cd $(printf %q "$ROOT/apps/web") && exec env PORT=$WEB_PORT NEXT_PUBLIC_API_URL=http://localhost:$API_PORT ${DEV_WEB_CMD:-pnpm dev}"
   fi
@@ -66,7 +66,10 @@ port_pid()    { lsof -ti "tcp:$1" -sTCP:LISTEN 2>/dev/null | head -1 || true; }
 api_healthy() { curl -fsS -m 2 "http://127.0.0.1:$API_PORT/health" >/dev/null 2>&1; }
 web_healthy() { curl -fsS -m 2 -o /dev/null "http://127.0.0.1:$WEB_PORT" 2>/dev/null; }
 svc_port()    { [ "$1" = api ] && echo "$API_PORT" || echo "$WEB_PORT"; }
-svc_healthy() { [ "$1" = api ] && api_healthy || web_healthy; }
+# Real per-service branch: a failing `api_healthy` must NOT fall through to
+# `web_healthy` (the old `&& ||` form reported the API up whenever the web port
+# was), which masked a crashed API pane as healthy.
+svc_healthy() { if [ "$1" = api ]; then api_healthy; else web_healthy; fi; }
 have_session(){ tmux has-session -t "$SESSION" 2>/dev/null; }
 have_window() { tmux list-windows -t "$SESSION" -F '#{window_name}' 2>/dev/null | grep -qx "$1"; }
 mtime()       { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0; }  # GNU first, then BSD

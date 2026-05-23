@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 publish = false
+# Several maintenance binaries live under src/bin/, so a bare `cargo run` is
+# otherwise ambiguous. Default it to the server so `cargo run` (and the dev
+# supervisor) always start the API.
+default-run = "aegis-api"
 
 [[bin]]
 name = "aegis-api"
