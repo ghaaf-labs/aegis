@@ -416,6 +416,9 @@ async fn real_quote_buy(
         dest_chain: chain,
         amount_in,
         min_out: min_out.max(1),
+        // Record the quoter's expected token output (the real pool rate), so the
+        // executor writes the holdings quantity that actually lands on-chain.
+        expected_asset_units: amount_out,
         slippage_bps: SLIPPAGE_BPS,
         deadline: (now + Duration::seconds(600)).timestamp() as u64,
         provider: "uniswap-v3".into(),
@@ -475,6 +478,9 @@ async fn real_quote_sell(
         dest_chain: chain,
         amount_in: max_in.max(1), // max token to spend
         min_out: amount_out_usdc, // exact USDC realized
+        // The quoter's expected token *input* — what leaves the wallet — so the
+        // sell-side holdings writeback decrements the real token quantity.
+        expected_asset_units: amount_in_token,
         slippage_bps: SLIPPAGE_BPS,
         deadline: (now + Duration::seconds(600)).timestamp() as u64,
         provider: "uniswap-v3".into(),
@@ -528,6 +534,7 @@ async fn lb_quote(
                 dest_chain: chain,
                 amount_in: amount_units,
                 min_out: min_out.max(1),
+                expected_asset_units: amount_out,
                 slippage_bps: SLIPPAGE_BPS,
                 deadline: (now + Duration::seconds(600)).timestamp() as u64,
                 provider: "trader-joe-lb".into(),
@@ -555,6 +562,7 @@ async fn lb_quote(
                 dest_chain: chain,
                 amount_in: max_in.max(1),
                 min_out: amount_units,
+                expected_asset_units: amount_in_token,
                 slippage_bps: SLIPPAGE_BPS,
                 deadline: (now + Duration::seconds(600)).timestamp() as u64,
                 provider: "trader-joe-lb".into(),
@@ -682,6 +690,9 @@ async fn lb_execute(
             None,
         )
         .await?;
+
+        // B3: confirm the allowance is on-chain-effective before the LB swap.
+        confirm_allowance(cfg, chain, approve_token, recipient, router, amount_in).await?;
 
         let path = lb_path(token_in, token_out);
         let swap_calldata = if is_sell {
@@ -1013,6 +1024,17 @@ async fn circle_wallet_swap(
     )
     .await?;
 
+    // B3: confirm the allowance is on-chain-effective before spending against it.
+    confirm_allowance(
+        cfg,
+        args.chain,
+        args.approve_token,
+        recipient,
+        args.router,
+        args.amount_in,
+    )
+    .await?;
+
     // 2) the swap itself (exact-output sell or exact-input buy).
     let fee = POOL_FEE.try_into().expect("fee fits uint24");
     let zero_limit = alloy::primitives::Uint::<160, 3>::ZERO;
@@ -1064,6 +1086,47 @@ async fn circle_wallet_swap(
 #[cfg(feature = "real-swap")]
 fn address_to_hex(addr: Address) -> String {
     format!("0x{}", hex::encode(addr.as_slice()))
+}
+
+/// Confirm an ERC-20 `approve` is on-chain-effective before submitting a swap
+/// (B3). Circle's contractExecution poll already confirms the approve tx, but a
+/// read-only `allowance()` check guarantees the spender can actually pull the
+/// input token — otherwise the swap reverts ("STF"/transfer-from failed). Reads
+/// the live allowance with a short bounded retry to absorb indexer/node lag.
+#[cfg(feature = "real-swap")]
+async fn confirm_allowance(
+    cfg: &Config,
+    chain: ChainKey,
+    token: Address,
+    owner: Address,
+    spender: Address,
+    min_allowance: u128,
+) -> Result<()> {
+    let provider = ProviderBuilder::new().connect_http(
+        cfg.rpc_url_for(chain)
+            .parse()
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
+    );
+    let erc20 = IERC20Swap::new(token, &provider);
+    let want = U256::from(min_allowance);
+    const ATTEMPTS: u32 = 5;
+    for attempt in 0..ATTEMPTS {
+        let have = erc20
+            .allowance(owner, spender)
+            .call()
+            .await
+            .unwrap_or(U256::ZERO);
+        if have >= want {
+            return Ok(());
+        }
+        if attempt + 1 < ATTEMPTS {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+    }
+    Err(AppError::Internal(anyhow::anyhow!(
+        "ERC-20 allowance not effective on {} after approve; not submitting swap to avoid an on-chain revert",
+        chain.as_str()
+    )))
 }
 
 #[cfg(test)]

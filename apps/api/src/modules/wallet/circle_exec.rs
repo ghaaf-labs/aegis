@@ -44,9 +44,81 @@ const TRANSACTION_STATUS_PATH: &str = "/v1/w3s/transactions";
 /// CCTP attestation poll (start small, cap the wall-clock wait).
 const POLL_INTERVAL: Duration = Duration::from_secs(3);
 const POLL_TIMEOUT: Duration = Duration::from_secs(180);
+/// How many *consecutive* unparseable / transient status responses we tolerate
+/// before failing the leg. Circle's status endpoint occasionally returns a
+/// truncated body or an alternate envelope shape mid-flight; a single blip must
+/// not brick an in-flight rebalance. A genuine `FAILED`/`CANCELLED` state is
+/// always surfaced immediately — this retry only covers responses we could not
+/// read at all.
+const MAX_DECODE_RETRIES: u32 = 3;
+
+/// Wall-clock ceiling for the post-funding balance confirmation (B1). A CCTP V2
+/// burn → attestation → mint round-trip, plus Circle's balance indexer lag, can
+/// take a couple of minutes on testnet; this matches the CCTP attestation
+/// budget so a dependent swap waits long enough rather than racing the credit.
+const FUNDING_WAIT_TIMEOUT: Duration = Duration::from_secs(180);
+/// Tolerance on the awaited amount, covering CCTP transfer fees + 6dp rounding
+/// so a standard transfer that delivers ~99.9% of the notional still satisfies
+/// the wait (the swap is sized off the same notional and clamps to balance).
+const FUNDING_WAIT_TOLERANCE: f64 = 0.99;
 
 fn blockchain_for_chain(chain: ChainKey) -> &'static str {
     crate::modules::wallet_routes::blockchain_for_chain(chain)
+}
+
+/// Bounded poll: wait until the user's Circle wallet holds at least
+/// `min_amount` USDC (within `FUNDING_WAIT_TOLERANCE`) on `chain`.
+///
+/// Closes the multi-leg race (B1) where a dependent swap is submitted before
+/// the bridged/minted USDC has credited the destination wallet — Circle marks
+/// the mint `CONFIRMED` before its balance indexer reflects the new USDC, so
+/// the swap would spend funds that aren't there yet and Circle returns `FAILED`.
+/// Errors (so the plan halts cleanly) if the balance never reaches the target
+/// within the timeout; the bridged USDC remains visible as Gateway cash.
+pub async fn wait_for_usdc_balance(
+    http: &reqwest::Client,
+    cfg: &Config,
+    db: &Db,
+    user_id: Uuid,
+    chain: ChainKey,
+    min_amount: f64,
+) -> Result<()> {
+    if min_amount <= 0.0 {
+        return Ok(());
+    }
+    let target = min_amount * FUNDING_WAIT_TOLERANCE;
+    let start = std::time::Instant::now();
+    let mut last_seen = 0.0_f64;
+    loop {
+        match crate::modules::gateway::service::fetch_chain_usdc(http, cfg, db, user_id, chain)
+            .await
+        {
+            Ok(balance) => {
+                last_seen = balance;
+                if balance >= target {
+                    return Ok(());
+                }
+            }
+            Err(e) => {
+                // A transient balance-read failure should not abort the wait; the
+                // timeout below is the real backstop.
+                tracing::warn!(
+                    chain = chain.as_str(),
+                    error = %e,
+                    "funding wait: balance read failed; retrying"
+                );
+            }
+        }
+        if start.elapsed() >= FUNDING_WAIT_TIMEOUT {
+            return Err(AppError::Internal(anyhow::anyhow!(
+                "bridged USDC did not credit on {} in time (need {:.2}, saw {:.2}); funds remain as Gateway cash for a follow-up plan",
+                chain.as_str(),
+                min_amount,
+                last_seen
+            )));
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
 }
 
 /// Submit a contract-execution transaction from the user's Circle wallet on
@@ -126,6 +198,9 @@ async fn poll_until_settled(
         cfg.circle_base_url, TRANSACTION_STATUS_PATH, transaction_id
     );
     let start = std::time::Instant::now();
+    // Count *consecutive* responses we couldn't read (network blip or
+    // unparseable body). Reset to zero on any successfully-decoded poll.
+    let mut consecutive_decode_failures: u32 = 0;
 
     loop {
         if start.elapsed() >= POLL_TIMEOUT {
@@ -134,20 +209,51 @@ async fn poll_until_settled(
             )));
         }
 
-        let envelope: TransactionStatusEnvelope = http
-            .get(&url)
-            .header("Authorization", auth_header(cfg))
-            .header("X-Request-Id", Uuid::new_v4().to_string())
-            .send()
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("circle tx status network: {e}")))?
-            .error_for_status()
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("circle tx status: {e}")))?
-            .json()
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("circle tx status decode: {e}")))?;
+        // Fetch the raw body first so a transient/alternate shape is a tolerated
+        // decode failure, not an instant leg failure. A genuine FAILED state is
+        // still surfaced immediately below once we *can* read the body.
+        let raw_body = match fetch_status_body(http, cfg, &url).await {
+            Ok(body) => body,
+            Err(transient) => {
+                consecutive_decode_failures += 1;
+                if consecutive_decode_failures >= MAX_DECODE_RETRIES {
+                    return Err(AppError::Internal(anyhow::anyhow!(
+                        "circle tx status unreadable for {transaction_id} after {MAX_DECODE_RETRIES} attempts: {transient}"
+                    )));
+                }
+                tracing::warn!(
+                    %transaction_id,
+                    attempt = consecutive_decode_failures,
+                    error = %transient,
+                    "circle tx status transient read failure; retrying"
+                );
+                tokio::time::sleep(POLL_INTERVAL).await;
+                continue;
+            }
+        };
 
-        let tx = envelope.data.transaction;
+        let tx = match parse_transaction_status(&raw_body) {
+            Some(tx) => {
+                consecutive_decode_failures = 0;
+                tx
+            }
+            None => {
+                consecutive_decode_failures += 1;
+                if consecutive_decode_failures >= MAX_DECODE_RETRIES {
+                    return Err(AppError::Internal(anyhow::anyhow!(
+                        "circle tx status body unparseable for {transaction_id} after {MAX_DECODE_RETRIES} attempts"
+                    )));
+                }
+                tracing::warn!(
+                    %transaction_id,
+                    attempt = consecutive_decode_failures,
+                    "circle tx status body unparseable; retrying"
+                );
+                tokio::time::sleep(POLL_INTERVAL).await;
+                continue;
+            }
+        };
+
         match tx.state.as_deref() {
             // Circle marks broadcast txs CONFIRMED, then COMPLETE on finality.
             // The tx hash is available as soon as it's on-chain.
@@ -159,8 +265,13 @@ async fn poll_until_settled(
                 });
             }
             Some("FAILED") | Some("CANCELLED") | Some("DENIED") => {
+                let reason = tx
+                    .error_reason
+                    .as_deref()
+                    .map(|r| format!(" ({r})"))
+                    .unwrap_or_default();
                 return Err(AppError::Internal(anyhow::anyhow!(
-                    "circle contractExecution {transaction_id} ended in state {:?}",
+                    "circle contractExecution {transaction_id} ended in state {:?}{reason}",
                     tx.state
                 )));
             }
@@ -169,6 +280,37 @@ async fn poll_until_settled(
 
         tokio::time::sleep(POLL_INTERVAL).await;
     }
+}
+
+/// Fetch the raw status-endpoint body, treating network errors and non-success
+/// HTTP codes as transient (the caller retries up to `MAX_DECODE_RETRIES`).
+async fn fetch_status_body(http: &reqwest::Client, cfg: &Config, url: &str) -> Result<String> {
+    let resp = http
+        .get(url)
+        .header("Authorization", auth_header(cfg))
+        .header("X-Request-Id", Uuid::new_v4().to_string())
+        .send()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("circle tx status network: {e}")))?
+        .error_for_status()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("circle tx status http: {e}")))?;
+    resp.text()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("circle tx status body read: {e}")))
+}
+
+/// Parse a status body into the inner transaction. Tolerates the documented
+/// `{data:{transaction:{…}}}` shape and an alternate `{data:{…}}` shape some
+/// sandbox responses use (the contractExecution POST shape). `None` ⇒ the body
+/// could not be read as either, so the caller retries.
+fn parse_transaction_status(body: &str) -> Option<TransactionData> {
+    if let Ok(env) = serde_json::from_str::<TransactionStatusEnvelope>(body) {
+        return Some(env.data.transaction);
+    }
+    // Fall back to the flatter envelope (id/state/txHash directly under `data`).
+    serde_json::from_str::<TransactionEnvelope>(body)
+        .ok()
+        .map(|env| env.data)
 }
 
 async fn entity_secret_ciphertext(http: &reqwest::Client, cfg: &Config) -> Result<String> {
@@ -272,6 +414,11 @@ struct TransactionData {
     state: Option<String>,
     #[serde(rename = "txHash", default)]
     tx_hash: Option<String>,
+    /// Circle's machine reason for a failed transaction (e.g.
+    /// `INSUFFICIENT_FUNDS`, `EXECUTION_REVERTED`). Surfaced in the leg's
+    /// failure reason so the ledger shows the real cause, not just "FAILED".
+    #[serde(rename = "errorReason", default)]
+    error_reason: Option<String>,
 }
 
 /// GET `/v1/w3s/transactions/{id}` nests the transaction under
@@ -366,5 +513,31 @@ mod tests {
         let env: TransactionEnvelope = serde_json::from_str(raw).unwrap();
         assert_eq!(env.data.state.as_deref(), Some("INITIATED"));
         assert!(env.data.tx_hash.is_none());
+    }
+
+    #[test]
+    fn parse_transaction_status_reads_nested_shape() {
+        let raw = r#"{"data":{"transaction":{"id":"tx-1","state":"CONFIRMED","txHash":"0xabc"}}}"#;
+        let tx = parse_transaction_status(raw).expect("nested shape parses");
+        assert_eq!(tx.state.as_deref(), Some("CONFIRMED"));
+        assert_eq!(tx.tx_hash.as_deref(), Some("0xabc"));
+    }
+
+    #[test]
+    fn parse_transaction_status_falls_back_to_flat_shape() {
+        // Some sandbox responses return the flatter POST-style envelope.
+        let raw = r#"{"data":{"id":"tx-9","state":"COMPLETE","txHash":"0xdef"}}"#;
+        let tx = parse_transaction_status(raw).expect("flat shape parses");
+        assert_eq!(tx.state.as_deref(), Some("COMPLETE"));
+        assert_eq!(tx.tx_hash.as_deref(), Some("0xdef"));
+    }
+
+    #[test]
+    fn parse_transaction_status_returns_none_for_unparseable_body() {
+        // A truncated / HTML / empty body is a transient read failure, not a
+        // FAILED state — the caller retries rather than bricking the leg.
+        assert!(parse_transaction_status("").is_none());
+        assert!(parse_transaction_status("<html>502 Bad Gateway</html>").is_none());
+        assert!(parse_transaction_status(r#"{"data":{"#).is_none());
     }
 }

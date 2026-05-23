@@ -98,6 +98,7 @@ pub async fn build(db: Db, config: Config) -> Router {
         )
         .route("/faucet/usdc", post(faucet::handlers::claim_usdc))
         .route("/gateway/balance", get(gateway::handlers::balance))
+        .route("/wallets/transactions", get(gateway::transactions::list))
         .route("/analytics/event", post(analytics::handlers::track))
         // SSE is authed — events are filtered server-side by audience_user_id.
         .route("/sse", get(sse::handler))
@@ -174,6 +175,11 @@ pub async fn build(db: Db, config: Config) -> Router {
         .route(
             "/users/me/agent/resume",
             post(agent::pause_handlers::resume),
+        )
+        .route(
+            "/users/me/agent/auto-pilot",
+            get(agent::pause_handlers::auto_pilot_status)
+                .post(agent::pause_handlers::set_auto_pilot),
         )
         .route("/backtest/preview", post(backtest::handlers::preview))
         .route("/trustability/me", get(trustability::handlers::me))

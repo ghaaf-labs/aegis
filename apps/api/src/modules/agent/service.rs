@@ -1152,6 +1152,28 @@ pub async fn apply_allocation(
     .execute(&mut *tx)
     .await?;
 
+    // Sync routePreferences.tokens to the agent's allocated symbols. The planner
+    // filters the target allocation by routePreferences.tokens; the onboarding
+    // wizard defaults that to ["USDC"], so without this an agent-chosen token
+    // (e.g. ETH) is silently dropped and the rebalance plans nothing. Approving
+    // the agent's allocation = enabling its tokens. Merge with `||` so other
+    // routePreferences keys (networks, watchlist) are preserved.
+    sqlx::query(
+        "UPDATE portfolios
+            SET goal = jsonb_set(
+                    COALESCE(goal, '{}'::jsonb),
+                    '{routePreferences}',
+                    COALESCE(goal->'routePreferences', '{}'::jsonb)
+                        || jsonb_build_object('tokens', $2::jsonb),
+                    true
+                )
+          WHERE id = $1",
+    )
+    .bind(portfolio_id)
+    .bind(json!(target_symbols))
+    .execute(&mut *tx)
+    .await?;
+
     // Seed allocations.target_weight (mirrors portfolio::handlers::create).
     for (symbol, weight) in &clamped {
         sqlx::query(

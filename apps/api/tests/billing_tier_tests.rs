@@ -189,7 +189,10 @@ async fn second_portfolio_is_rejected_for_single_portfolio_invariant() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(count2.0, 1, "one-portfolio invariant holds across tier upgrade");
+    assert_eq!(
+        count2.0, 1,
+        "one-portfolio invariant holds across tier upgrade"
+    );
 
     cleanup_user(&pool, user).await;
 }

@@ -18,7 +18,7 @@ use crate::modules::rebalance::cross_chain::build_hook_payload;
 use crate::modules::rebalance::models::{ChainKey, LegKind, PlannedLeg};
 use crate::modules::rebalance::quote::ValidatedQuote;
 use crate::modules::rebalance::registry::{
-    capabilities::RuntimeCapabilities, route::RouteLeg, ticket::ExecutionTicket,
+    capabilities::RuntimeCapabilities, route::RouteLeg, ticket::ExecutionTicket, tokens,
 };
 use crate::modules::sse::{RebalanceLegPayload, RebalancePlanPayload, SseEvent};
 use crate::modules::wallet_routes;
@@ -242,13 +242,44 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
             continue;
         }
 
+        // Post-funding confirmation (B1): if this leg spends USDC on a chain a
+        // prior confirmed bridge/mint just delivered to, wait for that USDC to
+        // actually credit the destination wallet before submitting — otherwise
+        // the swap races the mint and Circle returns FAILED. Only meaningful in
+        // real non-custodial mode (funds live in the user's Circle wallet).
+        if state.config.circle_wallet_exec
+            && !(state.config.execution_mock || state.config.circle_mock)
+        {
+            if let Some((fund_chain, min_usdc)) = pending_funding_dependency(leg, &confirmed_so_far)
+            {
+                if let Err(e) = crate::modules::wallet::circle_exec::wait_for_usdc_balance(
+                    &state.http,
+                    &state.config,
+                    &state.db,
+                    user_id,
+                    fund_chain,
+                    min_usdc,
+                )
+                .await
+                {
+                    let reason = format!("{e}");
+                    mark_leg_failed(state, rebalance_id, leg.id, user_id, leg, &reason).await?;
+                    return Err(e);
+                }
+            }
+        }
+
         // Bump the attempt counter on every submit so retries are observable and
         // a runaway leg can be capped. Done before the network call so a crash
         // mid-submit still records the attempt.
         bump_attempt_count(state, leg.id).await?;
         mark_leg_submitted(state, rebalance_id, leg.id, user_id, leg).await?;
 
-        let (tx_hash, cctp_hash) = match dispatch(state, rebalance_id, kind, leg, user_id).await {
+        let LegDispatch {
+            tx_hash,
+            cctp_hash,
+            filled_qty,
+        } = match dispatch(state, rebalance_id, kind, leg, user_id).await {
             Ok(v) => v,
             Err(e) => {
                 let reason = format!("{e}");
@@ -287,7 +318,9 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
         // disposal is separate bookkeeping and cannot be the holdings source
         // of truth.
         if is_sell_leg(kind, leg) {
-            if let Err(e) = record_allocation_disposal_for_leg(state, portfolio_id, leg).await {
+            if let Err(e) =
+                record_allocation_disposal_for_leg(state, portfolio_id, leg, filled_qty).await
+            {
                 tracing::warn!(leg_id=?leg.id, error=%e, "allocations: disposal writeback failed");
             } else {
                 holdings_changed = true;
@@ -310,7 +343,7 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
         // USYC leg reverts on Arc but BTC/ETH/SOL already settled) still
         // surfaces the holdings the user actually owns.
         if is_buy_leg(kind, leg) {
-            if let Err(e) = record_acquisition_for_leg(state, portfolio_id, leg).await {
+            if let Err(e) = record_acquisition_for_leg(state, portfolio_id, leg, filled_qty).await {
                 tracing::warn!(leg_id=?leg.id, error=%e, "allocations: acquisition writeback failed");
             } else {
                 holdings_changed = true;
@@ -395,13 +428,43 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
     Ok(())
 }
 
+/// Outcome of dispatching one leg: the on-chain hashes plus the real, on-chain
+/// fill of the leg's non-USDC asset (whole token units) when the executed quote
+/// can supply it. `filled_qty` is the source of truth for the holdings
+/// writeback — `None` falls back to the price-derived estimate (mock mode, or a
+/// cross-chain hook swap whose destination fill isn't known pre-execution).
+struct LegDispatch {
+    tx_hash: String,
+    cctp_hash: Option<String>,
+    filled_qty: Option<f64>,
+}
+
+/// The real on-chain fill of a quote's non-USDC asset, in whole token units,
+/// taken from the quoter's `expected_asset_units` (the pool's real exchange
+/// rate). `None` for a pure USDC↔USDC bridge or an un-priced/zero quote.
+fn quote_filled_qty(quote: &ValidatedQuote) -> Option<f64> {
+    let symbol = if !quote.src_token.eq_ignore_ascii_case(tokens::USDC) {
+        quote.src_token.as_str()
+    } else if !quote.dest_token.eq_ignore_ascii_case(tokens::USDC) {
+        quote.dest_token.as_str()
+    } else {
+        return None;
+    };
+    if quote.expected_asset_units == 0 {
+        return None;
+    }
+    let decimals = tokens::token(symbol)?.decimals;
+    let qty = quote.expected_asset_units as f64 / 10f64.powi(i32::from(decimals));
+    (qty.is_finite() && qty > 0.0).then_some(qty)
+}
+
 async fn dispatch(
     state: &AppState,
     rebalance_id: Uuid,
     kind: LegKind,
     leg: &LegRow,
     user_id: Uuid,
-) -> Result<(String, Option<String>)> {
+) -> Result<LegDispatch> {
     let _ = rebalance_id;
     let caps = RuntimeCapabilities::from_config(&state.config);
 
@@ -410,7 +473,11 @@ async fn dispatch(
     // APIs, so a synthetic hash can never stand in for a real transaction.
     if !caps.real_mode {
         let r = adapters::mock_receipt(kind, leg.id);
-        return Ok((r.tx_hash, None));
+        return Ok(LegDispatch {
+            tx_hash: r.tx_hash,
+            cctp_hash: None,
+            filled_qty: None,
+        });
     }
 
     // Real mode: the leg must clear the route registry and (for swaps) carry a
@@ -445,6 +512,10 @@ async fn dispatch(
 
     let ticket = ExecutionTicket::mint(&caps, &state.config, leg.id, &route_leg, quote, now)
         .map_err(|e| AppError::BadRequest(e.detail()))?;
+
+    // The real on-chain fill (from the executed quote) drives the holdings
+    // writeback. A USDC↔USDC bridge leg yields `None` here naturally.
+    let filled_qty = quote_filled_qty(ticket.quote());
 
     match kind {
         LegKind::CrossChainBurn => {
@@ -494,7 +565,11 @@ async fn dispatch(
                 &hook,
             )
             .await?;
-            Ok((r.tx_hash, r.cctp_message_hash))
+            Ok(LegDispatch {
+                tx_hash: r.tx_hash,
+                cctp_hash: r.cctp_message_hash,
+                filled_qty,
+            })
         }
         LegKind::CrossChainMint => {
             // The companion burn leg already produced a tx_hash; read it back.
@@ -519,13 +594,21 @@ async fn dispatch(
                 &burn_hash,
             )
             .await?;
-            Ok((r.tx_hash, None))
+            Ok(LegDispatch {
+                tx_hash: r.tx_hash,
+                cctp_hash: None,
+                filled_qty,
+            })
         }
         LegKind::LocalSwap => {
             let r =
                 adapters::swap::execute(&state.config, &state.http, &state.db, user_id, &ticket)
                     .await?;
-            Ok((r.tx_hash, r.cctp_message_hash))
+            Ok(LegDispatch {
+                tx_hash: r.tx_hash,
+                cctp_hash: r.cctp_message_hash,
+                filled_qty,
+            })
         }
         // Unreachable: USYC (disabled) and StableFX (KYB-gated) legs fail closed
         // at `mint` above, so real dispatch never reaches them.
@@ -740,6 +823,30 @@ fn leg_strands_funds_on_failure(kind: LegKind, prior_confirmed: &[LegRow]) -> bo
         // acquire, so a revert returns the USDC — nothing stranded.
         LegKind::LocalSwap | LegKind::ParkUsyc | LegKind::RedeemUsyc | LegKind::FxStablefx => false,
     }
+}
+
+/// If this leg spends USDC on a chain that a prior confirmed cross-chain mint
+/// just delivered USDC to, return `(chain, min_usdc)` the dependent leg must
+/// wait to credit before submitting. This is the timing-race guard (B1): a
+/// bridge mint reports `CONFIRMED` before Circle's balance indexer reflects the
+/// new USDC, so a swap that spends it would fail closed.
+///
+/// Pure (DB-free) so the dependency decision is unit-testable. Returns `None`
+/// when the leg doesn't spend USDC or no prior mint targeted its spend chain.
+fn pending_funding_dependency(leg: &LegRow, confirmed: &[LegRow]) -> Option<(ChainKey, f64)> {
+    // Only a USDC-spending leg (a buy swap, or a burn) can race a fresh mint.
+    if leg.src_symbol.as_deref() != Some(tokens::USDC) {
+        return None;
+    }
+    let spend_chain = leg.src_chain.as_deref().and_then(ChainKey::parse)?;
+    let delivered_here = confirmed.iter().any(|c| {
+        c.kind == LegKind::CrossChainMint.as_str()
+            && c.dest_chain.as_deref().and_then(ChainKey::parse) == Some(spend_chain)
+    });
+    if !delivered_here {
+        return None;
+    }
+    Some((spend_chain, leg.amount_usdc))
 }
 
 async fn mark_leg_submitted(
@@ -965,18 +1072,24 @@ fn is_buy_leg(kind: LegKind, leg: &LegRow) -> bool {
 
 /// Increment `allocations.quantity` by the asset amount acquired on a buy
 /// leg. Best-effort — failures here log and continue; the on-chain leg is
-/// already settled. Quantity is approximated as `amount_usdc / spot_price`
-/// since we don't parse on-chain swap output amounts.
+/// already settled.
+///
+/// `filled_qty` is the real on-chain fill from the executed swap quote (the
+/// pool's true exchange rate). It is the source of truth so `allocations.quantity`
+/// matches the tokens that actually landed on-chain — not `amount_usdc / mainnet_price`,
+/// which diverges badly on testnet pools. Falls back to the price-derived estimate
+/// only when the leg can't supply a real fill (mock mode, cross-chain hook swap).
 async fn record_acquisition_for_leg(
     state: &AppState,
     portfolio_id: Uuid,
     leg: &LegRow,
+    filled_qty: Option<f64>,
 ) -> Result<()> {
     let Some(symbol) = leg.dest_symbol.as_deref() else {
         return Ok(());
     };
     let spot_price = latest_spot_price_with_stable_fallback(state, symbol).await;
-    let Some(acquired_qty) = quantity_for_notional(leg.amount_usdc, spot_price) else {
+    let Some(acquired_qty) = settled_quantity(filled_qty, leg.amount_usdc, spot_price) else {
         return Ok(());
     };
 
@@ -1014,16 +1127,20 @@ async fn record_acquisition_for_leg(
     Ok(())
 }
 
+/// Decrement `allocations.quantity` by the asset amount sold on a sell leg.
+/// `filled_qty` is the real token input the swap spent (from the quote); it wins
+/// over the price-derived estimate so the sold quantity matches on-chain.
 async fn record_allocation_disposal_for_leg(
     state: &AppState,
     portfolio_id: Uuid,
     leg: &LegRow,
+    filled_qty: Option<f64>,
 ) -> Result<()> {
     let Some(symbol) = leg.src_symbol.as_deref() else {
         return Ok(());
     };
     let spot_price = latest_spot_price_with_stable_fallback(state, symbol).await;
-    let Some(sold_qty) = quantity_for_notional(leg.amount_usdc, spot_price) else {
+    let Some(sold_qty) = settled_quantity(filled_qty, leg.amount_usdc, spot_price) else {
         return Ok(());
     };
 
@@ -1112,6 +1229,19 @@ fn quantity_for_notional(amount_usdc: f64, spot_price: f64) -> Option<f64> {
         return None;
     }
     Some(amount_usdc / spot_price)
+}
+
+/// The quantity to write to holdings for a settled leg. The real on-chain fill
+/// (`filled_qty`, from the executed quote) is authoritative because it reflects
+/// the pool's true exchange rate; the `amount_usdc / spot_price` estimate is a
+/// last resort for legs that can't report a fill (mock mode, cross-chain hook
+/// swap). This is the fix for holdings showing `amount_usdc / mainnet_price`
+/// instead of the tokens that actually landed.
+fn settled_quantity(filled_qty: Option<f64>, amount_usdc: f64, spot_price: f64) -> Option<f64> {
+    match filled_qty {
+        Some(q) if q.is_finite() && q > 0.0 => Some(q),
+        _ => quantity_for_notional(amount_usdc, spot_price),
+    }
 }
 
 async fn record_tax_disposal_for_leg(
@@ -1237,6 +1367,62 @@ mod tests {
         assert_eq!(quantity_for_notional(600.0, 100_000.0), Some(0.006));
         assert_eq!(quantity_for_notional(0.0, 100_000.0), None);
         assert_eq!(quantity_for_notional(600.0, 0.0), None);
+    }
+
+    #[test]
+    fn settled_quantity_prefers_real_on_chain_fill_over_price_derived() {
+        // The bug: $20 of WETH on a testnet pool actually lands 0.0708 WETH,
+        // but amount_usdc / mainnet_price gives ~0.0096. The real fill must win.
+        let real_fill = 0.0708;
+        let mainnet_price = 2080.0;
+        let amount_usdc = 20.0;
+        // Price-derived would be far off.
+        let price_derived = quantity_for_notional(amount_usdc, mainnet_price).unwrap();
+        assert!((price_derived - 0.0096).abs() < 0.0005);
+        // settled_quantity returns the real fill, not the price-derived value.
+        assert_eq!(
+            settled_quantity(Some(real_fill), amount_usdc, mainnet_price),
+            Some(real_fill)
+        );
+    }
+
+    #[test]
+    fn settled_quantity_falls_back_to_price_when_no_fill() {
+        // No on-chain fill (mock mode / cross-chain hook) → price-derived.
+        assert_eq!(settled_quantity(None, 600.0, 100_000.0), Some(0.006));
+        // A zero/non-finite fill is ignored in favor of the price-derived value.
+        assert_eq!(settled_quantity(Some(0.0), 600.0, 100_000.0), Some(0.006));
+        assert_eq!(
+            settled_quantity(Some(f64::NAN), 600.0, 100_000.0),
+            Some(0.006)
+        );
+    }
+
+    #[test]
+    fn quote_filled_qty_scales_by_token_decimals_for_buy_and_sell() {
+        let now = Utc::now();
+        // Buy: USDC→ETH, quoter says 0.0708 WETH (18dp base units).
+        let mut buy = ValidatedQuote::cctp_one_to_one(ChainKey::Base, ChainKey::Base, 0, now);
+        buy.src_token = "USDC".into();
+        buy.dest_token = "ETH".into();
+        buy.expected_asset_units = 70_800_000_000_000_000; // 0.0708 * 1e18
+        let q = quote_filled_qty(&buy).unwrap();
+        assert!((q - 0.0708).abs() < 1e-9);
+
+        // Sell: ETH→USDC, quoter says the wallet spends 0.5 WETH.
+        let mut sell = ValidatedQuote::cctp_one_to_one(ChainKey::Base, ChainKey::Base, 0, now);
+        sell.src_token = "ETH".into();
+        sell.dest_token = "USDC".into();
+        sell.expected_asset_units = 500_000_000_000_000_000; // 0.5 * 1e18
+        assert_eq!(quote_filled_qty(&sell), Some(0.5));
+    }
+
+    #[test]
+    fn quote_filled_qty_is_none_for_pure_usdc_bridge() {
+        // A USDC↔USDC bridge has no non-USDC asset, so there is nothing to record.
+        let bridge =
+            ValidatedQuote::cctp_one_to_one(ChainKey::Arc, ChainKey::Base, 40_000_000, Utc::now());
+        assert_eq!(quote_filled_qty(&bridge), None);
     }
 
     fn hook_cfg() -> Config {
@@ -1391,6 +1577,50 @@ mod tests {
     }
 
     // ── Strand decision (which failures leave funds stranded) ─────────────
+
+    fn mint_leg(dest: ChainKey, amount: f64) -> LegRow {
+        LegRow {
+            id: Uuid::new_v4(),
+            leg_index: 1,
+            kind: LegKind::CrossChainMint.as_str().to_string(),
+            src_chain: Some(ChainKey::Arc.as_str().to_string()),
+            dest_chain: Some(dest.as_str().to_string()),
+            src_symbol: Some("USDC".into()),
+            dest_symbol: Some("USDC".into()),
+            amount_usdc: amount,
+            min_out: None,
+            status: "confirmed".into(),
+        }
+    }
+
+    #[test]
+    fn dependent_swap_waits_for_minted_usdc_on_same_chain() {
+        // Mint delivered USDC to Base; the next leg is a USDC→ETH swap on Base.
+        let confirmed = vec![mint_leg(ChainKey::Base, 40.0)];
+        let dep = swap_leg("USDC", "ETH"); // Base→Base, amount 600
+        assert_eq!(
+            pending_funding_dependency(&dep, &confirmed),
+            Some((ChainKey::Base, 600.0))
+        );
+    }
+
+    #[test]
+    fn no_funding_wait_without_prior_mint_on_that_chain() {
+        // A mint to Arc doesn't gate a Base swap.
+        let confirmed = vec![mint_leg(ChainKey::Arc, 40.0)];
+        let dep = swap_leg("USDC", "ETH"); // Base
+        assert_eq!(pending_funding_dependency(&dep, &confirmed), None);
+        // No prior mint at all → no wait.
+        assert_eq!(pending_funding_dependency(&dep, &[]), None);
+    }
+
+    #[test]
+    fn sell_leg_does_not_wait_for_funding() {
+        // A sell spends the non-USDC asset, not bridged USDC → no funding wait.
+        let confirmed = vec![mint_leg(ChainKey::Base, 40.0)];
+        let sell = swap_leg("ETH", "USDC");
+        assert_eq!(pending_funding_dependency(&sell, &confirmed), None);
+    }
 
     #[test]
     fn mint_failure_after_burn_strands_funds() {

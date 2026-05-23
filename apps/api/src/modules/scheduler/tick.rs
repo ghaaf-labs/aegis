@@ -17,7 +17,10 @@ use dashmap::DashMap;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::modules::agent::{models::AnalyzeRequest, service::analyze_portfolio};
+use crate::modules::agent::models::{AgentDecision, AnalyzeRequest, ProposeAllocationRequest};
+use crate::modules::agent::service::{analyze_portfolio, apply_allocation, propose_allocation};
+use crate::modules::rebalance::executor::approve_and_execute;
+use crate::modules::rebalance::handlers::{prepare_autonomous_plan, AutonomousPlan};
 use crate::router::AppState;
 
 /// Last-decision-emitted instant per portfolio.
@@ -60,13 +63,17 @@ pub fn spawn_portfolio_scheduler(state: AppState, cancel: CancellationToken) -> 
                 _ = tokio::time::sleep(tick) => {}
             }
 
-            // Skip portfolios whose owning user has paused the agent globally
-            // (FE-PAUSE-1). Manual /agent/analyze + /rebalance/:id/execute are
-            // unaffected — only the scheduled trigger is gated here.
-            let active: Vec<Uuid> = match sqlx::query_scalar(
-                "SELECT p.id FROM portfolios p \
+            // Skip portfolios whose owning user has paused the agent for all of
+            // that user's portfolios (FE-PAUSE-1). Manual /agent/analyze +
+            // /rebalance/:id/execute are unaffected — only the scheduled trigger
+            // is gated here. Auto-pilot portfolios are scanned even at $0 invested
+            // value so a first deployment of idle Gateway cash can fire.
+            let active: Vec<(Uuid, Uuid, bool)> = match sqlx::query_as(
+                "SELECT p.id, p.user_id, u.auto_pilot_enabled \
+                 FROM portfolios p \
                  JOIN users u ON u.id = p.user_id \
-                 WHERE p.total_value_usd > 0 AND u.agent_paused_at IS NULL",
+                 WHERE (p.total_value_usd > 0 OR u.auto_pilot_enabled) \
+                   AND u.agent_paused_at IS NULL",
             )
             .fetch_all(&st.db)
             .await
@@ -78,7 +85,7 @@ pub fn spawn_portfolio_scheduler(state: AppState, cancel: CancellationToken) -> 
                 }
             };
 
-            for portfolio_id in active {
+            for (portfolio_id, user_id, auto_pilot) in active {
                 if cd.within(portfolio_id, window) {
                     continue;
                 }
@@ -90,8 +97,16 @@ pub fn spawn_portfolio_scheduler(state: AppState, cancel: CancellationToken) -> 
                         continue;
                     }
                 };
-                tracing::info!(?portfolio_id, reason=%triggered, "scheduler firing");
-                if let Err(e) = analyze_portfolio(
+                tracing::info!(?portfolio_id, reason=%triggered, auto_pilot, "scheduler firing");
+
+                if auto_pilot {
+                    // Auto-pilot ON: the agent acts on its own within the
+                    // guardrails. On any failure it leaves a review behind
+                    // (the proposal / planned rebalance), exactly the OFF path.
+                    if let Err(e) = run_autopilot(&st, portfolio_id, user_id, &triggered).await {
+                        tracing::warn!(?portfolio_id, error=%e, "auto-pilot run failed; left as review");
+                    }
+                } else if let Err(e) = analyze_portfolio(
                     &st,
                     AnalyzeRequest {
                         portfolio_id,
@@ -108,6 +123,133 @@ pub fn spawn_portfolio_scheduler(state: AppState, cancel: CancellationToken) -> 
         }
     });
     cooldowns
+}
+
+/// Autonomous (auto-pilot) handling for one triggered portfolio.
+///
+/// The agent proposes a fresh target, adopts it, builds a real rebalance plan,
+/// and — only when every guardrail clears — executes it on the *exact same*
+/// path the manual approval endpoint uses. Any guardrail miss falls back to
+/// leaving a review (the proposal + any planned rebalance) for the user, which
+/// is the auto-pilot-OFF behavior.
+///
+/// Fail-safes that downgrade to review-only (never auto-execute):
+/// - the constitution flags the clamped allocation,
+/// - a depeg is active for this user (defer to peg defense),
+/// - approval-safety is not `approvable` (non-executable route, stale plan,
+///   balance unavailable, superseded, mock/legacy decision),
+/// - nothing to move (on-target or sub-$5 dust).
+async fn run_autopilot(
+    state: &AppState,
+    portfolio_id: Uuid,
+    user_id: Uuid,
+    triggered_by: &str,
+) -> crate::error::Result<()> {
+    // Defer to peg defense during an active depeg rather than rebalancing into
+    // a destabilized market.
+    if peg_defense_active(state, user_id).await {
+        tracing::info!(
+            ?portfolio_id,
+            "auto-pilot: depeg active; deferring to peg defense"
+        );
+        return Ok(());
+    }
+
+    // 1. Propose a fresh target. This runs the allocator, the deterministic
+    //    clamp (single-asset cap, stable floor, executable-only), and the
+    //    constitution check — all surfaced over SSE for the activity feed.
+    let proposal = propose_allocation(
+        state,
+        ProposeAllocationRequest {
+            portfolio_id,
+            triggered_by: Some(format!("autopilot:{triggered_by}")),
+            risk_override: None,
+        },
+    )
+    .await?;
+
+    // 2. Constitution gate (C4): never auto-adopt/execute an allocation the
+    //    constitution flags. The proposal stays as a Gate-1 review for the user.
+    if !proposal_constitution_clean(&proposal) {
+        tracing::info!(?portfolio_id, decision_id=?proposal.id, "auto-pilot: constitution flagged proposal; left as review");
+        return Ok(());
+    }
+
+    // 3. Adopt the target (idempotent; the user's own approval would do the same).
+    apply_allocation(state, proposal.id, user_id).await?;
+
+    // 4. Build the real rebalance plan toward the new target + its safety verdict.
+    let prepared = prepare_autonomous_plan(state, portfolio_id).await?;
+    let (rebalance_id, safety) = match prepared {
+        AutonomousPlan::NoOp => {
+            tracing::info!(
+                ?portfolio_id,
+                "auto-pilot: target adopted, nothing to move (on-target / dust)"
+            );
+            return Ok(());
+        }
+        AutonomousPlan::Prepared {
+            rebalance_id,
+            safety,
+        } => (rebalance_id, safety),
+    };
+
+    // 5. Approval-safety gate: only execute a plan the manual flow would accept.
+    if !safety.approvable {
+        tracing::info!(
+            ?portfolio_id,
+            ?rebalance_id,
+            code = %safety.code,
+            "auto-pilot: plan not approvable; left as review"
+        );
+        return Ok(());
+    }
+
+    // 6. Execute via the exact path the approval endpoint uses.
+    approve_and_execute(state.clone(), rebalance_id).await?;
+    tracing::info!(
+        ?portfolio_id,
+        ?rebalance_id,
+        "auto-pilot: executing rebalance autonomously"
+    );
+    Ok(())
+}
+
+/// True when the proposal's constitution verdict cites no violated clauses.
+/// `clause_ids` is omitted from the serialized verdict when empty, so an absent
+/// field reads as clean.
+fn proposal_constitution_clean(decision: &AgentDecision) -> bool {
+    let Some(verdict) = decision.critic_verdict.as_ref() else {
+        return true;
+    };
+    match verdict.get("clause_ids").and_then(|c| c.as_array()) {
+        Some(ids) => ids.is_empty(),
+        None => true,
+    }
+}
+
+/// Whether a peg-defense rule fired for this user within the fire cooldown — a
+/// proxy for "a depeg is active right now". Best-effort: a query error (e.g. the
+/// peg tables absent) reads as "not active" so it never blocks normal rebalancing.
+async fn peg_defense_active(state: &AppState, user_id: Uuid) -> bool {
+    if !state.config.peg_defense_enabled {
+        return false;
+    }
+    let cooldown_secs = state.config.peg_fire_cooldown_secs.max(60);
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(
+            SELECT 1 FROM peg_events e
+            JOIN peg_rules r ON r.id = e.rule_id
+            WHERE r.user_id = $1
+              AND e.action_taken IN ('propose_rebalance', 'auto_execute')
+              AND e.observed_at > NOW() - ($2 || ' seconds')::interval
+         )",
+    )
+    .bind(user_id)
+    .bind(cooldown_secs.to_string())
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(false)
 }
 
 /// Inspect a single portfolio; return `Some(reason)` if any trigger fires.

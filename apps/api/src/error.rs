@@ -206,9 +206,19 @@ fn bad_request_detail(message: &str) -> ErrorDetail {
 
 fn conflict_detail(message: &str) -> ErrorDetail {
     if message.starts_with("No rebalance plan was created") {
+        // Preserve *why* the plan is a no-op instead of always saying "add cash":
+        // a portfolio that already matches its target has plenty of cash, it just
+        // has nothing to move. (`message` is `&str`, so map to canned copy.)
+        let detail = if message.contains("already within the execution thresholds") {
+            "Your portfolio already matches the agent's target allocation, so there's nothing to rebalance right now."
+        } else if message.contains("no confirmed positions") {
+            "Add USDC to your wallet to fund your first allocation, then build a new review."
+        } else {
+            "The idle USDC left to deploy is below the $5 minimum move size, so no rebalance was created."
+        };
         return ErrorDetail {
             code: "no_rebalance_plan",
-            message: "No rebalance plan was created because there is no deployable wallet cash above $5. Add wallet cash, then build a new review.",
+            message: detail,
             retry_after: None,
         };
     }
@@ -401,12 +411,26 @@ mod tests {
 
     #[test]
     fn no_rebalance_plan_conflict_is_actionable() {
-        let detail = ErrorDetail::from(&AppError::Conflict(
+        // No confirmed positions / unfunded wallet → "add USDC" guidance.
+        let no_positions = ErrorDetail::from(&AppError::Conflict(
             "No rebalance plan was created because this portfolio has no confirmed positions and no deployable USDC above the $5 dust threshold. Fund the wallet first, then review deployment.".into(),
         ));
-        assert_eq!(detail.code, "no_rebalance_plan");
-        assert!(detail.message.contains("Add wallet cash"));
-        assert!(detail.message.contains("$5"));
+        assert_eq!(no_positions.code, "no_rebalance_plan");
+        assert!(no_positions.message.contains("Add USDC"));
+
+        // Already on-target → "nothing to rebalance", not a "fund cash" prompt.
+        let on_target = ErrorDetail::from(&AppError::Conflict(
+            "No rebalance plan was created because current weights, target weights, and idle USDC are already within the execution thresholds.".into(),
+        ));
+        assert_eq!(on_target.code, "no_rebalance_plan");
+        assert!(on_target.message.contains("already matches"));
+
+        // Dust-only surplus → "$5 minimum move size".
+        let dust = ErrorDetail::from(&AppError::Conflict(
+            "No rebalance plan was created because only $3.00 USDC is idle, below the $5.00 dust threshold.".into(),
+        ));
+        assert_eq!(dust.code, "no_rebalance_plan");
+        assert!(dust.message.contains("$5"));
     }
 
     #[test]

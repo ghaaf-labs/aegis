@@ -7,5 +7,6 @@
 pub mod handlers;
 pub mod service;
 pub mod ticker;
+pub mod transactions;
 
 pub use ticker::spawn_balance_ticker;

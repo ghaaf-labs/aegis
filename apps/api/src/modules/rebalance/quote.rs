@@ -28,6 +28,14 @@ pub struct ValidatedQuote {
     pub dest_chain: ChainKey,
     pub amount_in: u128,
     pub min_out: u128,
+    /// Quoted base-unit amount of the *non-USDC* asset this leg moves, taken
+    /// straight from the on-chain quoter — the real pool's exchange rate, not a
+    /// mainnet spot price. Buy (USDC→token): expected destination token output.
+    /// Sell (token→USDC): expected source token spent. `0` for a pure USDC↔USDC
+    /// bridge (no asset leg). The executor records holdings from this so
+    /// `allocations.quantity` matches what actually landed on-chain rather than
+    /// `amount_usdc / mainnet_price`.
+    pub expected_asset_units: u128,
     pub slippage_bps: u32,
     /// Unix timestamp (seconds) embedded in the on-chain call.
     pub deadline: u64,
@@ -53,6 +61,9 @@ impl ValidatedQuote {
             dest_chain,
             amount_in,
             min_out: amount_in,
+            // A pure USDC bridge moves no non-USDC asset, so there is no asset
+            // quantity to record from the quote.
+            expected_asset_units: 0,
             slippage_bps: 0,
             deadline: (now + Duration::seconds(600)).timestamp() as u64,
             provider: "cctp-1to1".into(),
@@ -144,6 +155,7 @@ mod tests {
             dest_chain: ChainKey::Base,
             amount_in: 1_000_000,
             min_out: 500,
+            expected_asset_units: 510,
             slippage_bps: 50,
             deadline: (now + Duration::seconds(300)).timestamp() as u64,
             provider: "uniswap-v3".into(),

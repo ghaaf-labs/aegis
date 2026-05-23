@@ -295,6 +295,57 @@ pub async fn history(
     Ok(Json(history))
 }
 
+/// Outcome of the auto-pilot plan preparation. `NoOp` ⇒ nothing to move
+/// (on-target / sub-dust); `Prepared` ⇒ a `planned` rebalance exists, with its
+/// approval-safety verdict for the scheduler to gate execution on.
+pub(crate) enum AutonomousPlan {
+    NoOp,
+    Prepared {
+        rebalance_id: Uuid,
+        safety: ApprovalSafety,
+    },
+}
+
+/// Build (or reuse) a real, `planned` rebalance toward the portfolio's current
+/// target and return its approval-safety verdict — the autonomous (auto-pilot)
+/// counterpart to the `create` handler. Reuses the *exact same* deterministic
+/// planner, plan persistence, and `approval_safety` gate the manual approval
+/// flow uses, so auto-pilot can never execute a plan the manual path would
+/// reject. The scheduler executes only when `safety.approvable` is true.
+pub(crate) async fn prepare_autonomous_plan(
+    state: &AppState,
+    portfolio_id: Uuid,
+) -> Result<AutonomousPlan> {
+    let input = build_plan_input(state, portfolio_id).await?;
+    let legs = plan_legs(&input);
+    if legs.is_empty() {
+        // On-target or sub-$5 dust — the planner drops it. Nothing to execute.
+        return Ok(AutonomousPlan::NoOp);
+    }
+
+    let rebalance_id =
+        if let Some(existing) = reusable_planned_rebalance(state, portfolio_id, &legs).await? {
+            existing.rebalance_id
+        } else {
+            // Auto-pilot is a real-execution control path; record the same
+            // deterministic planner decision the manual `create` route does so the
+            // approval-safety gate (which rejects mock/legacy decisions in real
+            // mode) accepts it.
+            let decision = if state.config.execution_mock || state.config.circle_mock {
+                mock_agent_decision(state, portfolio_id).await?
+            } else {
+                planner_agent_decision(state, portfolio_id, &input, &legs).await?
+            };
+            create_plan(state, portfolio_id, decision.id, &legs).await?
+        };
+
+    let safety = approval_safety(state, rebalance_id).await?;
+    Ok(AutonomousPlan::Prepared {
+        rebalance_id,
+        safety,
+    })
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 /// Insert a canned agent decision for mock-backed local/demo mode. Lets the
