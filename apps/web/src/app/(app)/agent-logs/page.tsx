@@ -85,7 +85,10 @@ export default function AgentLogsPage() {
       </div>
 
       {error && (
-        <p className="border border-risk/40 bg-risk/5 px-3 py-2 text-xs font-mono text-risk">
+        <p
+          role="alert"
+          className="border border-risk/40 bg-risk/5 px-3 py-2 text-xs font-mono text-risk"
+        >
           {error}
         </p>
       )}

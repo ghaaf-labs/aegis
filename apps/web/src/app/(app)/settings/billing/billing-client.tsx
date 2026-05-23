@@ -129,7 +129,10 @@ export function BillingSettingsClient() {
       )}
 
       {error && !alert && (
-        <div className="border border-red-500/40 bg-red-500/10 p-3 text-xs text-risk">
+        <div
+          role="alert"
+          className="border border-red-500/40 bg-red-500/10 p-3 text-xs text-risk"
+        >
           {error}
         </div>
       )}

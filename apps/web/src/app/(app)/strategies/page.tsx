@@ -73,7 +73,7 @@ export default function StrategiesPage() {
         </section>
       )}
       {adoptError && (
-        <p className="text-xs font-mono text-risk">
+        <p role="alert" className="text-xs font-mono text-risk">
           Adopt failed: {adoptError}
         </p>
       )}
