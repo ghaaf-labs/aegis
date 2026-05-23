@@ -279,16 +279,13 @@ export default function TaxSettingsPage() {
             </BrutalCardHeader>
             <BrutalCardBody className="space-y-3 text-xs text-text-lo">
               <p>
-                This report covers{" "}
+                This report covers settled{" "}
+                <span className="text-text-hi font-mono">{year}</span> activity
+                for {selectedPortfolio?.name ?? "this portfolio"} across{" "}
                 <span className="text-text-hi font-mono">
                   {summary?.wallets.length ?? 0} wallets
-                </span>{" "}
-                and{" "}
-                <span className="text-text-hi font-mono">
-                  {summary?.totalLotCount ?? 0} records
-                </span>{" "}
-                for {selectedPortfolio?.name ?? "this portfolio"} in {year}.
-                Wallet addresses are included for reconciliation.
+                </span>
+                . Wallet addresses are included for reconciliation.
               </p>
               <p>
                 Only settled moves with a transaction reference are included.
