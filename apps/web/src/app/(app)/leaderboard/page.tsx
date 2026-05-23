@@ -16,10 +16,12 @@ interface LeaderboardEntry {
   userId: string;
   handle: string;
   decisionsExecuted: number;
+  decisionsPerWeek: number;
   distinctModels: number;
   avg7dReturn: number;
   trustabilityDelta: number;
   lastDecisionAt: string | null;
+  aumUsd: number;
   label: "excellent" | "strong" | "stable" | "shaky" | "underperforming";
   recentModelSlug?: string;
   recentCriticVerdict?: {
@@ -83,14 +85,21 @@ export default async function LeaderboardPage() {
   );
 }
 
+const GRID_COLS =
+  "md:grid-cols-[40px_minmax(0,1fr)_80px_80px_90px_80px_64px_100px]";
+
 function TableHeader() {
   return (
-    <div className="hidden md:grid md:grid-cols-[40px_minmax(0,1fr)_80px_80px_80px_100px] gap-3 px-4 py-3 border-b border-border-default text-[10px] font-mono uppercase tracking-wider text-text-lo bg-raised">
+    <div
+      className={`hidden md:grid ${GRID_COLS} gap-3 px-4 py-3 border-b border-border-default text-[10px] font-mono uppercase tracking-wider text-text-lo bg-raised`}
+    >
       <span>#</span>
       <span>Handle</span>
       <span className="text-right">Δ vs cf</span>
       <span className="text-right">7d avg</span>
+      <span className="text-right">AUM</span>
       <span className="text-right">Decisions</span>
+      <span className="text-right">/wk</span>
       <span className="text-right">Tier</span>
     </div>
   );
@@ -107,7 +116,9 @@ function Row({ entry, rank }: { entry: LeaderboardEntry; rank: number }) {
   const labelTone = LABEL_TONE[entry.label];
 
   return (
-    <li className="border-b border-border-default px-4 py-4 font-mono text-xs transition-colors last:border-0 hover:bg-white/2 md:grid md:grid-cols-[40px_minmax(0,1fr)_80px_80px_80px_100px] md:items-center md:gap-3 md:py-3">
+    <li
+      className={`border-b border-border-default px-4 py-4 font-mono text-xs transition-colors last:border-0 hover:bg-white/2 md:grid ${GRID_COLS} md:items-center md:gap-3 md:py-3`}
+    >
       <div className="space-y-3 md:hidden">
         <div className="flex min-w-0 items-start gap-3">
           <span
@@ -126,8 +137,14 @@ function Row({ entry, rank }: { entry: LeaderboardEntry; rank: number }) {
           />
           <MobileMetric label="7d avg" value={signedPct(entry.avg7dReturn)} />
           <MobileMetric
-            label="Decisions"
-            value={entry.decisionsExecuted.toString()}
+            label="AUM"
+            value={formatAum(entry.aumUsd)}
+            className="text-accent-pnl"
+          />
+          <MobileMetric
+            label="Decisions / wk"
+            value={`${entry.decisionsExecuted} · ${entry.decisionsPerWeek}/wk`}
+            className="text-accent-agent"
           />
           <div className="border border-border-default bg-bg px-3 py-2">
             <p className="text-[10px] uppercase tracking-widest text-text-mut">
@@ -154,8 +171,14 @@ function Row({ entry, rank }: { entry: LeaderboardEntry; rank: number }) {
       <span className="hidden text-right tabular-nums text-text-default md:block">
         {signedPct(entry.avg7dReturn)}
       </span>
+      <span className="hidden text-right tabular-nums text-accent-pnl md:block">
+        {formatAum(entry.aumUsd)}
+      </span>
       <span className="hidden text-right tabular-nums text-text-lo md:block">
         {entry.decisionsExecuted}
+      </span>
+      <span className="hidden text-right tabular-nums text-accent-agent md:block">
+        {entry.decisionsPerWeek}
       </span>
       <span
         className={`hidden text-right text-[10px] uppercase tracking-wider border px-1.5 py-0.5 md:block ${labelTone}`}
@@ -174,6 +197,13 @@ function roundPct(value: number) {
 function signedPct(value: number) {
   const safe = roundPct(value);
   return `${safe >= 0 ? "+" : ""}${safe.toFixed(2)}%`;
+}
+
+function formatAum(value: number) {
+  const v = Number.isFinite(value) ? value : 0;
+  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `$${(v / 1_000).toFixed(1)}k`;
+  return `$${Math.round(v)}`;
 }
 
 function LeaderboardIdentity({ entry }: { entry: LeaderboardEntry }) {

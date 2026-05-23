@@ -581,6 +581,10 @@ export interface DiaryOutcome {
   counterfactualPctChange: number;
   compressedSummary: string;
   recordedAt: string;
+  /** BTC's return over the same 24h window (real, from price history). */
+  btcReturn?: number;
+  /** realizedPctChange − btcReturn, in percentage points. */
+  outperformanceVsBtc?: number;
 }
 
 export interface CounterfactualReplay {

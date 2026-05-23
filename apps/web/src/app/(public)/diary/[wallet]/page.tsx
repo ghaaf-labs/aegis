@@ -163,6 +163,30 @@ function DiaryCard({ entry }: { entry: DiaryEntry }) {
                   {entry.outcome.counterfactualPctChange.toFixed(2)}%
                 </div>
               </div>
+              {entry.outcome.btcReturn !== undefined && (
+                <div>
+                  <div className="text-text-mut">BTC 24h</div>
+                  <div className="text-text-default">
+                    {entry.outcome.btcReturn >= 0 ? "+" : ""}
+                    {entry.outcome.btcReturn.toFixed(2)}%
+                  </div>
+                </div>
+              )}
+              {entry.outcome.outperformanceVsBtc !== undefined && (
+                <div>
+                  <div className="text-text-mut">vs BTC</div>
+                  <div
+                    className={
+                      entry.outcome.outperformanceVsBtc >= 0
+                        ? "text-accent-pnl"
+                        : "text-risk"
+                    }
+                  >
+                    {entry.outcome.outperformanceVsBtc >= 0 ? "+" : ""}
+                    {entry.outcome.outperformanceVsBtc.toFixed(2)} pts
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <p className="mt-4 text-[11px] text-text-mut">
