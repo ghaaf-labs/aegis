@@ -134,7 +134,7 @@ async fn poll_until_settled(
             )));
         }
 
-        let envelope: TransactionEnvelope = http
+        let envelope: TransactionStatusEnvelope = http
             .get(&url)
             .header("Authorization", auth_header(cfg))
             .header("X-Request-Id", Uuid::new_v4().to_string())
@@ -147,7 +147,7 @@ async fn poll_until_settled(
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("circle tx status decode: {e}")))?;
 
-        let tx = envelope.data;
+        let tx = envelope.data.transaction;
         match tx.state.as_deref() {
             // Circle marks broadcast txs CONFIRMED, then COMPLETE on finality.
             // The tx hash is available as soon as it's on-chain.
@@ -272,6 +272,20 @@ struct TransactionData {
     state: Option<String>,
     #[serde(rename = "txHash", default)]
     tx_hash: Option<String>,
+}
+
+/// GET `/v1/w3s/transactions/{id}` nests the transaction under
+/// `data.transaction`, unlike the contractExecution POST which returns the id
+/// at `data.id`. Decode the status poll against this shape (reusing the POST
+/// envelope here drops the whole body — `id` is "missing" — and stalls the leg).
+#[derive(Deserialize)]
+struct TransactionStatusEnvelope {
+    data: TransactionStatusData,
+}
+
+#[derive(Deserialize)]
+struct TransactionStatusData {
+    transaction: TransactionData,
 }
 
 #[cfg(test)]
