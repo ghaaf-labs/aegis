@@ -58,9 +58,13 @@ impl TokenSpec {
             (CBBTC, ChainKey::Base) => cfg.cbbtc_base.as_str(),
             (CBETH, ChainKey::Base) => cfg.cbeth_base.as_str(),
             (SUSDS, ChainKey::Base) => cfg.susds_base.as_str(),
-            // EURC (Arc StableFX) and the remaining price-reference symbols have
-            // no canonical ERC-20 configured, so they resolve to None and fail
-            // closed (track-only). New-chain ERC-20s default empty until set.
+            // EURC executes via the permissionless USDC/EURC pool on Base
+            // (Aerodrome / Uniswap V3), superseding the KYB-gated Arc StableFX
+            // path. Empty ⇒ track-only (fail closed).
+            (EURC, ChainKey::Base) => cfg.eurc_base.as_str(),
+            // The remaining price-reference symbols have no canonical ERC-20
+            // configured, so they resolve to None and fail closed (track-only).
+            // New-chain ERC-20s default empty until set.
             _ => return None,
         };
         normalize_addr(raw)
@@ -106,12 +110,16 @@ pub const TOKEN_REGISTRY: &[TokenSpec] = &[
         canonical_chain: Some(ChainKey::Arc),
         supported_chains: ARC,
     },
+    // EURC — the EUR sleeve. Economically an FX stablecoin, but it now settles
+    // through the permissionless USDC/EURC pool on Base (Aerodrome / Uniswap V3)
+    // instead of the KYB-gated Arc StableFX rail, so it resides on Base and the
+    // route registry routes it via the swap adapter.
     TokenSpec {
         symbol: EURC,
         decimals: 6,
         class: TokenClass::FxStable,
-        canonical_chain: Some(ChainKey::Arc),
-        supported_chains: ARC,
+        canonical_chain: Some(ChainKey::Base),
+        supported_chains: BASE,
     },
     TokenSpec {
         symbol: "BTC",
@@ -264,7 +272,8 @@ mod tests {
         assert_eq!(token(USYC).unwrap().class, TokenClass::Yield);
         assert_eq!(token(USYC).unwrap().canonical_chain, Some(ChainKey::Arc));
         assert_eq!(token(EURC).unwrap().class, TokenClass::FxStable);
-        assert_eq!(token(EURC).unwrap().canonical_chain, Some(ChainKey::Arc));
+        // EURC now settles on Base via the permissionless USDC/EURC DEX pool.
+        assert_eq!(token(EURC).unwrap().canonical_chain, Some(ChainKey::Base));
         assert_eq!(token("BTC").unwrap().class, TokenClass::Volatile);
         assert_eq!(token(ETH).unwrap().canonical_chain, Some(ChainKey::Base));
     }
@@ -310,6 +319,18 @@ mod tests {
         // BTC has no configured Base ERC-20 → None.
         assert_eq!(
             token("BTC").unwrap().address_for(&cfg, ChainKey::Base),
+            None
+        );
+        // EURC resolves on Base once its DEX-pool ERC-20 is configured.
+        cfg.eurc_base = "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42".into();
+        assert_eq!(
+            token(EURC).unwrap().address_for(&cfg, ChainKey::Base),
+            Some(cfg.eurc_base.as_str())
+        );
+        // Empty default ⇒ track-only (fail closed).
+        let bare = crate::config::test_config();
+        assert_eq!(
+            token(EURC).unwrap().address_for(&bare, ChainKey::Base),
             None
         );
     }

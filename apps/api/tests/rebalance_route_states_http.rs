@@ -117,6 +117,60 @@ fn local_swap_needs_real_swap_feature() {
     assert!(has(&blockers, BlockerCode::RealSwapFeature));
 }
 
+#[cfg(not(feature = "real-swap"))]
+#[test]
+fn eurc_routes_as_base_local_swap_not_stablefx() {
+    // The EUR sleeve now executes through the Base USDC/EURC DEX pool, so a
+    // USDC→EURC buy is a local_swap on Base — it must clear the swap rail (here
+    // just the feature gate), never the gated StableFX blocker.
+    let cfg = real_config();
+    let caps = RuntimeCapabilities::from_config(&cfg);
+    let blockers = validate_legs(
+        &caps,
+        &cfg,
+        &[leg("local_swap", "base", "base", "USDC", "EURC")],
+    );
+    assert!(has(&blockers, BlockerCode::RealSwapFeature));
+    assert!(!has(&blockers, BlockerCode::StablefxUnavailable));
+}
+
+#[cfg(feature = "real-swap")]
+#[test]
+fn eurc_base_swap_is_executable_when_configured() {
+    // With the swap venue + EURC's Base ERC-20 configured (and the real-swap
+    // feature compiled in), a USDC→EURC local_swap on Base has no blockers.
+    let mut cfg = real_config();
+    cfg.uniswap_v3_quoter_base = "0xC5290058841028F1614F3A6F0F5816cAd0df5E27".into();
+    cfg.uniswap_v3_router_base = "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4".into();
+    cfg.eurc_base = "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42".into();
+    let caps = RuntimeCapabilities::from_config(&cfg);
+    let blockers = validate_legs(
+        &caps,
+        &cfg,
+        &[leg("local_swap", "base", "base", "USDC", "EURC")],
+    );
+    assert!(
+        blockers.is_empty(),
+        "configured EURC Base swap must be executable, got {blockers:?}"
+    );
+}
+
+#[cfg(feature = "real-swap")]
+#[test]
+fn eurc_base_swap_fails_closed_without_address() {
+    // Swap venue live but EURC's Base ERC-20 unset → fail closed on the address.
+    let mut cfg = real_config();
+    cfg.uniswap_v3_quoter_base = "0xC5290058841028F1614F3A6F0F5816cAd0df5E27".into();
+    cfg.uniswap_v3_router_base = "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4".into();
+    let caps = RuntimeCapabilities::from_config(&cfg);
+    let blockers = validate_legs(
+        &caps,
+        &cfg,
+        &[leg("local_swap", "base", "base", "USDC", "EURC")],
+    );
+    assert!(has(&blockers, BlockerCode::SwapTokenAddress));
+}
+
 #[test]
 fn mock_mode_permits_every_leg() {
     let cfg = base_config(); // execution_mock = true
@@ -307,6 +361,7 @@ fn base_config() -> Config {
         cbbtc_base: String::new(),
         cbeth_base: String::new(),
         susds_base: String::new(),
+        eurc_base: String::new(),
         uniswap_v3_quoter_eth: String::new(),
         uniswap_v3_router_eth: String::new(),
         uniswap_v3_quoter_arb: String::new(),

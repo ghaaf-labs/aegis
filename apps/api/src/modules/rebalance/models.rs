@@ -89,7 +89,10 @@ pub enum TokenClass {
     Stable,
     /// USYC — yield sleeve, minted/redeemed via the Hashnote Teller.
     Yield,
-    /// EURC — FX sleeve, swapped via Arc StableFX.
+    /// EURC — FX sleeve. Economically an FX stablecoin, but now executed via
+    /// the permissionless USDC/EURC pool on Base (the gated Arc StableFX rail
+    /// is superseded). The route registry routes an `FxStable` token with a
+    /// Base ERC-20 through the swap adapter.
     FxStable,
     /// BTC/ETH/SOL/… — market exposure acquired via a per-chain AMM swap.
     Volatile,
@@ -160,13 +163,17 @@ impl ChainKey {
 }
 
 /// Symbols whose canonical residency is Arc. Anything not in here defaults to
-/// Base for cross-chain planning. USYC and EURC live on Arc (StableFX), and
-/// USDC is multi-chain so it stays where the user holds it.
-pub const ARC_NATIVE_SYMBOLS: &[&str] = &["USYC", "EURC"];
+/// Base for cross-chain planning. USYC lives on Arc (Hashnote Teller), and
+/// USDC is multi-chain so it stays where the user holds it. EURC moved to Base
+/// once the EUR sleeve switched to the permissionless USDC/EURC DEX pool.
+pub const ARC_NATIVE_SYMBOLS: &[&str] = &["USYC"];
 
-/// Symbols whose canonical residency is Base (Uniswap V3 venue).
-pub const BASE_NATIVE_SYMBOLS: &[&str] =
-    &["BTC", "ETH", "SOL", "BNB", "AVAX", "MATIC", "LINK", "UNI"];
+/// Symbols whose canonical residency is Base (Uniswap V3 / Aerodrome venue).
+/// EURC settles here via the permissionless USDC/EURC pool (supersedes the
+/// KYB-gated Arc StableFX rail).
+pub const BASE_NATIVE_SYMBOLS: &[&str] = &[
+    "BTC", "ETH", "SOL", "BNB", "AVAX", "MATIC", "LINK", "UNI", "EURC",
+];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlannedLeg {

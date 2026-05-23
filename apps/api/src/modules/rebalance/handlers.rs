@@ -1222,10 +1222,31 @@ mod tests {
 
         apply_route_preferences_to_targets(&goal, &mut targets);
 
+        // With only Arc selected, the Base-native sleeves (BTC/ETH and now EURC,
+        // which trades on the Base USDC/EURC pool) drop out; only Arc-native
+        // USYC survives.
         assert_eq!(
             targets.keys().cloned().collect::<HashSet<_>>(),
-            HashSet::from(["USYC".to_string(), "EURC".to_string()])
+            HashSet::from(["USYC".to_string()])
         );
+    }
+
+    #[test]
+    fn route_preferences_keep_eurc_when_base_selected() {
+        // EURC is Base-native now (Base USDC/EURC DEX pool), so selecting Base
+        // keeps it even when Arc is not selected.
+        let goal = json!({
+            "routePreferences": {
+                "networks": ["BASE-SEPOLIA"],
+                "tokens": ["USYC", "EURC"]
+            }
+        });
+        let mut targets = HashMap::from([("USYC".to_string(), 0.50), ("EURC".to_string(), 0.50)]);
+
+        apply_route_preferences_to_targets(&goal, &mut targets);
+
+        assert!(targets.contains_key("EURC"));
+        assert!(!targets.contains_key("USYC"));
     }
 
     fn planned_leg(

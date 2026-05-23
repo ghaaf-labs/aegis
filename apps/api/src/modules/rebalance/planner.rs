@@ -8,7 +8,9 @@
 //! Decisions encoded here:
 //!
 //! - Symbols in `ARC_NATIVE_SYMBOLS` land on Arc; anything in
-//!   `BASE_NATIVE_SYMBOLS` lands on Base (Uniswap V3 venue).
+//!   `BASE_NATIVE_SYMBOLS` lands on Base (Uniswap V3 / Aerodrome venue). EURC is
+//!   Base-native here — the EUR sleeve trades on the permissionless USDC/EURC
+//!   pool, superseding the KYB-gated Arc StableFX rail.
 //! - A buy that needs USDC on Base while liquidity is on Arc emits a
 //!   `cross_chain_burn` + `cross_chain_mint` pair instead of two legs.
 //! - Sells route through `redeem_usyc` (USYC → USDC) or a local swap into USDC
@@ -84,10 +86,11 @@ pub fn plan_legs(input: &PlanInput) -> Vec<PlannedLeg> {
     }
 
     // Sells first (negative deltas) so they free up USDC for same-plan buys.
-    // Among buys: USYC and EURC are routed *last*. Their final leg calls an
-    // external integration (Hashnote Teller, Arc StableFX) — when those
-    // revert on testnet the executor halts the plan, so putting them at the
-    // tail keeps a Teller failure from blocking the BTC/ETH/SOL legs.
+    // Among buys: USYC is routed *last*. Its final leg calls an external
+    // integration (Hashnote Teller) — when that reverts on testnet the executor
+    // halts the plan, so putting it at the tail keeps a Teller failure from
+    // blocking the BTC/ETH/SOL/EURC legs. EURC now trades on the Base DEX like
+    // the volatiles, so it is no longer deferred.
     deltas.sort_by(|a, b| {
         use std::cmp::Ordering;
         let a_sell = a.value_delta_usd < 0.0;
@@ -100,8 +103,8 @@ pub fn plan_legs(input: &PlanInput) -> Vec<PlannedLeg> {
                 .partial_cmp(&b.value_delta_usd)
                 .unwrap_or(Ordering::Equal),
             (false, false) => {
-                let a_yield = matches!(a.symbol.as_str(), "USYC" | "EURC");
-                let b_yield = matches!(b.symbol.as_str(), "USYC" | "EURC");
+                let a_yield = matches!(a.symbol.as_str(), "USYC");
+                let b_yield = matches!(b.symbol.as_str(), "USYC");
                 match (a_yield, b_yield) {
                     (true, false) => Ordering::Greater,
                     (false, true) => Ordering::Less,
@@ -205,7 +208,7 @@ fn append_sell_legs(
     let chain = native_chain(&d.symbol);
     let kind = match d.symbol.as_str() {
         "USYC" => LegKind::RedeemUsyc,
-        "EURC" => LegKind::FxStablefx,
+        // EURC sells route through the Base USDC/EURC DEX pool, not Arc StableFX.
         _ => LegKind::LocalSwap,
     };
     legs.push(PlannedLeg {
@@ -240,7 +243,11 @@ fn append_buy_legs(
         to_acquire -= used_local;
     }
 
-    let is_volatile = !matches!(d.symbol.as_str(), "USYC" | "EURC" | "USDC");
+    // Tokens acquired via an AMM swap (volatiles + EURC, which now trades on the
+    // Base USDC/EURC pool). These get a same-chain swap for the local portion and
+    // a cross-chain hook swap for the bridged portion. Only USYC (Teller park)
+    // and USDC (no swap) take the special stable final-leg path below.
+    let is_swap_acquired = !matches!(d.symbol.as_str(), "USYC" | "USDC");
 
     // Bridge any shortfall from the chain holding the most idle USDC (greedy,
     // single-source). With two chains this is just "the other chain"; with N it
@@ -270,11 +277,11 @@ fn append_buy_legs(
         _ => 0.0,
     };
 
-    // For volatile assets in a mixed buy (some USDC already local on target chain,
-    // some bridged from the other chain) the bridge+hook only swaps the bridged
-    // amount — the local portion still needs its own swap leg. Older code
+    // For swap-acquired assets in a mixed buy (some USDC already local on target
+    // chain, some bridged from the other chain) the bridge+hook only swaps the
+    // bridged amount — the local portion still needs its own swap leg. Older code
     // returned early after the hook and silently dropped the local portion.
-    if is_volatile && used_local > 0.0 {
+    if is_swap_acquired && used_local > 0.0 {
         let min_out = prices.get(&d.symbol).map(|&price| {
             if price > 0.0 {
                 (used_local / price) * 0.95
@@ -296,11 +303,11 @@ fn append_buy_legs(
     }
 
     if let (Some(source_chain), true) = (other_chain, to_bridge > 0.0) {
-        // Volatile: attach hook params to the burn so the destination
-        // RebalanceExecutor swaps USDC→asset atomically with the mint.
-        // Stables (USYC, EURC): plain USDC bridge; a separate special leg
-        // below handles the final park/FX on the destination chain.
-        let (burn_dest_symbol, burn_min_out) = if is_volatile {
+        // Swap-acquired (volatiles + EURC): attach hook params to the burn so
+        // the destination RebalanceExecutor swaps USDC→asset atomically with the
+        // mint. USYC: plain USDC bridge; a separate special leg below handles the
+        // final park on the destination chain.
+        let (burn_dest_symbol, burn_min_out) = if is_swap_acquired {
             let min_out = prices.get(&d.symbol).map(|&price| {
                 if price > 0.0 {
                     (to_bridge / price) * 0.95
@@ -340,22 +347,21 @@ fn append_buy_legs(
         *usdc_pool.entry(source_chain).or_insert(0.0) -= to_bridge;
     }
 
-    if is_volatile {
-        // Volatile final leg(s) already emitted above (local_swap for the
+    if is_swap_acquired {
+        // Swap-acquired final leg(s) already emitted above (local_swap for the
         // used_local portion + cross-chain hook for the bridged portion).
         return;
     }
 
-    // Stable final leg: park USDC → USYC, swap USDC → EURC, or local USDC swap.
-    // Amount = used_local + to_bridge; the bridged USDC has arrived on the
-    // target chain via the mint above.
+    // Stable final leg: park USDC → USYC, or a local USDC swap. Amount =
+    // used_local + to_bridge; the bridged USDC has arrived on the target chain
+    // via the mint above. (EURC no longer reaches here — it is swap-acquired.)
     let consumed = used_local + to_bridge;
     if consumed <= 0.0 {
         return;
     }
     let kind = match d.symbol.as_str() {
         "USYC" => LegKind::ParkUsyc,
-        "EURC" => LegKind::FxStablefx,
         _ => LegKind::LocalSwap,
     };
 
@@ -564,7 +570,10 @@ mod tests {
     }
 
     #[test]
-    fn fx_only_when_eurc_changes() {
+    fn eurc_buy_routes_through_base_dex_swap() {
+        // EURC is now Base-native and acquired via the permissionless USDC/EURC
+        // DEX pool, so a buy emits a LocalSwap (USDC→EURC) on Base — never the
+        // gated Arc StableFX leg. USDC liquidity on Arc bridges to Base first.
         let i = input(
             10_000.0,
             &[("USYC", 1.0)],
@@ -574,9 +583,42 @@ mod tests {
         );
         let legs = plan_legs(&i);
         let kinds: Vec<LegKind> = legs.iter().map(|l| l.kind).collect();
-        assert!(kinds.iter().any(|k| matches!(k, LegKind::FxStablefx)));
-        let fx = legs.iter().find(|l| l.kind == LegKind::FxStablefx).unwrap();
-        assert_eq!(fx.dest_chain, Some(ChainKey::Arc));
+        assert!(
+            !kinds.iter().any(|k| matches!(k, LegKind::FxStablefx)),
+            "EURC must not route via Arc StableFX, got {kinds:?}"
+        );
+        // The EURC acquisition is a swap. With idle USDC only on Arc it bridges
+        // to Base and swaps there (CrossChainBurn carries the hook to EURC), so
+        // assert the EURC destination lands on Base via a swap-bearing leg.
+        let eurc_leg = legs
+            .iter()
+            .find(|l| l.dest_symbol.as_deref() == Some("EURC"))
+            .expect("expected a leg acquiring EURC");
+        assert!(matches!(
+            eurc_leg.kind,
+            LegKind::LocalSwap | LegKind::CrossChainBurn
+        ));
+        assert_eq!(eurc_leg.dest_chain, Some(ChainKey::Base));
+    }
+
+    #[test]
+    fn eurc_buy_with_local_base_usdc_is_a_single_local_swap() {
+        // With USDC already on Base, the EURC buy is a same-chain LocalSwap.
+        let i = input(
+            10_000.0,
+            &[("USYC", 1.0)],
+            &[("USYC", 0.80), ("EURC", 0.20)],
+            0.0,
+            5_000.0,
+        );
+        let legs = plan_legs(&i);
+        let eurc = legs
+            .iter()
+            .find(|l| l.dest_symbol.as_deref() == Some("EURC"))
+            .expect("expected a EURC buy leg");
+        assert_eq!(eurc.kind, LegKind::LocalSwap);
+        assert_eq!(eurc.src_symbol.as_deref(), Some("USDC"));
+        assert_eq!(eurc.dest_chain, Some(ChainKey::Base));
     }
 
     #[test]
@@ -660,7 +702,7 @@ mod tests {
         assert!(
             legs.iter()
                 .any(|l| l.dest_symbol.as_deref() == Some("EURC")),
-            "EURC target should still route through StableFX, got {legs:?}"
+            "EURC target should still produce a buy leg (via the Base DEX swap), got {legs:?}"
         );
         assert!(
             legs.iter()

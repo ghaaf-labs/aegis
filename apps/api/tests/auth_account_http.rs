@@ -596,6 +596,7 @@ fn test_config(database_url: &str) -> Config {
         cbbtc_base: String::new(),
         cbeth_base: String::new(),
         susds_base: String::new(),
+        eurc_base: String::new(),
         uniswap_v3_quoter_eth: String::new(),
         uniswap_v3_router_eth: String::new(),
         uniswap_v3_quoter_arb: String::new(),

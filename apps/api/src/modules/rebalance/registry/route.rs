@@ -8,7 +8,7 @@ use crate::config::Config;
 
 use super::super::models::{ChainKey, LegKind, PlannedLeg, TokenClass};
 use super::capabilities::{AdapterCapability, RuntimeCapabilities};
-use super::tokens::{self, EURC, USDC, USYC};
+use super::tokens::{self, USDC, USYC};
 
 /// Plain-language route state surfaced to the UI for a token. One-to-one with
 /// the user-facing labels: Ready, Track only, Needs route, Needs quote,
@@ -402,8 +402,10 @@ pub fn route_state_for_token(caps: &RuntimeCapabilities, cfg: &Config, symbol: &
         // USDC is the settlement unit — always holdable/transferable.
         TokenClass::Stable => RouteState::Ready,
         TokenClass::Yield => cap_to_state(caps.usyc, true),
-        TokenClass::FxStable => cap_to_state(caps.stablefx, true),
-        TokenClass::Volatile => {
+        // EURC (the only FxStable) trades on the permissionless USDC/EURC pool on
+        // Base, so it routes through the swap adapter exactly like a volatile —
+        // the gated Arc StableFX rail (`caps.stablefx`) is superseded.
+        TokenClass::FxStable | TokenClass::Volatile => {
             let has_addr = spec.address_for(cfg, ChainKey::Base).is_some();
             cap_to_state(caps.swap, has_addr)
         }
@@ -422,21 +424,19 @@ fn cap_to_state(cap: AdapterCapability, has_addr: bool) -> RouteState {
     }
 }
 
-/// Symbols the agent may actually move funds into. Always USDC; USYC/EURC and
-/// each volatile only when their adapter is live and (for volatiles) the token
-/// has a configured Base ERC-20.
+/// Symbols the agent may actually move funds into. Always USDC; USYC only when
+/// its adapter is live; every swap-acquired token (volatiles + EURC, which now
+/// trades on the Base USDC/EURC pool) only when the swap adapter is live and the
+/// token has a configured Base ERC-20.
 pub fn executable_token_symbols(caps: &RuntimeCapabilities, cfg: &Config) -> Vec<&'static str> {
     let mut out = vec![USDC];
     if caps.usyc.is_live() {
         out.push(USYC);
     }
-    if caps.stablefx.is_live() {
-        out.push(EURC);
-    }
     if caps.swap.is_live() {
         for spec in tokens::TOKEN_REGISTRY {
-            if spec.class == TokenClass::Volatile && spec.address_for(cfg, ChainKey::Base).is_some()
-            {
+            let swap_acquired = matches!(spec.class, TokenClass::Volatile | TokenClass::FxStable);
+            if swap_acquired && spec.address_for(cfg, ChainKey::Base).is_some() {
                 out.push(spec.symbol);
             }
         }
@@ -526,9 +526,26 @@ mod tests {
         let cfg = real_cfg();
         let caps = RuntimeCapabilities::from_config(&cfg);
         assert!(executable_token_symbols(&caps, &cfg).contains(&"USDC"));
-        // USYC disabled, EURC KYB-gated → never executable here.
+        // USYC disabled → never executable here. EURC needs the swap adapter
+        // live + a Base ERC-20; neither is set in this cfg, so not executable.
         assert!(!executable_token_symbols(&caps, &cfg).contains(&"USYC"));
         assert!(!executable_token_symbols(&caps, &cfg).contains(&"EURC"));
+    }
+
+    #[test]
+    fn eurc_is_executable_when_swap_live_with_base_erc20() {
+        // EURC now executes on the Base USDC/EURC DEX pool. When the swap
+        // adapter is live and EURC has a configured Base ERC-20, it joins the
+        // executable set (no longer gated behind StableFX).
+        let mut cfg = real_cfg();
+        cfg.eurc_base = "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42".into();
+        let mut caps = RuntimeCapabilities::from_config(&cfg);
+        caps.swap = AdapterCapability::Live;
+        assert!(executable_token_symbols(&caps, &cfg).contains(&"EURC"));
+        assert_eq!(
+            route_state_for_token(&caps, &cfg, "EURC"),
+            RouteState::Ready
+        );
     }
 
     #[test]
@@ -567,9 +584,12 @@ mod tests {
             route_state_for_token(&caps, &cfg, "USYC"),
             RouteState::TrackOnly
         );
+        // EURC now routes via the swap adapter; without the real-swap feature
+        // the venue reports NeedsFeature, so EURC needs a route (not the old
+        // track-only StableFX state) — matching the volatile sleeves.
         assert_eq!(
             route_state_for_token(&caps, &cfg, "EURC"),
-            RouteState::TrackOnly
+            route_state_for_token(&caps, &cfg, "cbBTC"),
         );
         assert_eq!(
             route_state_for_token(&caps, &cfg, "USDC"),

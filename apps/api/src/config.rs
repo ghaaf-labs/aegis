@@ -213,6 +213,12 @@ pub struct Config {
     /// Sky sUSDS ERC-20 on Base (permissionless savings-yield sleeve).
     #[allow(dead_code)]
     pub susds_base: String,
+    /// EURC ERC-20 on Base (the EUR sleeve). EURC is a freely-transferable
+    /// Circle stablecoin with a real USDC/EURC pool on Base (Aerodrome /
+    /// Uniswap V3), so the EUR sleeve now executes via the permissionless DEX
+    /// swap rather than KYB-gated Arc StableFX. Empty ⇒ track-only (fail closed).
+    #[allow(dead_code)]
+    pub eurc_base: String,
 
     // ── Per-chain Uniswap-V3-compatible swap venues (other execution chains) ─
     // Aerodrome Slipstream (Base) and Velodrome (OP) expose the same V3-style
@@ -502,6 +508,7 @@ impl Config {
             cbbtc_base: std::env::var("CBBTC_BASE").unwrap_or_default(),
             cbeth_base: std::env::var("CBETH_BASE").unwrap_or_default(),
             susds_base: std::env::var("SUSDS_BASE").unwrap_or_default(),
+            eurc_base: std::env::var("EURC_BASE").unwrap_or_default(),
 
             uniswap_v3_quoter_eth: std::env::var("UNISWAP_V3_QUOTER_ETH").unwrap_or_default(),
             uniswap_v3_router_eth: std::env::var("UNISWAP_V3_ROUTER_ETH").unwrap_or_default(),
@@ -906,6 +913,7 @@ pub(crate) fn test_config() -> Config {
         cbbtc_base: String::new(),
         cbeth_base: String::new(),
         susds_base: String::new(),
+        eurc_base: String::new(),
         uniswap_v3_quoter_eth: String::new(),
         uniswap_v3_router_eth: String::new(),
         uniswap_v3_quoter_arb: String::new(),
