@@ -29,6 +29,7 @@ import { usePortfolioStore } from "@/stores/portfolio";
 export function PortfolioLoader() {
   const setPortfolios = usePortfolioStore((s) => s.setPortfolios);
   const setPortfoliosLoaded = usePortfolioStore((s) => s.setPortfoliosLoaded);
+  const setPortfoliosError = usePortfolioStore((s) => s.setPortfoliosError);
   const setWallet = usePortfolioStore((s) => s.setWallet);
   const setMarketSnapshot = usePortfolioStore((s) => s.setMarketSnapshot);
   const setDecisions = usePortfolioStore((s) => s.setDecisions);
@@ -66,7 +67,13 @@ export function PortfolioLoader() {
             if (alive) setPortfolios(portfolios);
           })
           .catch(() => {
-            if (alive) setPortfoliosLoaded(true);
+            // Distinguish a failed fetch from "genuinely no portfolios" so the
+            // auth-gate shows a retry instead of booting an existing user into
+            // the create-portfolio wizard.
+            if (alive) {
+              setPortfoliosError(true);
+              setPortfoliosLoaded(true);
+            }
           });
       })
       .catch(() => {
@@ -91,6 +98,7 @@ export function PortfolioLoader() {
     isExplore,
     setPortfolios,
     setPortfoliosLoaded,
+    setPortfoliosError,
     setWallet,
     setMarketSnapshot,
   ]);

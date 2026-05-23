@@ -39,6 +39,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const sessionActive = usePortfolioStore((s) => s.sessionActive);
   const wallet = usePortfolioStore((s) => s.wallet);
   const portfoliosLoaded = usePortfolioStore((s) => s.portfoliosLoaded);
+  const portfoliosError = usePortfolioStore((s) => s.portfoliosError);
   const portfolioCount = usePortfolioStore((s) => s.portfolios.length);
 
   useEffect(() => {
@@ -84,6 +85,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       sessionActive &&
       portfoliosLoaded &&
       portfolioCount === 0 &&
+      !portfoliosError &&
       requiresPortfolio(pathname)
     ) {
       router.replace("/onboarding");
@@ -98,6 +100,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     pathname,
     portfolioCount,
     portfoliosLoaded,
+    portfoliosError,
     router,
     sessionActive,
   ]);
@@ -109,6 +112,9 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   if (authState.kind === "checking") return null;
 
   if (authState.kind === "ready" && sessionActive) {
+    if (requiresPortfolio(pathname) && portfoliosError) {
+      return <PortfolioLoadError />;
+    }
     if (
       requiresPortfolio(pathname) &&
       (!portfoliosLoaded || portfolioCount === 0)
@@ -127,6 +133,30 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   }
 
   return null;
+}
+
+function PortfolioLoadError() {
+  return (
+    <div className="flex min-h-[50vh] flex-col items-center justify-center px-6 text-center">
+      <p className="font-mono text-[11px] uppercase tracking-widest text-warn">
+        Connection issue
+      </p>
+      <h1 className="mt-2 font-mono text-xl font-semibold text-text-hi">
+        Couldn&apos;t load your portfolios
+      </h1>
+      <p className="mt-2 max-w-sm font-mono text-xs leading-relaxed text-text-lo">
+        Your account is fine — Aegis just couldn&apos;t reach your portfolio
+        data. Try again in a moment.
+      </p>
+      <button
+        type="button"
+        onClick={() => window.location.reload()}
+        className="mt-5 inline-flex min-h-11 items-center justify-center rounded-sharp border-brutal border-black bg-accent-agent px-5 font-mono font-semibold text-black shadow-brutal-sm hover:shadow-brutal"
+      >
+        Try again
+      </button>
+    </div>
+  );
 }
 
 function isWalletRecoveryPath(pathname: string) {

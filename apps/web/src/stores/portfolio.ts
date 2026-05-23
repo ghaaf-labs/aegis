@@ -27,6 +27,8 @@ interface PortfolioState {
   portfolios: Portfolio[];
   /** True once portfolioApi.list() has resolved at least once this session. */
   portfoliosLoaded: boolean;
+  /** True when the last portfolios fetch failed (distinct from "loaded empty"). */
+  portfoliosError: boolean;
   activePortfolioId: PortfolioId | null;
   decisions: AgentDecision[];
   marketSnapshot: MarketSnapshot | null;
@@ -65,6 +67,7 @@ interface PortfolioState {
 
   setPortfolios: (p: Portfolio[]) => void;
   setPortfoliosLoaded: (v: boolean) => void;
+  setPortfoliosError: (v: boolean) => void;
   /** Merge a partial update into the portfolio with the given id. Used by
    * the dashboard to layer allocations from `/portfolios/:id` onto the
    * list-shape entry from `/portfolios`. */
@@ -115,6 +118,7 @@ export const usePortfolioStore = create<PortfolioState>()(
     (set) => ({
       portfolios: [],
       portfoliosLoaded: false,
+      portfoliosError: false,
       activePortfolioId: null,
       decisions: [],
       marketSnapshot: null,
@@ -163,10 +167,12 @@ export const usePortfolioStore = create<PortfolioState>()(
           return {
             portfolios: mergedPortfolios,
             portfoliosLoaded: true,
+            portfoliosError: false,
             activePortfolioId,
           };
         }),
       setPortfoliosLoaded: (portfoliosLoaded) => set({ portfoliosLoaded }),
+      setPortfoliosError: (portfoliosError) => set({ portfoliosError }),
       patchPortfolio: (id, patch) =>
         set((state) => ({
           portfolios: state.portfolios.map((p) =>
@@ -182,6 +188,7 @@ export const usePortfolioStore = create<PortfolioState>()(
               portfolio,
             ],
             portfoliosLoaded: true,
+            portfoliosError: false,
             activePortfolioId: portfolio.id,
           };
         }),
@@ -247,6 +254,7 @@ export const usePortfolioStore = create<PortfolioState>()(
         set({
           portfolios: [],
           portfoliosLoaded: false,
+          portfoliosError: false,
           activePortfolioId: null,
           decisions: [],
           wallet: null,
