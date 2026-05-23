@@ -82,9 +82,11 @@ describe("<FaucetButton />", () => {
     await flushEffects();
 
     expect(container.textContent).toContain(
-      "You already requested today's test USDC. Open the faucet directly or try again tomorrow.",
+      "Daily test funds already requested",
     );
+    expect(container.textContent).toContain("try again tomorrow");
     expect(container.textContent).not.toContain("429:");
+    expect(container.querySelector("button")).toBeNull();
     expect(
       container.querySelector<HTMLAnchorElement>(
         'a[href="https://faucet.circle.com"]',

@@ -13,7 +13,7 @@ export function FaucetButton() {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
     "idle",
   );
-  const showFaucetLink = error?.includes("already requested") ?? false;
+  const dailyLimitReached = error?.includes("already requested") ?? false;
 
   const claim = async () => {
     setSubmitting(true);
@@ -106,8 +106,39 @@ export function FaucetButton() {
     );
   }
 
+  if (dailyLimitReached) {
+    return (
+      <div
+        data-testid="faucet-button"
+        className="grid max-w-xl gap-2 rounded-sharp border border-warn/45 bg-warn/5 p-3 font-mono"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs font-semibold text-text-hi">
+            Daily test funds already requested
+          </p>
+          <a
+            href="https://faucet.circle.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex min-h-8 items-center gap-1 rounded-sharp border border-accent-agent/45 bg-accent-agent/10 px-2 text-xs font-semibold text-accent-agent hover:bg-accent-agent/15"
+          >
+            <ExternalLink className="w-3 h-3" />
+            Open faucet
+          </a>
+        </div>
+        <p className="text-xs leading-relaxed text-text-lo">
+          You can try again tomorrow, or use the public faucet directly if you
+          need test funds now.
+        </p>
+      </div>
+    );
+  }
+
   return (
-    <div data-testid="faucet-button" className="flex items-center gap-3">
+    <div
+      data-testid="faucet-button"
+      className="flex flex-wrap items-center gap-3"
+    >
       <BrutalButton
         variant="agent"
         onClick={() => void claim()}
@@ -117,17 +148,6 @@ export function FaucetButton() {
         {submitting ? "Claiming…" : "Get test USDC"}
       </BrutalButton>
       <ProvenanceLine source="test faucet · 100 USDC/day" />
-      {showFaucetLink ? (
-        <a
-          href="https://faucet.circle.com"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 text-xs font-mono text-accent-agent hover:underline"
-        >
-          <ExternalLink className="w-3 h-3" />
-          Open faucet
-        </a>
-      ) : null}
       {error && <span className="text-xs text-risk font-mono">{error}</span>}
     </div>
   );
