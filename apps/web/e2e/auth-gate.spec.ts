@@ -10,6 +10,12 @@ const GATED_ROUTES = [
   "/wallets",
   "/settings",
   "/wallet",
+  "/agent-studio",
+  "/analytics",
+  "/transactions",
+  "/tax-center",
+  "/help",
+  "/settings/billing",
 ];
 
 for (const route of GATED_ROUTES) {
