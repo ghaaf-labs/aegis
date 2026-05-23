@@ -1,7 +1,7 @@
 import type { WalletNetwork } from "@/types";
 import type { ExplorerChain } from "./explorers";
 
-export interface WalletRouteMeta {
+interface WalletRouteMeta {
   key: ExplorerChain;
   blockchain: string;
   label: string;
@@ -18,7 +18,7 @@ export interface ChainBalanceRow {
   totalUsd: number;
 }
 
-export const WALLET_ROUTES: WalletRouteMeta[] = [
+const WALLET_ROUTES: WalletRouteMeta[] = [
   {
     key: "arc",
     blockchain: "ARC-TESTNET",
@@ -96,7 +96,7 @@ export function walletRouteKeyFromBlockchain(
   );
 }
 
-export function normalizeWalletRouteKey(
+function normalizeWalletRouteKey(
   key: string | null | undefined,
 ): ExplorerChain | null {
   if (!key) return null;
