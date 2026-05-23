@@ -188,8 +188,8 @@ export function ExecutionTrace({
 
   return (
     <section data-testid="execution-trace" className="space-y-3">
-      <header className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <h2 className="text-lg font-semibold text-text-hi">
             Execution trace
           </h2>
