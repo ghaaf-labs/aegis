@@ -69,7 +69,11 @@ pub fn plan_legs(input: &PlanInput) -> Vec<PlannedLeg> {
     let mut deltas: Vec<SymbolDelta> = deltas_source
         .into_iter()
         .filter(|d| {
-            let band = if d.weight_drift < 0.0 { sell_band } else { buy_band };
+            let band = if d.weight_drift < 0.0 {
+                sell_band
+            } else {
+                buy_band
+            };
             d.weight_drift.abs() >= band
         })
         .filter(|d| d.value_delta_usd.abs() >= input.dust_threshold_usd)
@@ -238,17 +242,32 @@ fn append_buy_legs(
 
     let is_volatile = !matches!(d.symbol.as_str(), "USYC" | "EURC" | "USDC");
 
-    // Bridge any shortfall from the other chain.
-    let other_chain = if target_chain == ChainKey::Arc {
-        ChainKey::Base
+    // Bridge any shortfall from the chain holding the most idle USDC (greedy,
+    // single-source). With two chains this is just "the other chain"; with N it
+    // picks the richest non-target source so one burn+mint covers the shortfall
+    // when possible. Splitting a shortfall across multiple source chains is left
+    // to the durable saga (out of scope here). Ties break on `as_str()` so the
+    // plan stays deterministic.
+    let other_chain = if to_acquire > 0.0 {
+        usdc_pool
+            .iter()
+            .filter(|(chain, bal)| **chain != target_chain && **bal > 0.0)
+            .max_by(|(a_chain, a_bal), (b_chain, b_bal)| {
+                a_bal
+                    .partial_cmp(b_bal)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| b_chain.as_str().cmp(a_chain.as_str()))
+            })
+            .map(|(chain, _)| *chain)
     } else {
-        ChainKey::Arc
+        None
     };
-    let to_bridge = if to_acquire > 0.0 {
-        let available_other = usdc_pool.get(&other_chain).copied().unwrap_or(0.0);
-        available_other.min(to_acquire)
-    } else {
-        0.0
+    let to_bridge = match other_chain {
+        Some(chain) if to_acquire > 0.0 => {
+            let available_other = usdc_pool.get(&chain).copied().unwrap_or(0.0);
+            available_other.min(to_acquire)
+        }
+        _ => 0.0,
     };
 
     // For volatile assets in a mixed buy (some USDC already local on target chain,
@@ -276,7 +295,7 @@ fn append_buy_legs(
         *next_idx += 1;
     }
 
-    if to_bridge > 0.0 {
+    if let (Some(source_chain), true) = (other_chain, to_bridge > 0.0) {
         // Volatile: attach hook params to the burn so the destination
         // RebalanceExecutor swaps USDC→asset atomically with the mint.
         // Stables (USYC, EURC): plain USDC bridge; a separate special leg
@@ -297,7 +316,7 @@ fn append_buy_legs(
         legs.push(PlannedLeg {
             leg_index: *next_idx,
             kind: LegKind::CrossChainBurn,
-            src_chain: Some(other_chain),
+            src_chain: Some(source_chain),
             dest_chain: Some(target_chain),
             src_symbol: Some("USDC".into()),
             dest_symbol: burn_dest_symbol,
@@ -309,7 +328,7 @@ fn append_buy_legs(
         legs.push(PlannedLeg {
             leg_index: *next_idx,
             kind: LegKind::CrossChainMint,
-            src_chain: Some(other_chain),
+            src_chain: Some(source_chain),
             dest_chain: Some(target_chain),
             src_symbol: Some("USDC".into()),
             dest_symbol: Some("USDC".into()),
@@ -318,7 +337,7 @@ fn append_buy_legs(
         });
         *next_idx += 1;
 
-        *usdc_pool.entry(other_chain).or_insert(0.0) -= to_bridge;
+        *usdc_pool.entry(source_chain).or_insert(0.0) -= to_bridge;
     }
 
     if is_volatile {
@@ -430,10 +449,8 @@ mod tests {
             0.0,
             0.0,
         );
-        let trims_btc = |legs: &[PlannedLeg]| {
-            legs.iter()
-                .any(|l| l.src_symbol.as_deref() == Some("BTC"))
-        };
+        let trims_btc =
+            |legs: &[PlannedLeg]| legs.iter().any(|l| l.src_symbol.as_deref() == Some("BTC"));
         assert!(trims_btc(&plan_legs(&i)), "neutral should trim the winner");
         i.regime = Some("risk_on".into());
         assert!(
@@ -481,6 +498,40 @@ mod tests {
             .find(|l| l.kind == LegKind::CrossChainMint)
             .unwrap();
         assert_eq!(mint.dest_chain, Some(ChainKey::Base));
+    }
+
+    #[test]
+    fn cross_chain_buy_sources_from_richest_chain() {
+        // First-deploy of 100% ETH (Base-native) with idle USDC spread across
+        // three chains and none on Base. The bridge must greedily source from
+        // the chain holding the most idle USDC (EthSepolia: $3000 > Arc: $1000),
+        // not a hardcoded "other chain". No current holdings ⇒ no sell leg
+        // injects USDC and skews the comparison.
+        let mut usdc_per_chain = HashMap::new();
+        usdc_per_chain.insert(ChainKey::Arc, 1_000.0);
+        usdc_per_chain.insert(ChainKey::Base, 0.0);
+        usdc_per_chain.insert(ChainKey::EthSepolia, 3_000.0);
+        let i = PlanInput {
+            portfolio_value_usd: 0.0,
+            current_weights: weights(&[]),
+            target_weights: weights(&[("ETH", 1.0)]),
+            usdc_per_chain,
+            drift_threshold: 0.05,
+            dust_threshold_usd: 5.0,
+            prices: HashMap::new(),
+            regime: None,
+        };
+        let legs = plan_legs(&i);
+        let burn = legs
+            .iter()
+            .find(|l| l.kind == LegKind::CrossChainBurn)
+            .expect("expected a cross-chain burn for the ETH buy");
+        assert_eq!(
+            burn.src_chain,
+            Some(ChainKey::EthSepolia),
+            "burn must source from the richest non-target chain"
+        );
+        assert_eq!(burn.dest_chain, Some(ChainKey::Base));
     }
 
     #[test]
