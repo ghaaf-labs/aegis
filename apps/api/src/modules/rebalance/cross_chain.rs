@@ -331,13 +331,6 @@ impl<'a> CctpClient<'a> {
             .usdc_for(src)
             .parse::<Address>()
             .map_err(|_| AppError::Internal(anyhow::anyhow!("bad USDC on {:?}", src)))?;
-        let executor_on_dest = self
-            .config
-            .rebalance_executor_for(dest)
-            .parse::<Address>()
-            .map_err(|_| {
-                AppError::Internal(anyhow::anyhow!("bad RebalanceExecutor on {:?}", dest))
-            })?;
 
         // depositForBurn calls `USDC.transferFrom(msg.sender, tokenMessenger,
         // amount + fee)` internally — even with maxFee=0 the contract may
@@ -424,6 +417,16 @@ impl<'a> CctpClient<'a> {
                 .await
                 .map_err(|e| anyhow::anyhow!("get_receipt error: {e}"))?
         } else {
+            // Hooked burn: the mint must land at the destination RebalanceExecutor
+            // (parsed lazily here so a plain bridge to a chain without a deployed
+            // executor isn't blocked by an unparsable address).
+            let executor_on_dest = self
+                .config
+                .rebalance_executor_for(dest)
+                .parse::<Address>()
+                .map_err(|_| {
+                    AppError::Internal(anyhow::anyhow!("bad RebalanceExecutor on {:?}", dest))
+                })?;
             contract
                 .depositForBurnWithHook(
                     U256::from(amount),
