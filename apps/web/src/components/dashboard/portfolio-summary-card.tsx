@@ -60,27 +60,37 @@ export function PortfolioSummaryCard() {
   const arcTotal = (perChainUsdc.arc ?? 0) + (perChainEurc.arc ?? 0) * eurcUsd;
   const baseTotal =
     (perChainUsdc.base ?? 0) + (perChainEurc.base ?? 0) * eurcUsd;
+  const currentHoldingCount = positionMetrics.positions.filter(
+    (position) => position.valueUsd > 0.5,
+  ).length;
+  const targetAssetCount = portfolio.allocations.filter(
+    (allocation) => allocation.targetWeight > 0,
+  ).length;
 
   return (
-    <Card data-testid="portfolio-summary">
+    <Card data-testid="portfolio-summary" className="h-full">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Wallet className="w-3.5 h-3.5" />
           Net Worth
         </CardTitle>
       </CardHeader>
-      <CardContent>
-        <p className={`text-3xl font-bold mb-1 ${priceColor}`}>
-          {formatCurrency(totalWealthUsd)}
-        </p>
-        <p className="text-[11px] font-mono text-text-mut mb-3">
-          {formatCurrency(investedUsd, { compact: true })} invested{" · "}
-          {walletBalanceUnavailable
-            ? "wallet balance unavailable"
-            : walletBalanceLoading
-              ? "checking wallet balance"
-              : `${formatCurrency(idleCashUsd, { compact: true })} in wallet`}
-        </p>
+      <CardContent className="space-y-3">
+        <div>
+          <p
+            className={`text-2xl font-bold leading-none sm:text-3xl ${priceColor}`}
+          >
+            {formatCurrency(totalWealthUsd)}
+          </p>
+          <p className="mt-1 font-mono text-[11px] text-text-mut">
+            {formatCurrency(investedUsd, { compact: true })} invested{" · "}
+            {walletBalanceUnavailable
+              ? "wallet balance unavailable"
+              : walletBalanceLoading
+                ? "checking wallet balance"
+                : `${formatCurrency(idleCashUsd, { compact: true })} wallet cash`}
+          </p>
+        </div>
         {investedUsd > 0.5 ? (
           <div
             className={`flex items-center gap-1.5 text-sm ${changeColor(portfolio.totalPnlUsd)}`}
@@ -94,25 +104,30 @@ export function PortfolioSummaryCard() {
             <span className="text-text-mut text-xs ml-1">all time</span>
           </div>
         ) : (
-          <p className="text-[11px] font-mono text-text-mut">
-            No investment yet. PnL appears after your first approved plan.
-          </p>
+          <div className="border border-border-default bg-bg/70 px-3 py-2 font-mono">
+            <p className="text-xs font-semibold text-text-hi">
+              Not invested yet
+            </p>
+            <p className="mt-1 text-[11px] leading-relaxed text-text-lo">
+              Value appears here after you approve and execute the first plan.
+            </p>
+          </div>
         )}
 
         {!walletBalanceUnavailable &&
           !walletBalanceLoading &&
           idleCashUsd > 0.5 && (
-            <div className="mt-4 grid grid-cols-2 gap-2 text-[11px] font-mono">
-              <div className="p-2 rounded-sharp bg-raised border border-border-default">
-                <p className="text-text-mut uppercase tracking-wider text-[9px] mb-0.5">
+            <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
+              <div className="border border-border-default bg-bg/70 p-2">
+                <p className="mb-0.5 text-[9px] uppercase tracking-wider text-text-mut">
                   Arc balance
                 </p>
                 <p className="text-text-hi tabular-nums">
                   {formatCurrency(arcTotal, { compact: true })}
                 </p>
               </div>
-              <div className="p-2 rounded-sharp bg-raised border border-border-default">
-                <p className="text-text-mut uppercase tracking-wider text-[9px] mb-0.5">
+              <div className="border border-border-default bg-bg/70 p-2">
+                <p className="mb-0.5 text-[9px] uppercase tracking-wider text-text-mut">
                   Base balance
                 </p>
                 <p className="text-text-hi tabular-nums">
@@ -121,26 +136,34 @@ export function PortfolioSummaryCard() {
               </div>
               <Link
                 href="/wallets"
-                className="col-span-2 flex items-center justify-between px-2 py-1.5 rounded-sharp text-[10px] text-accent-pnl/80 hover:text-accent-pnl hover:bg-accent-pnl/5 transition-colors"
+                className="col-span-2 flex items-center justify-between gap-2 border border-accent-pnl/20 bg-accent-pnl/5 px-2 py-1.5 text-[10px] text-accent-pnl/80 transition-colors hover:text-accent-pnl"
               >
-                <span>Wallet address + per-token breakdown</span>
-                <ArrowRight className="w-3 h-3" />
+                <span className="min-w-0 truncate">
+                  Wallet address + per-token breakdown
+                </span>
+                <ArrowRight className="h-3 w-3 shrink-0" />
               </Link>
             </div>
           )}
 
-        <div className="mt-4 grid grid-cols-2 gap-3">
-          <div className="p-3 rounded-sharp bg-raised border border-border-default">
-            <p className="text-xs text-text-mut mb-1">Assets</p>
-            <p className="text-sm font-semibold text-text-hi">
-              {portfolio.allocations?.length ?? 0}
+        <div className="grid gap-2 border-t border-white/10 pt-2 font-mono text-[11px]">
+          <div className="flex min-h-8 items-center justify-between gap-3">
+            <p className="text-text-mut">Current holdings</p>
+            <p className="font-semibold text-text-hi tabular-nums">
+              {currentHoldingCount}
             </p>
           </div>
-          <div className="p-3 rounded-sharp bg-raised border border-border-default">
-            <p className="text-xs text-text-mut mb-1">Risk Score</p>
+          <div className="flex min-h-8 items-center justify-between gap-3">
+            <p className="text-text-mut">Target assets</p>
+            <p className="font-semibold text-text-hi tabular-nums">
+              {targetAssetCount}
+            </p>
+          </div>
+          <div className="grid min-h-8 grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
+            <p className="text-text-mut">Risk score</p>
             {investedUsd > 0.5 ? (
-              <>
-                <div className="flex items-center gap-2">
+              <div className="text-right">
+                <div className="flex items-center justify-end gap-2">
                   <p
                     className={`text-sm font-semibold ${portfolio.riskScore < 40 ? "text-accent-agent" : portfolio.riskScore < 65 ? "text-warn" : "text-risk"}`}
                   >
@@ -162,18 +185,15 @@ export function PortfolioSummaryCard() {
                     })}
                   </p>
                 )}
-              </>
+              </div>
             ) : (
-              <>
-                <p className="text-sm font-semibold text-text-mut">—</p>
-                <p className="text-[10px] text-text-mut mt-0.5">
-                  available after first approved plan
-                </p>
-              </>
+              <p className="max-w-36 text-right text-[10px] leading-snug text-text-mut">
+                after first approved plan
+              </p>
             )}
           </div>
 
-          <div className="col-span-2 pt-2 border-t border-white/10">
+          <div className="pt-2 border-t border-white/10">
             <ProvenanceLine
               source={
                 walletBalanceUnavailable

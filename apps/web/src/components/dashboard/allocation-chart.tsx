@@ -3,7 +3,7 @@
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
-import { formatPercent } from "@/lib/utils";
+import { formatCurrency, formatPercent } from "@/lib/utils";
 import { derivePortfolioPositionMetrics } from "@/lib/portfolio-values";
 import { ProvenanceLine } from "@aegis/ui";
 
@@ -47,9 +47,9 @@ export function AllocationChart({ compact = false }: Props) {
 
   if (data.length === 0 || data.every((d) => d.value === 0)) {
     return (
-      <Card>
+      <Card className="h-full">
         <CardHeader>
-          <CardTitle>Allocation</CardTitle>
+          <CardTitle>Target Mix</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex items-center justify-center h-32 text-center">
@@ -63,16 +63,65 @@ export function AllocationChart({ compact = false }: Props) {
     );
   }
 
+  if (isUninvested) {
+    return (
+      <Card className="h-full">
+        <CardHeader className="gap-3">
+          <CardTitle className="min-w-0">Target Mix</CardTitle>
+          <span className="shrink-0 border border-text-mut/30 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-text-mut">
+            not invested
+          </span>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="border border-border-default bg-bg/70 px-3 py-2 font-mono">
+            <p className="text-xs font-semibold text-text-hi">
+              Plan only, current value {formatCurrency(0)}
+            </p>
+            <p className="mt-1 text-[11px] leading-relaxed text-text-lo">
+              These weights become holdings only after funding and approval.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            {data.map((item, i) => (
+              <div key={item.name} className="grid gap-1 font-mono">
+                <div className="flex items-center justify-between gap-3 text-xs">
+                  <span className="min-w-0 truncate text-text-lo">
+                    {item.name}
+                  </span>
+                  <span className="shrink-0 font-semibold text-text-hi">
+                    {formatPercent(item.value, false)}
+                  </span>
+                </div>
+                <div className="h-1.5 border border-border-default bg-bg">
+                  <div
+                    className="h-full"
+                    style={{
+                      width: `${Math.max(0, Math.min(item.value, 100))}%`,
+                      backgroundColor: CHART_COLORS[i % CHART_COLORS.length],
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="border-t border-white/10 pt-2">
+            <ProvenanceLine
+              source="target allocation · no positions yet"
+              freshness="live"
+            />
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
-    <Card>
+    <Card className="h-full">
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="flex items-center gap-2">
           <span>Allocation</span>
-          {isUninvested && (
-            <span className="text-[10px] font-mono text-text-mut uppercase tracking-wider border border-text-mut/30 px-1.5 py-0.5 rounded-sharp">
-              target
-            </span>
-          )}
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -81,7 +130,7 @@ export function AllocationChart({ compact = false }: Props) {
             className={
               compact
                 ? "mx-auto h-40 w-full max-w-[220px]"
-                : "mx-auto h-36 w-full max-w-[170px]"
+                : "mx-auto h-32 w-full max-w-[150px]"
             }
           >
             <ResponsiveContainer width="100%" height="100%">

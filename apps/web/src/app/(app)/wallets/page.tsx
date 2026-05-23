@@ -531,7 +531,7 @@ function ChainCard({
                   {copyState === "copied"
                     ? "Copied"
                     : copyState === "selected"
-                      ? "Selected"
+                      ? "Address selected"
                       : copyState === "failed"
                         ? "Copy failed"
                         : "Copy"}

@@ -12,7 +12,7 @@ export function MarketOverview() {
 
   if (!snapshot) {
     return (
-      <Card>
+      <Card className="h-full">
         <CardHeader>
           <CardTitle>Market</CardTitle>
         </CardHeader>
@@ -73,40 +73,40 @@ export function MarketOverview() {
         : "text-accent-pnl";
 
   return (
-    <Card>
+    <Card className="h-full">
       <CardHeader>
         <CardTitle>Market</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-3">
+      <CardContent className="space-y-2.5">
         {snapshot.totalMarketCapUsd > 0 && (
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3">
             <span className="text-xs text-text-mut">Total Market Cap</span>
-            <span className="text-xs font-medium text-text-hi">
+            <span className="shrink-0 text-xs font-medium text-text-hi">
               {formatCurrency(snapshot.totalMarketCapUsd, { compact: true })}
             </span>
           </div>
         )}
         {snapshot.btcDominance > 0 && (
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3">
             <span className="text-xs text-text-mut">BTC Dominance</span>
-            <span className="text-xs font-medium text-text-hi">
+            <span className="shrink-0 text-xs font-medium text-text-hi">
               {snapshot.btcDominance.toFixed(1)}%
             </span>
           </div>
         )}
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           <span
             className="text-xs text-text-mut"
             title="Crypto Fear & Greed Index — alternative.me, daily"
           >
             Fear & Greed
           </span>
-          <span className={`text-xs font-semibold ${fearColor}`}>
+          <span className={`shrink-0 text-xs font-semibold ${fearColor}`}>
             {snapshot.fearGreedIndex} · {fearLabel}
           </span>
         </div>
 
-        <div className="border-t border-white/5 pt-3 space-y-2">
+        <div className="space-y-2 border-t border-white/5 pt-3">
           {snapshot.assets.slice(0, 4).map((snapshotAsset) => {
             const live = livePrices[snapshotAsset.symbol];
             const asset = live
@@ -120,17 +120,19 @@ export function MarketOverview() {
             return (
               <div
                 key={asset.symbol}
-                className="flex items-center justify-between"
+                className="flex items-center justify-between gap-3"
               >
                 <span className="text-xs font-mono text-text-lo">
                   {asset.symbol}
                 </span>
-                <div className="flex items-center gap-2">
-                  <span className={`text-xs font-medium ${priceColor}`}>
+                <div className="flex min-w-0 items-center gap-2">
+                  <span
+                    className={`text-xs font-medium tabular-nums ${priceColor}`}
+                  >
                     {formatCurrency(asset.priceUsd, { compact: true })}
                   </span>
                   <span
-                    className={`text-[10px] flex items-center gap-0.5 ${changeColor(asset.change24h)}`}
+                    className={`flex items-center gap-0.5 text-[10px] tabular-nums ${changeColor(asset.change24h)}`}
                   >
                     {positive ? (
                       <TrendingUp className="w-2.5 h-2.5" />

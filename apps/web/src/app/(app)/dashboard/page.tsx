@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { usePortfolioStore } from "@/stores/portfolio";
+import { dashboardDestination } from "./dashboard-routing";
 
 /**
  * Bare /dashboard URL — forwards to the most recently loaded portfolio.
@@ -16,19 +17,19 @@ export default function DashboardIndex() {
   const portfolios = usePortfolioStore((s) => s.portfolios);
   const portfoliosLoaded = usePortfolioStore((s) => s.portfoliosLoaded);
   const activePortfolioId = usePortfolioStore((s) => s.activePortfolioId);
+  const target = dashboardDestination(portfolios, activePortfolioId);
+  const destination = target ? `/dashboard/${target.id}` : "/onboarding";
 
   useEffect(() => {
     if (!portfoliosLoaded) return;
-    const activeStillExists = portfolios.some(
-      (p) => p.id === activePortfolioId,
-    );
-    const target = activeStillExists ? activePortfolioId : portfolios[0]?.id;
-    if (target) {
-      router.replace(`/dashboard/${target}`);
-    } else {
-      router.replace("/onboarding");
-    }
-  }, [router, activePortfolioId, portfolios, portfoliosLoaded]);
+    router.replace(destination);
+    const fallback = window.setTimeout(() => {
+      if (window.location.pathname === "/dashboard") {
+        window.location.replace(destination);
+      }
+    }, 600);
+    return () => window.clearTimeout(fallback);
+  }, [destination, portfoliosLoaded, router]);
 
   if (!portfoliosLoaded) {
     return (
@@ -56,17 +57,22 @@ export default function DashboardIndex() {
   return (
     <div className="min-h-[50vh] flex items-center justify-center">
       <div className="border-brutal border-border-default bg-raised p-6 text-center max-w-sm">
+        {target && (
+          <Loader2 className="w-5 h-5 animate-spin text-accent-agent mx-auto mb-3" />
+        )}
         <h1 className="text-sm font-semibold font-mono text-text-hi">
-          Portfolio setup needed
+          {target ? "Opening dashboard" : "Finish portfolio setup"}
         </h1>
         <p className="mt-2 text-xs font-mono text-text-lo leading-relaxed">
-          Create your first portfolio to open the dashboard.
+          {target
+            ? `Taking you to ${target.name || "your portfolio"}.`
+            : "Choose a goal and target mix before reviewing the dashboard."}
         </p>
         <Link
-          href="/onboarding"
+          href={destination}
           className="mt-4 inline-flex px-3 py-1.5 border-2 border-accent-pnl bg-accent-pnl text-black text-xs font-semibold"
         >
-          Create portfolio
+          {target ? "Open dashboard" : "Continue setup"}
         </Link>
       </div>
     </div>

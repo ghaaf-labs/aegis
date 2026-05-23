@@ -5,6 +5,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { AccountWalletCard } from "./account-wallet-card";
 import { WalletOperationalPanel } from "./wallet-operational-panel";
 
+const clipboardMock = vi.hoisted(() => ({
+  copyTextToClipboard: vi.fn(),
+}));
+
+vi.mock("@/lib/clipboard", () => clipboardMock);
+
 beforeAll(() => {
   (
     globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -58,8 +64,9 @@ describe("<WalletOperationalPanel />", () => {
 });
 
 describe("<AccountWalletCard />", () => {
+  const address = "0x8955c4848b7e3ce309700b7001caa2c7df50f7f7";
+
   it("shows a shared account address once for multi-network wallets", () => {
-    const address = "0x8955c4848b7e3ce309700b7001caa2c7df50f7f7";
     const { container, root } = render(
       <AccountWalletCard
         accountAddress={address}
@@ -76,6 +83,33 @@ describe("<AccountWalletCard />", () => {
     expect(text).toContain("Arc testnet");
     expect(text).toContain("Base Sepolia");
     expect(text.match(new RegExp(address, "g"))).toHaveLength(1);
+
+    act(() => root.unmount());
+  });
+
+  it("uses plain fallback copy when clipboard write is blocked", async () => {
+    clipboardMock.copyTextToClipboard.mockRejectedValueOnce(
+      new Error("clipboard blocked"),
+    );
+    const { container, root } = render(
+      <AccountWalletCard
+        accountAddress={address}
+        networks={["Arc testnet", "Base Sepolia"]}
+        explorerLinks={[]}
+      />,
+    );
+    const button = container.querySelector<HTMLButtonElement>(
+      'button[title="Copy wallet address"]',
+    );
+
+    await act(async () => {
+      button?.click();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("Address selected");
+    expect(container.textContent).toContain(address);
+    expect(clipboardMock.copyTextToClipboard).toHaveBeenCalledWith(address);
 
     act(() => root.unmount());
   });
