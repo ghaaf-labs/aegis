@@ -393,23 +393,55 @@ impl<'a> CctpClient<'a> {
         // the message out of any path to mint. See F-CCTP-5.
         let destination_caller = alloy::primitives::FixedBytes::<32>::ZERO;
 
-        let receipt = contract
-            .depositForBurnWithHook(
-                U256::from(amount),
-                dest.domain_id(),
-                executor_on_dest.into_word(),
-                usdc,
-                destination_caller,
-                max_fee,
-                fee_choice.finality_threshold,
-                hook_data,
-            )
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("alloy send error: {e}"))?
-            .get_receipt()
-            .await
-            .map_err(|e| anyhow::anyhow!("get_receipt error: {e}"))?;
+        // Plain USDC bridge (hook tokenOut == destination USDC): mint directly to
+        // the recipient EOA via `depositForBurn` — no hook, no executor hop, so
+        // funds cannot strand at the executor waiting on a `relay()` the CCTP
+        // core never calls. The destination swap (if any) is a separate
+        // `LocalSwap` leg (the two-leg baseline). A hooked burn (tokenOut !=
+        // USDC) still routes to the executor for the atomic path.
+        let plain_bridge = hook
+            .token_out
+            .eq_ignore_ascii_case(self.config.usdc_for(dest));
+
+        let receipt = if plain_bridge {
+            let recipient = hook.recipient.parse::<Address>().map_err(|_| {
+                AppError::Internal(anyhow::anyhow!("bad mint recipient for plain bridge"))
+            })?;
+            contract
+                .depositForBurn(
+                    U256::from(amount),
+                    dest.domain_id(),
+                    recipient.into_word(),
+                    usdc,
+                    destination_caller,
+                    max_fee,
+                    fee_choice.finality_threshold,
+                )
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("alloy send error: {e}"))?
+                .get_receipt()
+                .await
+                .map_err(|e| anyhow::anyhow!("get_receipt error: {e}"))?
+        } else {
+            contract
+                .depositForBurnWithHook(
+                    U256::from(amount),
+                    dest.domain_id(),
+                    executor_on_dest.into_word(),
+                    usdc,
+                    destination_caller,
+                    max_fee,
+                    fee_choice.finality_threshold,
+                    hook_data,
+                )
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("alloy send error: {e}"))?
+                .get_receipt()
+                .await
+                .map_err(|e| anyhow::anyhow!("get_receipt error: {e}"))?
+        };
 
         // Robust MessageSent extraction (works across Alloy Log type differences)
         let message_sent_topic: alloy::primitives::B256 =

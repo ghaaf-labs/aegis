@@ -309,32 +309,20 @@ fn append_buy_legs(
     }
 
     if let (Some(source_chain), true) = (other_chain, to_bridge > 0.0) {
-        // Swap-acquired (volatiles + EURC): attach hook params to the burn so
-        // the destination RebalanceExecutor swaps USDC→asset atomically with the
-        // mint. USYC: plain USDC bridge; a separate special leg below handles the
-        // final park on the destination chain.
-        let (burn_dest_symbol, burn_min_out) = if is_swap_acquired {
-            let min_out = prices.get(&d.symbol).map(|&price| {
-                if price > 0.0 {
-                    (to_bridge / price) * 0.95
-                } else {
-                    0.0
-                }
-            });
-            (Some(d.symbol.clone()), min_out)
-        } else {
-            (Some("USDC".into()), None)
-        };
-
+        // Two-leg baseline: bridge USDC *plainly* to the destination chain
+        // (CCTP delivers it to the user's EOA), then acquire the asset there. The
+        // burn never carries a swap hook — a failed destination swap can't strand
+        // bridged USDC at the executor waiting on a relay() the CCTP core never
+        // calls. USYC's park leg below consumes the bridged USDC the same way.
         legs.push(PlannedLeg {
             leg_index: *next_idx,
             kind: LegKind::CrossChainBurn,
             src_chain: Some(source_chain),
             dest_chain: Some(target_chain),
             src_symbol: Some("USDC".into()),
-            dest_symbol: burn_dest_symbol,
+            dest_symbol: Some("USDC".into()),
             amount_usdc: to_bridge,
-            min_out: burn_min_out,
+            min_out: None,
         });
         *next_idx += 1;
 
@@ -351,11 +339,34 @@ fn append_buy_legs(
         *next_idx += 1;
 
         *usdc_pool.entry(source_chain).or_insert(0.0) -= to_bridge;
+
+        // Swap-acquired (volatiles + EURC): the bridged USDC now sits on the
+        // destination chain — acquire the token with a same-chain swap leg.
+        if is_swap_acquired {
+            let min_out = prices.get(&d.symbol).map(|&price| {
+                if price > 0.0 {
+                    (to_bridge / price) * 0.95
+                } else {
+                    0.0
+                }
+            });
+            legs.push(PlannedLeg {
+                leg_index: *next_idx,
+                kind: LegKind::LocalSwap,
+                src_chain: Some(target_chain),
+                dest_chain: Some(target_chain),
+                src_symbol: Some("USDC".into()),
+                dest_symbol: Some(d.symbol.clone()),
+                amount_usdc: to_bridge,
+                min_out,
+            });
+            *next_idx += 1;
+        }
     }
 
     if is_swap_acquired {
         // Swap-acquired final leg(s) already emitted above (local_swap for the
-        // used_local portion + cross-chain hook for the bridged portion).
+        // used_local portion + bridge-then-swap for the bridged portion).
         return;
     }
 
@@ -687,23 +698,23 @@ mod tests {
         );
         let legs = plan_legs(&i);
         assert!(!legs.is_empty(), "first-deploy must produce legs");
+        // Acquisition legs only: a cross-chain buy is now a plain USDC bridge
+        // (CrossChainBurn/Mint, a USDC move) plus a LocalSwap/ParkUsyc that
+        // actually acquires the token — count the latter so the bridged portion
+        // isn't double-counted.
         let total_buy_usdc: f64 = legs
             .iter()
-            .filter(|l| {
-                matches!(
-                    l.kind,
-                    LegKind::LocalSwap | LegKind::ParkUsyc | LegKind::CrossChainBurn
-                )
-            })
+            .filter(|l| matches!(l.kind, LegKind::LocalSwap | LegKind::ParkUsyc))
             .map(|l| l.amount_usdc)
             .sum();
         assert!(
             (total_buy_usdc - 200.0).abs() < 0.01,
             "buy legs must consume ~$200 of idle USDC, got {total_buy_usdc}"
         );
-        // USDC is not bought from USDC — skip.
+        // USDC is never bought from USDC; only the plain CCTP bridge legs carry a
+        // USDC destination (they move USDC, they don't acquire it).
         assert!(legs.iter().all(|l| l.dest_symbol.as_deref() != Some("USDC")
-            || matches!(l.kind, LegKind::CrossChainMint)));
+            || matches!(l.kind, LegKind::CrossChainMint | LegKind::CrossChainBurn)));
     }
 
     #[test]
@@ -768,9 +779,11 @@ mod tests {
                 .any(|l| l.dest_symbol.as_deref() == Some("USYC")),
             "idle USDC should produce a USYC park leg, got {legs:?}"
         );
+        // Exclude both CCTP bridge legs (plain USDC moves) so the bridged
+        // portion isn't counted twice alongside its destination swap.
         let routed: f64 = legs
             .iter()
-            .filter(|l| l.kind != LegKind::CrossChainMint)
+            .filter(|l| !matches!(l.kind, LegKind::CrossChainMint | LegKind::CrossChainBurn))
             .map(|l| l.amount_usdc)
             .sum();
         assert!(
