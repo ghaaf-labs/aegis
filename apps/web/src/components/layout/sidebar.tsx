@@ -10,7 +10,6 @@ import {
   CircleHelp,
   Compass,
   LayoutDashboard,
-  LayoutGrid,
   ListChecks,
   LockKeyhole,
   LogOut,
@@ -70,12 +69,6 @@ const BASE_NAV_SECTIONS: NavSection[] = [
         icon: PieChart,
         label: "Portfolio",
         description: "positions and targets",
-      },
-      {
-        href: "/strategies",
-        icon: LayoutGrid,
-        label: "Builder",
-        description: "targets and routes",
       },
       {
         href: "/transactions",
@@ -184,12 +177,7 @@ const NAV_SECTIONS = PRICING_UI_ENABLED
     )
   : BASE_NAV_SECTIONS;
 
-const PUBLIC_NAV_HREFS = new Set([
-  "/explore",
-  "/leaderboard",
-  "/strategies",
-  "/help",
-]);
+const PUBLIC_NAV_HREFS = new Set(["/explore", "/leaderboard", "/help"]);
 
 function isActivePath(pathname: string, item: NavItem) {
   const paths = [item.href, ...(item.match ?? [])];

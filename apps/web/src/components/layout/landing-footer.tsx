@@ -53,7 +53,6 @@ export function LandingFooter() {
               Product
             </p>
             {[
-              { href: "/strategies", label: "Portfolio builder" },
               { href: "/leaderboard", label: "Leaderboard" },
               { href: "/explore", label: "Demo portfolios" },
               ...(PRICING_UI_ENABLED
