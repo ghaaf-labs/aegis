@@ -130,16 +130,18 @@ async fn estimate_total_gas(state: &AppState, legs: &[PlannedLeg]) -> f64 {
 
     let mut chains: HashSet<ChainKey> = HashSet::new();
     for leg in legs {
-        if let Some(c) = leg.dest_chain.or(leg.src_chain) {
+        // A cross-chain leg pays gas on BOTH ends (source approve/burn + dest
+        // mint), so collect both chains — `dest.or(src)` would drop the source
+        // side and under-quote the preview persisted as `total_gas_usdc`.
+        for c in [leg.src_chain, leg.dest_chain].into_iter().flatten() {
             chains.insert(c);
         }
     }
     let mut total = 0.0;
     for c in chains {
-        // The paymaster now estimates per `ChainKey` directly: Arc gas is native
-        // USDC, every other EVM chain pays ETH-style gas via the live
-        // `eth_gasPrice` path. Only Arc/Base are executable today, so the others
-        // never actually produce a leg here.
+        // The paymaster estimates per `ChainKey`: Arc gas is native USDC, every
+        // other EVM execution chain (Base/Eth/Arb/Avax) pays ETH-style gas via
+        // the live `eth_gasPrice` path.
         if let Ok(e) = estimate(&state.config, c, "rebalance").await {
             total += e.fee_usdc;
         }
@@ -169,19 +171,18 @@ pub async fn approve_and_execute(state: AppState, rebalance_id: Uuid) -> Result<
     let user_id = user_for_portfolio(&state, portfolio_id).await?;
     let st = state.clone();
     tokio::spawn(async move {
-        // Run the walk in a child task so a *panic* (e.g. an unexpected `unwrap`
-        // deep in an adapter or a malformed external response) surfaces as a
-        // `JoinError` here instead of silently aborting the task and leaving the
-        // `rebalances` row stuck in `executing` forever. Both a returned `Err`
-        // and a panic fall through to the same failure cleanup below.
-        let walk = tokio::spawn({
-            let st = st.clone();
-            async move { walk_legs(&st, rebalance_id, user_id).await }
-        });
-        let failure_reason = match walk.await {
+        use futures_util::FutureExt;
+        // Catch a *panic* (e.g. an unexpected `unwrap` deep in an adapter or a
+        // malformed external response) so it can't silently abort the task and
+        // leave the `rebalances` row stuck in `executing` forever. Both a
+        // returned `Err` and a panic fall through to the same failure cleanup.
+        let outcome = std::panic::AssertUnwindSafe(walk_legs(&st, rebalance_id, user_id))
+            .catch_unwind()
+            .await;
+        let failure_reason = match outcome {
             Ok(Ok(())) => None,
             Ok(Err(e)) => Some(format!("{e}")),
-            Err(join_err) => Some(format!("rebalance executor panicked: {join_err}")),
+            Err(_panic) => Some("rebalance executor panicked".to_string()),
         };
         let Some(reason) = failure_reason else {
             return;
@@ -324,7 +325,7 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
             Ok(v) => v,
             Err(e) => {
                 let reason = format!("{e}");
-                if leg_strands_funds_on_failure(kind, &confirmed_so_far) {
+                if leg_strands_funds_on_failure(kind, leg, &confirmed_so_far) {
                     // Funds already moved (e.g. a bridge mint landed USDC) but
                     // the final action failed. The idle USDC stays in the user's
                     // wallet and is surfaced by the Gateway unified balance — the
@@ -754,13 +755,12 @@ struct LegRow {
     min_out: Option<f64>,
     /// Per-leg state-machine status (`pending`/`submitted`/`confirmed`/`failed`).
     /// Read on every walk so a resumed plan can skip legs already confirmed
-    /// rather than re-submitting them.
-    #[sqlx(default)]
+    /// rather than re-submitting them. NOT NULL DEFAULT in the schema.
     status: String,
     /// How many times this leg has been submitted (bumped before each dispatch).
     /// Read on every walk so a persistently-reverting leg can be capped at
     /// `MAX_LEG_ATTEMPTS` rather than re-dispatching forever across resumes.
-    #[sqlx(default)]
+    /// NOT NULL DEFAULT 0 (migration 0038).
     attempt_count: i32,
 }
 
@@ -775,14 +775,15 @@ fn protocol_fee_notional_from_legs(legs: &[LegRow]) -> f64 {
         .sum()
 }
 
-/// Deterministic per-leg fingerprint for idempotent submit + resume.
+/// Deterministic per-leg fingerprint, stamped once at plan creation and
+/// persisted in `rebalance_legs.idempotency_key`.
 ///
-/// Two walks of the same plan (a retry after a transient failure, or a resume
-/// after a crash) recompute the *same* key for the same logical leg, so the
-/// `(rebalance_id, idempotency_key)` UNIQUE index recognizes it instead of
-/// admitting a duplicate. The amount is rounded to whole USDC cents so a price
-/// re-fetch that nudges the notional by a fraction of a cent doesn't mint a new
-/// key for what is the same leg.
+/// Its job is the DB-level `(rebalance_id, idempotency_key)` UNIQUE index: if a
+/// plan-creation is ever retried for the same logical leg, the same fingerprint
+/// collides instead of admitting a duplicate row. The amount is rounded to whole
+/// USDC cents so a sub-cent notional re-fetch maps to the same key. (The
+/// at-submit, cross-resume dedup against Circle is separate — that uses the
+/// stable leg-id-derived key in `circle_exec`, not this column.)
 ///
 /// Shape: `rebalance_id:leg_index:kind:src>dest:rounded_amount`.
 fn idempotency_key_for_leg(
@@ -860,18 +861,31 @@ pub fn remaining_delta_after_strand(stranded: &[StrandedLeg]) -> Vec<RemainingDe
 /// than failing the whole plan. A pre-funds-moved failure (e.g. the burn itself
 /// reverts, or a local swap reverts before any token leaves the wallet) is a
 /// clean halt with nothing stranded.
-fn leg_strands_funds_on_failure(kind: LegKind, prior_confirmed: &[LegRow]) -> bool {
+fn leg_strands_funds_on_failure(kind: LegKind, leg: &LegRow, prior_confirmed: &[LegRow]) -> bool {
     match kind {
-        // The mint's USDC only lands if its companion burn confirmed first.
-        LegKind::CrossChainMint => prior_confirmed
-            .iter()
-            .any(|l| l.kind == LegKind::CrossChainBurn.as_str()),
-        // A buy-side hook swap on a burn leg: if the burn settled but the
-        // destination swap reverts, the minted USDC strands at the executor.
-        LegKind::CrossChainBurn => false,
-        // Local swap / park / FX: funds leave the wallet atomically with the
-        // acquire, so a revert returns the USDC — nothing stranded.
-        LegKind::LocalSwap | LegKind::ParkUsyc | LegKind::RedeemUsyc | LegKind::FxStablefx => false,
+        // Plain-bridge baseline: burn → mint → local swap. The mint is the leg
+        // that *lands* the destination USDC, so a same-chain swap strands its
+        // input USDC only when a companion `CrossChainMint` already confirmed on
+        // this swap's chain. Without that preceding bridge, a revert returns the
+        // USDC atomically — nothing stranded. (Pairs by chain to the same mint
+        // `pending_funding_dependency` waits on.)
+        LegKind::LocalSwap => {
+            let chain = leg.src_chain.as_deref().and_then(ChainKey::parse);
+            chain.is_some()
+                && prior_confirmed.iter().any(|l| {
+                    l.kind == LegKind::CrossChainMint.as_str()
+                        && l.dest_chain.as_deref().and_then(ChainKey::parse) == chain
+                })
+        }
+        // A failed mint means the destination USDC never landed (it's still in
+        // CCTP transit, recoverable by re-mint via the existing attestation), and
+        // a failed burn leaves the source USDC in place — neither leaves idle
+        // cash to strand. (A source-burn confirmation alone does NOT mean the
+        // mint landed: that is the mint leg's job.)
+        LegKind::CrossChainMint | LegKind::CrossChainBurn => false,
+        // Park / FX: funds leave the wallet atomically with the acquire, so a
+        // revert returns them — nothing stranded.
+        LegKind::ParkUsyc | LegKind::RedeemUsyc | LegKind::FxStablefx => false,
     }
 }
 
@@ -1639,40 +1653,57 @@ mod tests {
     }
 
     #[test]
-    fn mint_failure_after_burn_strands_funds() {
-        // A burn already confirmed → the mint's USDC has landed; a mint failure
-        // strands that USDC as cash.
+    fn mint_failure_does_not_strand_even_after_burn() {
+        // A failed mint means the destination USDC never landed (still in CCTP
+        // transit, re-mintable) — a source-burn confirmation does NOT imply idle
+        // cash, so the mint leg must not be marked stranded.
         let prior = vec![leg(LegKind::CrossChainBurn, 500.0)];
-        assert!(leg_strands_funds_on_failure(
-            LegKind::CrossChainMint,
-            &prior
-        ));
-    }
-
-    #[test]
-    fn mint_failure_without_prior_burn_does_not_strand() {
-        // No companion burn confirmed → no USDC moved; a clean halt.
-        let prior: Vec<LegRow> = vec![];
+        let mint = mint_leg(ChainKey::Base, 500.0);
         assert!(!leg_strands_funds_on_failure(
             LegKind::CrossChainMint,
+            &mint,
             &prior
         ));
     }
 
     #[test]
-    fn local_swap_and_burn_failures_do_not_strand() {
-        // Local swap / park / FX revert atomically — USDC returns to the wallet.
-        // A burn failure means no USDC ever left, so nothing is stranded either.
-        let prior = vec![leg(LegKind::CrossChainBurn, 500.0)];
-        for kind in [
+    fn local_swap_failure_after_mint_strands_idle_usdc() {
+        // burn → mint (confirmed on Base) → local swap on Base fails: the bridged
+        // USDC is now idle cash on Base, so the swap leg strands for the replan.
+        let confirmed = vec![mint_leg(ChainKey::Base, 600.0)];
+        let swap = swap_leg("USDC", "ETH"); // Base → Base
+        assert!(leg_strands_funds_on_failure(
             LegKind::LocalSwap,
+            &swap,
+            &confirmed
+        ));
+    }
+
+    #[test]
+    fn local_swap_failure_without_prior_mint_does_not_strand() {
+        // A same-chain swap with no preceding bridge reverts atomically — the
+        // USDC returns to the wallet, nothing stranded.
+        let swap = swap_leg("USDC", "ETH");
+        assert!(!leg_strands_funds_on_failure(
+            LegKind::LocalSwap,
+            &swap,
+            &[]
+        ));
+    }
+
+    #[test]
+    fn burn_park_fx_failures_do_not_strand() {
+        // A burn failure leaves source USDC in place; park / FX revert atomically
+        // — none leave idle cash, even when a prior mint confirmed.
+        let confirmed = vec![mint_leg(ChainKey::Base, 600.0)];
+        for kind in [
+            LegKind::CrossChainBurn,
             LegKind::ParkUsyc,
             LegKind::RedeemUsyc,
             LegKind::FxStablefx,
-            LegKind::CrossChainBurn,
         ] {
             assert!(
-                !leg_strands_funds_on_failure(kind, &prior),
+                !leg_strands_funds_on_failure(kind, &leg(kind, 500.0), &confirmed),
                 "{kind:?} must not strand on failure"
             );
         }
