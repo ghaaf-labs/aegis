@@ -657,6 +657,7 @@ mod tests {
             nanopayments_seller_address: String::new(),
             nanopayments_treasury_address: String::new(),
             billing_v2_enabled: false,
+            admin_user_ids: vec![],
             peg_defense_enabled: false,
             peg_monitor_tick_secs: 10,
             peg_fire_cooldown_secs: 1800,

@@ -109,7 +109,7 @@ pub async fn create_share(
         claims.sub,
         input.portfolio_id,
         input.year,
-        input.ttl_days,
+        input.ttl_days.clamp(1, 30),
     )
     .await?;
     let share_url = tax_share_url(&state, &token);

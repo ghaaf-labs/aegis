@@ -473,6 +473,7 @@ fn test_config(database_url: &str) -> Config {
         nanopayments_seller_address: String::new(),
         nanopayments_treasury_address: String::new(),
         billing_v2_enabled: false,
+        admin_user_ids: vec![],
         execution_mock: true,
         scheduler_tick_secs: 3600,
         scheduler_cooldown_secs: 1800,

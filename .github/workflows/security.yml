@@ -1,0 +1,97 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 3 * * 1" # every Monday at 03:00 UTC
+
+jobs:
+  # ── Rust dependency audit ────────────────────────────────────────────────
+  cargo-audit:
+    name: Cargo audit (CVEs)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/api
+      - name: Install cargo-audit
+        run: cargo install --locked cargo-audit
+      - name: Run audit
+        run: cargo audit --ignore RUSTSEC-2023-0071
+
+  # ── npm dependency audit ─────────────────────────────────────────────────
+  npm-audit:
+    name: npm audit (CVEs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --audit-level=high
+
+  # ── Secret scanning (TruffleHog) ────────────────────────────────────────
+  trufflehog:
+    name: Secret scanning (TruffleHog)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: TruffleHog OSS
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --only-verified
+
+  # ── Static analysis: Rust (clippy security lints) ───────────────────────
+  clippy-security:
+    name: Clippy security lints
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/api
+      - name: Clippy with security lints
+        run: >
+          cargo clippy --all-targets --
+          -D warnings
+          -W clippy::all
+
+  # ── Dependency licence check ─────────────────────────────────────────────
+  license-check:
+    name: Licence compliance (cargo-deny)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/api
+      - name: Install cargo-deny
+        run: cargo install --locked cargo-deny
+      - name: Check licences
+        run: cargo deny check licenses
