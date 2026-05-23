@@ -97,11 +97,11 @@ function TableHeader() {
 }
 
 function Row({ entry, rank }: { entry: LeaderboardEntry; rank: number }) {
-  const deltaSign = entry.trustabilityDelta > 0 ? "+" : "";
+  const deltaRounded = roundPct(entry.trustabilityDelta);
   const deltaTone =
-    entry.trustabilityDelta > 0
+    deltaRounded > 0
       ? "text-accent-pnl"
-      : entry.trustabilityDelta < 0
+      : deltaRounded < 0
         ? "text-risk"
         : "text-text-default";
   const labelTone = LABEL_TONE[entry.label];
@@ -121,15 +121,10 @@ function Row({ entry, rank }: { entry: LeaderboardEntry; rank: number }) {
         <div className="grid grid-cols-2 gap-2">
           <MobileMetric
             label="Delta"
-            value={`${deltaSign}${entry.trustabilityDelta.toFixed(2)}%`}
+            value={signedPct(entry.trustabilityDelta)}
             className={deltaTone}
           />
-          <MobileMetric
-            label="7d avg"
-            value={`${entry.avg7dReturn >= 0 ? "+" : ""}${entry.avg7dReturn.toFixed(
-              2,
-            )}%`}
-          />
+          <MobileMetric label="7d avg" value={signedPct(entry.avg7dReturn)} />
           <MobileMetric
             label="Decisions"
             value={entry.decisionsExecuted.toString()}
@@ -154,12 +149,10 @@ function Row({ entry, rank }: { entry: LeaderboardEntry; rank: number }) {
         <LeaderboardIdentity entry={entry} />
       </div>
       <span className={`hidden text-right tabular-nums md:block ${deltaTone}`}>
-        {deltaSign}
-        {entry.trustabilityDelta.toFixed(2)}%
+        {signedPct(entry.trustabilityDelta)}
       </span>
       <span className="hidden text-right tabular-nums text-text-default md:block">
-        {entry.avg7dReturn >= 0 ? "+" : ""}
-        {entry.avg7dReturn.toFixed(2)}%
+        {signedPct(entry.avg7dReturn)}
       </span>
       <span className="hidden text-right tabular-nums text-text-lo md:block">
         {entry.decisionsExecuted}
@@ -171,6 +164,16 @@ function Row({ entry, rank }: { entry: LeaderboardEntry; rank: number }) {
       </span>
     </li>
   );
+}
+
+function roundPct(value: number) {
+  const rounded = Math.round(value * 100) / 100;
+  return rounded === 0 ? 0 : rounded;
+}
+
+function signedPct(value: number) {
+  const safe = roundPct(value);
+  return `${safe >= 0 ? "+" : ""}${safe.toFixed(2)}%`;
 }
 
 function LeaderboardIdentity({ entry }: { entry: LeaderboardEntry }) {
