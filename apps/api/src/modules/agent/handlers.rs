@@ -58,13 +58,12 @@ pub async fn analyze(
     Json(body): Json<AnalyzeRequest>,
 ) -> crate::error::Result<Json<AgentDecision>> {
     // Verify the caller owns the portfolio before running the AI pipeline.
-    let owned: Option<(Uuid,)> = sqlx::query_as(
-        "SELECT id FROM portfolios WHERE id = $1 AND user_id = $2",
-    )
-    .bind(body.portfolio_id)
-    .bind(claims.sub)
-    .fetch_optional(&state.db)
-    .await?;
+    let owned: Option<(Uuid,)> =
+        sqlx::query_as("SELECT id FROM portfolios WHERE id = $1 AND user_id = $2")
+            .bind(body.portfolio_id)
+            .bind(claims.sub)
+            .fetch_optional(&state.db)
+            .await?;
 
     if owned.is_none() {
         return Err(crate::error::AppError::NotFound(format!(
