@@ -13,15 +13,6 @@ export const metadata: Metadata = {
 
 const TEAM = [
   {
-    name: "Mohammad Jalili",
-    handle: "mohijalili",
-    role: "Staff Engineer",
-    avatar: "/team/mohijalili.png",
-    linkedin: "https://www.linkedin.com/in/mohammadjalili/",
-    github: "https://github.com/mohijalili",
-    website: "https://mohism.io",
-  },
-  {
     name: "Mahdi Zarrintareh",
     handle: "malivix",
     role: "Staff Engineer",
@@ -29,6 +20,15 @@ const TEAM = [
     linkedin: "https://www.linkedin.com/in/malivix/",
     github: "https://github.com/malivix",
     website: null,
+  },
+  {
+    name: "Mohammad Jalili",
+    handle: "mohijalili",
+    role: "Staff Engineer",
+    avatar: "/team/mohijalili.png",
+    linkedin: "https://www.linkedin.com/in/mohammadjalili/",
+    github: "https://github.com/mohijalili",
+    website: "https://mohism.io",
   },
 ];
 
