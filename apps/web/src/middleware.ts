@@ -6,7 +6,14 @@ import {
 } from "@/lib/auth-routing";
 import { sessionCookieName } from "@/lib/session-cookie";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+// NEXT_PUBLIC_SERVER_API_URL is the direct Docker service URL (http://api:8080)
+// used for server-to-server session checks — bypasses Cloudflare + nginx and
+// avoids IPv6 DNS hangs inside the container. Falls back to the public URL for
+// local dev where both services run on the same host.
+const API_URL =
+  process.env.NEXT_PUBLIC_SERVER_API_URL ??
+  process.env.NEXT_PUBLIC_API_URL ??
+  "http://localhost:8080";
 const SESSION_COOKIE_NAME = sessionCookieName({
   publicBaseUrl: process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
   apiBaseUrl: API_URL,
@@ -62,6 +69,7 @@ async function checkServerSession(token: string) {
       headers: {
         Cookie: `${SESSION_COOKIE_NAME}=${token}`,
       },
+      signal: AbortSignal.timeout(5000),
     });
     return response.ok ? "active" : "rejected";
   } catch {

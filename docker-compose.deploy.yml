@@ -49,7 +49,7 @@ services:
       CIRCLE_BASE_URL: https://api.circle.com
       EXECUTION_MOCK: ${EXECUTION_MOCK:-true}
       CORS_ALLOW_ORIGIN: https://${APP_DOMAIN:-aegis.devberlin.de}
-      SESSION_COOKIE_NAME: __Host-aegis_jwt
+      SESSION_COOKIE_NAME: __Host-aegis_session
       SESSION_COOKIE_SECURE: "true"
       PUBLIC_BASE_URL: https://${APP_DOMAIN:-aegis.devberlin.de}
       API_BASE_URL: https://${APP_DOMAIN:-aegis.devberlin.de}/api
@@ -78,6 +78,7 @@ services:
         NEXT_PUBLIC_API_URL: https://${APP_DOMAIN:-aegis.devberlin.de}/api
         NEXT_PUBLIC_SSE_URL: https://${APP_DOMAIN:-aegis.devberlin.de}/api/sse
         NEXT_PUBLIC_APP_URL: https://${APP_DOMAIN:-aegis.devberlin.de}
+        NEXT_PUBLIC_SERVER_API_URL: http://api:8080
     restart: unless-stopped
     ports:
       - "127.0.0.1:3002:3000"
