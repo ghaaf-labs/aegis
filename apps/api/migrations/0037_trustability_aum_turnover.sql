@@ -9,7 +9,13 @@
 -- AUM is summed across the user's portfolios in a correlated subquery so the
 -- per-decision JOIN fan-out can't multiply the portfolio value.
 
-CREATE OR REPLACE VIEW v_trustability_per_user AS
+-- DROP + CREATE (not REPLACE): the new columns change the view's column set/
+-- order, which Postgres' CREATE OR REPLACE VIEW forbids ("cannot change name of
+-- view column"). Nothing has a DB-level dependency on this view (only queries
+-- read it), so a clean recreate is safe.
+DROP VIEW IF EXISTS v_trustability_per_user;
+
+CREATE VIEW v_trustability_per_user AS
 SELECT
     u.id                                                  AS user_id,
     md5(u.id::text)                                       AS handle_full,
