@@ -736,7 +736,7 @@ fn cross_chain_token_swap_needed(leg: &LegView) -> bool {
         && leg
             .dest_symbol
             .as_deref()
-            .is_some_and(|symbol| symbol != "USDC")
+            .is_some_and(|symbol| !symbol.eq_ignore_ascii_case("USDC"))
 }
 
 fn unsupported_real_execution_message(missing: &[MissingCapability]) -> String {
@@ -1232,24 +1232,34 @@ mod tests {
 
     #[test]
     fn real_execution_capability_blocks_cross_chain_token_swaps() {
-        let mut eth_buy = leg("cross_chain_burn");
-        eth_buy.dest_symbol = Some("ETH".into());
-        let missing = unsupported_real_execution_capabilities(&[eth_buy]);
+        for symbol in ["BTC", "ETH", "SOL", "USYC", "EURC"] {
+            let mut token_buy = leg("cross_chain_burn");
+            token_buy.dest_symbol = Some(symbol.into());
+            let missing = unsupported_real_execution_capabilities(&[token_buy]);
 
-        assert!(missing
-            .iter()
-            .any(|cap| cap.code == "CROSS_CHAIN_TOKEN_SWAP"));
+            assert!(
+                missing
+                    .iter()
+                    .any(|cap| cap.code == "CROSS_CHAIN_TOKEN_SWAP"),
+                "{symbol} cross-chain buys must stay blocked until a real route exists",
+            );
+        }
     }
 
     #[test]
     fn real_execution_capability_allows_cross_chain_usdc_mints() {
-        let mut usdc_bridge = leg("cross_chain_burn");
-        usdc_bridge.dest_symbol = Some("USDC".into());
-        let missing = unsupported_real_execution_capabilities(&[usdc_bridge]);
+        for symbol in ["USDC", "usdc"] {
+            let mut usdc_bridge = leg("cross_chain_burn");
+            usdc_bridge.dest_symbol = Some(symbol.into());
+            let missing = unsupported_real_execution_capabilities(&[usdc_bridge]);
 
-        assert!(!missing
-            .iter()
-            .any(|cap| cap.code == "CROSS_CHAIN_TOKEN_SWAP"));
+            assert!(
+                !missing
+                    .iter()
+                    .any(|cap| cap.code == "CROSS_CHAIN_TOKEN_SWAP"),
+                "{symbol} bridge mints should not be treated as token swaps",
+            );
+        }
     }
 
     #[cfg(not(feature = "real-usyc"))]

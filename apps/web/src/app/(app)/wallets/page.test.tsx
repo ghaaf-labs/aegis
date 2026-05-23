@@ -133,15 +133,35 @@ describe("<NetworkTokenPanel />", () => {
       />,
     );
     const text = container.textContent ?? "";
+    const expectedNetworks = [
+      "Arc testnet",
+      "Base Sepolia",
+      "Ethereum Sepolia",
+      "Arbitrum Sepolia",
+      "Avalanche Fuji",
+    ];
+    const expectedTokens = [
+      ["USDC", "Cash · Funding source and reserve target", "Usable"],
+      [
+        "BTC / ETH / SOL",
+        "Market targets · Needs live swap routes before approval",
+        "Blocked",
+      ],
+      ["USYC", "Yield · Needs live yield route before approval", "Blocked"],
+      ["EURC", "FX sleeve · Needs live FX route before approval", "Blocked"],
+    ];
 
-    expect(text).toContain("Arc testnet");
-    expect(text).toContain("Base Sepolia");
-    expect(text).toContain("Ethereum Sepolia");
+    for (const network of expectedNetworks) {
+      expect(text).toContain(network);
+    }
     expect(text).toContain("Not enabled for this wallet");
-    expect(text).toContain("BTC / ETH / SOL");
-    expect(text).toContain("Needs live swap routes before approval");
-    expect(text).toContain("USDC");
-    expect(text).toContain("Usable");
+    expect(text.match(/Live/g)).toHaveLength(2);
+    expect(text.match(/Off/g)).toHaveLength(3);
+
+    for (const tokenCopy of expectedTokens.flat()) {
+      expect(text).toContain(tokenCopy);
+    }
+    expect(text.match(/Blocked/g)).toHaveLength(3);
 
     act(() => root.unmount());
   });
