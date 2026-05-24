@@ -156,10 +156,12 @@ mod tests {
         let mut cfg = crate::config::test_config();
         cfg.execution_mock = false;
         cfg.circle_mock = false;
-        cfg.chain_private_key_arc = "0xaa".into();
-        cfg.chain_private_key_base = "0xbb".into();
-        cfg.usdc_arc = "0x00000000000000000000000000000000000000a1".into();
-        cfg.usdc_base = "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
+        cfg.chains[ChainKey::Arc.index()].private_key = "0xaa".into();
+        cfg.chains[ChainKey::Base.index()].private_key = "0xbb".into();
+        cfg.chains[ChainKey::Arc.index()].usdc =
+            "0x00000000000000000000000000000000000000a1".into();
+        cfg.chains[ChainKey::Base.index()].usdc =
+            "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
         cfg
     }
 

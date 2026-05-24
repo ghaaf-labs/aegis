@@ -644,13 +644,17 @@ mod tests {
         let mut cfg = crate::config::test_config();
         cfg.execution_mock = false;
         cfg.circle_mock = false;
-        cfg.chain_private_key_arc = "0xaa".into();
-        cfg.chain_private_key_base = "0xbb".into();
-        cfg.usdc_base = "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
+        use crate::modules::rebalance::models::ChainKey;
+        cfg.chains[ChainKey::Arc.index()].private_key = "0xaa".into();
+        cfg.chains[ChainKey::Base.index()].private_key = "0xbb".into();
+        cfg.chains[ChainKey::Base.index()].usdc =
+            "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
         cfg.eurc_base = "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42".into();
         // The Base swap venue must be wired for EURC to count as executable.
-        cfg.uniswap_v3_router_base = "0x1111111111111111111111111111111111111111".into();
-        cfg.uniswap_v3_quoter_base = "0x2222222222222222222222222222222222222222".into();
+        cfg.chains[ChainKey::Base.index()].swap_router =
+            "0x1111111111111111111111111111111111111111".into();
+        cfg.chains[ChainKey::Base.index()].swap_quoter =
+            "0x2222222222222222222222222222222222222222".into();
 
         // USYC is disabled by default → never an executable stable, never chosen.
         assert!(!is_executable_stable(&cfg, "USYC"));

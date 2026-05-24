@@ -17,7 +17,10 @@ use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use uuid::Uuid;
 
-use aegis_api::{config::Config, db, modules::treasury::service::park_in_usyc};
+use aegis_api::{
+    config::Config, db, modules::rebalance::models::ChainKey,
+    modules::treasury::service::park_in_usyc,
+};
 
 const USER_ID: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
@@ -51,12 +54,18 @@ async fn main() -> Result<()> {
         !cfg.usyc_teller_arc.is_empty(),
         "USYC_TELLER_ARC must be set"
     );
-    anyhow::ensure!(!cfg.usdc_arc.is_empty(), "USDC_ARC must be set");
+    anyhow::ensure!(
+        !cfg.chain(ChainKey::Arc).usdc.is_empty(),
+        "USDC_ARC must be set"
+    );
 
     println!("--- runtime config ---");
     println!("  USYC_TELLER_ARC = {}", cfg.usyc_teller_arc);
-    println!("  USDC_ARC        = {}", cfg.usdc_arc);
-    println!("  ARC_RPC_URL set = {}", !cfg.arc_rpc_url.is_empty());
+    println!("  USDC_ARC        = {}", cfg.chain(ChainKey::Arc).usdc);
+    println!(
+        "  ARC_RPC_URL set = {}",
+        !cfg.chain(ChainKey::Arc).rpc_url.is_empty()
+    );
     println!("---");
 
     let pool = db::connect(&cfg.database_url).await?;

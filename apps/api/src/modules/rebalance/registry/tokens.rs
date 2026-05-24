@@ -42,12 +42,12 @@ impl TokenSpec {
     /// chain. Callers MUST treat `None` as non-executable.
     pub fn address_for<'a>(&self, cfg: &'a Config, chain: ChainKey) -> Option<&'a str> {
         let raw = match (self.symbol, chain) {
-            (USDC, ChainKey::Arc) => cfg.usdc_arc.as_str(),
-            (USDC, ChainKey::Base) => cfg.usdc_base.as_str(),
-            (USDC, ChainKey::EthSepolia) => cfg.usdc_eth.as_str(),
-            (USDC, ChainKey::ArbSepolia) => cfg.usdc_arb.as_str(),
-            (USDC, ChainKey::AvaxFuji) => cfg.usdc_avax.as_str(),
-            (USDC, ChainKey::OpSepolia) => cfg.usdc_op.as_str(),
+            (USDC, ChainKey::Arc) => cfg.chain(ChainKey::Arc).usdc.as_str(),
+            (USDC, ChainKey::Base) => cfg.chain(ChainKey::Base).usdc.as_str(),
+            (USDC, ChainKey::EthSepolia) => cfg.chain(ChainKey::EthSepolia).usdc.as_str(),
+            (USDC, ChainKey::ArbSepolia) => cfg.chain(ChainKey::ArbSepolia).usdc.as_str(),
+            (USDC, ChainKey::AvaxFuji) => cfg.chain(ChainKey::AvaxFuji).usdc.as_str(),
+            (USDC, ChainKey::OpSepolia) => cfg.chain(ChainKey::OpSepolia).usdc.as_str(),
             (USYC, ChainKey::Arc) => cfg.usyc_token_arc.as_str(),
             (ETH, ChainKey::Base) => cfg.weth_base.as_str(),
             (ETH, ChainKey::EthSepolia) => cfg.weth_eth.as_str(),
@@ -299,14 +299,16 @@ mod tests {
     #[test]
     fn address_for_reads_config_and_normalizes() {
         let mut cfg = crate::config::test_config();
-        cfg.usdc_base = "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
-        cfg.usdc_arc = "0x0000000000000000000000000000000000000000".into();
+        cfg.chains[ChainKey::Base.index()].usdc =
+            "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
+        cfg.chains[ChainKey::Arc.index()].usdc =
+            "0x0000000000000000000000000000000000000000".into();
         cfg.weth_base = "0x4200000000000000000000000000000000000006".into();
 
         let usdc = token(USDC).unwrap();
         assert_eq!(
             usdc.address_for(&cfg, ChainKey::Base),
-            Some(cfg.usdc_base.as_str())
+            Some(cfg.chain(ChainKey::Base).usdc.as_str())
         );
         // Zero placeholder on Arc resolves to None → fail closed.
         assert_eq!(usdc.address_for(&cfg, ChainKey::Arc), None);
@@ -338,14 +340,15 @@ mod tests {
     #[test]
     fn usdc_and_weth_resolve_per_chain_on_new_chains() {
         let mut cfg = crate::config::test_config();
-        cfg.usdc_op = "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
+        cfg.chains[ChainKey::OpSepolia.index()].usdc =
+            "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
         cfg.weth_op = "0x4200000000000000000000000000000000000006".into();
         cfg.wbtc_eth = "0x0000000000000000000000000000000000000abc".into();
 
         let usdc = token(USDC).unwrap();
         assert_eq!(
             usdc.address_for(&cfg, ChainKey::OpSepolia),
-            Some(cfg.usdc_op.as_str())
+            Some(cfg.chain(ChainKey::OpSepolia).usdc.as_str())
         );
         // Unconfigured chains fail closed.
         assert_eq!(usdc.address_for(&cfg, ChainKey::ArbSepolia), None);

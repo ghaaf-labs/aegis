@@ -23,18 +23,18 @@ pub fn capability(cfg: &Config) -> AdapterCapability {
     let usdc = tokens::token(USDC).expect("USDC in registry");
     let have_addrs = usdc.address_for(cfg, ChainKey::Arc).is_some()
         && usdc.address_for(cfg, ChainKey::Base).is_some()
-        && tokens::is_real_addr(&cfg.cctp_token_messenger_arc)
-        && tokens::is_real_addr(&cfg.cctp_token_messenger_base)
-        && tokens::is_real_addr(&cfg.cctp_message_transmitter_arc)
-        && tokens::is_real_addr(&cfg.cctp_message_transmitter_base)
-        && tokens::is_real_addr(&cfg.rebalance_executor_arc)
-        && tokens::is_real_addr(&cfg.rebalance_executor_base);
+        && tokens::is_real_addr(&cfg.chain(ChainKey::Arc).cctp_token_messenger)
+        && tokens::is_real_addr(&cfg.chain(ChainKey::Base).cctp_token_messenger)
+        && tokens::is_real_addr(&cfg.chain(ChainKey::Arc).cctp_message_transmitter)
+        && tokens::is_real_addr(&cfg.chain(ChainKey::Base).cctp_message_transmitter)
+        && tokens::is_real_addr(&cfg.chain(ChainKey::Arc).rebalance_executor)
+        && tokens::is_real_addr(&cfg.chain(ChainKey::Base).rebalance_executor);
     if !cfg!(feature = "real-cctp") {
         AdapterCapability::NeedsFeature
     } else if !have_addrs {
         AdapterCapability::NeedsAddress
-    } else if cfg.chain_private_key_arc.trim().is_empty()
-        || cfg.chain_private_key_base.trim().is_empty()
+    } else if cfg.chain(ChainKey::Arc).private_key.trim().is_empty()
+        || cfg.chain(ChainKey::Base).private_key.trim().is_empty()
     {
         AdapterCapability::NeedsSigner
     } else {
@@ -66,15 +66,15 @@ pub fn capability_for_route(
     let usdc = tokens::token(USDC).expect("USDC in registry");
     let addrs_ok = usdc.address_for(cfg, src).is_some()
         && usdc.address_for(cfg, dest).is_some()
-        && tokens::is_real_addr(cfg.cctp_token_messenger_for(src))
-        && tokens::is_real_addr(cfg.cctp_message_transmitter_for(dest))
-        && (!hooked || tokens::is_real_addr(cfg.rebalance_executor_for(dest)));
+        && tokens::is_real_addr(&cfg.chain(src).cctp_token_messenger)
+        && tokens::is_real_addr(&cfg.chain(dest).cctp_message_transmitter)
+        && (!hooked || tokens::is_real_addr(&cfg.chain(dest).rebalance_executor));
     if !addrs_ok {
         return AdapterCapability::NeedsAddress;
     }
     if !cfg.circle_wallet_exec
-        && (cfg.chain_private_key_for(src).trim().is_empty()
-            || cfg.chain_private_key_for(dest).trim().is_empty())
+        && (cfg.chain(src).private_key.trim().is_empty()
+            || cfg.chain(dest).private_key.trim().is_empty())
     {
         return AdapterCapability::NeedsSigner;
     }
@@ -91,7 +91,7 @@ pub fn capability_for_route(
 #[cfg(feature = "real-cctp")]
 pub fn eoa_address_for(cfg: &Config, chain: ChainKey) -> Option<String> {
     use alloy::signers::local::PrivateKeySigner;
-    let bytes = hex::decode(cfg.chain_private_key_for(chain).trim_start_matches("0x")).ok()?;
+    let bytes = hex::decode(cfg.chain(chain).private_key.trim_start_matches("0x")).ok()?;
     let signer = PrivateKeySigner::from_slice(&bytes).ok()?;
     Some(signer.address().to_string())
 }

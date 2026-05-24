@@ -8,6 +8,7 @@
 use crate::config::Config;
 
 use super::super::adapters;
+use super::super::models::ChainKey;
 
 /// Why an adapter is or isn't able to execute real transactions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,8 +63,8 @@ impl RuntimeCapabilities {
             real_usyc_compiled: cfg!(feature = "real-usyc"),
             real_swap_compiled: cfg!(feature = "real-swap"),
             usyc_enabled: cfg.usyc_enabled,
-            signer_arc: !cfg.chain_private_key_arc.trim().is_empty(),
-            signer_base: !cfg.chain_private_key_base.trim().is_empty(),
+            signer_arc: !cfg.chain(ChainKey::Arc).private_key.trim().is_empty(),
+            signer_base: !cfg.chain(ChainKey::Base).private_key.trim().is_empty(),
             cctp: adapters::cctp::capability(cfg),
             swap: adapters::swap::capability(cfg),
             usyc: adapters::usyc::capability(cfg),
@@ -80,10 +81,12 @@ mod tests {
         let mut cfg = crate::config::test_config();
         cfg.execution_mock = false;
         cfg.circle_mock = false;
-        cfg.chain_private_key_arc = "0xaa".into();
-        cfg.chain_private_key_base = "0xbb".into();
-        cfg.usdc_arc = "0x0000000000000000000000000000000000000abc".into();
-        cfg.usdc_base = "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
+        cfg.chains[ChainKey::Arc.index()].private_key = "0xaa".into();
+        cfg.chains[ChainKey::Base.index()].private_key = "0xbb".into();
+        cfg.chains[ChainKey::Arc.index()].usdc =
+            "0x0000000000000000000000000000000000000abc".into();
+        cfg.chains[ChainKey::Base.index()].usdc =
+            "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
         cfg
     }
 

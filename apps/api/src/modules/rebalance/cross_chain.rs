@@ -324,7 +324,7 @@ impl<'a> CctpClient<'a> {
                 .await;
         }
 
-        let private_key = self.config.chain_private_key_for(src);
+        let private_key = &self.config.chain(src).private_key;
 
         let key_bytes = hex::decode(private_key.trim_start_matches("0x")).map_err(|_| {
             AppError::Internal(anyhow::anyhow!("invalid hex private key for {:?}", src))
@@ -335,7 +335,7 @@ impl<'a> CctpClient<'a> {
 
         let wallet = EthereumWallet::from(signer);
 
-        let rpc_url = self.config.rpc_url_for(src);
+        let rpc_url = &self.config.chain(src).rpc_url;
 
         let provider = ProviderBuilder::new().wallet(wallet).connect_http(
             rpc_url
@@ -347,14 +347,16 @@ impl<'a> CctpClient<'a> {
         // RebalanceExecutor that becomes the CCTP mintRecipient.
         let token_messenger = self
             .config
-            .cctp_token_messenger_for(src)
+            .chain(src)
+            .cctp_token_messenger
             .parse::<Address>()
             .map_err(|_| {
                 AppError::Internal(anyhow::anyhow!("bad CCTP TokenMessenger on {:?}", src))
             })?;
         let usdc = self
             .config
-            .usdc_for(src)
+            .chain(src)
+            .usdc
             .parse::<Address>()
             .map_err(|_| AppError::Internal(anyhow::anyhow!("bad USDC on {:?}", src)))?;
 
@@ -420,7 +422,7 @@ impl<'a> CctpClient<'a> {
         // USDC) still routes to the executor for the atomic path.
         let plain_bridge = hook
             .token_out
-            .eq_ignore_ascii_case(self.config.usdc_for(dest));
+            .eq_ignore_ascii_case(&self.config.chain(dest).usdc);
 
         let receipt = if plain_bridge {
             let recipient = hook.recipient.parse::<Address>().map_err(|_| {
@@ -448,7 +450,8 @@ impl<'a> CctpClient<'a> {
             // executor isn't blocked by an unparsable address).
             let executor_on_dest = self
                 .config
-                .rebalance_executor_for(dest)
+                .chain(dest)
+                .rebalance_executor
                 .parse::<Address>()
                 .map_err(|_| {
                     AppError::Internal(anyhow::anyhow!("bad RebalanceExecutor on {:?}", dest))
@@ -520,7 +523,7 @@ impl<'a> CctpClient<'a> {
                 .await;
         }
 
-        let private_key = self.config.chain_private_key_for(dest);
+        let private_key = &self.config.chain(dest).private_key;
 
         let signer = PrivateKeySigner::from_slice(
             &hex::decode(private_key.trim_start_matches("0x"))
@@ -530,7 +533,7 @@ impl<'a> CctpClient<'a> {
 
         let wallet = EthereumWallet::from(signer);
 
-        let rpc_url = self.config.rpc_url_for(dest);
+        let rpc_url = &self.config.chain(dest).rpc_url;
 
         let provider = ProviderBuilder::new().wallet(wallet).connect_http(
             rpc_url
@@ -540,7 +543,8 @@ impl<'a> CctpClient<'a> {
 
         let transmitter: Address = self
             .config
-            .cctp_message_transmitter_for(dest)
+            .chain(dest)
+            .cctp_message_transmitter
             .parse()
             .map_err(|_| {
                 AppError::Internal(anyhow::anyhow!("bad MessageTransmitter on {:?}", dest))
@@ -592,8 +596,8 @@ impl<'a> CctpClient<'a> {
             ))
         })?;
 
-        let token_messenger_str = self.config.cctp_token_messenger_for(src);
-        let usdc_str = self.config.usdc_for(src);
+        let token_messenger_str = &self.config.chain(src).cctp_token_messenger;
+        let usdc_str = &self.config.chain(src).usdc;
         let token_messenger: Address = token_messenger_str
             .parse()
             .map_err(|_| AppError::Internal(anyhow::anyhow!("bad CCTP TokenMessenger")))?;
@@ -632,7 +636,7 @@ impl<'a> CctpClient<'a> {
         let max_fee = U256::from(max_fee_for(amount, fee_choice.fee_bps));
         let plain_bridge = hook
             .token_out
-            .eq_ignore_ascii_case(self.config.usdc_for(dest));
+            .eq_ignore_ascii_case(&self.config.chain(dest).usdc);
         let burn_calldata = if plain_bridge {
             let recipient = hook.recipient.parse::<Address>().map_err(|_| {
                 AppError::Internal(anyhow::anyhow!("bad mint recipient for plain bridge"))
@@ -650,7 +654,8 @@ impl<'a> CctpClient<'a> {
         } else {
             let executor_on_dest = self
                 .config
-                .rebalance_executor_for(dest)
+                .chain(dest)
+                .rebalance_executor
                 .parse::<Address>()
                 .map_err(|_| {
                     AppError::Internal(anyhow::anyhow!("bad RebalanceExecutor on {:?}", dest))
@@ -710,7 +715,7 @@ impl<'a> CctpClient<'a> {
             ))
         })?;
 
-        let transmitter_str = self.config.cctp_message_transmitter_for(dest);
+        let transmitter_str = &self.config.chain(dest).cctp_message_transmitter;
         let transmitter = transmitter_str.parse::<Address>().map_err(|_| {
             AppError::Internal(anyhow::anyhow!("bad MessageTransmitter on {:?}", dest))
         })?;

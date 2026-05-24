@@ -1456,7 +1456,8 @@ mod tests {
 
     fn hook_cfg() -> Config {
         let mut cfg = crate::config::test_config();
-        cfg.usdc_base = "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
+        cfg.chains[ChainKey::Base.index()].usdc =
+            "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
         cfg.weth_base = "0x4200000000000000000000000000000000000006".into();
         cfg
     }
@@ -1474,7 +1475,7 @@ mod tests {
         )
         .unwrap();
         // tokenOut == dest USDC → contract takes the passthrough fast path.
-        assert_eq!(hook.token_out, cfg.usdc_base);
+        assert_eq!(hook.token_out, cfg.chain(ChainKey::Base).usdc);
         assert_eq!(hook.min_out, 0);
     }
 
@@ -1483,7 +1484,7 @@ mod tests {
         let cfg = hook_cfg();
         let hook =
             build_cross_chain_hook(&cfg, "0xR", ChainKey::Base, None, None, Utc::now()).unwrap();
-        assert_eq!(hook.token_out, cfg.usdc_base);
+        assert_eq!(hook.token_out, cfg.chain(ChainKey::Base).usdc);
     }
 
     #[test]

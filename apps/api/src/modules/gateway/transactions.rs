@@ -244,10 +244,11 @@ fn classify_contract(
         return "contract";
     };
     let eq = |configured: &str| !configured.is_empty() && configured.eq_ignore_ascii_case(addr);
-    if eq(cfg.cctp_token_messenger_for(chain)) || eq(cfg.cctp_message_transmitter_for(chain)) {
+    if eq(&cfg.chain(chain).cctp_token_messenger) || eq(&cfg.chain(chain).cctp_message_transmitter)
+    {
         return "bridge";
     }
-    if eq(cfg.swap_router_for(chain)) {
+    if eq(&cfg.chain(chain).swap_router) {
         return "swap";
     }
     // A contract execution that targets a token contract is an ERC-20 approve.
@@ -318,9 +319,10 @@ mod tests {
 
     fn real_cfg() -> Config {
         let mut cfg = crate::config::test_config();
-        cfg.cctp_token_messenger_base = "0xBdc0000000000000000000000000000000000001".into();
-        cfg.uniswap_v3_router_base = "0x2626664c2603336E57B271c5C0b26F421741e481".into();
-        cfg.usdc_base = "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
+        let base = &mut cfg.chains[ChainKey::Base.index()];
+        base.cctp_token_messenger = "0xBdc0000000000000000000000000000000000001".into();
+        base.swap_router = "0x2626664c2603336E57B271c5C0b26F421741e481".into();
+        base.usdc = "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
         cfg
     }
 
@@ -357,7 +359,7 @@ mod tests {
             classify(
                 Some("CONTRACT_EXECUTION"),
                 Some("OUTBOUND"),
-                Some(&cfg.cctp_token_messenger_base),
+                Some(&cfg.chain(ChainKey::Base).cctp_token_messenger),
                 &cfg,
                 Some(ChainKey::Base),
             ),
@@ -368,7 +370,7 @@ mod tests {
             classify(
                 Some("CONTRACT_EXECUTION"),
                 Some("OUTBOUND"),
-                Some(&cfg.uniswap_v3_router_base),
+                Some(&cfg.chain(ChainKey::Base).swap_router),
                 &cfg,
                 Some(ChainKey::Base),
             ),
@@ -379,7 +381,7 @@ mod tests {
             classify(
                 Some("CONTRACT_EXECUTION"),
                 Some("OUTBOUND"),
-                Some(&cfg.usdc_base),
+                Some(&cfg.chain(ChainKey::Base).usdc),
                 &cfg,
                 Some(ChainKey::Base),
             ),
@@ -411,7 +413,11 @@ mod tests {
     fn token_from_contract_resolves_configured_addresses() {
         let cfg = real_cfg();
         assert_eq!(
-            token_from_contract(&cfg, Some(ChainKey::Base), Some(&cfg.usdc_base)),
+            token_from_contract(
+                &cfg,
+                Some(ChainKey::Base),
+                Some(&cfg.chain(ChainKey::Base).usdc)
+            ),
             Some("USDC".to_string())
         );
         assert_eq!(

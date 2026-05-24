@@ -120,6 +120,19 @@ impl ChainKey {
             Self::OpSepolia => "op_sepolia",
         }
     }
+    /// Dense index into a per-chain collection (e.g. `Config`'s `[ChainConfig; 6]`).
+    /// The ordering matches the variant declaration order and is the single
+    /// source of truth for indexing per-chain config.
+    pub fn index(self) -> usize {
+        match self {
+            Self::Arc => 0,
+            Self::Base => 1,
+            Self::EthSepolia => 2,
+            Self::ArbSepolia => 3,
+            Self::AvaxFuji => 4,
+            Self::OpSepolia => 5,
+        }
+    }
     pub fn parse(s: &str) -> Option<Self> {
         // Accept both the canonical snake_case `as_str()` form and the
         // hyphenated Circle wallet `blockchain` form (e.g. "eth-sepolia"),

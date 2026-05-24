@@ -62,7 +62,7 @@ fn native_gas_is_usdc(chain: ChainKey) -> bool {
 
 /// JSON-RPC URL used for the live `eth_gasPrice` probe on `chain`.
 fn rpc_for_gas(cfg: &Config, chain: ChainKey) -> &str {
-    cfg.rpc_url_for(chain)
+    &cfg.chain(chain).rpc_url
 }
 
 /// Deterministic per-chain stub used in mock mode and as the RPC fallback.
@@ -212,8 +212,11 @@ mod tests {
     #[test]
     fn rpc_for_gas_reads_per_chain_url() {
         let mut c = cfg();
-        c.op_rpc_url = "https://op.example".into();
+        c.chains[ChainKey::OpSepolia.index()].rpc_url = "https://op.example".into();
         assert_eq!(rpc_for_gas(&c, ChainKey::OpSepolia), "https://op.example");
-        assert_eq!(rpc_for_gas(&c, ChainKey::Arc), c.arc_rpc_url.as_str());
+        assert_eq!(
+            rpc_for_gas(&c, ChainKey::Arc),
+            c.chain(ChainKey::Arc).rpc_url.as_str()
+        );
     }
 }

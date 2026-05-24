@@ -8,8 +8,8 @@
 //! the route fails closed upstream and these return an error rather than a
 //! synthetic success.
 //!
-//! The venue is resolved per chain via `Config::swap_router_for` /
-//! `swap_quoter_for`: Base = Aerodrome Slipstream, OP = Velodrome,
+//! The venue is resolved per chain via `Config::chain(c).swap_router` /
+//! `.swap_quoter`: Base = Aerodrome Slipstream, OP = Velodrome,
 //! Eth/Arb = Uniswap V3. All three expose the same V3-style
 //! `exactInputSingle`/`exactOutputSingle` router + QuoterV2 surface, so the
 //! single `sol!` interface below works against any of their addresses. Avax's
@@ -56,15 +56,15 @@ pub fn capability(cfg: &Config) -> AdapterCapability {
 /// Per-chain swap-venue capability. A chain is `Live` only when `real-swap` is
 /// compiled, its V3-compatible router + quoter are configured, and its signer
 /// is present. Chains with no AMM venue (Arc, Avax/Trader-Joe-LB) report
-/// `NeedsAddress` because their `swap_router_for`/`swap_quoter_for` are empty.
+/// `NeedsAddress` because their `chain(c).swap_router`/`.swap_quoter` are empty.
 pub fn capability_for(cfg: &Config, chain: ChainKey) -> AdapterCapability {
     if !cfg!(feature = "real-swap") {
         AdapterCapability::NeedsFeature
-    } else if !tokens::is_real_addr(cfg.swap_quoter_for(chain))
-        || !tokens::is_real_addr(cfg.swap_router_for(chain))
+    } else if !tokens::is_real_addr(&cfg.chain(chain).swap_quoter)
+        || !tokens::is_real_addr(&cfg.chain(chain).swap_router)
     {
         AdapterCapability::NeedsAddress
-    } else if !cfg.circle_wallet_exec && cfg.chain_private_key_for(chain).trim().is_empty() {
+    } else if !cfg.circle_wallet_exec && cfg.chain(chain).private_key.trim().is_empty() {
         // The EOA path signs the swap on `chain`; the non-custodial path
         // (`circle_wallet_exec`) submits it from the user's Circle wallet and
         // needs no backend signing key.
@@ -361,12 +361,20 @@ fn swap_addresses(
         .map_err(|_| {
             AppError::Internal(anyhow::anyhow!("bad token address on {}", chain.as_str()))
         })?;
-    let router = cfg.swap_router_for(chain).parse::<Address>().map_err(|_| {
-        AppError::Internal(anyhow::anyhow!("bad swap router on {}", chain.as_str()))
-    })?;
-    let quoter = cfg.swap_quoter_for(chain).parse::<Address>().map_err(|_| {
-        AppError::Internal(anyhow::anyhow!("bad swap quoter on {}", chain.as_str()))
-    })?;
+    let router = cfg
+        .chain(chain)
+        .swap_router
+        .parse::<Address>()
+        .map_err(|_| {
+            AppError::Internal(anyhow::anyhow!("bad swap router on {}", chain.as_str()))
+        })?;
+    let quoter = cfg
+        .chain(chain)
+        .swap_quoter
+        .parse::<Address>()
+        .map_err(|_| {
+            AppError::Internal(anyhow::anyhow!("bad swap quoter on {}", chain.as_str()))
+        })?;
     Ok((usdc, token, router, quoter))
 }
 
@@ -382,7 +390,8 @@ async fn real_quote_buy(
     let amount_in = (amount_usdc * 1_000_000.0) as u128;
 
     let provider = ProviderBuilder::new().connect_http(
-        cfg.rpc_url_for(chain)
+        cfg.chain(chain)
+            .rpc_url
             .parse()
             .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
     );
@@ -442,7 +451,8 @@ async fn real_quote_sell(
     let amount_out_usdc = (amount_usdc * 1_000_000.0) as u128;
 
     let provider = ProviderBuilder::new().connect_http(
-        cfg.rpc_url_for(chain)
+        cfg.chain(chain)
+            .rpc_url
             .parse()
             .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
     );
@@ -509,7 +519,8 @@ async fn lb_quote(
     let amount_units = (amount_usdc * 1_000_000.0) as u128;
 
     let provider = ProviderBuilder::new().connect_http(
-        cfg.rpc_url_for(chain)
+        cfg.chain(chain)
+            .rpc_url
             .parse()
             .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
     );
@@ -737,13 +748,14 @@ async fn lb_execute(
         });
     }
 
-    let key_bytes = hex::decode(cfg.chain_private_key_for(chain).trim_start_matches("0x"))
+    let key_bytes = hex::decode(cfg.chain(chain).private_key.trim_start_matches("0x"))
         .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid private key")))?;
     let signer = PrivateKeySigner::from_slice(&key_bytes)
         .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid private key")))?;
     let wallet = EthereumWallet::from(signer);
     let provider = ProviderBuilder::new().wallet(wallet).connect_http(
-        cfg.rpc_url_for(chain)
+        cfg.chain(chain)
+            .rpc_url
             .parse()
             .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
     );
@@ -888,13 +900,14 @@ async fn real_execute(
         .await;
     }
 
-    let key_bytes = hex::decode(cfg.chain_private_key_for(chain).trim_start_matches("0x"))
+    let key_bytes = hex::decode(cfg.chain(chain).private_key.trim_start_matches("0x"))
         .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid private key")))?;
     let signer = PrivateKeySigner::from_slice(&key_bytes)
         .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid private key")))?;
     let wallet = EthereumWallet::from(signer);
     let provider = ProviderBuilder::new().wallet(wallet).connect_http(
-        cfg.rpc_url_for(chain)
+        cfg.chain(chain)
+            .rpc_url
             .parse()
             .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
     );
@@ -1124,7 +1137,8 @@ async fn confirm_allowance(
     min_allowance: u128,
 ) -> Result<()> {
     let provider = ProviderBuilder::new().connect_http(
-        cfg.rpc_url_for(chain)
+        cfg.chain(chain)
+            .rpc_url
             .parse()
             .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
     );
@@ -1201,9 +1215,11 @@ mod tests {
             AdapterCapability::NeedsAddress
         );
         // Wire the LB router + quoter + signer → Live.
-        cfg.trader_joe_lb_router_avax = "0x1111111111111111111111111111111111111111".into();
-        cfg.trader_joe_lb_quoter_avax = "0x2222222222222222222222222222222222222222".into();
-        cfg.chain_private_key_avax = "0xab".into();
+        cfg.chains[ChainKey::AvaxFuji.index()].swap_router =
+            "0x1111111111111111111111111111111111111111".into();
+        cfg.chains[ChainKey::AvaxFuji.index()].swap_quoter =
+            "0x2222222222222222222222222222222222222222".into();
+        cfg.chains[ChainKey::AvaxFuji.index()].private_key = "0xab".into();
         assert_eq!(
             capability_for(&cfg, ChainKey::AvaxFuji),
             AdapterCapability::Live
@@ -1252,9 +1268,11 @@ mod tests {
     fn capability_for_distinguishes_chains_by_their_own_venue() {
         let mut cfg = crate::config::test_config();
         // Wire only OP's venue + signer; Base stays unconfigured.
-        cfg.uniswap_v3_router_op = "0x1111111111111111111111111111111111111111".into();
-        cfg.uniswap_v3_quoter_op = "0x2222222222222222222222222222222222222222".into();
-        cfg.chain_private_key_op = "0xab".into();
+        cfg.chains[ChainKey::OpSepolia.index()].swap_router =
+            "0x1111111111111111111111111111111111111111".into();
+        cfg.chains[ChainKey::OpSepolia.index()].swap_quoter =
+            "0x2222222222222222222222222222222222222222".into();
+        cfg.chains[ChainKey::OpSepolia.index()].private_key = "0xab".into();
         assert_eq!(
             capability_for(&cfg, ChainKey::OpSepolia),
             AdapterCapability::Live
@@ -1280,17 +1298,29 @@ mod tests {
     #[test]
     fn swap_addresses_resolve_from_the_legs_chain() {
         let mut cfg = crate::config::test_config();
-        cfg.usdc_op = "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
+        cfg.chains[ChainKey::OpSepolia.index()].usdc =
+            "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
         cfg.weth_op = "0x4200000000000000000000000000000000000006".into();
-        cfg.uniswap_v3_router_op = "0x1111111111111111111111111111111111111111".into();
-        cfg.uniswap_v3_quoter_op = "0x2222222222222222222222222222222222222222".into();
+        cfg.chains[ChainKey::OpSepolia.index()].swap_router =
+            "0x1111111111111111111111111111111111111111".into();
+        cfg.chains[ChainKey::OpSepolia.index()].swap_quoter =
+            "0x2222222222222222222222222222222222222222".into();
 
         let (usdc, token, router, quoter) =
             swap_addresses(&cfg, ChainKey::OpSepolia, "ETH").expect("OP venue resolves");
-        assert_eq!(address_to_hex(usdc), cfg.usdc_op.to_ascii_lowercase());
+        assert_eq!(
+            address_to_hex(usdc),
+            cfg.chain(ChainKey::OpSepolia).usdc.to_ascii_lowercase()
+        );
         assert_eq!(address_to_hex(token), cfg.weth_op.to_ascii_lowercase());
-        assert_eq!(address_to_hex(router), cfg.uniswap_v3_router_op);
-        assert_eq!(address_to_hex(quoter), cfg.uniswap_v3_quoter_op);
+        assert_eq!(
+            address_to_hex(router),
+            cfg.chain(ChainKey::OpSepolia).swap_router
+        );
+        assert_eq!(
+            address_to_hex(quoter),
+            cfg.chain(ChainKey::OpSepolia).swap_quoter
+        );
 
         // Base has no venue configured here → fail closed.
         assert!(swap_addresses(&cfg, ChainKey::Base, "ETH").is_err());

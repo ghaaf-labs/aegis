@@ -19,6 +19,21 @@ pub enum ModelRoute {
     CritiqueAgent,
 }
 
+/// Per-chain settlement infrastructure. One instance per [`ChainKey`], reached
+/// through [`Config::chain`]. Every address default-empty ⇒ the route registry
+/// fails that leg closed (it never executes against a blank address).
+#[derive(Debug, Clone, Default)]
+pub struct ChainConfig {
+    pub rpc_url: String,
+    pub private_key: String,
+    pub cctp_token_messenger: String,
+    pub cctp_message_transmitter: String,
+    pub usdc: String,
+    pub rebalance_executor: String, // "" for chains without a deployed executor
+    pub swap_router: String,        // "" for chains with no AMM venue
+    pub swap_quoter: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub database_url: String,
@@ -78,18 +93,13 @@ pub struct Config {
     /// `MOCK_CIRCLE=true` in `.env.local` for offline dev or hermetic CI.
     pub circle_mock: bool,
 
+    /// Per-chain settlement infrastructure (RPC, signer, CCTP V2 contracts,
+    /// USDC, executor, swap venue), one entry per [`ChainKey`] indexed by
+    /// [`ChainKey::index`]. Accessed via [`Config::chain`]. Per-(token×chain)
+    /// ERC-20s (`weth_*`, `wbtc_*`, …) stay flat below — they are not chain
+    /// infra and are out of this collection.
     #[allow(dead_code)]
-    pub arc_rpc_url: String,
-    #[allow(dead_code)]
-    pub base_rpc_url: String,
-    #[allow(dead_code)]
-    pub eth_rpc_url: String,
-    #[allow(dead_code)]
-    pub arb_rpc_url: String,
-    #[allow(dead_code)]
-    pub avax_rpc_url: String,
-    #[allow(dead_code)]
-    pub op_rpc_url: String,
+    pub chains: [ChainConfig; 6],
 
     /// Cadence for the Gateway unified-balance ticker. Read by S2.6.
     #[allow(dead_code)]
@@ -118,65 +128,6 @@ pub struct Config {
     /// Max wall-clock seconds we'll wait for a CCTP attestation. Default 180.
     #[allow(dead_code)]
     pub cctp_attestation_timeout_secs: u64,
-    /// EOA private key (hex, 0x-prefixed) used to submit transactions on Arc.
-    /// Empty in mock mode.
-    #[allow(dead_code)]
-    pub chain_private_key_arc: String,
-    /// EOA private key for Base Sepolia transactions.
-    #[allow(dead_code)]
-    pub chain_private_key_base: String,
-    /// EOA private keys for the additional CCTP-V2 testnets. Empty until the
-    /// chain is wired for execution (it stays non-execution while blank).
-    #[allow(dead_code)]
-    pub chain_private_key_eth: String,
-    #[allow(dead_code)]
-    pub chain_private_key_arb: String,
-    #[allow(dead_code)]
-    pub chain_private_key_avax: String,
-    #[allow(dead_code)]
-    pub chain_private_key_op: String,
-
-    // Real CCTP + Hook execution addresses (loaded only when real-cctp feature + !mock)
-    #[allow(dead_code)]
-    pub cctp_token_messenger_arc: String,
-    #[allow(dead_code)]
-    pub cctp_token_messenger_base: String,
-    #[allow(dead_code)]
-    pub cctp_token_messenger_eth: String,
-    #[allow(dead_code)]
-    pub cctp_token_messenger_arb: String,
-    #[allow(dead_code)]
-    pub cctp_token_messenger_avax: String,
-    #[allow(dead_code)]
-    pub cctp_token_messenger_op: String,
-    #[allow(dead_code)]
-    pub cctp_message_transmitter_arc: String,
-    #[allow(dead_code)]
-    pub cctp_message_transmitter_base: String,
-    #[allow(dead_code)]
-    pub cctp_message_transmitter_eth: String,
-    #[allow(dead_code)]
-    pub cctp_message_transmitter_arb: String,
-    #[allow(dead_code)]
-    pub cctp_message_transmitter_avax: String,
-    #[allow(dead_code)]
-    pub cctp_message_transmitter_op: String,
-    #[allow(dead_code)]
-    pub rebalance_executor_arc: String,
-    #[allow(dead_code)]
-    pub rebalance_executor_base: String,
-    #[allow(dead_code)]
-    pub usdc_arc: String,
-    #[allow(dead_code)]
-    pub usdc_base: String,
-    #[allow(dead_code)]
-    pub usdc_eth: String,
-    #[allow(dead_code)]
-    pub usdc_arb: String,
-    #[allow(dead_code)]
-    pub usdc_avax: String,
-    #[allow(dead_code)]
-    pub usdc_op: String,
     #[allow(dead_code)]
     pub usyc_token_arc: String,
     #[allow(dead_code)]
@@ -191,14 +142,7 @@ pub struct Config {
     /// EOA is allowlisted and the real Teller path is wired.
     pub usyc_enabled: bool,
 
-    // ── Per-chain swap venue (Uniswap V3, Base Sepolia) ────────────────────
-    /// Uniswap V3 QuoterV2 used to price USDC↔token swaps and derive `min_out`.
-    /// Empty ⇒ the swap adapter reports `NeedsAddress` and swaps fail closed.
-    #[allow(dead_code)]
-    pub uniswap_v3_quoter_base: String,
-    /// Uniswap V3 SwapRouter02 used to execute USDC↔token swaps on Base.
-    #[allow(dead_code)]
-    pub uniswap_v3_router_base: String,
+    // ── Per-token ERC-20s on Base ──────────────────────────────────────────
     /// Wrapped-ETH ERC-20 on Base Sepolia — the concrete token behind the
     /// "ETH" symbol for swap routing. Other volatiles have no canonical Base
     /// Sepolia ERC-20 + pool, so they fail closed (`NeedsAddress`).
@@ -219,39 +163,6 @@ pub struct Config {
     /// swap rather than KYB-gated Arc StableFX. Empty ⇒ track-only (fail closed).
     #[allow(dead_code)]
     pub eurc_base: String,
-
-    // ── Per-chain Uniswap-V3-compatible swap venues (other execution chains) ─
-    // Aerodrome Slipstream (Base) and Velodrome (OP) expose the same V3-style
-    // exactInput/exactOutputSingle router + QuoterV2 surface, so the existing
-    // `sol!` interface works against their addresses. Eth/Arb use Uniswap V3
-    // proper. Avax's Trader Joe is a Liquidity-Book router (different ABI) and
-    // stays fail-closed (no address wired) until a dedicated adapter lands.
-    // All default empty ⇒ swaps on those chains report `NeedsAddress`.
-    #[allow(dead_code)]
-    pub uniswap_v3_quoter_eth: String,
-    #[allow(dead_code)]
-    pub uniswap_v3_router_eth: String,
-    #[allow(dead_code)]
-    pub uniswap_v3_quoter_arb: String,
-    #[allow(dead_code)]
-    pub uniswap_v3_router_arb: String,
-    #[allow(dead_code)]
-    pub uniswap_v3_quoter_op: String,
-    #[allow(dead_code)]
-    pub uniswap_v3_router_op: String,
-
-    // ── Trader Joe Liquidity Book (Avalanche) ──────────────────────────────
-    // Avax's primary DEX is Trader Joe LB v2.2, whose `LBRouter` uses a
-    // bin-step + version `Path` ABI distinct from the V3 exactInput surface, so
-    // it gets its own adapter arm (the V3 `swap_router_for` returns these too,
-    // but the swap adapter dispatches on `SwapVenue`). Empty ⇒ Avax swaps
-    // report `NeedsAddress` and fail closed.
-    #[allow(dead_code)]
-    pub trader_joe_lb_router_avax: String,
-    /// Trader Joe `LBQuoter` (`findBestPathFromAmountIn`/`Out`) used to price
-    /// LB swaps and derive `min_out`. Empty ⇒ fail closed.
-    #[allow(dead_code)]
-    pub trader_joe_lb_quoter_avax: String,
 
     /// Canonical volatile ERC-20s on the additional execution chains. Empty ⇒
     /// the symbol is track-only on that chain (the registry fails closed).
@@ -454,14 +365,7 @@ impl Config {
             circle_entity_secret: std::env::var("CIRCLE_ENTITY_SECRET").unwrap_or_default(),
             circle_mock: parse_or("MOCK_CIRCLE", false)?,
 
-            arc_rpc_url: std::env::var("ARC_RPC_URL")
-                .unwrap_or_else(|_| "https://testnet.arc.network".into()),
-            base_rpc_url: std::env::var("BASE_RPC_URL")
-                .unwrap_or_else(|_| "https://sepolia.base.org".into()),
-            eth_rpc_url: std::env::var("ETH_RPC_URL").unwrap_or_default(),
-            arb_rpc_url: std::env::var("ARB_RPC_URL").unwrap_or_default(),
-            avax_rpc_url: std::env::var("AVAX_RPC_URL").unwrap_or_default(),
-            op_rpc_url: std::env::var("OP_RPC_URL").unwrap_or_default(),
+            chains: chain_configs_from_env(),
 
             gateway_poll_secs: parse_or("GATEWAY_POLL_SECS", 10)?,
             faucet_max_usdc_per_day: parse_or("FAUCET_MAX_USDC_PER_DAY", 100.0)?,
@@ -474,65 +378,17 @@ impl Config {
             cctp_attestation_url: std::env::var("CCTP_ATTESTATION_URL")
                 .unwrap_or_else(|_| "https://iris-api-sandbox.circle.com".into()),
             cctp_attestation_timeout_secs: parse_or("CCTP_ATTESTATION_TIMEOUT_SECS", 180)?,
-            chain_private_key_arc: std::env::var("CHAIN_PRIVATE_KEY_ARC").unwrap_or_default(),
-            chain_private_key_base: std::env::var("CHAIN_PRIVATE_KEY_BASE").unwrap_or_default(),
-            chain_private_key_eth: std::env::var("CHAIN_PRIVATE_KEY_ETH").unwrap_or_default(),
-            chain_private_key_arb: std::env::var("CHAIN_PRIVATE_KEY_ARB").unwrap_or_default(),
-            chain_private_key_avax: std::env::var("CHAIN_PRIVATE_KEY_AVAX").unwrap_or_default(),
-            chain_private_key_op: std::env::var("CHAIN_PRIVATE_KEY_OP").unwrap_or_default(),
-
-            // Real execution addresses (only used when EXECUTION_MOCK=false and real-cctp feature)
-            cctp_token_messenger_arc: std::env::var("CCTP_TOKEN_MESSENGER_ARC").unwrap_or_default(),
-            cctp_token_messenger_base: std::env::var("CCTP_TOKEN_MESSENGER_BASE")
-                .unwrap_or_default(),
-            cctp_token_messenger_eth: std::env::var("CCTP_TOKEN_MESSENGER_ETH").unwrap_or_default(),
-            cctp_token_messenger_arb: std::env::var("CCTP_TOKEN_MESSENGER_ARB").unwrap_or_default(),
-            cctp_token_messenger_avax: std::env::var("CCTP_TOKEN_MESSENGER_AVAX")
-                .unwrap_or_default(),
-            cctp_token_messenger_op: std::env::var("CCTP_TOKEN_MESSENGER_OP").unwrap_or_default(),
-            cctp_message_transmitter_arc: std::env::var("CCTP_MESSAGE_TRANSMITTER_ARC")
-                .unwrap_or_default(),
-            cctp_message_transmitter_base: std::env::var("CCTP_MESSAGE_TRANSMITTER_BASE")
-                .unwrap_or_default(),
-            cctp_message_transmitter_eth: std::env::var("CCTP_MESSAGE_TRANSMITTER_ETH")
-                .unwrap_or_default(),
-            cctp_message_transmitter_arb: std::env::var("CCTP_MESSAGE_TRANSMITTER_ARB")
-                .unwrap_or_default(),
-            cctp_message_transmitter_avax: std::env::var("CCTP_MESSAGE_TRANSMITTER_AVAX")
-                .unwrap_or_default(),
-            cctp_message_transmitter_op: std::env::var("CCTP_MESSAGE_TRANSMITTER_OP")
-                .unwrap_or_default(),
-            rebalance_executor_arc: std::env::var("REBALANCE_EXECUTOR_ARC").unwrap_or_default(),
-            rebalance_executor_base: std::env::var("REBALANCE_EXECUTOR_BASE").unwrap_or_default(),
-            usdc_arc: std::env::var("USDC_ARC").unwrap_or_default(),
-            usdc_base: std::env::var("USDC_BASE").unwrap_or_default(),
-            usdc_eth: std::env::var("USDC_ETH").unwrap_or_default(),
-            usdc_arb: std::env::var("USDC_ARB").unwrap_or_default(),
-            usdc_avax: std::env::var("USDC_AVAX").unwrap_or_default(),
-            usdc_op: std::env::var("USDC_OP").unwrap_or_default(),
             usyc_token_arc: std::env::var("USYC_TOKEN_ARC").unwrap_or_default(),
             usyc_teller_arc: std::env::var("USYC_TELLER_ARC").unwrap_or_default(),
             usyc_oracle_arc: std::env::var("USYC_ORACLE_ARC").unwrap_or_default(),
             usyc_enabled: parse_or("USYC_ENABLED", false)?,
 
-            uniswap_v3_quoter_base: std::env::var("UNISWAP_V3_QUOTER_BASE").unwrap_or_default(),
-            uniswap_v3_router_base: std::env::var("UNISWAP_V3_ROUTER_BASE").unwrap_or_default(),
             weth_base: std::env::var("WETH_BASE").unwrap_or_default(),
             cbbtc_base: std::env::var("CBBTC_BASE").unwrap_or_default(),
             cbeth_base: std::env::var("CBETH_BASE").unwrap_or_default(),
             susds_base: std::env::var("SUSDS_BASE").unwrap_or_default(),
             eurc_base: std::env::var("EURC_BASE").unwrap_or_default(),
 
-            uniswap_v3_quoter_eth: std::env::var("UNISWAP_V3_QUOTER_ETH").unwrap_or_default(),
-            uniswap_v3_router_eth: std::env::var("UNISWAP_V3_ROUTER_ETH").unwrap_or_default(),
-            uniswap_v3_quoter_arb: std::env::var("UNISWAP_V3_QUOTER_ARB").unwrap_or_default(),
-            uniswap_v3_router_arb: std::env::var("UNISWAP_V3_ROUTER_ARB").unwrap_or_default(),
-            uniswap_v3_quoter_op: std::env::var("UNISWAP_V3_QUOTER_OP").unwrap_or_default(),
-            uniswap_v3_router_op: std::env::var("UNISWAP_V3_ROUTER_OP").unwrap_or_default(),
-            trader_joe_lb_router_avax: std::env::var("TRADER_JOE_LB_ROUTER_AVAX")
-                .unwrap_or_default(),
-            trader_joe_lb_quoter_avax: std::env::var("TRADER_JOE_LB_QUOTER_AVAX")
-                .unwrap_or_default(),
             weth_eth: std::env::var("WETH_ETH").unwrap_or_default(),
             weth_arb: std::env::var("WETH_ARB").unwrap_or_default(),
             weth_op: std::env::var("WETH_OP").unwrap_or_default(),
@@ -602,12 +458,12 @@ impl Config {
                     );
                 }
             } else {
-                if self.chain_private_key_arc.trim().is_empty() {
+                if self.chain(ChainKey::Arc).private_key.trim().is_empty() {
                     anyhow::bail!(
                         "EXECUTION_MOCK=false but CHAIN_PRIVATE_KEY_ARC is empty; set it, enable CIRCLE_WALLET_EXEC, or flip EXECUTION_MOCK=true"
                     );
                 }
-                if self.chain_private_key_base.trim().is_empty() {
+                if self.chain(ChainKey::Base).private_key.trim().is_empty() {
                     anyhow::bail!(
                         "EXECUTION_MOCK=false but CHAIN_PRIVATE_KEY_BASE is empty; set it, enable CIRCLE_WALLET_EXEC, or flip EXECUTION_MOCK=true"
                     );
@@ -701,122 +557,102 @@ impl Config {
         }
     }
 
-    /// JSON-RPC URL for `chain`. Empty for chains that have no RPC configured
-    /// (the new CCTP testnets default empty until wired).
+    /// Per-chain settlement infrastructure for `chain` — RPC URL, EOA signing
+    /// key, CCTP V2 contracts, USDC, executor, and swap venue. The single
+    /// accessor over the `chains` collection. Addresses default empty until the
+    /// chain is wired (Arc has no AMM venue; only Arc/Base have a deployed
+    /// executor) so unconfigured legs fail closed.
     #[allow(dead_code)]
-    pub fn rpc_url_for(&self, chain: ChainKey) -> &str {
-        match chain {
-            ChainKey::Arc => &self.arc_rpc_url,
-            ChainKey::Base => &self.base_rpc_url,
-            ChainKey::EthSepolia => &self.eth_rpc_url,
-            ChainKey::ArbSepolia => &self.arb_rpc_url,
-            ChainKey::AvaxFuji => &self.avax_rpc_url,
-            ChainKey::OpSepolia => &self.op_rpc_url,
-        }
-    }
-
-    /// EOA signing key (hex) for `chain`. Empty until the chain is funded/wired.
-    #[allow(dead_code)]
-    pub fn chain_private_key_for(&self, chain: ChainKey) -> &str {
-        match chain {
-            ChainKey::Arc => &self.chain_private_key_arc,
-            ChainKey::Base => &self.chain_private_key_base,
-            ChainKey::EthSepolia => &self.chain_private_key_eth,
-            ChainKey::ArbSepolia => &self.chain_private_key_arb,
-            ChainKey::AvaxFuji => &self.chain_private_key_avax,
-            ChainKey::OpSepolia => &self.chain_private_key_op,
-        }
-    }
-
-    /// CCTP V2 TokenMessenger address for `chain`.
-    #[allow(dead_code)]
-    pub fn cctp_token_messenger_for(&self, chain: ChainKey) -> &str {
-        match chain {
-            ChainKey::Arc => &self.cctp_token_messenger_arc,
-            ChainKey::Base => &self.cctp_token_messenger_base,
-            ChainKey::EthSepolia => &self.cctp_token_messenger_eth,
-            ChainKey::ArbSepolia => &self.cctp_token_messenger_arb,
-            ChainKey::AvaxFuji => &self.cctp_token_messenger_avax,
-            ChainKey::OpSepolia => &self.cctp_token_messenger_op,
-        }
-    }
-
-    /// CCTP V2 MessageTransmitter address for `chain`.
-    #[allow(dead_code)]
-    pub fn cctp_message_transmitter_for(&self, chain: ChainKey) -> &str {
-        match chain {
-            ChainKey::Arc => &self.cctp_message_transmitter_arc,
-            ChainKey::Base => &self.cctp_message_transmitter_base,
-            ChainKey::EthSepolia => &self.cctp_message_transmitter_eth,
-            ChainKey::ArbSepolia => &self.cctp_message_transmitter_arb,
-            ChainKey::AvaxFuji => &self.cctp_message_transmitter_avax,
-            ChainKey::OpSepolia => &self.cctp_message_transmitter_op,
-        }
-    }
-
-    /// USDC ERC-20 address for `chain`.
-    #[allow(dead_code)]
-    pub fn usdc_for(&self, chain: ChainKey) -> &str {
-        match chain {
-            ChainKey::Arc => &self.usdc_arc,
-            ChainKey::Base => &self.usdc_base,
-            ChainKey::EthSepolia => &self.usdc_eth,
-            ChainKey::ArbSepolia => &self.usdc_arb,
-            ChainKey::AvaxFuji => &self.usdc_avax,
-            ChainKey::OpSepolia => &self.usdc_op,
-        }
-    }
-
-    /// Destination-chain RebalanceExecutor address (the CCTP mintRecipient for a
-    /// hook-enabled burn). Only Arc and Base have a deployed executor today; the
-    /// rest return empty and fail closed before any burn is attempted.
-    #[allow(dead_code)]
-    pub fn rebalance_executor_for(&self, chain: ChainKey) -> &str {
-        match chain {
-            ChainKey::Arc => &self.rebalance_executor_arc,
-            ChainKey::Base => &self.rebalance_executor_base,
-            ChainKey::EthSepolia
-            | ChainKey::ArbSepolia
-            | ChainKey::AvaxFuji
-            | ChainKey::OpSepolia => "",
-        }
-    }
-
-    /// Swap router address for `chain`. Base = Aerodrome Slipstream, OP =
-    /// Velodrome, Eth/Arb = Uniswap V3 (all share the V3-style
-    /// `exactInputSingle`/`exactOutputSingle` surface); Avax = Trader Joe LB
-    /// (its own bin-step `Path` ABI — the swap adapter dispatches on
-    /// `SwapVenue`). Arc has no AMM venue (it settles stables / FX), so it
-    /// returns empty and fails closed in the swap adapter.
-    #[allow(dead_code)]
-    pub fn swap_router_for(&self, chain: ChainKey) -> &str {
-        match chain {
-            ChainKey::Base => &self.uniswap_v3_router_base,
-            ChainKey::EthSepolia => &self.uniswap_v3_router_eth,
-            ChainKey::ArbSepolia => &self.uniswap_v3_router_arb,
-            ChainKey::OpSepolia => &self.uniswap_v3_router_op,
-            ChainKey::AvaxFuji => &self.trader_joe_lb_router_avax,
-            ChainKey::Arc => "",
-        }
-    }
-
-    /// Swap quoter address for `chain` — QuoterV2 on the V3 venues, the Trader
-    /// Joe `LBQuoter` on Avax (see `swap_router_for`).
-    #[allow(dead_code)]
-    pub fn swap_quoter_for(&self, chain: ChainKey) -> &str {
-        match chain {
-            ChainKey::Base => &self.uniswap_v3_quoter_base,
-            ChainKey::EthSepolia => &self.uniswap_v3_quoter_eth,
-            ChainKey::ArbSepolia => &self.uniswap_v3_quoter_arb,
-            ChainKey::OpSepolia => &self.uniswap_v3_quoter_op,
-            ChainKey::AvaxFuji => &self.trader_joe_lb_quoter_avax,
-            ChainKey::Arc => "",
-        }
+    pub fn chain(&self, chain: ChainKey) -> &ChainConfig {
+        &self.chains[chain.index()]
     }
 }
 
 fn required(key: &str) -> anyhow::Result<String> {
     std::env::var(key).with_context(|| format!("missing required env var: {key}"))
+}
+
+/// Build the per-chain config array from env, indexed by [`ChainKey::index`].
+/// Env var names are unchanged (`{KNOB}_{CHAIN}`). The swap venue mapping
+/// mirrors the old `swap_router_for`/`swap_quoter_for`: Base = Aerodrome
+/// Slipstream, OP = Velodrome, Eth/Arb = Uniswap V3 (all share the V3-style
+/// router + QuoterV2 surface, so they read `UNISWAP_V3_{ROUTER,QUOTER}_*`); Avax
+/// = Trader Joe LB (its own bin-step `Path` ABI — `TRADER_JOE_LB_*`); Arc has no
+/// AMM venue, so its swap addresses stay empty and fail closed. Only Arc/Base
+/// have a deployed RebalanceExecutor; the rest leave it empty.
+fn chain_configs_from_env() -> [ChainConfig; 6] {
+    let env = |key: &str| std::env::var(key).unwrap_or_default();
+    [
+        // Arc
+        ChainConfig {
+            rpc_url: std::env::var("ARC_RPC_URL")
+                .unwrap_or_else(|_| "https://testnet.arc.network".into()),
+            private_key: env("CHAIN_PRIVATE_KEY_ARC"),
+            cctp_token_messenger: env("CCTP_TOKEN_MESSENGER_ARC"),
+            cctp_message_transmitter: env("CCTP_MESSAGE_TRANSMITTER_ARC"),
+            usdc: env("USDC_ARC"),
+            rebalance_executor: env("REBALANCE_EXECUTOR_ARC"),
+            // Arc settles stables / FX; no AMM venue.
+            swap_router: String::new(),
+            swap_quoter: String::new(),
+        },
+        // Base
+        ChainConfig {
+            rpc_url: std::env::var("BASE_RPC_URL")
+                .unwrap_or_else(|_| "https://sepolia.base.org".into()),
+            private_key: env("CHAIN_PRIVATE_KEY_BASE"),
+            cctp_token_messenger: env("CCTP_TOKEN_MESSENGER_BASE"),
+            cctp_message_transmitter: env("CCTP_MESSAGE_TRANSMITTER_BASE"),
+            usdc: env("USDC_BASE"),
+            rebalance_executor: env("REBALANCE_EXECUTOR_BASE"),
+            swap_router: env("UNISWAP_V3_ROUTER_BASE"),
+            swap_quoter: env("UNISWAP_V3_QUOTER_BASE"),
+        },
+        // EthSepolia
+        ChainConfig {
+            rpc_url: env("ETH_RPC_URL"),
+            private_key: env("CHAIN_PRIVATE_KEY_ETH"),
+            cctp_token_messenger: env("CCTP_TOKEN_MESSENGER_ETH"),
+            cctp_message_transmitter: env("CCTP_MESSAGE_TRANSMITTER_ETH"),
+            usdc: env("USDC_ETH"),
+            rebalance_executor: String::new(),
+            swap_router: env("UNISWAP_V3_ROUTER_ETH"),
+            swap_quoter: env("UNISWAP_V3_QUOTER_ETH"),
+        },
+        // ArbSepolia
+        ChainConfig {
+            rpc_url: env("ARB_RPC_URL"),
+            private_key: env("CHAIN_PRIVATE_KEY_ARB"),
+            cctp_token_messenger: env("CCTP_TOKEN_MESSENGER_ARB"),
+            cctp_message_transmitter: env("CCTP_MESSAGE_TRANSMITTER_ARB"),
+            usdc: env("USDC_ARB"),
+            rebalance_executor: String::new(),
+            swap_router: env("UNISWAP_V3_ROUTER_ARB"),
+            swap_quoter: env("UNISWAP_V3_QUOTER_ARB"),
+        },
+        // AvaxFuji — Trader Joe LB venue (distinct ABI; dispatched on SwapVenue).
+        ChainConfig {
+            rpc_url: env("AVAX_RPC_URL"),
+            private_key: env("CHAIN_PRIVATE_KEY_AVAX"),
+            cctp_token_messenger: env("CCTP_TOKEN_MESSENGER_AVAX"),
+            cctp_message_transmitter: env("CCTP_MESSAGE_TRANSMITTER_AVAX"),
+            usdc: env("USDC_AVAX"),
+            rebalance_executor: String::new(),
+            swap_router: env("TRADER_JOE_LB_ROUTER_AVAX"),
+            swap_quoter: env("TRADER_JOE_LB_QUOTER_AVAX"),
+        },
+        // OpSepolia
+        ChainConfig {
+            rpc_url: env("OP_RPC_URL"),
+            private_key: env("CHAIN_PRIVATE_KEY_OP"),
+            cctp_token_messenger: env("CCTP_TOKEN_MESSENGER_OP"),
+            cctp_message_transmitter: env("CCTP_MESSAGE_TRANSMITTER_OP"),
+            usdc: env("USDC_OP"),
+            rebalance_executor: String::new(),
+            swap_router: env("UNISWAP_V3_ROUTER_OP"),
+            swap_quoter: env("UNISWAP_V3_QUOTER_OP"),
+        },
+    ]
 }
 
 /// Parse a comma-separated `ADMIN_USER_IDS` list into UUIDs, warning loudly on
@@ -907,12 +743,20 @@ pub(crate) fn test_config() -> Config {
         circle_entity_secret: "0000000000000000000000000000000000000000000000000000000000000000"
             .into(),
         circle_mock: true,
-        arc_rpc_url: "https://testnet.arc.network".into(),
-        base_rpc_url: "https://sepolia.base.org".into(),
-        eth_rpc_url: String::new(),
-        arb_rpc_url: String::new(),
-        avax_rpc_url: String::new(),
-        op_rpc_url: String::new(),
+        chains: [
+            ChainConfig {
+                rpc_url: "https://testnet.arc.network".into(),
+                ..ChainConfig::default()
+            },
+            ChainConfig {
+                rpc_url: "https://sepolia.base.org".into(),
+                ..ChainConfig::default()
+            },
+            ChainConfig::default(),
+            ChainConfig::default(),
+            ChainConfig::default(),
+            ChainConfig::default(),
+        ],
         gateway_poll_secs: 10,
         faucet_max_usdc_per_day: 100.0,
         cors_allow_origin: "http://localhost:3000".into(),
@@ -920,51 +764,15 @@ pub(crate) fn test_config() -> Config {
         session_cookie_secure: false,
         cctp_attestation_url: "https://iris-api-sandbox.circle.com".into(),
         cctp_attestation_timeout_secs: 180,
-        chain_private_key_arc: String::new(),
-        chain_private_key_base: String::new(),
-        chain_private_key_eth: String::new(),
-        chain_private_key_arb: String::new(),
-        chain_private_key_avax: String::new(),
-        chain_private_key_op: String::new(),
-        cctp_token_messenger_arc: String::new(),
-        cctp_token_messenger_base: String::new(),
-        cctp_token_messenger_eth: String::new(),
-        cctp_token_messenger_arb: String::new(),
-        cctp_token_messenger_avax: String::new(),
-        cctp_token_messenger_op: String::new(),
-        cctp_message_transmitter_arc: String::new(),
-        cctp_message_transmitter_base: String::new(),
-        cctp_message_transmitter_eth: String::new(),
-        cctp_message_transmitter_arb: String::new(),
-        cctp_message_transmitter_avax: String::new(),
-        cctp_message_transmitter_op: String::new(),
-        rebalance_executor_arc: String::new(),
-        rebalance_executor_base: String::new(),
-        usdc_arc: String::new(),
-        usdc_base: String::new(),
-        usdc_eth: String::new(),
-        usdc_arb: String::new(),
-        usdc_avax: String::new(),
-        usdc_op: String::new(),
         usyc_token_arc: String::new(),
         usyc_teller_arc: String::new(),
         usyc_oracle_arc: String::new(),
         usyc_enabled: false,
-        uniswap_v3_quoter_base: String::new(),
-        uniswap_v3_router_base: String::new(),
         weth_base: String::new(),
         cbbtc_base: String::new(),
         cbeth_base: String::new(),
         susds_base: String::new(),
         eurc_base: String::new(),
-        uniswap_v3_quoter_eth: String::new(),
-        uniswap_v3_router_eth: String::new(),
-        uniswap_v3_quoter_arb: String::new(),
-        uniswap_v3_router_arb: String::new(),
-        uniswap_v3_quoter_op: String::new(),
-        uniswap_v3_router_op: String::new(),
-        trader_joe_lb_router_avax: String::new(),
-        trader_joe_lb_quoter_avax: String::new(),
         weth_eth: String::new(),
         weth_arb: String::new(),
         weth_op: String::new(),
@@ -1105,23 +913,29 @@ mod tests {
     #[test]
     fn swap_venue_helpers_resolve_per_chain() {
         let mut cfg = test_config();
-        cfg.uniswap_v3_router_base = "0xbase_router".into();
-        cfg.uniswap_v3_quoter_base = "0xbase_quoter".into();
-        cfg.uniswap_v3_router_op = "0xop_router".into();
-        cfg.uniswap_v3_quoter_eth = "0xeth_quoter".into();
-        cfg.trader_joe_lb_router_avax = "0xavax_lb_router".into();
-        cfg.trader_joe_lb_quoter_avax = "0xavax_lb_quoter".into();
+        cfg.chains[ChainKey::Base.index()].swap_router = "0xbase_router".into();
+        cfg.chains[ChainKey::Base.index()].swap_quoter = "0xbase_quoter".into();
+        cfg.chains[ChainKey::OpSepolia.index()].swap_router = "0xop_router".into();
+        cfg.chains[ChainKey::EthSepolia.index()].swap_quoter = "0xeth_quoter".into();
+        cfg.chains[ChainKey::AvaxFuji.index()].swap_router = "0xavax_lb_router".into();
+        cfg.chains[ChainKey::AvaxFuji.index()].swap_quoter = "0xavax_lb_quoter".into();
 
-        assert_eq!(cfg.swap_router_for(ChainKey::Base), "0xbase_router");
-        assert_eq!(cfg.swap_quoter_for(ChainKey::Base), "0xbase_quoter");
-        assert_eq!(cfg.swap_router_for(ChainKey::OpSepolia), "0xop_router");
-        assert_eq!(cfg.swap_quoter_for(ChainKey::EthSepolia), "0xeth_quoter");
+        assert_eq!(cfg.chain(ChainKey::Base).swap_router, "0xbase_router");
+        assert_eq!(cfg.chain(ChainKey::Base).swap_quoter, "0xbase_quoter");
+        assert_eq!(cfg.chain(ChainKey::OpSepolia).swap_router, "0xop_router");
+        assert_eq!(cfg.chain(ChainKey::EthSepolia).swap_quoter, "0xeth_quoter");
         // Avax resolves to the Trader Joe LB venue (its own ABI, dispatched in
         // the swap adapter).
-        assert_eq!(cfg.swap_router_for(ChainKey::AvaxFuji), "0xavax_lb_router");
-        assert_eq!(cfg.swap_quoter_for(ChainKey::AvaxFuji), "0xavax_lb_quoter");
+        assert_eq!(
+            cfg.chain(ChainKey::AvaxFuji).swap_router,
+            "0xavax_lb_router"
+        );
+        assert_eq!(
+            cfg.chain(ChainKey::AvaxFuji).swap_quoter,
+            "0xavax_lb_quoter"
+        );
         // Arc has no AMM venue → always empty.
-        assert_eq!(cfg.swap_router_for(ChainKey::Arc), "");
-        assert_eq!(cfg.swap_quoter_for(ChainKey::Arc), "");
+        assert_eq!(cfg.chain(ChainKey::Arc).swap_router, "");
+        assert_eq!(cfg.chain(ChainKey::Arc).swap_quoter, "");
     }
 }

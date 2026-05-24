@@ -64,12 +64,24 @@ async fn main() -> anyhow::Result<()> {
         "smoke must run with MOCK_CIRCLE=false; got true"
     );
     let public_vars = [
-        ("CCTP_TOKEN_MESSENGER_BASE", &cfg.cctp_token_messenger_base),
-        ("CCTP_TOKEN_MESSENGER_ARC", &cfg.cctp_token_messenger_arc),
-        ("USDC_BASE", &cfg.usdc_base),
-        ("USDC_ARC", &cfg.usdc_arc),
-        ("REBALANCE_EXECUTOR_BASE", &cfg.rebalance_executor_base),
-        ("REBALANCE_EXECUTOR_ARC", &cfg.rebalance_executor_arc),
+        (
+            "CCTP_TOKEN_MESSENGER_BASE",
+            &cfg.chain(ChainKey::Base).cctp_token_messenger,
+        ),
+        (
+            "CCTP_TOKEN_MESSENGER_ARC",
+            &cfg.chain(ChainKey::Arc).cctp_token_messenger,
+        ),
+        ("USDC_BASE", &cfg.chain(ChainKey::Base).usdc),
+        ("USDC_ARC", &cfg.chain(ChainKey::Arc).usdc),
+        (
+            "REBALANCE_EXECUTOR_BASE",
+            &cfg.chain(ChainKey::Base).rebalance_executor,
+        ),
+        (
+            "REBALANCE_EXECUTOR_ARC",
+            &cfg.chain(ChainKey::Arc).rebalance_executor,
+        ),
     ];
     println!("--- runtime config ---");
     for (name, val) in public_vars {
@@ -82,11 +94,11 @@ async fn main() -> anyhow::Result<()> {
     }
     println!(
         "  CHAIN_PRIVATE_KEY_BASE    = {} chars",
-        cfg.chain_private_key_base.len()
+        cfg.chain(ChainKey::Base).private_key.len()
     );
     println!(
         "  CHAIN_PRIVATE_KEY_ARC     = {} chars",
-        cfg.chain_private_key_arc.len()
+        cfg.chain(ChainKey::Arc).private_key.len()
     );
     println!("---");
 
