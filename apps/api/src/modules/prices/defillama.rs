@@ -106,7 +106,7 @@ impl PriceProvider for DefiLlamaProvider {
                 .single()
                 .unwrap_or_else(Utc::now);
             out.push(SpotQuote {
-                ticker: sym.ticker,
+                ticker: sym.symbol,
                 price_usd: raw.price,
                 change_24h: pct_24h.get(sym.defillama_key).copied().unwrap_or(0.0),
                 change_7d: pct_7d.get(sym.defillama_key).copied().unwrap_or(0.0),

@@ -15,7 +15,7 @@ import type {
   RiskTolerance,
   RoutePreferences,
 } from "@/types";
-import { portfolioApi, agentApi, analyticsApi } from "@/lib/api";
+import { portfolioApi, analyticsApi } from "@/lib/api";
 import { usePortfolioStore } from "@/stores/portfolio";
 
 interface WizardState {
@@ -108,19 +108,12 @@ export function GoalWizard() {
         risk: state.risk,
       });
 
-      // Hand off to the agent: it designs the allocation, then the dashboard
-      // opens Gate 1 with the proposal.
-      let proposalQuery = "";
-      try {
-        const decision = await agentApi.proposeAllocation(portfolio.id);
-        proposalQuery = `?proposal=${decision.id}`;
-      } catch {
-        // Proposal can be retried from the dashboard ("Re-propose"); don't
-        // block the user on a slow allocator call.
-      }
-
+      // Navigate immediately — never block onboarding on the slow multi-model
+      // allocator call. The dashboard kicks off the design on `?designing=1` and
+      // opens Gate 1 when the proposal arrives (via the returned decision or the
+      // SSE `agent.decision` event), with a retry affordance if it fails.
       window.sessionStorage.removeItem(STORAGE_KEY);
-      router.push(`/dashboard/${portfolio.id}${proposalQuery}`);
+      router.push(`/dashboard/${portfolio.id}?designing=1`);
     } catch (e) {
       setState((s) => ({
         ...s,

@@ -2,7 +2,7 @@ import { ImageResponse } from "next/og";
 import type { DiaryEntry } from "@/types";
 
 export const runtime = "edge";
-export const revalidate = 86400;
+export const revalidate = 0;
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
@@ -13,7 +13,7 @@ interface RouteParams {
 async function fetchDecision(id: string): Promise<DiaryEntry | null> {
   try {
     const res = await fetch(`${API_BASE}/diary/decision/${id}`, {
-      next: { revalidate: 3600 },
+      cache: "no-store",
     });
     if (!res.ok) return null;
     return (await res.json()) as DiaryEntry;

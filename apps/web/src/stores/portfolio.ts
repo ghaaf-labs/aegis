@@ -30,8 +30,15 @@ interface PortfolioState {
   /** True when the last portfolios fetch failed (distinct from "loaded empty"). */
   portfoliosError: boolean;
   activePortfolioId: PortfolioId | null;
+  /** Detail fetch status for the active portfolio. The list endpoint is lean;
+   * the dashboard waits for this before replacing the loading skeleton. */
+  activePortfolioDetailId: PortfolioId | null;
+  activePortfolioDetailStatus: "idle" | "loading" | "ready" | "error";
+  decisionsPortfolioId: PortfolioId | null;
+  decisionsStatus: "idle" | "loading" | "ready" | "error";
   decisions: AgentDecision[];
   marketSnapshot: MarketSnapshot | null;
+  marketSnapshotStatus: "idle" | "loading" | "ready" | "error";
   regime: RegimeState;
   /** Latest price per symbol — kept fresh by SSE `price.tick` events. */
   livePrices: Record<string, PriceTick>;
@@ -47,6 +54,8 @@ interface PortfolioState {
   perChainUsdc: Record<string, number>;
   /** EURC per chain — same key set as perChainUsdc. */
   perChainEurc: Record<string, number>;
+  /** Non-cash token quantities per chain, normalized to Aegis symbols. */
+  tokenBalancesByChain: Record<string, Record<string, number>>;
   /** Whether the latest wallet cash balance fetch is known-good. */
   gatewayBalanceStatus: "idle" | "loading" | "ready" | "error";
   gatewayBalanceError: string | null;
@@ -71,6 +80,14 @@ interface PortfolioState {
   setPortfolios: (p: Portfolio[]) => void;
   setPortfoliosLoaded: (v: boolean) => void;
   setPortfoliosError: (v: boolean) => void;
+  setActivePortfolioDetailStatus: (
+    id: PortfolioId | null,
+    status: PortfolioState["activePortfolioDetailStatus"],
+  ) => void;
+  setDecisionsStatus: (
+    id: PortfolioId | null,
+    status: PortfolioState["decisionsStatus"],
+  ) => void;
   /** Merge a partial update into the portfolio with the given id. Used by
    * the dashboard to layer allocations from `/portfolios/:id` onto the
    * list-shape entry from `/portfolios`. */
@@ -80,6 +97,9 @@ interface PortfolioState {
   setDecisions: (d: AgentDecision[]) => void;
   addDecision: (d: AgentDecision) => void;
   setMarketSnapshot: (s: MarketSnapshot) => void;
+  setMarketSnapshotStatus: (
+    status: PortfolioState["marketSnapshotStatus"],
+  ) => void;
   setRegime: (next: Partial<RegimeState>) => void;
   applyPriceTick: (tick: PriceTick) => void;
   setUnifiedUsdc: (v: number) => void;
@@ -90,6 +110,7 @@ interface PortfolioState {
     /** Epoch ms the balance was *observed* server-side (Circle call time).
      * Defaults to now for callers without a server timestamp (REST loader). */
     updatedAt?: number,
+    tokenBalancesByChain?: Record<string, Record<string, number>>,
   ) => void;
   setGatewayBalanceStatus: (
     status: "idle" | "loading" | "ready" | "error",
@@ -126,8 +147,13 @@ export const usePortfolioStore = create<PortfolioState>()(
       portfoliosLoaded: false,
       portfoliosError: false,
       activePortfolioId: null,
+      activePortfolioDetailId: null,
+      activePortfolioDetailStatus: "idle",
+      decisionsPortfolioId: null,
+      decisionsStatus: "idle",
       decisions: [],
       marketSnapshot: null,
+      marketSnapshotStatus: "idle",
       regime: DEFAULT_REGIME,
       livePrices: {},
       isRebalancing: false,
@@ -138,6 +164,7 @@ export const usePortfolioStore = create<PortfolioState>()(
       unifiedEurc: 0,
       perChainUsdc: {},
       perChainEurc: {},
+      tokenBalancesByChain: {},
       gatewayBalanceStatus: "idle",
       gatewayBalanceError: null,
       gatewayBalanceUpdatedAt: null,
@@ -180,6 +207,12 @@ export const usePortfolioStore = create<PortfolioState>()(
         }),
       setPortfoliosLoaded: (portfoliosLoaded) => set({ portfoliosLoaded }),
       setPortfoliosError: (portfoliosError) => set({ portfoliosError }),
+      setActivePortfolioDetailStatus: (
+        activePortfolioDetailId,
+        activePortfolioDetailStatus,
+      ) => set({ activePortfolioDetailId, activePortfolioDetailStatus }),
+      setDecisionsStatus: (decisionsPortfolioId, decisionsStatus) =>
+        set({ decisionsPortfolioId, decisionsStatus }),
       patchPortfolio: (id, patch) =>
         set((state) => ({
           portfolios: state.portfolios.map((p) =>
@@ -208,7 +241,10 @@ export const usePortfolioStore = create<PortfolioState>()(
             ...state.decisions.filter((d) => d.id !== decision.id),
           ].slice(0, 100),
         })),
-      setMarketSnapshot: (marketSnapshot) => set({ marketSnapshot }),
+      setMarketSnapshot: (marketSnapshot) =>
+        set({ marketSnapshot, marketSnapshotStatus: "ready" }),
+      setMarketSnapshotStatus: (marketSnapshotStatus) =>
+        set({ marketSnapshotStatus }),
       setRegime: (next) =>
         set((state) => ({ regime: { ...state.regime, ...next } })),
       applyPriceTick: (tick) =>
@@ -217,10 +253,16 @@ export const usePortfolioStore = create<PortfolioState>()(
         })),
       setUnifiedUsdc: (unifiedUsdc) => set({ unifiedUsdc }),
       setUnifiedEurc: (unifiedEurc) => set({ unifiedEurc }),
-      setPerChain: (perChainUsdc, perChainEurc, updatedAt) =>
+      setPerChain: (
+        perChainUsdc,
+        perChainEurc,
+        updatedAt,
+        tokenBalancesByChain,
+      ) =>
         set({
           perChainUsdc,
           perChainEurc,
+          tokenBalancesByChain: tokenBalancesByChain ?? {},
           gatewayBalanceUpdatedAt: updatedAt ?? Date.now(),
         }),
       setGatewayBalanceStatus: (gatewayBalanceStatus, gatewayBalanceError) =>
@@ -264,12 +306,19 @@ export const usePortfolioStore = create<PortfolioState>()(
           portfoliosLoaded: false,
           portfoliosError: false,
           activePortfolioId: null,
+          activePortfolioDetailId: null,
+          activePortfolioDetailStatus: "idle",
+          decisionsPortfolioId: null,
+          decisionsStatus: "idle",
           decisions: [],
+          marketSnapshot: null,
+          marketSnapshotStatus: "idle",
           wallet: null,
           unifiedUsdc: 0,
           unifiedEurc: 0,
           perChainUsdc: {},
           perChainEurc: {},
+          tokenBalancesByChain: {},
           gatewayBalanceStatus: "idle",
           gatewayBalanceError: null,
           gatewayBalanceUpdatedAt: null,

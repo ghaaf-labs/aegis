@@ -90,7 +90,8 @@ export function LandingFooter() {
             </p>
             {[
               { href: "/about", label: "About us" },
-              { href: "/about/regime", label: "Regime model" },
+              { href: "/about/regime", label: "Regime classifier" },
+              { href: "/about/regime/backtest", label: "Backtest evidence" },
               { href: "/policy", label: "Policy" },
             ].map((link) => (
               <Link

@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
 import { agentApi, rebalanceApi } from "@/lib/api";
+import { pollDecisionReady } from "@/lib/decision-poll";
 import type { AgentDecision } from "@/types";
 import { formatCurrency } from "@/lib/utils";
 
@@ -126,8 +127,12 @@ export function RebalanceModal({ open, onClose }: Props) {
     setNow(Date.now());
     setError(null);
     try {
+      // Async: analyze enqueues the job (returns immediately); poll the
+      // decision until the worker finishes. The timeout wraps the poll, not the
+      // enqueue, so the existing "taking longer" message still applies.
+      const queued = await agentApi.analyze(active.id);
       const result = await withTimeout(
-        agentApi.analyze(active.id),
+        pollDecisionReady(queued.id),
         "Agent commentary is taking longer than expected. Build the review plan directly; no funds move without approval.",
         AGENT_TIMEOUT_MS,
       );

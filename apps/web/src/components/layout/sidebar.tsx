@@ -4,11 +4,14 @@ import { useEffect, useState, type ComponentType } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Activity,
   BarChart3,
   Bot,
   CreditCard,
   CircleHelp,
   Compass,
+  Gauge,
+  Home,
   Info,
   LayoutDashboard,
   ListChecks,
@@ -103,6 +106,12 @@ const BASE_NAV_SECTIONS: NavSection[] = [
         description: "ask a question",
       },
       {
+        href: "/settings/agent",
+        icon: Gauge,
+        label: "Auto-pilot",
+        description: "autonomous mode & pause",
+      },
+      {
         href: "/settings/peg",
         icon: Shield,
         label: "Peg defense",
@@ -154,6 +163,12 @@ const BASE_NAV_SECTIONS: NavSection[] = [
         label: "Leaderboard",
         description: "public results",
       },
+      {
+        href: "/about/regime",
+        icon: Activity,
+        label: "Regime model",
+        description: "classifier evidence",
+      },
     ],
   },
 ];
@@ -178,9 +193,22 @@ const NAV_SECTIONS = PRICING_UI_ENABLED
     )
   : BASE_NAV_SECTIONS;
 
-const PUBLIC_NAV_HREFS = new Set(["/explore", "/leaderboard", "/help"]);
+const PUBLIC_NAV_HREFS = new Set([
+  "/about",
+  "/about/regime",
+  "/explore",
+  "/leaderboard",
+  "/help",
+]);
 
 const SIGNED_OUT_NAV: NavItem[] = [
+  {
+    href: "/",
+    icon: Home,
+    label: "Home",
+    description: "Aegis overview",
+    exact: true,
+  },
   {
     href: "/explore",
     icon: Compass,
@@ -198,6 +226,12 @@ const SIGNED_OUT_NAV: NavItem[] = [
     icon: Info,
     label: "About",
     description: "how Aegis works",
+  },
+  {
+    href: "/about/regime",
+    icon: Activity,
+    label: "Regime model",
+    description: "classifier evidence",
   },
   {
     href: "/help",
@@ -232,7 +266,6 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
   // DOM entirely — signed-out users only see public destinations.
   const signedOut = sessionResolved && !sessionActive;
   const navSections = NAV_SECTIONS;
-  const showLogoutInSidebar = Boolean(onClose);
 
   const handleLogout = async () => {
     setLogoutError(null);
@@ -264,18 +297,24 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
     >
       {/* Logo */}
       <div className="flex items-center gap-2.5 px-5 h-16 shrink-0 border-b border-border-default">
-        <div
-          className="w-7 h-7 rounded-sharp bg-accent-agent flex items-center justify-center border-brutal border-black shrink-0"
-          aria-hidden="true"
+        <Link
+          href="/"
+          aria-label="Aegis home"
+          className="group flex min-w-0 items-center gap-2.5 rounded-sharp focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-agent"
         >
-          <Shield className="w-3.5 h-3.5 text-black" />
-        </div>
-        <span className="font-bold text-text-hi text-sm tracking-tight font-mono">
-          Aegis
-        </span>
-        <span className="hidden xl:inline text-[10px] font-mono uppercase tracking-widest text-text-mut">
-          Console
-        </span>
+          <span
+            className="w-7 h-7 rounded-sharp bg-accent-agent flex items-center justify-center border-brutal border-black shrink-0"
+            aria-hidden="true"
+          >
+            <Shield className="w-3.5 h-3.5 text-black" />
+          </span>
+          <span className="font-bold text-text-hi text-sm tracking-tight font-mono group-hover:text-accent-agent">
+            Aegis
+          </span>
+          <span className="hidden xl:inline text-[10px] font-mono uppercase tracking-widest text-text-mut">
+            Console
+          </span>
+        </Link>
         {onClose && (
           <button
             type="button"
@@ -541,24 +580,18 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
                 : "Account setup pending"}
             </span>
           </div>
-          {showLogoutInSidebar ? (
-            <button
-              type="button"
-              data-testid="sidebar-logout"
-              onClick={() => void handleLogout()}
-              title="Log out"
-              aria-label="Log out"
-              className="touch-target w-full min-h-[36px] inline-flex items-center justify-center gap-2 rounded-sharp border border-border-default bg-bg px-3 text-xs font-mono text-text-lo hover:border-risk/50 hover:bg-risk/5 hover:text-risk transition-colors"
-            >
-              <LogOut className="w-3.5 h-3.5" aria-hidden="true" />
-              Log out
-            </button>
-          ) : (
-            <p className="text-[10px] font-mono leading-relaxed text-text-mut">
-              Sign out from the top bar.
-            </p>
-          )}
-          {showLogoutInSidebar && logoutError && (
+          <button
+            type="button"
+            data-testid="sidebar-logout"
+            onClick={() => void handleLogout()}
+            title="Sign out"
+            aria-label="Sign out"
+            className="touch-target inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-sharp border border-border-default bg-bg px-3 text-xs font-mono text-text-lo transition-colors hover:border-risk/50 hover:bg-risk/5 hover:text-risk"
+          >
+            <LogOut className="w-3.5 h-3.5" aria-hidden="true" />
+            Sign out
+          </button>
+          {logoutError && (
             <p role="alert" className="text-[11px] font-mono text-risk">
               {logoutError}
             </p>

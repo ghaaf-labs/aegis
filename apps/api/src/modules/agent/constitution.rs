@@ -219,6 +219,14 @@ fn check_risk_2(clause: &Clause, proposal: &Proposal, out: &mut Vec<ClauseViolat
         _ => return,
     };
     for alloc in &proposal.allocations {
+        // Cash/stable/yield reserve sleeves are exempt: RISK-2 is a *volatility*
+        // concentration floor (no single risky asset dominates), not a cap on
+        // holding USDC. A 100%-USDC or stable-heavy reserve is the safest target,
+        // never a breach — sharing the allocator's single source of truth keeps
+        // the clamp and the constitution from disagreeing.
+        if super::allocation::is_stable_symbol(&alloc.asset) {
+            continue;
+        }
         let w = norm_weight(alloc.target_weight_pct);
         if w > limit {
             out.push(ClauseViolation {
@@ -379,6 +387,48 @@ mod tests {
         let ids: Vec<&str> = v.iter().map(|x| x.clause_id.as_str()).collect();
         assert!(ids.contains(&"RISK-2"));
         assert!(ids.contains(&"RISK-3"));
+    }
+
+    #[test]
+    fn risk_2_exempts_stable_and_cash_reserves() {
+        let c = fixture();
+        // A 100% USDC reserve is the safest possible target — never a RISK-2
+        // single-asset (volatility-concentration) breach.
+        let usdc_only = Proposal {
+            expected_max_drawdown_pct: Some(0.0),
+            allocations: vec![ProposalAllocation {
+                asset: "USDC".into(),
+                target_weight_pct: 1.0,
+            }],
+            legs: vec![],
+        };
+        let v = evaluate(&c, &usdc_only, Tier::Free, 0.0);
+        assert!(
+            !v.iter().any(|x| x.clause_id == "RISK-2"),
+            "RISK-2 must not fire on a USDC-only reserve: {v:?}"
+        );
+
+        // A stable-heavy mix (each sleeve > 60%) is likewise exempt.
+        let stable_heavy = Proposal {
+            expected_max_drawdown_pct: Some(0.01),
+            allocations: vec![
+                ProposalAllocation {
+                    asset: "USDC".into(),
+                    target_weight_pct: 0.70,
+                },
+                ProposalAllocation {
+                    asset: "EURC".into(),
+                    target_weight_pct: 0.20,
+                },
+                ProposalAllocation {
+                    asset: "USYC".into(),
+                    target_weight_pct: 0.10,
+                },
+            ],
+            legs: vec![],
+        };
+        let v = evaluate(&c, &stable_heavy, Tier::Free, 0.0);
+        assert!(!v.iter().any(|x| x.clause_id == "RISK-2"));
     }
 
     #[test]

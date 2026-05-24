@@ -20,6 +20,7 @@ import {
   BrutalPill,
 } from "@aegis/ui";
 import { agentApi, userAgentApi } from "@/lib/api";
+import { pollDecisionReady } from "@/lib/decision-poll";
 import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
 import { derivePortfolioPositionMetrics } from "@/lib/portfolio-values";
 import { totalWalletCashUsd } from "@/lib/cash-model";
@@ -92,10 +93,13 @@ export default function AgentStudioPage() {
     setError(null);
     setNotice(null);
     try {
-      const decision = await agentApi.analyze(
+      // Async: analyze enqueues a job and returns a `queued` placeholder; poll
+      // until the worker finishes (the SSE `agent.decision` also lands it live).
+      const queued = await agentApi.analyze(
         portfolio.id,
         RECOMMENDATION_TIMEOUT_MS,
       );
+      const decision = await pollDecisionReady(queued.id);
       addDecision(decision);
       setNotice("Recommendation ready. Open Dashboard to review it.");
     } catch (e) {

@@ -34,7 +34,8 @@ use crate::router::AppState;
 pub struct ReferralRow {
     pub id: Uuid,
     pub new_user_id: Uuid,
-    pub reward_usdc: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub reward_usdc: Decimal,
     pub paid_at: Option<DateTime<Utc>>,
     pub tx_hash: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -61,15 +62,16 @@ pub async fn list_referrals(
     .fetch_all(&state.db)
     .await?;
 
+    use rust_decimal::prelude::ToPrimitive;
     let total_paid_usdc = rows
         .iter()
         .filter(|r| r.paid_at.is_some())
-        .map(|r| r.reward_usdc)
+        .map(|r| r.reward_usdc.to_f64().unwrap_or(0.0))
         .sum::<f64>();
     let total_pending_usdc = rows
         .iter()
         .filter(|r| r.paid_at.is_none())
-        .map(|r| r.reward_usdc)
+        .map(|r| r.reward_usdc.to_f64().unwrap_or(0.0))
         .sum::<f64>();
 
     Ok(Json(ReferralsResponse {

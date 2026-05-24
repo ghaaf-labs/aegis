@@ -174,7 +174,11 @@ fn eurc_base_swap_is_executable_when_configured() {
         "0xC5290058841028F1614F3A6F0F5816cAd0df5E27".into();
     cfg.chains[ChainKey::Base.index()].swap_router =
         "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4".into();
-    cfg.eurc_base = "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42".into();
+    cfg.set_token_address(
+        "EURC",
+        ChainKey::Base,
+        "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42",
+    );
     let caps = RuntimeCapabilities::from_config(&cfg);
     let blockers = validate_legs(
         &caps,
@@ -335,6 +339,9 @@ fn base_config() -> Config {
         model_commentary: "commentary-model".into(),
         openrouter_app_name: "Aegis".into(),
         openrouter_app_url: None,
+        openrouter_max_retries: 1,
+        openrouter_attempt_timeout_secs: 90,
+        openrouter_response_healing: true,
         coingecko_api_key: None,
         price_provider_primary: "defillama".into(),
         price_provider_fallback: "none".into(),
@@ -371,16 +378,8 @@ fn base_config() -> Config {
         usyc_teller_arc: String::new(),
         usyc_oracle_arc: String::new(),
         usyc_enabled: false,
-        weth_base: String::new(),
-        cbbtc_base: String::new(),
-        cbeth_base: String::new(),
-        susds_base: String::new(),
-        eurc_base: String::new(),
-        weth_eth: String::new(),
-        weth_arb: String::new(),
-        weth_op: String::new(),
-        wbtc_eth: String::new(),
-        wbtc_arb: String::new(),
+        token_addrs: std::collections::HashMap::new(),
+        swap_liquid_tokens: std::collections::HashMap::new(),
         nanopayments_facilitator_url: "https://gateway-api-testnet.circle.com".into(),
         nanopayments_seller_address: String::new(),
         nanopayments_treasury_address: String::new(),

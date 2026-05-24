@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use rust_decimal::Decimal;
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -8,8 +9,10 @@ pub struct CostBasisLot {
     pub id: Uuid,
     pub allocation_id: Uuid,
     pub acquired_at: DateTime<Utc>,
-    pub quantity: f64,
-    pub basis_usd: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub quantity: Decimal,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub basis_usd: Decimal,
     pub disposed_at: Option<DateTime<Utc>>,
 }
 

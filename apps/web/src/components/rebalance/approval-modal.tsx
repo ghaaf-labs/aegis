@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Loader2 } from "lucide-react";
 
 import { rebalanceApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -117,7 +118,8 @@ export function ApprovalModal({
           <button
             type="button"
             onClick={onClose}
-            className="text-text-lo hover:text-text-hi"
+            disabled={submitting}
+            className="text-text-lo hover:text-text-hi disabled:cursor-not-allowed disabled:opacity-50"
             aria-label="Close"
           >
             ×
@@ -227,6 +229,16 @@ export function ApprovalModal({
               {error}
             </p>
           )}
+          {submitting && (
+            <p
+              className="mb-3 flex items-center gap-2 border border-accent-pnl/40 bg-accent-pnl/5 px-3 py-2 font-mono text-[11px] text-accent-pnl"
+              role="status"
+              aria-live="polite"
+            >
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Submitting approval and starting execution...
+            </p>
+          )}
         </div>
 
         <footer className="px-6 py-4 border-t border-white/10 flex items-center justify-between gap-2">
@@ -242,7 +254,8 @@ export function ApprovalModal({
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-sm text-text-default hover:text-text-hi border border-white/10"
+              disabled={submitting}
+              className="px-4 py-2 text-sm text-text-default hover:text-text-hi border border-white/10 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Cancel
             </button>
@@ -251,7 +264,7 @@ export function ApprovalModal({
               onClick={handleApprove}
               disabled={submitting || approvalBlocked}
               className={cn(
-                "px-4 py-2 text-sm font-semibold border-2",
+                "inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold border-2",
                 approvalBlocked
                   ? "bg-warn/20 text-warn border-warn/40"
                   : "bg-emerald-500 text-black border-emerald-300 hover:bg-emerald-400", // PnL exception: approve = move funds, green per dual-accent rule
@@ -259,11 +272,16 @@ export function ApprovalModal({
                 "disabled:opacity-50 disabled:cursor-not-allowed",
               )}
             >
-              {approvalBlocked
-                ? "Needs changes"
-                : submitting
-                  ? "Submitting…"
-                  : "Approve and move funds"}
+              {approvalBlocked ? (
+                "Needs changes"
+              ) : submitting ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Submitting
+                </>
+              ) : (
+                "Approve and move funds"
+              )}
             </button>
           </div>
         </footer>

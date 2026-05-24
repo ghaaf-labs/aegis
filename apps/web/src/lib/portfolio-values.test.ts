@@ -152,4 +152,52 @@ describe("derivePortfolioPositionMetrics", () => {
     expect(metrics.investedUsd).toBe(90);
     expect(metrics.usingLivePrices).toBe(true);
   });
+
+  it("keeps stored economic value when testnet fills imply an impossible mark", () => {
+    const portfolio = {
+      id: "p1",
+      userId: "u1",
+      name: "Testnet Fill",
+      totalValueUsd: 160,
+      totalPnlUsd: 0,
+      totalPnlPct: 0,
+      riskScore: 50,
+      goal: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      allocations: [
+        {
+          assetId: "ETH",
+          symbol: "ETH",
+          quantity: 0.46,
+          targetWeight: 100,
+          currentWeight: 100,
+          valueUsd: 160,
+        },
+      ],
+    } satisfies Portfolio;
+    const snapshot = {
+      id: "s1",
+      capturedAt: new Date().toISOString(),
+      fearGreedIndex: 50,
+      totalMarketCapUsd: 0,
+      btcDominance: 0,
+      assets: [
+        {
+          symbol: "ETH",
+          priceUsd: 2_100,
+          change24h: 0,
+          change7d: 0,
+          marketCap: 0,
+          volume24h: 0,
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    } satisfies MarketSnapshot;
+
+    const metrics = derivePortfolioPositionMetrics(portfolio, snapshot);
+
+    expect(metrics.investedUsd).toBe(160);
+    expect(metrics.usingLivePrices).toBe(false);
+  });
 });

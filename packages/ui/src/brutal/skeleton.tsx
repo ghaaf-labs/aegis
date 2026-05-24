@@ -29,7 +29,7 @@ export function Skeleton({
     <div
       aria-hidden="true"
       className={cn(
-        "border-brutal border-border-default rounded-sharp animate-pulse",
+        "shimmer border-[2px] border-border-default rounded-sharp",
         tone === "raised" ? "bg-raised" : "bg-surface",
         width,
         height,

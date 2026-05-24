@@ -17,7 +17,6 @@
 //! provenance gap to the user.
 
 use chrono::{DateTime, Datelike, Utc};
-use rust_decimal::prelude::*;
 use rust_decimal::Decimal;
 use serde::Serialize;
 use sqlx::PgPool;
@@ -139,115 +138,8 @@ pub async fn export_portfolio(pool: &PgPool, portfolio_id: Uuid, year: i32) -> R
         let Some(confirmed_at) = leg.confirmed_at else {
             continue;
         };
-        let amount = Decimal::from_f64(leg.amount_usdc).unwrap_or_default();
-        let kind = leg.kind.as_str();
-
-        match kind {
-            // FX rail: USDC ↔ EURC. The proceeds-vs-basis delta is the
-            // realized FX gain/loss row that 1099-DA wants. We also emit
-            // the matching disposition + acquisition pair so the FIFO
-            // ledger downstream stays balanced.
-            "fx_stablefx" => {
-                let src = leg.src_symbol.clone().unwrap_or_else(|| "USDC".into());
-                let dest = leg.dest_symbol.clone().unwrap_or_else(|| "EURC".into());
-                let proceeds =
-                    Decimal::from_f64(leg.min_out.unwrap_or(leg.amount_usdc)).unwrap_or_default();
-                let gain = proceeds - amount;
-                lines.push(TaxLine {
-                    occurred_at: confirmed_at,
-                    kind: TaxLineKind::FxGainLoss,
-                    asset_in: src,
-                    qty_in: amount,
-                    basis_usd_in: amount,
-                    asset_out: Some(dest),
-                    qty_out: Some(proceeds),
-                    proceeds_usd: proceeds,
-                    gain_usd: gain,
-                    holding_days: 0,
-                    leg_ref: leg.tx_hash.clone(),
-                });
-            }
-            // USYC park = acquire interest-bearing token at par. The
-            // redeem path emits IncomeUsyc with the gain field set to
-            // the yield.
-            "park_usyc" => {
-                lines.push(TaxLine {
-                    occurred_at: confirmed_at,
-                    kind: TaxLineKind::Acquisition,
-                    asset_in: "USYC".into(),
-                    qty_in: amount,
-                    basis_usd_in: amount,
-                    asset_out: Some("USDC".into()),
-                    qty_out: Some(amount),
-                    proceeds_usd: Decimal::ZERO,
-                    gain_usd: Decimal::ZERO,
-                    holding_days: 0,
-                    leg_ref: leg.tx_hash.clone(),
-                });
-            }
-            "redeem_usyc" => {
-                let proceeds =
-                    Decimal::from_f64(leg.min_out.unwrap_or(leg.amount_usdc)).unwrap_or_default();
-                let gain = proceeds - amount;
-                lines.push(TaxLine {
-                    occurred_at: confirmed_at,
-                    kind: TaxLineKind::IncomeUsyc,
-                    asset_in: "USDC".into(),
-                    qty_in: proceeds,
-                    basis_usd_in: amount,
-                    asset_out: Some("USYC".into()),
-                    qty_out: Some(amount),
-                    proceeds_usd: proceeds,
-                    gain_usd: gain,
-                    holding_days: 0,
-                    leg_ref: leg.tx_hash.clone(),
-                });
-            }
-            // Local swap / cross-chain mint = stablecoin-to-stablecoin
-            // disposition. Drive FIFO basis off cost_basis_lots; if no
-            // basis is recorded (older leg, no lot yet), fall back to
-            // amount_usdc as basis (zero gain).
-            "local_swap" | "cross_chain_mint" => {
-                let src = leg.src_symbol.clone().unwrap_or_else(|| "USDC".into());
-                let dest = leg.dest_symbol.clone().unwrap_or_else(|| "USDC".into());
-                let proceeds =
-                    Decimal::from_f64(leg.min_out.unwrap_or(leg.amount_usdc)).unwrap_or_default();
-                let basis_match = match_fifo_basis(pool, portfolio_id, &src, amount).await?;
-                let basis_usd = basis_match.unwrap_or(amount);
-                let gain = proceeds - basis_usd;
-                lines.push(TaxLine {
-                    occurred_at: confirmed_at,
-                    kind: TaxLineKind::Disposition,
-                    asset_in: src,
-                    qty_in: amount,
-                    basis_usd_in: basis_usd,
-                    asset_out: Some(dest),
-                    qty_out: Some(proceeds),
-                    proceeds_usd: proceeds,
-                    gain_usd: gain,
-                    holding_days: 0,
-                    leg_ref: leg.tx_hash.clone(),
-                });
-            }
-            // Burn legs are the mirror of mints; we surface them as
-            // acquisitions on the source chain to keep the ledger
-            // symmetric for accountants.
-            "cross_chain_burn" => {
-                lines.push(TaxLine {
-                    occurred_at: confirmed_at,
-                    kind: TaxLineKind::Acquisition,
-                    asset_in: leg.dest_symbol.clone().unwrap_or_else(|| "USDC".into()),
-                    qty_in: amount,
-                    basis_usd_in: amount,
-                    asset_out: leg.src_symbol.clone(),
-                    qty_out: Some(amount),
-                    proceeds_usd: Decimal::ZERO,
-                    gain_usd: Decimal::ZERO,
-                    holding_days: 0,
-                    leg_ref: leg.tx_hash.clone(),
-                });
-            }
-            _ => {}
+        if let Some(line) = leg_to_tax_line(pool, portfolio_id, leg, confirmed_at).await? {
+            lines.push(line);
         }
     }
 
@@ -258,6 +150,119 @@ pub async fn export_portfolio(pool: &PgPool, portfolio_id: Uuid, year: i32) -> R
     })
 }
 
+/// Classify one confirmed leg into its 1099-DA tax line, or `None` for leg
+/// kinds that aren't a taxable event. Pulled out of [`export_portfolio`] so the
+/// walk stays a thin loop and the per-kind mapping reads as one unit.
+async fn leg_to_tax_line(
+    pool: &PgPool,
+    portfolio_id: Uuid,
+    leg: &LegRow,
+    confirmed_at: DateTime<Utc>,
+) -> Result<Option<TaxLine>> {
+    let amount = leg.amount_usdc;
+    let line = match leg.kind.as_str() {
+        // FX rail: USDC ↔ EURC. The proceeds-vs-basis delta is the
+        // realized FX gain/loss row that 1099-DA wants. We also emit
+        // the matching disposition + acquisition pair so the FIFO
+        // ledger downstream stays balanced.
+        "fx_stablefx" => {
+            let src = leg.src_symbol.clone().unwrap_or_else(|| "USDC".into());
+            let dest = leg.dest_symbol.clone().unwrap_or_else(|| "EURC".into());
+            let proceeds = leg.min_out.unwrap_or(amount);
+            let gain = proceeds - amount;
+            TaxLine {
+                occurred_at: confirmed_at,
+                kind: TaxLineKind::FxGainLoss,
+                asset_in: src,
+                qty_in: amount,
+                basis_usd_in: amount,
+                asset_out: Some(dest),
+                qty_out: Some(proceeds),
+                proceeds_usd: proceeds,
+                gain_usd: gain,
+                holding_days: 0,
+                leg_ref: leg.tx_hash.clone(),
+            }
+        }
+        // USYC park = acquire interest-bearing token at par. The
+        // redeem path emits IncomeUsyc with the gain field set to
+        // the yield.
+        "park_usyc" => TaxLine {
+            occurred_at: confirmed_at,
+            kind: TaxLineKind::Acquisition,
+            asset_in: "USYC".into(),
+            qty_in: amount,
+            basis_usd_in: amount,
+            asset_out: Some("USDC".into()),
+            qty_out: Some(amount),
+            proceeds_usd: Decimal::ZERO,
+            gain_usd: Decimal::ZERO,
+            holding_days: 0,
+            leg_ref: leg.tx_hash.clone(),
+        },
+        "redeem_usyc" => {
+            let proceeds = leg.min_out.unwrap_or(amount);
+            let gain = proceeds - amount;
+            TaxLine {
+                occurred_at: confirmed_at,
+                kind: TaxLineKind::IncomeUsyc,
+                asset_in: "USDC".into(),
+                qty_in: proceeds,
+                basis_usd_in: amount,
+                asset_out: Some("USYC".into()),
+                qty_out: Some(amount),
+                proceeds_usd: proceeds,
+                gain_usd: gain,
+                holding_days: 0,
+                leg_ref: leg.tx_hash.clone(),
+            }
+        }
+        // Local swap / cross-chain mint = stablecoin-to-stablecoin
+        // disposition. Drive FIFO basis off cost_basis_lots; if no
+        // basis is recorded (older leg, no lot yet), fall back to
+        // amount_usdc as basis (zero gain).
+        "local_swap" | "cross_chain_mint" => {
+            let src = leg.src_symbol.clone().unwrap_or_else(|| "USDC".into());
+            let dest = leg.dest_symbol.clone().unwrap_or_else(|| "USDC".into());
+            let proceeds = leg.min_out.unwrap_or(amount);
+            let basis_match = match_fifo_basis(pool, portfolio_id, &src, amount).await?;
+            let basis_usd = basis_match.unwrap_or(amount);
+            let gain = proceeds - basis_usd;
+            TaxLine {
+                occurred_at: confirmed_at,
+                kind: TaxLineKind::Disposition,
+                asset_in: src,
+                qty_in: amount,
+                basis_usd_in: basis_usd,
+                asset_out: Some(dest),
+                qty_out: Some(proceeds),
+                proceeds_usd: proceeds,
+                gain_usd: gain,
+                holding_days: 0,
+                leg_ref: leg.tx_hash.clone(),
+            }
+        }
+        // Burn legs are the mirror of mints; we surface them as
+        // acquisitions on the source chain to keep the ledger
+        // symmetric for accountants.
+        "cross_chain_burn" => TaxLine {
+            occurred_at: confirmed_at,
+            kind: TaxLineKind::Acquisition,
+            asset_in: leg.dest_symbol.clone().unwrap_or_else(|| "USDC".into()),
+            qty_in: amount,
+            basis_usd_in: amount,
+            asset_out: leg.src_symbol.clone(),
+            qty_out: Some(amount),
+            proceeds_usd: Decimal::ZERO,
+            gain_usd: Decimal::ZERO,
+            holding_days: 0,
+            leg_ref: leg.tx_hash.clone(),
+        },
+        _ => return Ok(None),
+    };
+    Ok(Some(line))
+}
+
 #[derive(sqlx::FromRow)]
 struct LegRow {
     #[allow(dead_code)]
@@ -265,8 +270,8 @@ struct LegRow {
     kind: String,
     src_symbol: Option<String>,
     dest_symbol: Option<String>,
-    amount_usdc: f64,
-    min_out: Option<f64>,
+    amount_usdc: Decimal,
+    min_out: Option<Decimal>,
     confirmed_at: Option<DateTime<Utc>>,
     tx_hash: Option<String>,
 }
@@ -283,8 +288,8 @@ async fn match_fifo_basis(
 ) -> Result<Option<Decimal>> {
     #[derive(sqlx::FromRow)]
     struct LotRow {
-        quantity: f64,
-        basis_usd: f64,
+        quantity: Decimal,
+        basis_usd: Decimal,
     }
     let lots: Vec<LotRow> = sqlx::query_as(
         r#"
@@ -304,15 +309,8 @@ async fn match_fifo_basis(
     if lots.is_empty() {
         return Ok(None);
     }
-    let decimal_lots: Vec<(Decimal, Decimal)> = lots
-        .iter()
-        .map(|r| {
-            (
-                Decimal::from_f64(r.quantity).unwrap_or_default(),
-                Decimal::from_f64(r.basis_usd).unwrap_or_default(),
-            )
-        })
-        .collect();
+    let decimal_lots: Vec<(Decimal, Decimal)> =
+        lots.iter().map(|r| (r.quantity, r.basis_usd)).collect();
     Ok(Some(attribute_fifo_basis(&decimal_lots, qty_disposed)))
 }
 

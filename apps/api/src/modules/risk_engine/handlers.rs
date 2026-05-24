@@ -25,6 +25,7 @@ use axum::{
     Extension, Json,
 };
 use chrono::{DateTime, Utc};
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -231,7 +232,8 @@ pub struct PegRuleView {
     pub user_id: Uuid,
     pub portfolio_id: Option<Uuid>,
     pub asset: String,
-    pub threshold_price: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub threshold_price: Decimal,
     pub window_seconds: i32,
     pub action_kind: String,
     pub target_asset: Option<String>,

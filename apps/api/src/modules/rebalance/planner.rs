@@ -7,10 +7,9 @@
 //!
 //! Decisions encoded here:
 //!
-//! - Symbols in `ARC_NATIVE_SYMBOLS` land on Arc; anything in
-//!   `BASE_NATIVE_SYMBOLS` lands on Base (Uniswap V3 / Aerodrome venue). EURC is
-//!   Base-native here — the EUR sleeve trades on the permissionless USDC/EURC
-//!   pool, superseding the KYB-gated Arc StableFX rail.
+//! - A symbol lands on its registry canonical chain (`tokens::native_chain`):
+//!   USYC on Arc; everything else (incl. EURC, which trades on the permissionless
+//!   Base USDC/EURC pool) defaults to Base (Uniswap V3 / Aerodrome venue).
 //! - A buy that needs USDC on Base while liquidity is on Arc emits a
 //!   `cross_chain_burn` + `cross_chain_mint` pair instead of two legs.
 //! - Sells route through `redeem_usyc` (USYC → USDC) or a local swap into USDC
@@ -24,9 +23,8 @@
 
 use std::collections::HashMap;
 
-use super::models::{
-    ChainKey, LegKind, PlanInput, PlannedLeg, ARC_NATIVE_SYMBOLS, BASE_NATIVE_SYMBOLS,
-};
+use super::models::{ChainKey, LegKind, PlanInput, PlannedLeg};
+use crate::domain::token::native_chain;
 
 /// Compute the minimum set of legs to bring `current_weights` to
 /// `target_weights`. Returns an empty Vec if no leg exceeds the drift / dust
@@ -193,17 +191,6 @@ fn symbol_deltas(input: &PlanInput) -> Vec<SymbolDelta> {
         .collect()
 }
 
-fn native_chain(symbol: &str) -> ChainKey {
-    if ARC_NATIVE_SYMBOLS.contains(&symbol) {
-        ChainKey::Arc
-    } else if BASE_NATIVE_SYMBOLS.contains(&symbol) {
-        ChainKey::Base
-    } else {
-        // Default: USDC stays where it lives; anything unknown lands on Base.
-        ChainKey::Base
-    }
-}
-
 fn append_sell_legs(
     legs: &mut Vec<PlannedLeg>,
     next_idx: &mut i32,
@@ -288,24 +275,15 @@ fn append_buy_legs(
     // bridged amount — the local portion still needs its own swap leg. Older code
     // returned early after the hook and silently dropped the local portion.
     if is_swap_acquired && used_local > 0.0 {
-        let min_out = prices.get(&d.symbol).map(|&price| {
-            if price > 0.0 {
-                (used_local / price) * 0.95
-            } else {
-                0.0
-            }
-        });
-        legs.push(PlannedLeg {
-            leg_index: *next_idx,
-            kind: LegKind::LocalSwap,
-            src_chain: Some(target_chain),
-            dest_chain: Some(target_chain),
-            src_symbol: Some("USDC".into()),
-            dest_symbol: Some(d.symbol.clone()),
-            amount_usdc: used_local,
-            min_out,
-        });
-        *next_idx += 1;
+        push_acquire_leg(
+            legs,
+            next_idx,
+            LegKind::LocalSwap,
+            target_chain,
+            &d.symbol,
+            used_local,
+            prices,
+        );
     }
 
     if let (Some(source_chain), true) = (other_chain, to_bridge > 0.0) {
@@ -343,24 +321,15 @@ fn append_buy_legs(
         // Swap-acquired (volatiles + EURC): the bridged USDC now sits on the
         // destination chain — acquire the token with a same-chain swap leg.
         if is_swap_acquired {
-            let min_out = prices.get(&d.symbol).map(|&price| {
-                if price > 0.0 {
-                    (to_bridge / price) * 0.95
-                } else {
-                    0.0
-                }
-            });
-            legs.push(PlannedLeg {
-                leg_index: *next_idx,
-                kind: LegKind::LocalSwap,
-                src_chain: Some(target_chain),
-                dest_chain: Some(target_chain),
-                src_symbol: Some("USDC".into()),
-                dest_symbol: Some(d.symbol.clone()),
-                amount_usdc: to_bridge,
-                min_out,
-            });
-            *next_idx += 1;
+            push_acquire_leg(
+                legs,
+                next_idx,
+                LegKind::LocalSwap,
+                target_chain,
+                &d.symbol,
+                to_bridge,
+                prices,
+            );
         }
     }
 
@@ -382,22 +351,45 @@ fn append_buy_legs(
         _ => LegKind::LocalSwap,
     };
 
-    let min_out = prices.get(&d.symbol).map(|&price| {
+    push_acquire_leg(
+        legs,
+        next_idx,
+        kind,
+        target_chain,
+        &d.symbol,
+        consumed,
+        prices,
+    );
+}
+
+/// Emit a same-chain "acquire" leg: spend `amount_usdc` of USDC on `chain` to
+/// obtain `symbol` (a local USDC→token swap, or a USYC park). `min_out` floors
+/// the fill at the current price less a 5% slippage allowance — `None` when the
+/// price is unknown, `Some(0.0)` when it is non-positive.
+fn push_acquire_leg(
+    legs: &mut Vec<PlannedLeg>,
+    next_idx: &mut i32,
+    kind: LegKind,
+    chain: ChainKey,
+    symbol: &str,
+    amount_usdc: f64,
+    prices: &HashMap<String, f64>,
+) {
+    let min_out = prices.get(symbol).map(|&price| {
         if price > 0.0 {
-            (consumed / price) * 0.95
+            (amount_usdc / price) * 0.95
         } else {
             0.0
         }
     });
-
     legs.push(PlannedLeg {
         leg_index: *next_idx,
         kind,
-        src_chain: Some(target_chain),
-        dest_chain: Some(target_chain),
+        src_chain: Some(chain),
+        dest_chain: Some(chain),
         src_symbol: Some("USDC".into()),
-        dest_symbol: Some(d.symbol.clone()),
-        amount_usdc: consumed,
+        dest_symbol: Some(symbol.to_string()),
+        amount_usdc,
         min_out,
     });
     *next_idx += 1;

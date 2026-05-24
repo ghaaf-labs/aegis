@@ -1,0 +1,864 @@
+//! CCTP V2 client.
+//!
+//! `deposit_for_burn` initiates a burn on the source chain; the planner
+//! attaches our hook payload (recipient, tokenOut, fee, minOut, deadline) so
+//! that on attestation, the destination-chain `RebalanceExecutor` performs
+//! the swap atomically.
+//!
+//! In `execution_mock` mode (the default), all calls return deterministic
+//! fixtures so unit and integration tests don't touch any RPC. Production
+//! deployments flip the env var and supply real `CHAIN_PRIVATE_KEY_*` keys.
+
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+#[cfg(feature = "real-cctp")]
+use sha2::{Digest, Sha256};
+
+use crate::config::Config;
+use crate::error::{AppError, Result};
+use crate::modules::rebalance::models::ChainKey;
+
+#[cfg(feature = "real-cctp")]
+use fees::{max_fee_for, select_burn_fee, BurnFeeChoice, CctpFeeEntry};
+use mock::{mock_attestation, mock_burn_receipt, mock_tx_hash};
+
+mod fees;
+mod mock;
+
+#[cfg(feature = "real-cctp")]
+use alloy::{
+    primitives::{Address, Bytes, U256},
+    providers::{ProviderBuilder, WalletProvider},
+    signers::local::PrivateKeySigner,
+    sol,
+    sol_types::{SolCall, SolValue},
+};
+
+#[cfg(feature = "real-cctp")]
+sol! {
+    #[sol(rpc)]
+    #[allow(clippy::too_many_arguments)]
+    interface ICCTPV2TokenMessenger {
+        // CCTP V2 standard burn (no hook).
+        function depositForBurn(
+            uint256 amount,
+            uint32 destinationDomain,
+            bytes32 mintRecipient,
+            address burnToken,
+            bytes32 destinationCaller,
+            uint256 maxFee,
+            uint32 minFinalityThreshold
+        ) external returns (uint64 nonce);
+
+        // CCTP V2 hook-enabled burn. hookData is delivered to
+        // RebalanceExecutor.handleReceiveMessage on the destination chain
+        // for the atomic USDC -> tokenOut swap.
+        function depositForBurnWithHook(
+            uint256 amount,
+            uint32 destinationDomain,
+            bytes32 mintRecipient,
+            address burnToken,
+            bytes32 destinationCaller,
+            uint256 maxFee,
+            uint32 minFinalityThreshold,
+            bytes calldata hookData
+        ) external returns (uint64 nonce);
+
+        event MessageSent(bytes message);
+    }
+
+    #[sol(rpc)]
+    interface IMessageTransmitter {
+        function receiveMessage(
+            bytes calldata message,
+            bytes calldata attestation
+        ) external returns (bool success);
+    }
+
+    // USDC must be approve()'d to the TokenMessenger before depositForBurn,
+    // or the contract reverts on its internal `transferFrom(sender, …)`.
+    #[sol(rpc)]
+    interface IERC20 {
+        function approve(address spender, uint256 amount) external returns (bool);
+        function allowance(address owner, address spender) external view returns (uint256);
+    }
+
+    // Hook payload exactly as the RebalanceExecutor expects in handleReceiveMessage
+    struct HookExecutionPayload {
+        address recipient;
+        address tokenOut;
+        uint24 poolFee;
+        uint256 minOut;
+        uint256 deadline;
+    }
+}
+
+/// Encodes a Rust HookPayload into the exact 160-byte ABI encoding expected by RebalanceExecutor.handleReceiveMessage
+#[cfg(feature = "real-cctp")]
+pub fn encode_hook_payload(hook: &HookPayload) -> Bytes {
+    let payload = HookExecutionPayload {
+        recipient: hook.recipient.parse().expect("valid recipient address"),
+        tokenOut: hook.token_out.parse().expect("valid tokenOut address"),
+        poolFee: hook.pool_fee.try_into().expect("poolFee fits in uint24"),
+        minOut: U256::from(hook.min_out),
+        deadline: U256::from(hook.deadline),
+    };
+    payload.abi_encode().into()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct HookPayload {
+    /// Final wallet that receives `token_out` on the destination chain.
+    pub recipient: String,
+    /// ERC-20 to receive. If equal to USDC, the hook skips the Uniswap leg.
+    pub token_out: String,
+    /// Uniswap V3 pool fee tier (500 / 3000 / 10000).
+    pub pool_fee: u32,
+    /// Minimum output the swap must yield. Computed by the quoter with a
+    /// 50bps slippage tolerance applied.
+    pub min_out: u128,
+    /// Hook expiry (unix seconds). Planner sets `now + 600`.
+    pub deadline: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BurnReceipt {
+    pub tx_hash: String,
+    pub message_hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MintReceipt {
+    pub tx_hash: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct IrisV2Envelope {
+    messages: Vec<IrisV2Message>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IrisV2Message {
+    attestation: Option<String>,
+    message: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct Attestation {
+    pub message: String,
+    pub attestation: String,
+}
+
+pub struct CctpClient<'a> {
+    http: &'a reqwest::Client,
+    config: &'a Config,
+    /// Execution context for the non-custodial path (Part B0). When set and
+    /// `config.circle_wallet_exec` is true, burn/mint/approve are submitted from
+    /// the user's Circle developer-controlled wallet instead of the backend EOA.
+    /// Optional so the offline/mock tests construct a client without a DB.
+    user: Option<UserExecContext<'a>>,
+    /// The executing leg's stable id, used to derive deterministic Circle
+    /// idempotency keys (`<leg_id>:<step>`) so a resumed/retried non-custodial
+    /// submit dedupes instead of double-broadcasting. `None` outside the
+    /// per-leg executor path (only the mock/EOA paths run then).
+    leg_id: Option<uuid::Uuid>,
+}
+
+#[derive(Clone, Copy)]
+struct UserExecContext<'a> {
+    // Read only by the real-cctp non-custodial path; the default build attaches
+    // the context but never dereferences it.
+    #[cfg_attr(not(feature = "real-cctp"), allow(dead_code))]
+    db: &'a crate::db::Db,
+    #[cfg_attr(not(feature = "real-cctp"), allow(dead_code))]
+    user_id: uuid::Uuid,
+}
+
+impl<'a> CctpClient<'a> {
+    pub fn new(http: &'a reqwest::Client, config: &'a Config) -> Self {
+        Self {
+            http,
+            config,
+            user: None,
+            leg_id: None,
+        }
+    }
+
+    /// Attach the owning user + DB so the non-custodial (`circle_wallet_exec`)
+    /// path can resolve the user's Circle wallet as the tx sender.
+    pub fn with_user(mut self, db: &'a crate::db::Db, user_id: uuid::Uuid) -> Self {
+        self.user = Some(UserExecContext { db, user_id });
+        self
+    }
+
+    /// Attach the executing leg's id so the non-custodial path can derive
+    /// deterministic Circle idempotency keys (dedup on resume/retry).
+    pub fn with_leg(mut self, leg_id: uuid::Uuid) -> Self {
+        self.leg_id = Some(leg_id);
+        self
+    }
+
+    /// Idempotency seed for one non-custodial step of this leg
+    /// (`<leg_id>:<step>`), falling back to a per-process random base when no
+    /// leg is attached (only the mock/EOA paths, which never reach Circle).
+    #[cfg(feature = "real-cctp")]
+    fn idem_seed(&self, step: &str) -> String {
+        match self.leg_id {
+            Some(id) => format!("{id}:{step}"),
+            None => format!("{}:{step}", uuid::Uuid::new_v4()),
+        }
+    }
+
+    /// Burn `amount_usdc` USDC on `src` and mint the same amount on `dest`
+    /// to `RebalanceExecutor`, which then invokes the hook payload.
+    pub async fn deposit_for_burn(
+        &self,
+        src: ChainKey,
+        dest: ChainKey,
+        amount_usdc: f64,
+        hook: &HookPayload,
+    ) -> Result<BurnReceipt> {
+        if self.config.execution_mock {
+            return Ok(mock_burn_receipt(src, dest, amount_usdc, hook));
+        }
+
+        #[cfg(not(feature = "real-cctp"))]
+        {
+            let _ = (src, dest, amount_usdc, hook);
+            Err(AppError::Internal(anyhow::anyhow!(
+                "real-cctp feature not enabled. Build with --features real-cctp and set EXECUTION_MOCK=false"
+            )))
+        }
+
+        #[cfg(feature = "real-cctp")]
+        {
+            self.real_deposit_for_burn(src, dest, amount_usdc, hook)
+                .await
+        }
+    }
+
+    /// Poll Circle's attestation API until the message is attested or the
+    /// timeout (default 180s) elapses. Backoff: 2s → 4s → 8s → 16s capped.
+    ///
+    /// `src_domain` is the CCTP V2 domain id of the chain that produced the
+    /// burn. Circle's V2 endpoint is `/v2/messages/{srcDomain}/{messageHash}`
+    /// — without the domain segment the API returns 404.
+    #[cfg(feature = "real-cctp")]
+    async fn real_deposit_for_burn(
+        &self,
+        src: ChainKey,
+        dest: ChainKey,
+        amount_usdc: f64,
+        hook: &HookPayload,
+    ) -> Result<BurnReceipt> {
+        use alloy::network::EthereumWallet;
+
+        let amount = (amount_usdc * 1_000_000.0) as u128;
+
+        // Part B0 — non-custodial: submit the approve + burn from the user's
+        // Circle developer-controlled wallet (entity-secret signed) instead of
+        // the backend EOA. The user's wallet is the tx sender and holds the
+        // funds. Falls through to the EOA path when the flag is off.
+        if self.config.circle_wallet_exec {
+            return self
+                .circle_wallet_deposit_for_burn(src, dest, amount, hook)
+                .await;
+        }
+
+        let private_key = &self.config.chain(src).private_key;
+
+        let key_bytes = hex::decode(private_key.trim_start_matches("0x")).map_err(|_| {
+            AppError::Internal(anyhow::anyhow!("invalid hex private key for {:?}", src))
+        })?;
+        let signer = PrivateKeySigner::from_slice(&key_bytes).map_err(|_| {
+            AppError::Internal(anyhow::anyhow!("invalid private key for {:?}", src))
+        })?;
+
+        let wallet = EthereumWallet::from(signer);
+
+        let rpc_url = &self.config.chain(src).rpc_url;
+
+        let provider = ProviderBuilder::new().wallet(wallet).connect_http(
+            rpc_url
+                .parse()
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
+        );
+
+        // Source-chain TokenMessenger + USDC, and the destination-chain
+        // RebalanceExecutor that becomes the CCTP mintRecipient.
+        let token_messenger = self
+            .config
+            .chain(src)
+            .cctp_token_messenger
+            .parse::<Address>()
+            .map_err(|_| {
+                AppError::Internal(anyhow::anyhow!("bad CCTP TokenMessenger on {:?}", src))
+            })?;
+        let usdc = self
+            .config
+            .chain(src)
+            .usdc
+            .parse::<Address>()
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("bad USDC on {:?}", src)))?;
+
+        // depositForBurn calls `USDC.transferFrom(msg.sender, tokenMessenger,
+        // amount + fee)` internally — even with maxFee=0 the contract may
+        // round-trip through a fee branch, so approve with headroom rather
+        // than the exact amount. Skip the approve if a previous run already
+        // left sufficient allowance, both to save gas and to avoid the
+        // pre-flight race some testnet RPCs hit when the approve receipt is
+        // mined but eth_estimateGas reads stale state.
+        let usdc_token = IERC20::new(usdc, &provider);
+        let approve_amount = U256::from(amount).saturating_mul(U256::from(2u64));
+        let signer_addr = provider.default_signer_address();
+        let current_allowance = usdc_token
+            .allowance(signer_addr, token_messenger)
+            .call()
+            .await
+            .unwrap_or(U256::ZERO);
+        if current_allowance < approve_amount {
+            let _approve_receipt = usdc_token
+                .approve(token_messenger, approve_amount)
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("USDC approve send error: {e}"))?
+                .get_receipt()
+                .await
+                .map_err(|e| anyhow::anyhow!("USDC approve receipt error: {e}"))?;
+            // Brief settle so depositForBurn's pre-flight sees the new
+            // allowance even on testnet RPCs that lag a block.
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        }
+
+        let contract = ICCTPV2TokenMessenger::new(token_messenger, &provider);
+
+        // The 160-byte hook payload is forwarded by the MessageTransmitter to
+        // RebalanceExecutor.handleReceiveMessage on the destination, which
+        // decodes it and performs the atomic USDC -> tokenOut swap.
+        let hook_data = encode_hook_payload(hook);
+
+        // Fast Transfer (threshold 1000) needs a non-zero maxFee fetched from
+        // Circle's fee API — a zero fee on the fast path is rejected with
+        // delayReason="insufficient_fee". Fall back to the free standard path
+        // (threshold 2000, maxFee 0) when the fee API is unavailable.
+        let fee_choice = self.resolve_burn_fee(src, dest).await;
+        let max_fee = U256::from(max_fee_for(amount, fee_choice.fee_bps));
+
+        // destinationCaller = bytes32(0) means any address can call
+        // MessageTransmitter.receiveMessage on the destination chain.
+        // The hook body (mintRecipient + swap params) is baked into the
+        // message at burn time and cannot be manipulated by the relayer,
+        // so unrestricted relay is safe for this flow. Setting this to
+        // `executor_on_dest` (as we did initially) would require the
+        // RebalanceExecutor contract to expose a function that forwards
+        // to `receiveMessage` — it doesn't, so non-zero values here lock
+        // the message out of any path to mint. See F-CCTP-5.
+        let destination_caller = alloy::primitives::FixedBytes::<32>::ZERO;
+
+        // Plain USDC bridge (hook tokenOut == destination USDC): mint directly to
+        // the recipient EOA via `depositForBurn` — no hook, no executor hop, so
+        // funds cannot strand at the executor waiting on a `relay()` the CCTP
+        // core never calls. The destination swap (if any) is a separate
+        // `LocalSwap` leg (the two-leg baseline). A hooked burn (tokenOut !=
+        // USDC) still routes to the executor for the atomic path.
+        let plain_bridge = hook
+            .token_out
+            .eq_ignore_ascii_case(&self.config.chain(dest).usdc);
+
+        let receipt = if plain_bridge {
+            let recipient = hook.recipient.parse::<Address>().map_err(|_| {
+                AppError::Internal(anyhow::anyhow!("bad mint recipient for plain bridge"))
+            })?;
+            contract
+                .depositForBurn(
+                    U256::from(amount),
+                    dest.domain_id(),
+                    recipient.into_word(),
+                    usdc,
+                    destination_caller,
+                    max_fee,
+                    fee_choice.finality_threshold,
+                )
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("alloy send error: {e}"))?
+                .get_receipt()
+                .await
+                .map_err(|e| anyhow::anyhow!("get_receipt error: {e}"))?
+        } else {
+            // Hooked burn: the mint must land at the destination RebalanceExecutor
+            // (parsed lazily here so a plain bridge to a chain without a deployed
+            // executor isn't blocked by an unparsable address).
+            let executor_on_dest = self
+                .config
+                .chain(dest)
+                .rebalance_executor
+                .parse::<Address>()
+                .map_err(|_| {
+                    AppError::Internal(anyhow::anyhow!("bad RebalanceExecutor on {:?}", dest))
+                })?;
+            contract
+                .depositForBurnWithHook(
+                    U256::from(amount),
+                    dest.domain_id(),
+                    executor_on_dest.into_word(),
+                    usdc,
+                    destination_caller,
+                    max_fee,
+                    fee_choice.finality_threshold,
+                    hook_data,
+                )
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("alloy send error: {e}"))?
+                .get_receipt()
+                .await
+                .map_err(|e| anyhow::anyhow!("get_receipt error: {e}"))?
+        };
+
+        // Robust MessageSent extraction (works across Alloy Log type differences)
+        let message_sent_topic: alloy::primitives::B256 =
+            alloy::primitives::keccak256("MessageSent(bytes)");
+
+        let message_hash = receipt
+            .inner
+            .logs()
+            .iter()
+            .find_map(|log| {
+                if log.topics().first() == Some(&message_sent_topic) {
+                    // The message is in the first (and only) topic or data depending on indexing.
+                    // For CCTP MessageSent, the message is usually in the data.
+                    let data = &log.data().data;
+                    if !data.is_empty() {
+                        Some(hex::encode(Sha256::digest(data)))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| {
+                AppError::Internal(anyhow::anyhow!("MessageSent event not found in receipt"))
+            })?;
+
+        Ok(BurnReceipt {
+            tx_hash: receipt.transaction_hash.to_string(),
+            message_hash,
+        })
+    }
+
+    #[cfg(feature = "real-cctp")]
+    pub async fn real_receive_message(
+        &self,
+        dest: ChainKey,
+        message: &str,
+        attestation: &str,
+    ) -> Result<String> {
+        use alloy::network::EthereumWallet;
+
+        // Part B0 — non-custodial: mint via the user's Circle wallet.
+        if self.config.circle_wallet_exec {
+            return self
+                .circle_wallet_receive_message(dest, message, attestation)
+                .await;
+        }
+
+        let private_key = &self.config.chain(dest).private_key;
+
+        let signer = PrivateKeySigner::from_slice(
+            &hex::decode(private_key.trim_start_matches("0x"))
+                .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid hex key")))?,
+        )
+        .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid private key")))?;
+
+        let wallet = EthereumWallet::from(signer);
+
+        let rpc_url = &self.config.chain(dest).rpc_url;
+
+        let provider = ProviderBuilder::new().wallet(wallet).connect_http(
+            rpc_url
+                .parse()
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
+        );
+
+        let transmitter: Address = self
+            .config
+            .chain(dest)
+            .cctp_message_transmitter
+            .parse()
+            .map_err(|_| {
+                AppError::Internal(anyhow::anyhow!("bad MessageTransmitter on {:?}", dest))
+            })?;
+
+        let contract = IMessageTransmitter::new(transmitter, &provider);
+
+        let message_bytes: alloy::primitives::Bytes = message
+            .parse()
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid message hex")))?;
+        let attestation_bytes: alloy::primitives::Bytes = attestation
+            .parse()
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid attestation hex")))?;
+
+        let receipt = contract
+            .receiveMessage(message_bytes, attestation_bytes)
+            .send()
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("receiveMessage send error: {e}")))?
+            .get_receipt()
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("get_receipt error: {e}")))?;
+
+        Ok(receipt.transaction_hash.to_string())
+    }
+
+    /// Non-custodial burn (Part B0): ABI-encode the USDC `approve` and
+    /// `depositForBurnWithHook` calls and submit each from the user's Circle
+    /// developer-controlled wallet. The user's wallet is the tx sender (and, in
+    /// this model, the USDC holder), so the bridge is non-custodial.
+    ///
+    /// Unlike the EOA path we cannot read the burn receipt's `MessageSent` log
+    /// directly (Circle returns a tx hash, not decoded logs). That is fine: the
+    /// attestation lookup is keyed by the burn `transactionHash`, not by this
+    /// `message_hash`, which is only persisted as an identifier. We derive a
+    /// deterministic identifier from the tx hash so the receipt shape matches
+    /// the EOA path.
+    #[cfg(feature = "real-cctp")]
+    async fn circle_wallet_deposit_for_burn(
+        &self,
+        src: ChainKey,
+        dest: ChainKey,
+        amount: u128,
+        hook: &HookPayload,
+    ) -> Result<BurnReceipt> {
+        let user = self.user.ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "circle_wallet_exec set but no user context attached to CctpClient"
+            ))
+        })?;
+
+        let token_messenger_str = &self.config.chain(src).cctp_token_messenger;
+        let usdc_str = &self.config.chain(src).usdc;
+        let token_messenger: Address = token_messenger_str
+            .parse()
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("bad CCTP TokenMessenger")))?;
+        let usdc: Address = usdc_str
+            .parse()
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("bad USDC address")))?;
+
+        // 1) approve(tokenMessenger, amount*2) — same headroom as the EOA path.
+        let approve_amount = U256::from(amount).saturating_mul(U256::from(2u64));
+        let approve_calldata = IERC20::approveCall {
+            spender: token_messenger,
+            amount: approve_amount,
+        }
+        .abi_encode();
+        crate::modules::wallet::circle_exec::submit_contract_execution(
+            self.http,
+            self.config,
+            user.db,
+            user.user_id,
+            src,
+            usdc_str,
+            &hex::encode(approve_calldata),
+            None,
+            &self.idem_seed("cctp-approve"),
+        )
+        .await?;
+
+        // 2) Burn. Mirror the EOA path's plain-vs-hooked branch: a plain USDC
+        // bridge (tokenOut == destination USDC) mints directly to the recipient
+        // via `depositForBurn` — no hook, no executor hop (so a bridge to a chain
+        // without a deployed executor isn't blocked, and funds can't strand at
+        // the executor). A hooked burn (tokenOut != USDC) routes to the
+        // destination RebalanceExecutor via `depositForBurnWithHook`.
+        let fee_choice = self.resolve_burn_fee(src, dest).await;
+        let destination_caller = alloy::primitives::FixedBytes::<32>::ZERO;
+        let max_fee = U256::from(max_fee_for(amount, fee_choice.fee_bps));
+        let plain_bridge = hook
+            .token_out
+            .eq_ignore_ascii_case(&self.config.chain(dest).usdc);
+        let burn_calldata = if plain_bridge {
+            let recipient = hook.recipient.parse::<Address>().map_err(|_| {
+                AppError::Internal(anyhow::anyhow!("bad mint recipient for plain bridge"))
+            })?;
+            ICCTPV2TokenMessenger::depositForBurnCall {
+                amount: U256::from(amount),
+                destinationDomain: dest.domain_id(),
+                mintRecipient: recipient.into_word(),
+                burnToken: usdc,
+                destinationCaller: destination_caller,
+                maxFee: max_fee,
+                minFinalityThreshold: fee_choice.finality_threshold,
+            }
+            .abi_encode()
+        } else {
+            let executor_on_dest = self
+                .config
+                .chain(dest)
+                .rebalance_executor
+                .parse::<Address>()
+                .map_err(|_| {
+                    AppError::Internal(anyhow::anyhow!("bad RebalanceExecutor on {:?}", dest))
+                })?;
+            ICCTPV2TokenMessenger::depositForBurnWithHookCall {
+                amount: U256::from(amount),
+                destinationDomain: dest.domain_id(),
+                mintRecipient: executor_on_dest.into_word(),
+                burnToken: usdc,
+                destinationCaller: destination_caller,
+                maxFee: max_fee,
+                minFinalityThreshold: fee_choice.finality_threshold,
+                hookData: encode_hook_payload(hook),
+            }
+            .abi_encode()
+        };
+        let tx_hash = crate::modules::wallet::circle_exec::submit_contract_execution(
+            self.http,
+            self.config,
+            user.db,
+            user.user_id,
+            src,
+            token_messenger_str,
+            &hex::encode(burn_calldata),
+            None,
+            &self.idem_seed("cctp-burn"),
+        )
+        .await?;
+
+        // Synthetic local identifier only — NOT the real on-chain CCTP message
+        // hash (Circle returns a tx hash, not decoded `MessageSent` logs). The
+        // attestation lookup keys off the burn `tx_hash`, so this value is never
+        // matched against Circle's message hashes; it just fills the receipt
+        // shape. Marked so any downstream reconciliation treats it as opaque.
+        let message_hash = format!(
+            "synthetic:0x{}",
+            hex::encode(Sha256::digest(tx_hash.as_bytes()))
+        );
+        Ok(BurnReceipt {
+            tx_hash,
+            message_hash,
+        })
+    }
+
+    /// Non-custodial mint (Part B0): ABI-encode `receiveMessage(message,
+    /// attestation)` and submit it from the user's Circle wallet on `dest`.
+    #[cfg(feature = "real-cctp")]
+    async fn circle_wallet_receive_message(
+        &self,
+        dest: ChainKey,
+        message: &str,
+        attestation: &str,
+    ) -> Result<String> {
+        let user = self.user.ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "circle_wallet_exec set but no user context attached to CctpClient"
+            ))
+        })?;
+
+        let transmitter_str = &self.config.chain(dest).cctp_message_transmitter;
+        let transmitter = transmitter_str.parse::<Address>().map_err(|_| {
+            AppError::Internal(anyhow::anyhow!("bad MessageTransmitter on {:?}", dest))
+        })?;
+        let _ = transmitter;
+
+        let message_bytes: Bytes = message
+            .parse()
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid message hex")))?;
+        let attestation_bytes: Bytes = attestation
+            .parse()
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid attestation hex")))?;
+
+        let calldata = IMessageTransmitter::receiveMessageCall {
+            message: message_bytes,
+            attestation: attestation_bytes,
+        }
+        .abi_encode();
+
+        crate::modules::wallet::circle_exec::submit_contract_execution(
+            self.http,
+            self.config,
+            user.db,
+            user.user_id,
+            dest,
+            transmitter_str,
+            &hex::encode(calldata),
+            None,
+            &self.idem_seed("cctp-mint"),
+        )
+        .await
+    }
+
+    /// Resolve the Fast Transfer burn parameters for `src` → `dest` by querying
+    /// Circle's fee API. Returns the standard (free, slow) path on any error so
+    /// the working burn is never broken by an unreachable/changed fee endpoint.
+    #[cfg(feature = "real-cctp")]
+    async fn resolve_burn_fee(&self, src: ChainKey, dest: ChainKey) -> BurnFeeChoice {
+        let url = format!(
+            "{}/v2/burn/USDC/fees/{}/{}",
+            self.config.cctp_attestation_url,
+            src.domain_id(),
+            dest.domain_id()
+        );
+        match self.http.get(&url).send().await {
+            Ok(r) if r.status().is_success() => match r.json::<Vec<CctpFeeEntry>>().await {
+                Ok(entries) => select_burn_fee(&entries),
+                Err(e) => {
+                    tracing::warn!(error = %e, "cctp fee parse failed; using standard finality");
+                    BurnFeeChoice::STANDARD
+                }
+            },
+            Ok(r) => {
+                tracing::warn!(status = %r.status(), "cctp fee api non-200; using standard finality");
+                BurnFeeChoice::STANDARD
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "cctp fee api unreachable; using standard finality");
+                BurnFeeChoice::STANDARD
+            }
+        }
+    }
+
+    pub async fn wait_for_attestation(
+        &self,
+        src_domain: u32,
+        burn_tx_hash: &str,
+    ) -> Result<Attestation> {
+        if self.config.execution_mock {
+            return Ok(mock_attestation(burn_tx_hash));
+        }
+
+        // CCTP V2 attestations are looked up by source-domain + burn tx
+        // hash: GET /v2/messages/{domain}?transactionHash={tx}. The
+        // response wraps zero-or-more messages; we poll until exactly one
+        // has `attestation != "PENDING"` and a non-null `message`.
+        let url = format!(
+            "{}/v2/messages/{}?transactionHash={}",
+            self.config.cctp_attestation_url, src_domain, burn_tx_hash
+        );
+
+        let start = std::time::Instant::now();
+        let timeout = Duration::from_secs(self.config.cctp_attestation_timeout_secs);
+        let mut delay = Duration::from_secs(2);
+        let max_delay = Duration::from_secs(16);
+
+        loop {
+            if start.elapsed() >= timeout {
+                return Err(AppError::Internal(anyhow::anyhow!(
+                    "cctp attestation timed out after {}s",
+                    self.config.cctp_attestation_timeout_secs
+                )));
+            }
+
+            match self.http.get(&url).send().await {
+                Ok(r) if r.status().is_success() => {
+                    if let Ok(env) = r.json::<IrisV2Envelope>().await {
+                        if let Some(m) = env.messages.into_iter().next() {
+                            if let (Some(msg), Some(att)) = (m.message, m.attestation) {
+                                if att != "PENDING" && !msg.is_empty() {
+                                    return Ok(Attestation {
+                                        message: msg,
+                                        attestation: att,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::debug!(error = %e, "attestation poll transient error");
+                }
+            }
+            tokio::time::sleep(delay).await;
+            delay = (delay * 2).min(max_delay);
+        }
+    }
+
+    pub async fn receive_message(
+        &self,
+        dest: ChainKey,
+        attestation: &Attestation,
+    ) -> Result<MintReceipt> {
+        if self.config.execution_mock {
+            return Ok(MintReceipt {
+                tx_hash: mock_tx_hash("mint", dest.as_str(), &attestation.message),
+            });
+        }
+
+        #[cfg(not(feature = "real-cctp"))]
+        {
+            let _ = (dest, attestation);
+            Err(AppError::Internal(anyhow::anyhow!(
+                "real-cctp feature not enabled. Build with --features real-cctp and set EXECUTION_MOCK=false"
+            )))
+        }
+
+        #[cfg(feature = "real-cctp")]
+        {
+            let tx_hash = self
+                .real_receive_message(dest, &attestation.message, &attestation.attestation)
+                .await?;
+            Ok(MintReceipt { tx_hash })
+        }
+    }
+}
+
+/// Build the on-chain hook payload (160 bytes) the destination
+/// `RebalanceExecutor.handleReceiveMessage` decodes.
+pub fn build_hook_payload(
+    recipient: &str,
+    token_out: &str,
+    pool_fee: u32,
+    min_out: u128,
+    deadline: u64,
+) -> HookPayload {
+    HookPayload {
+        recipient: recipient.to_string(),
+        token_out: token_out.to_string(),
+        pool_fee,
+        min_out,
+        deadline,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_hook_payload_sets_fields() {
+        let h = build_hook_payload("0xrecipient", "0xeth", 3000, 999, 1_700_000_600);
+        assert_eq!(h.recipient, "0xrecipient");
+        assert_eq!(h.token_out, "0xeth");
+        assert_eq!(h.pool_fee, 3000);
+        assert_eq!(h.min_out, 999);
+        assert_eq!(h.deadline, 1_700_000_600);
+    }
+
+    #[cfg(feature = "real-cctp")]
+    #[test]
+    fn encode_hook_payload_produces_160_byte_abi() {
+        let hook = build_hook_payload(
+            "0x1234567890123456789012345678901234567890",
+            "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", // USDC
+            3000,
+            1_000_000_000_000_000_000u128,
+            1_700_000_000,
+        );
+        let encoded = encode_hook_payload(&hook);
+        // HookExecutionPayload is 5 words (160 bytes) exactly.
+        assert_eq!(
+            encoded.len(),
+            160,
+            "HookExecutionPayload must be exactly 160 bytes for RebalanceExecutor"
+        );
+        // First 32 bytes should be the recipient address left-padded.
+        assert_eq!(
+            &encoded[12..32],
+            &hex::decode("1234567890123456789012345678901234567890").unwrap()[..]
+        );
+    }
+}

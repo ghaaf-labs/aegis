@@ -437,6 +437,13 @@ pub fn route_state_for_token(caps: &RuntimeCapabilities, cfg: &Config, symbol: &
         // the gated Arc StableFX rail (`caps.stablefx`) is superseded.
         TokenClass::FxStable | TokenClass::Volatile => {
             let has_addr = spec.address_for(cfg, ChainKey::Base).is_some();
+            // An ERC-20 is configured but the deployment's liquidity allowlist
+            // says there's no tradeable pool here (e.g. EURC/LINK/cbBTC on Base
+            // Sepolia) → honest track-only, never an execution target that would
+            // revert at gas-estimation.
+            if has_addr && !cfg.swap_token_has_venue(symbol, ChainKey::Base) {
+                return RouteState::TrackOnly;
+            }
             cap_to_state(caps.swap, has_addr)
         }
     }
@@ -466,7 +473,10 @@ pub fn executable_token_symbols(caps: &RuntimeCapabilities, cfg: &Config) -> Vec
     if caps.swap.is_live() {
         for spec in tokens::TOKEN_REGISTRY {
             let swap_acquired = matches!(spec.class, TokenClass::Volatile | TokenClass::FxStable);
-            if swap_acquired && spec.address_for(cfg, ChainKey::Base).is_some() {
+            if swap_acquired
+                && spec.address_for(cfg, ChainKey::Base).is_some()
+                && cfg.swap_token_has_venue(spec.symbol, ChainKey::Base)
+            {
                 out.push(spec.symbol);
             }
         }
@@ -474,9 +484,104 @@ pub fn executable_token_symbols(caps: &RuntimeCapabilities, cfg: &Config) -> Vec
     out
 }
 
+/// Symbols the allocator may place in a target allocation for the current
+/// runtime. Mock/demo mode keeps the full product sleeve menu; real mode only
+/// offers sleeves that can build an approvable execution review now.
+pub fn allocation_target_symbols(cfg: &Config) -> Vec<&'static str> {
+    let caps = RuntimeCapabilities::from_config(cfg);
+    if caps.real_mode {
+        executable_token_symbols(&caps, cfg)
+    } else {
+        designable_allocation_symbols(cfg)
+    }
+}
+
+/// The product's supported sleeve universe, derived from each token's
+/// [`TokenSpec::designable`] flag. This is wider than the current real-mode
+/// target universe; allocator call sites should use [`allocation_target_symbols`]
+/// so local demos can keep the full menu while real execution only targets
+/// approvable sleeves.
+///
+/// USYC is the one runtime-gated sleeve: it is only offered while `USYC_ENABLED`
+/// (declared via its [`TokenSpec::gate`]), otherwise it stays coming-soon /
+/// context-only and must not appear as an investable target.
+pub fn designable_allocation_symbols(cfg: &Config) -> Vec<&'static str> {
+    tokens::TOKEN_REGISTRY
+        .iter()
+        .filter(|spec| spec.is_designable_target(cfg))
+        .map(|spec| spec.symbol)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn designable_universe_is_independent_of_swap_liveness() {
+        let cfg = crate::config::test_config();
+        let designable = designable_allocation_symbols(&cfg);
+        // The product sleeve menu is present regardless of adapter *liveness*
+        // (cargo features / funded signers) — but only routable-in-principle
+        // sleeves are offered (no un-routable L1-natives; see the registry).
+        for sym in [
+            USDC,
+            tokens::CBBTC,
+            tokens::ETH,
+            tokens::EURC,
+            tokens::CBETH,
+            "LINK",
+            "UNI",
+            "AERO",
+        ] {
+            assert!(designable.contains(&sym), "designable should include {sym}");
+        }
+        // In a mock/offline build the executable set collapses to USDC, but the
+        // designable universe must NOT — conflating the two was the bug.
+        let caps = RuntimeCapabilities::from_config(&cfg);
+        let executable = executable_token_symbols(&caps, &cfg);
+        assert!(!executable.contains(&tokens::CBBTC));
+        assert!(designable.contains(&tokens::CBBTC));
+        assert!(designable.len() > executable.len());
+    }
+
+    #[test]
+    fn designable_excludes_price_only_and_unroutable_tokens() {
+        let designable = designable_allocation_symbols(&crate::config::test_config());
+        // Price-only `BTC` (cbBTC is the sleeve), wrong-chain `WBTC`, the
+        // misclassified `sUSDS`, and the un-routable other-L1-natives (no
+        // Arc/Base venue) must not be offered — the agent can only design what we
+        // can route. (LINK/UNI/AERO are now designable; see the other test.)
+        for sym in [
+            "BTC",
+            tokens::WBTC,
+            tokens::SUSDS,
+            "SOL",
+            "BNB",
+            "AVAX",
+            "MATIC",
+        ] {
+            assert!(!designable.contains(&sym), "designable must exclude {sym}");
+        }
+    }
+
+    #[test]
+    fn designable_gates_usyc_on_the_usyc_enabled_flag() {
+        let mut cfg = crate::config::test_config();
+        cfg.usyc_enabled = false;
+        assert!(!designable_allocation_symbols(&cfg).contains(&USYC));
+        cfg.usyc_enabled = true;
+        assert!(designable_allocation_symbols(&cfg).contains(&USYC));
+    }
+
+    #[test]
+    fn allocation_targets_keep_designable_sleeves_in_mock_mode() {
+        let cfg = crate::config::test_config();
+        let targets = allocation_target_symbols(&cfg);
+        assert!(targets.contains(&USDC));
+        assert!(targets.contains(&"UNI"));
+        assert!(targets.contains(&tokens::CBBTC));
+    }
 
     fn real_cfg() -> Config {
         let mut cfg = crate::config::test_config();
@@ -567,18 +672,107 @@ mod tests {
     }
 
     #[test]
+    fn allocation_targets_are_executable_only_in_real_mode() {
+        let cfg = real_cfg();
+        let caps = RuntimeCapabilities::from_config(&cfg);
+        let targets = allocation_target_symbols(&cfg);
+        assert_eq!(targets, executable_token_symbols(&caps, &cfg));
+        assert!(targets.contains(&USDC));
+        assert!(!targets.contains(&"UNI"));
+    }
+
+    #[test]
     fn eurc_is_executable_when_swap_live_with_base_erc20() {
         // EURC now executes on the Base USDC/EURC DEX pool. When the swap
         // adapter is live and EURC has a configured Base ERC-20, it joins the
         // executable set (no longer gated behind StableFX).
         let mut cfg = real_cfg();
-        cfg.eurc_base = "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42".into();
+        cfg.set_token_address(
+            "EURC",
+            ChainKey::Base,
+            "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42",
+        );
+        cfg.swap_liquid_tokens
+            .insert(ChainKey::Base, vec!["EURC".into()]);
         let mut caps = RuntimeCapabilities::from_config(&cfg);
         caps.swap = AdapterCapability::Live;
         assert!(executable_token_symbols(&caps, &cfg).contains(&"EURC"));
         assert_eq!(
             route_state_for_token(&caps, &cfg, "EURC"),
             RouteState::Ready
+        );
+    }
+
+    #[test]
+    fn unset_liquidity_allowlist_uses_safe_testnet_default() {
+        let mut cfg = real_cfg();
+        cfg.set_token_address(
+            "ETH",
+            ChainKey::Base,
+            "0x4200000000000000000000000000000000000006",
+        );
+        cfg.set_token_address(
+            "cbBTC",
+            ChainKey::Base,
+            "0xcbb7c0006f23900c38eb856149f799620fcb8a4a",
+        );
+        cfg.set_token_address(
+            "LINK",
+            ChainKey::Base,
+            "0xE4aB69C077896252FAFBD49EFD26B5D171A32410",
+        );
+        let mut caps = RuntimeCapabilities::from_config(&cfg);
+        caps.swap = AdapterCapability::Live;
+
+        let executable = executable_token_symbols(&caps, &cfg);
+        assert!(executable.contains(&tokens::ETH));
+        assert!(!executable.contains(&tokens::CBBTC));
+        assert!(!executable.contains(&"LINK"));
+    }
+
+    #[test]
+    fn liquid_venue_allowlist_curates_executable_set() {
+        // A token with a configured Base ERC-20 + a live swap rail is NOT
+        // executable when the deployment's liquidity allowlist excludes it
+        // (e.g. only WETH/USDC has a real pool on Base Sepolia). The agent and
+        // planner both read this, so no swap leg is ever built for cbBTC/EURC.
+        let mut cfg = real_cfg();
+        cfg.set_token_address(
+            "ETH",
+            ChainKey::Base,
+            "0x4200000000000000000000000000000000000006",
+        );
+        cfg.set_token_address(
+            "cbBTC",
+            ChainKey::Base,
+            "0xcbb7c0006f23900c38eb856149f799620fcb8a4a",
+        );
+        cfg.set_token_address(
+            "EURC",
+            ChainKey::Base,
+            "0x808456652fdb597867f38412077A9182bf77359F",
+        );
+        cfg.swap_liquid_tokens
+            .insert(ChainKey::Base, vec!["ETH".into()]);
+        let mut caps = RuntimeCapabilities::from_config(&cfg);
+        caps.swap = AdapterCapability::Live;
+
+        let executable = executable_token_symbols(&caps, &cfg);
+        assert!(executable.contains(&"USDC"));
+        assert!(executable.contains(&tokens::ETH));
+        assert!(!executable.contains(&tokens::CBBTC));
+        assert!(!executable.contains(&"EURC"));
+        assert_eq!(
+            route_state_for_token(&caps, &cfg, tokens::ETH),
+            RouteState::Ready
+        );
+        assert_eq!(
+            route_state_for_token(&caps, &cfg, tokens::CBBTC),
+            RouteState::TrackOnly
+        );
+        assert_eq!(
+            route_state_for_token(&caps, &cfg, "EURC"),
+            RouteState::TrackOnly
         );
     }
 
@@ -601,7 +795,11 @@ mod tests {
         // CrossChainTokenSwap blocker no longer fires (CCTP feature gating is a
         // separate blocker and is allowed to remain).
         let mut cfg = real_cfg();
-        cfg.weth_base = "0x4200000000000000000000000000000000000006".into();
+        cfg.set_token_address(
+            "ETH",
+            ChainKey::Base,
+            "0x4200000000000000000000000000000000000006",
+        );
         let caps = RuntimeCapabilities::from_config(&cfg);
         let legs = vec![leg(LegKind::CrossChainBurn, "arc", "base", "ETH")];
         let blockers = validate_legs(&caps, &cfg, &legs);

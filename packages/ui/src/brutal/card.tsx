@@ -19,7 +19,7 @@ export const BrutalCard = React.forwardRef<HTMLDivElement, BrutalCardProps>(
       <div
         ref={ref}
         className={cn(
-          "border-brutal border-border-default rounded-card",
+          "border-[2px] border-border-default rounded-card",
           variant === "default" ? "bg-surface" : "bg-raised",
           "text-text-default",
           shadow && "hover:shadow-brutal transition-[box-shadow] duration-100",

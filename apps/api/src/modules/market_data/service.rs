@@ -3,13 +3,13 @@ use std::collections::HashMap;
 
 use super::{AssetPrice, MarketSnapshot};
 use crate::db::Db;
-use crate::modules::prices::{PriceProvider, SpotQuote, SYMBOLS};
+use crate::modules::prices::{priceable_symbols, PriceProvider, SpotQuote};
 
-/// Fetch the current spot for every symbol in `SYMBOLS` via the configured
-/// price provider. Drops symbols the provider has no data for, matching the
-/// prior CoinGecko-era behaviour (retired coingecko IDs returned empty maps).
+/// Fetch the current spot for every priceable token in the registry via the
+/// configured price provider. Drops symbols the provider has no data for,
+/// matching the prior behaviour (retired coingecko IDs returned empty maps).
 pub async fn fetch_prices(provider: &dyn PriceProvider) -> anyhow::Result<Vec<AssetPrice>> {
-    let symbols: Vec<&_> = SYMBOLS.iter().collect();
+    let symbols = priceable_symbols();
     let quotes = provider.fetch_spot(&symbols).await?;
     Ok(quotes.into_iter().map(to_asset_price).collect())
 }

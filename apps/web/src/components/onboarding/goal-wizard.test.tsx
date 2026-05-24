@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { GoalWizard } from "./goal-wizard";
 import { usePortfolioStore } from "@/stores/portfolio";
 import { agentApi, analyticsApi, portfolioApi } from "@/lib/api";
-import type { AgentDecision, Portfolio } from "@/types";
+import type { Portfolio } from "@/types";
 
 const push = vi.fn();
 
@@ -18,6 +18,8 @@ vi.mock("@/lib/api", () => ({
   portfolioApi: {
     create: vi.fn(),
   },
+  // The wizard no longer calls the allocator; kept here so we can assert it is
+  // NOT invoked from onboarding (the dashboard owns the slow design call).
   agentApi: {
     proposeAllocation: vi.fn(),
   },
@@ -55,28 +57,9 @@ function createdPortfolio(): Portfolio {
   };
 }
 
-function proposalDecision(): AgentDecision {
-  return {
-    id: "decision-1",
-    portfolioId: "portfolio-1",
-    reasoning: "Allocator designed a balanced mix.",
-    recommendation: {
-      summary: "",
-      trades: [],
-      expectedImpact: { riskDelta: 0, diversificationScore: 0 },
-    },
-    confidence: 0.8,
-    triggeredBy: "user_request",
-    kind: "allocation_proposal",
-    recommendedAllocation: { USDC: 60, BTC: 40 },
-    createdAt: new Date().toISOString(),
-  };
-}
-
 describe("<GoalWizard />", () => {
-  it("walks objective → horizon → risk and creates an agent-owned portfolio", async () => {
+  it("walks objective → horizon → risk and hands off to the dashboard to design", async () => {
     vi.mocked(portfolioApi.create).mockResolvedValue(createdPortfolio());
-    vi.mocked(agentApi.proposeAllocation).mockResolvedValue(proposalDecision());
     vi.mocked(analyticsApi.track).mockResolvedValue(undefined);
 
     const { container, root } = render(<GoalWizard />);
@@ -114,32 +97,32 @@ describe("<GoalWizard />", () => {
     expect(createCall?.goal?.horizon).toBe("10y");
     expect(createCall?.goal?.riskTolerance).toBe("conservative");
 
-    expect(agentApi.proposeAllocation).toHaveBeenCalledWith("portfolio-1");
-    expect(push).toHaveBeenCalledWith(
-      "/dashboard/portfolio-1?proposal=decision-1",
-    );
+    // Onboarding must NOT block on the slow allocator — it navigates straight to
+    // the dashboard's designing state, which owns proposal generation.
+    expect(agentApi.proposeAllocation).not.toHaveBeenCalled();
+    expect(push).toHaveBeenCalledWith("/dashboard/portfolio-1?designing=1");
 
     act(() => root.unmount());
   });
 
-  it("still routes to the dashboard when the proposal call fails", async () => {
+  it("tracks the goal.completed analytics event before navigating", async () => {
     vi.mocked(portfolioApi.create).mockResolvedValue(createdPortfolio());
-    vi.mocked(agentApi.proposeAllocation).mockRejectedValue(
-      new Error("allocator timeout"),
-    );
     vi.mocked(analyticsApi.track).mockResolvedValue(undefined);
 
     const { container, root } = render(<GoalWizard />);
-
-    await advance(container); // objective
-    await advance(container); // horizon
+    await advance(container); // objective (default "grow")
+    await advance(container); // horizon (default "5y")
 
     await act(async () => {
       buttonByText(container, "Let the agent design it").click();
       await flushMicrotasks();
     });
 
-    expect(push).toHaveBeenCalledWith("/dashboard/portfolio-1");
+    expect(analyticsApi.track).toHaveBeenCalledWith(
+      "goal.completed",
+      expect.objectContaining({ portfolioId: "portfolio-1" }),
+    );
+    expect(push).toHaveBeenCalledWith("/dashboard/portfolio-1?designing=1");
 
     act(() => root.unmount());
   });

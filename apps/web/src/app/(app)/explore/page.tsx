@@ -1,20 +1,21 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import type { LucideIcon } from "lucide-react";
 import {
+  Activity,
   ArrowRight,
+  BarChart3,
+  BookOpen,
   Brain,
-  RadioTower,
+  Clock3,
   ShieldCheck,
   WalletCards,
 } from "lucide-react";
-import {
-  BrutalCard,
-  BrutalCardBody,
-  BrutalCardHeader,
-  BrutalPill,
-} from "@aegis/ui";
-import { DEMO_BUNDLES } from "@/lib/explore-data";
+import { BrutalPill, ModelBadge, ProvenanceLine } from "@aegis/ui";
+import { DEMO_BUNDLES, type DemoBundle } from "@/lib/explore-data";
 import { pageMetadata } from "@/lib/seo";
+import { cn } from "@/lib/utils";
+import type { AgentDecision } from "@/types";
 
 export const metadata: Metadata = pageMetadata({
   title: "Explore Demo Portfolios — Aegis",
@@ -22,6 +23,9 @@ export const metadata: Metadata = pageMetadata({
     "Three curated Aegis portfolios across different risk profiles and regimes — see how the agent reasons before signing up.",
   path: "/explore",
 });
+
+const GRID_COLS =
+  "lg:grid-cols-[minmax(210px,1.15fr)_minmax(190px,1fr)_minmax(240px,1.2fr)_minmax(220px,1.1fr)_150px]";
 
 export default function ExploreIndex() {
   const bundles = Object.values(DEMO_BUNDLES);
@@ -33,318 +37,424 @@ export default function ExploreIndex() {
     (sum, { decisions }) => sum + decisions.length,
     0,
   );
+  const supportedCount = bundles.filter(
+    ({ unsupportedSleeves = [] }) => unsupportedSleeves.length === 0,
+  ).length;
+
   return (
-    <div className="max-w-[1400px] mx-auto space-y-6">
-      <div className="grid gap-5 border-brutal border-border-default bg-surface p-4 md:p-5 lg:grid-cols-[minmax(0,1fr)_520px]">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-2xl font-mono font-semibold text-text-hi tracking-tight">
-              Explore demo portfolios
-            </h1>
-            <BrutalPill tone="agent">READ ONLY</BrutalPill>
+    <div className="mx-auto w-full max-w-[1400px] space-y-5 md:space-y-6">
+      <section className="border-brutal border-border-default bg-surface">
+        <div className="grid gap-4 border-b border-border-default px-4 py-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-start md:px-5">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <BookOpen className="h-4 w-4 text-accent-agent" />
+              <h1 className="font-mono text-2xl font-semibold text-text-hi md:text-3xl">
+                Explore demo portfolios
+              </h1>
+              <BrutalPill tone="agent">READ ONLY</BrutalPill>
+            </div>
+            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-text-lo">
+              Compare curated portfolios by risk posture, target mix, agent
+              signal, and execution readiness. Every row opens a reasoning trace
+              without requiring wallet setup.
+            </p>
+            <div className="mt-2">
+              <ProvenanceLine source="curated demo data" freshness="static" />
+            </div>
           </div>
-          <p className="mt-2 max-w-2xl text-sm text-text-lo">
-            Inspect three curated portfolios across risk profiles. These demos
-            show the reasoning path, target sleeves, model signal, and approval
-            gates without opening a wallet session.
-          </p>
-          <div className="mt-4 grid gap-2 text-[11px] font-mono sm:grid-cols-3">
-            <ExploreMetric
-              icon={WalletCards}
-              label="Demo value"
-              value={formatCompactUsd(totalDemoValue)}
-              tone="pnl"
-            />
-            <ExploreMetric
-              icon={Brain}
-              label="Agent notes"
-              value={String(decisionCount)}
-              tone="agent"
-            />
-            <ExploreMetric
-              icon={ShieldCheck}
-              label="Demo mode"
-              value="read only"
-              tone="warn"
-            />
-          </div>
-        </div>
-        <ExploreRailSvg />
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {bundles.map(({ portfolio, decisions, unsupportedSleeves }) => (
           <Link
-            key={portfolio.id}
-            href={`/explore/${portfolio.id}`}
-            className="block group"
+            href="/login?next=%2Fdashboard"
+            className="inline-flex min-h-10 items-center justify-center gap-2 border-brutal border-black bg-accent-pnl px-4 py-2 font-mono text-xs font-semibold text-black shadow-brutal-sm hover:shadow-brutal"
           >
-            <BrutalCard className="cursor-pointer transition-all group-hover:border-accent-agent/60 group-hover:translate-x-[-2px] group-hover:translate-y-[-2px] group-hover:shadow-brutal">
-              <BrutalCardHeader>
-                <div className="flex items-center justify-between w-full">
-                  <span className="font-mono font-semibold text-text-hi">
-                    {portfolio.name}
-                  </span>
-                  <BrutalPill tone="agent">
-                    {portfolio.goal?.horizon}
-                  </BrutalPill>
-                </div>
-              </BrutalCardHeader>
-              <BrutalCardBody>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-2xl font-mono font-semibold text-text-hi tabular-nums">
-                      ${portfolio.totalValueUsd.toLocaleString()}
-                    </p>
-                    <p
-                      className={`mt-1 text-sm font-mono ${
-                        portfolio.totalPnlPct >= 0
-                          ? "text-accent-pnl"
-                          : "text-risk"
-                      }`}
-                    >
-                      {portfolio.totalPnlPct >= 0 ? "+" : ""}
-                      {portfolio.totalPnlPct.toFixed(1)}% all-time
-                    </p>
-                  </div>
-                  <span className="border border-border-default bg-bg px-2 py-1 text-[10px] font-mono uppercase tracking-widest text-text-mut">
-                    {portfolio.goal?.riskTolerance}
-                  </span>
-                </div>
-
-                {unsupportedSleeves && unsupportedSleeves.length > 0 && (
-                  <div className="mt-3 flex flex-wrap gap-1">
-                    {unsupportedSleeves.map((sleeve) => (
-                      <span
-                        key={sleeve}
-                        className="border border-warn/40 bg-warn/5 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-warn"
-                      >
-                        {sleeve} · coming soon
-                      </span>
-                    ))}
-                  </div>
-                )}
-
-                <p className="mt-4 min-h-10 text-xs leading-relaxed text-text-lo">
-                  {portfolioThesis(portfolio.goal?.riskTolerance)}
-                </p>
-
-                <div className="mt-4 grid gap-2 text-[10px] font-mono">
-                  <DemoFact
-                    label="Target"
-                    value={targetSummary(portfolio.goal?.targetAllocation)}
-                  />
-                  <DemoFact
-                    label="Latest regime"
-                    value={
-                      decisions[0]?.regime?.replace("_", "-").toUpperCase() ??
-                      "NONE"
-                    }
-                    tone="agent"
-                  />
-                  <DemoFact
-                    label="Approval"
-                    value="read-only demo"
-                    tone="warn"
-                  />
-                </div>
-
-                <p className="mt-4 inline-flex items-center gap-1 text-[11px] text-accent-agent/70 group-hover:text-accent-agent font-mono">
-                  Open reasoning trace
-                  <ArrowRight className="h-3 w-3" />
-                </p>
-              </BrutalCardBody>
-            </BrutalCard>
+            Create real portfolio
+            <ArrowRight className="h-3.5 w-3.5" />
           </Link>
-        ))}
-      </div>
-
-      <div className="flex flex-col gap-3 border border-accent-pnl/30 bg-accent-pnl/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-sm font-mono font-semibold text-text-hi">
-            Ready for a real wallet-backed portfolio?
-          </p>
-          <p className="mt-1 text-xs font-mono text-text-lo">
-            Continue with email, finish account setup, then approve any
-            deployment before money moves.
-          </p>
         </div>
-        <Link
-          href="/login?next=%2Fdashboard"
-          className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 px-4 py-2 bg-accent-pnl text-black font-mono font-semibold rounded-sharp border-brutal border-black shadow-brutal-sm hover:shadow-brutal"
+
+        <div className="grid grid-cols-2 border-b border-border-default lg:grid-cols-4">
+          <SummaryCell
+            icon={WalletCards}
+            label="Demo AUM"
+            value={formatCompactUsd(totalDemoValue)}
+            detail={`${bundles.length} profiles`}
+            tone="pnl"
+          />
+          <SummaryCell
+            icon={Brain}
+            label="Agent decisions"
+            value={String(decisionCount)}
+            detail="model + critic"
+            tone="agent"
+          />
+          <SummaryCell
+            icon={ShieldCheck}
+            label="Live-route demos"
+            value={`${supportedCount}/${bundles.length}`}
+            detail="no coming-soon sleeves"
+            tone={supportedCount === bundles.length ? "pnl" : "warn"}
+          />
+          <SummaryCell
+            icon={Clock3}
+            label="Mode"
+            value="read-only"
+            detail="safe to inspect"
+          />
+        </div>
+      </section>
+
+      <section className="border-brutal border-border-default bg-surface">
+        <SectionHeader
+          icon={BarChart3}
+          title="Portfolio comparison"
+          detail="risk, allocation, signal, and readiness"
+        />
+        <div
+          className={cn(
+            "hidden border-b border-border-default bg-bg/60 px-4 py-3 font-mono text-[10px] uppercase tracking-widest text-text-mut md:px-5 lg:grid lg:gap-4",
+            GRID_COLS,
+          )}
         >
-          Create my portfolio
-          <ArrowRight className="h-4 w-4" />
-        </Link>
-      </div>
+          <span>Profile</span>
+          <span>Portfolio value</span>
+          <span>Target mix</span>
+          <span>Agent signal</span>
+          <span className="text-right">Open</span>
+        </div>
+        <div>
+          {bundles.map((bundle) => (
+            <DemoRow key={bundle.portfolio.id} bundle={bundle} />
+          ))}
+        </div>
+      </section>
+
+      <section className="border-brutal border-border-default bg-surface">
+        <SectionHeader
+          icon={Activity}
+          title="Latest reasoning"
+          detail="one current decision from each demo"
+        />
+        <div className="grid divide-y divide-border-default lg:grid-cols-3 lg:divide-x lg:divide-y-0">
+          {bundles.map((bundle) => (
+            <DecisionPreview key={bundle.portfolio.id} bundle={bundle} />
+          ))}
+        </div>
+      </section>
     </div>
   );
 }
 
-function ExploreMetric({
+function DemoRow({ bundle }: { bundle: DemoBundle }) {
+  const { portfolio, decisions, unsupportedSleeves = [] } = bundle;
+  const decision = decisions[0];
+  const goal = portfolio.goal;
+  const readiness =
+    unsupportedSleeves.length > 0 ? "simulation sleeves" : "live route ready";
+  const readinessTone = unsupportedSleeves.length > 0 ? "warn" : "pnl";
+
+  return (
+    <Link
+      href={`/explore/${portfolio.id}`}
+      className={cn(
+        "block border-b border-border-default px-4 py-4 last:border-b-0 hover:bg-raised md:px-5 lg:grid lg:items-center lg:gap-4",
+        GRID_COLS,
+      )}
+    >
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="font-mono text-base font-semibold text-text-hi">
+            {portfolio.name}
+          </h2>
+          <BrutalPill tone={riskTone(goal?.riskTolerance)}>
+            {goal?.riskTolerance ?? "demo"}
+          </BrutalPill>
+        </div>
+        <p className="mt-2 text-xs leading-relaxed text-text-lo">
+          {portfolioThesis(goal?.riskTolerance)}
+        </p>
+        <div className="mt-3 grid grid-cols-3 gap-2 font-mono text-[10px] lg:hidden">
+          <MiniFact label="Horizon" value={goal?.horizon ?? "n/a"} />
+          <MiniFact label="Objective" value={goal?.objective ?? "n/a"} />
+          <MiniFact label="Readiness" value={readiness} tone={readinessTone} />
+        </div>
+      </div>
+
+      <div className="mt-4 min-w-0 font-mono lg:mt-0">
+        <p className="text-xl font-semibold tabular-nums text-text-hi">
+          ${portfolio.totalValueUsd.toLocaleString()}
+        </p>
+        <p
+          className={cn(
+            "mt-1 text-xs tabular-nums",
+            portfolio.totalPnlPct >= 0 ? "text-accent-pnl" : "text-risk",
+          )}
+        >
+          {portfolio.totalPnlPct >= 0 ? "+" : ""}
+          {portfolio.totalPnlPct.toFixed(1)}% all-time ·{" "}
+          {goal?.horizon ?? "n/a"} horizon
+        </p>
+        <p className="mt-2 hidden text-[10px] uppercase tracking-widest text-text-mut lg:block">
+          {goal?.objective ?? "demo"} objective
+        </p>
+      </div>
+
+      <div className="mt-4 min-w-0 lg:mt-0">
+        <AllocationBar targetAllocation={goal?.targetAllocation} />
+        {unsupportedSleeves.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {unsupportedSleeves.map((sleeve) => (
+              <span
+                key={sleeve}
+                className="border border-warn/40 bg-warn/5 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-warn"
+              >
+                {sleeve} coming soon
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="mt-4 min-w-0 lg:mt-0">
+        <div className="flex flex-wrap items-center gap-2">
+          {decision?.regime && (
+            <BrutalPill tone={regimeTone(decision.regime)}>
+              {decision.regime.replace("_", "-").toUpperCase()}
+            </BrutalPill>
+          )}
+          {decision?.modelSlug && <ModelBadge model={decision.modelSlug} />}
+        </div>
+        <ConfidenceBar confidence={decision?.confidence ?? 0} />
+        <p className="mt-2 font-mono text-[10px] uppercase tracking-widest text-text-mut">
+          {readiness}
+        </p>
+      </div>
+
+      <div className="mt-4 flex items-center justify-between gap-3 font-mono text-xs lg:mt-0 lg:justify-end">
+        <span
+          className={cn(
+            "lg:hidden",
+            readinessTone === "pnl" ? "text-accent-pnl" : "text-warn",
+          )}
+        >
+          {readiness}
+        </span>
+        <span className="inline-flex items-center gap-1 text-accent-agent">
+          Open trace
+          <ArrowRight className="h-3.5 w-3.5" />
+        </span>
+      </div>
+    </Link>
+  );
+}
+
+function DecisionPreview({ bundle }: { bundle: DemoBundle }) {
+  const { portfolio, decisions } = bundle;
+  const decision = decisions[0];
+  if (!decision) return null;
+
+  return (
+    <article className="min-w-0 p-4 md:p-5">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-mono text-[10px] uppercase tracking-widest text-text-mut">
+          {portfolio.name}
+        </span>
+        <BrutalPill tone={regimeTone(decision.regime)}>
+          {decision.regime?.replace("_", "-").toUpperCase()}
+        </BrutalPill>
+      </div>
+      <p className="mt-3 text-sm font-semibold leading-relaxed text-text-hi">
+        {decision.recommendation.summary}
+      </p>
+      <p className="mt-2 line-clamp-4 text-xs leading-relaxed text-text-lo">
+        {decision.reasoning}
+      </p>
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        {decision.modelSlug && <ModelBadge model={decision.modelSlug} />}
+        <span className="font-mono text-[10px] text-text-mut">
+          confidence {Math.round((decision.confidence ?? 0) * 100)}%
+        </span>
+      </div>
+      <Link
+        href={`/explore/${portfolio.id}`}
+        className="mt-4 inline-flex items-center gap-1 font-mono text-xs text-accent-agent hover:underline"
+      >
+        Inspect reasoning
+        <ArrowRight className="h-3.5 w-3.5" />
+      </Link>
+    </article>
+  );
+}
+
+function SectionHeader({
+  detail,
+  icon: Icon,
+  title,
+}: {
+  detail: string;
+  icon: LucideIcon;
+  title: string;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-default px-4 py-3 md:px-5">
+      <div className="flex items-center gap-2">
+        <Icon className="h-4 w-4 text-accent-agent" />
+        <h2 className="font-mono text-lg font-semibold text-text-hi">
+          {title}
+        </h2>
+      </div>
+      <p className="font-mono text-[10px] uppercase tracking-widest text-text-mut">
+        {detail}
+      </p>
+    </div>
+  );
+}
+
+function SummaryCell({
+  detail,
   icon: Icon,
   label,
+  tone = "default",
   value,
-  tone,
 }: {
-  icon: typeof WalletCards;
+  detail: string;
+  icon: LucideIcon;
   label: string;
+  tone?: "default" | "pnl" | "agent" | "warn";
   value: string;
-  tone: "pnl" | "agent" | "warn";
 }) {
   const toneClass =
     tone === "pnl"
       ? "text-accent-pnl"
       : tone === "agent"
         ? "text-accent-agent"
-        : "text-warn";
+        : tone === "warn"
+          ? "text-warn"
+          : "text-text-hi";
   return (
-    <div className="flex min-h-14 items-center gap-2 border border-border-default bg-bg px-3 py-2">
-      <Icon className={`h-4 w-4 shrink-0 ${toneClass}`} />
-      <div className="min-w-0">
-        <p className="text-[10px] uppercase tracking-widest text-text-mut">
+    <div className="min-h-24 border-r border-border-default px-4 py-4 last:border-r-0 odd:border-b even:border-b md:px-5 lg:border-b-0">
+      <div className={cn("flex items-center gap-2", toneClass)}>
+        <Icon className="h-4 w-4 shrink-0" />
+        <p className="font-mono text-[10px] uppercase tracking-widest text-text-mut">
           {label}
         </p>
-        <p className={`mt-0.5 truncate font-semibold ${toneClass}`}>{value}</p>
+      </div>
+      <p className={cn("mt-3 font-mono text-2xl font-semibold", toneClass)}>
+        {value}
+      </p>
+      <p className="mt-1 font-mono text-[10px] text-text-mut">{detail}</p>
+    </div>
+  );
+}
+
+function AllocationBar({
+  targetAllocation,
+}: {
+  targetAllocation: Record<string, number | undefined> | undefined;
+}) {
+  const entries = allocationEntries(targetAllocation);
+  if (entries.length === 0) {
+    return <p className="font-mono text-xs text-text-mut">No target set</p>;
+  }
+
+  return (
+    <div>
+      <div className="flex h-4 overflow-hidden border border-border-default bg-bg">
+        {entries.map(([symbol, pct]) => (
+          <div
+            key={symbol}
+            className={cn("h-full min-w-1", tokenColor(symbol))}
+            style={{ flexBasis: `${pct}%` }}
+            title={`${symbol} ${pct}%`}
+          />
+        ))}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1">
+        {entries.map(([symbol, pct]) => (
+          <span
+            key={symbol}
+            className="border border-border-default bg-bg px-1.5 py-0.5 font-mono text-[10px] text-text-lo"
+          >
+            <span
+              className={cn("mr-1 inline-block h-2 w-2", tokenColor(symbol))}
+            />
+            {symbol} {pct}%
+          </span>
+        ))}
       </div>
     </div>
   );
 }
 
-function DemoFact({
-  label,
-  value,
-  tone = "default",
-}: {
-  label: string;
-  value: string;
-  tone?: "default" | "agent" | "warn";
-}) {
-  const valueClass =
-    tone === "agent"
-      ? "text-accent-agent"
-      : tone === "warn"
-        ? "text-warn"
-        : "text-text-hi";
+function ConfidenceBar({ confidence }: { confidence: number }) {
+  const pct = Math.max(0, Math.min(100, Math.round(confidence * 100)));
   return (
-    <div className="flex items-center justify-between gap-3 border border-border-default bg-bg px-2 py-1.5">
-      <span className="uppercase tracking-widest text-text-mut">{label}</span>
-      <span className={`truncate text-right ${valueClass}`}>{value}</span>
+    <div className="mt-3">
+      <div className="h-1.5 border border-border-default bg-bg">
+        <div className="h-full bg-accent-agent" style={{ width: `${pct}%` }} />
+      </div>
+      <p className="mt-1 font-mono text-[10px] text-text-mut">
+        confidence {pct}%
+      </p>
     </div>
   );
 }
 
-function ExploreRailSvg() {
-  return (
-    <svg
-      viewBox="0 0 520 220"
-      role="img"
-      aria-label="Demo flow showing curated data, agent reasoning, review gate, and read-only execution"
-      className="h-auto w-full border border-border-default bg-bg"
-    >
-      <defs>
-        <pattern
-          id="explore-grid"
-          width="22"
-          height="22"
-          patternUnits="userSpaceOnUse"
-        >
-          <path d="M22 0H0V22" fill="none" stroke="#242424" strokeWidth="1" />
-        </pattern>
-      </defs>
-      <rect width="520" height="220" fill="url(#explore-grid)" />
-      <path
-        d="M98 108H196H300H410"
-        fill="none"
-        stroke="#67e8f9"
-        strokeDasharray="9 7"
-        strokeWidth="4"
-      >
-        <animate
-          attributeName="stroke-dashoffset"
-          dur="2.2s"
-          from="32"
-          repeatCount="indefinite"
-          to="0"
-        />
-      </path>
-      <ExploreNode x={30} label="Demo" sublabel="curated" tone="agent" />
-      <ExploreNode x={154} label="Agent" sublabel="reasoning" tone="agent" />
-      <ExploreNode
-        x={278}
-        label="Review"
-        sublabel="approval gate"
-        tone="warn"
-      />
-      <ExploreNode x={398} label="Real" sublabel="signup only" tone="pnl" />
-      <g transform="translate(34 166)">
-        <RadioTower width="16" height="16" color="#67e8f9" />
-        <text x="24" y="13" fill="#a3a3a3" fontFamily="monospace" fontSize="10">
-          demo data is read-only
-        </text>
-      </g>
-    </svg>
-  );
-}
-
-function ExploreNode({
-  x,
+function MiniFact({
   label,
-  sublabel,
-  tone,
+  tone = "default",
+  value,
 }: {
-  x: number;
   label: string;
-  sublabel: string;
-  tone: "pnl" | "agent" | "warn";
+  tone?: "default" | "pnl" | "warn";
+  value: string;
 }) {
-  const stroke =
-    tone === "pnl" ? "#86efac" : tone === "agent" ? "#67e8f9" : "#f59e0b";
   return (
-    <g transform={`translate(${x} 62)`}>
-      <rect
-        width="92"
-        height="92"
-        fill="#111111"
-        stroke={stroke}
-        strokeWidth="3"
-      />
-      <rect x="13" y="14" width="66" height="10" fill={stroke} />
-      <text
-        x="46"
-        y="54"
-        fill="#f5f5f5"
-        fontFamily="monospace"
-        fontSize="13"
-        fontWeight="700"
-        textAnchor="middle"
+    <div className="border border-border-default bg-bg px-2 py-1.5">
+      <p className="uppercase tracking-widest text-text-mut">{label}</p>
+      <p
+        className={cn(
+          "mt-1 truncate font-semibold",
+          tone === "pnl"
+            ? "text-accent-pnl"
+            : tone === "warn"
+              ? "text-warn"
+              : "text-text-hi",
+        )}
       >
-        {label}
-      </text>
-      <text
-        x="46"
-        y="72"
-        fill="#a3a3a3"
-        fontFamily="monospace"
-        fontSize="9"
-        textAnchor="middle"
-      >
-        {sublabel}
-      </text>
-    </g>
+        {value}
+      </p>
+    </div>
   );
 }
 
-function targetSummary(
+function allocationEntries(
   targetAllocation: Record<string, number | undefined> | undefined,
-): string {
-  if (!targetAllocation) return "not set";
+) {
+  if (!targetAllocation) return [];
   return Object.entries(targetAllocation)
     .filter((entry): entry is [string, number] => (entry[1] ?? 0) > 0)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3)
-    .map(([symbol, pct]) => `${symbol} ${pct}%`)
-    .join(" / ");
+    .sort((a, b) => b[1] - a[1]);
+}
+
+function regimeTone(regime: AgentDecision["regime"]) {
+  if (regime === "risk_on") return "pnl";
+  if (regime === "risk_off") return "risk";
+  return "neutral";
+}
+
+function riskTone(risk: string | undefined) {
+  if (risk === "aggressive") return "risk";
+  if (risk === "conservative") return "pnl";
+  return "neutral";
+}
+
+function tokenColor(symbol: string) {
+  const normalized = symbol.toUpperCase();
+  if (["USDC", "USYC"].includes(normalized)) return "bg-accent-pnl";
+  if (["BTC", "CBBTC"].includes(normalized)) return "bg-text-hi";
+  if (normalized === "ETH") return "bg-warn";
+  if (["SOL", "LINK", "UNI"].includes(normalized)) return "bg-risk";
+  if (normalized === "EURC") return "bg-text-mut";
+  return "bg-raised";
 }
 
 function portfolioThesis(risk: string | undefined) {

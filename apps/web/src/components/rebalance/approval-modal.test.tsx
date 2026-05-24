@@ -119,6 +119,63 @@ describe("<ApprovalModal />", () => {
     act(() => root.unmount());
   });
 
+  it("does not double-count the bridge in the deploy headline", () => {
+    // Screenshot scenario: $412 swapped on Base, funded partly by a $372
+    // Arc→Base bridge. The headline must show the real $412 deployed, not
+    // $412 + $372 = $784 (the bridge relocates USDC the swap then spends).
+    const plan: RebalancePlanResponse = {
+      rebalanceId: "rebalance-4",
+      decisionId: "decision-4",
+      executionMode: "real",
+      totalLegs: 3,
+      legs: [
+        {
+          legIndex: 0,
+          kind: "local_swap",
+          srcChain: "base",
+          destChain: "base",
+          srcSymbol: "USDC",
+          destSymbol: "cbBTC",
+          amountUsdc: 412,
+        },
+        {
+          legIndex: 1,
+          kind: "cross_chain_burn",
+          srcChain: "arc",
+          destChain: "base",
+          srcSymbol: "USDC",
+          destSymbol: "USDC",
+          amountUsdc: 372,
+        },
+        {
+          legIndex: 2,
+          kind: "cross_chain_mint",
+          srcChain: "arc",
+          destChain: "base",
+          srcSymbol: "USDC",
+          destSymbol: "USDC",
+          amountUsdc: 372,
+        },
+      ],
+    };
+
+    const { root, container } = render(
+      <ApprovalModal
+        open
+        plan={plan}
+        estimatedFeeUsdc={0.01}
+        onApproved={() => {}}
+        onClose={() => {}}
+      />,
+    );
+
+    const text = container.textContent ?? "";
+    expect(text).toContain("Deploy $412.00 of wallet USDC");
+    expect(text).not.toContain("$784.00");
+
+    act(() => root.unmount());
+  });
+
   it("hides internal route blocker details from the approval copy", () => {
     const plan: RebalancePlanResponse = {
       rebalanceId: "rebalance-3",

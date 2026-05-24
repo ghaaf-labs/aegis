@@ -72,13 +72,13 @@ impl FallbackProvider {
         let mut misses = Vec::new();
         let cache = self.cache.lock().unwrap();
         for s in symbols {
-            match cache.get(s.ticker) {
+            match cache.get(s.symbol) {
                 Some((at, q)) if now.duration_since(*at) < CACHE_TTL => hits.push(q.clone()),
                 _ => {
                     // Re-resolve to a 'static reference via the symbol table —
                     // a fresh request never carries borrowed lifetimes past
                     // the cache.
-                    if let Some(sym) = super::provider::lookup_symbol(s.ticker) {
+                    if let Some(sym) = super::lookup_symbol(s.symbol) {
                         misses.push(sym);
                     }
                 }
@@ -160,7 +160,7 @@ impl PriceProvider for FallbackProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::prices::provider::lookup_symbol;
+    use crate::modules::prices::lookup_symbol;
 
     struct FixedProvider {
         name: &'static str,
@@ -173,7 +173,7 @@ mod tests {
             Ok(symbols
                 .iter()
                 .map(|s| SpotQuote {
-                    ticker: s.ticker,
+                    ticker: s.symbol,
                     price_usd: self.quote,
                     change_24h: 0.0,
                     change_7d: 0.0,

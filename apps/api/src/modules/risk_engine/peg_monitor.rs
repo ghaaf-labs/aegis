@@ -24,12 +24,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::Decimal;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::db::Db;
+use crate::modules::rebalance::executor::create_plan;
+use crate::modules::rebalance::models::{ChainKey, PlanInput, PlannedLeg};
+use crate::modules::rebalance::planner::plan_legs;
 use crate::modules::sse::{PegAlertPayload, SseEvent};
 use crate::router::AppState;
 
@@ -86,7 +91,7 @@ pub struct PegRuleRow {
     pub user_id: Uuid,
     pub portfolio_id: Option<Uuid>,
     pub asset: String,
-    pub threshold_price: f64,
+    pub threshold_price: Decimal,
     pub window_seconds: i32,
     pub action_kind: String,
     pub target_asset: Option<String>,
@@ -196,7 +201,11 @@ async fn tick_once(state: &AppState, monitor: &PegMonitor) -> anyhow::Result<()>
             continue;
         }
         let buf = monitor.snapshot(rule.id).await;
-        if !should_fire(&buf, rule.threshold_price, rule.window_seconds as i64) {
+        if !should_fire(
+            &buf,
+            rule.threshold_price.to_f64().unwrap_or(0.0),
+            rule.window_seconds as i64,
+        ) {
             continue;
         }
 
@@ -246,12 +255,13 @@ async fn handle_fire(
         .execute(&state.db)
         .await?;
 
+    let threshold_f64 = rule.threshold_price.to_f64().unwrap_or(0.0);
     let payload = PegAlertPayload {
         user_id: rule.user_id,
         rule_id: rule.id,
         asset: rule.asset.clone(),
         observed_price: sample.price,
-        threshold_price: rule.threshold_price,
+        threshold_price: threshold_f64,
         observed_at: sample.observed_at,
         action_taken: action_taken.clone(),
         rebalance_id,
@@ -261,7 +271,7 @@ async fn handle_fire(
         rule_id=%rule.id,
         asset=%rule.asset,
         price=sample.price,
-        threshold=rule.threshold_price,
+        threshold=threshold_f64,
         action=%action_taken,
         "peg rule fired"
     );
@@ -323,49 +333,11 @@ async fn propose_defensive_plan(
     state: &AppState,
     rule: &PegRuleRow,
 ) -> anyhow::Result<Option<Uuid>> {
-    use crate::modules::rebalance::executor::create_plan;
-    use crate::modules::rebalance::models::{ChainKey, PlanInput};
-    use crate::modules::rebalance::planner::plan_legs;
-
-    // Resolve target portfolio: prefer the rule's pinned portfolio_id,
-    // fall back to the user's most-recently-updated portfolio. Multi-portfolio
-    // fan-out (one defensive plan per portfolio) is left as F-PEG-9.
-    let portfolio_id: Option<Uuid> = match rule.portfolio_id {
-        Some(pid) => Some(pid),
-        None => {
-            sqlx::query_scalar(
-                "SELECT id FROM portfolios WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 1",
-            )
-            .bind(rule.user_id)
-            .fetch_optional(&state.db)
-            .await?
-        }
-    };
-    let Some(portfolio_id) = portfolio_id else {
-        warn!(rule_id=%rule.id, user_id=%rule.user_id, "peg rule has no portfolio; skipping defensive plan");
+    let Some((portfolio_id, total_value_usd, current_weights)) =
+        load_defensive_portfolio(state, rule).await?
+    else {
         return Ok(None);
     };
-
-    // Portfolio value + current allocation (weights are 0–100 in DB; planner
-    // wants 0–1 fractions).
-    let total_value_usd: f64 = sqlx::query_scalar(
-        "SELECT total_value_usd::DOUBLE PRECISION FROM portfolios WHERE id = $1",
-    )
-    .bind(portfolio_id)
-    .fetch_one(&state.db)
-    .await?;
-
-    let allocations: Vec<(String, f64)> = sqlx::query_as(
-        "SELECT asset_symbol, current_weight::DOUBLE PRECISION FROM allocations WHERE portfolio_id = $1",
-    )
-    .bind(portfolio_id)
-    .fetch_all(&state.db)
-    .await?;
-
-    let mut current_weights: HashMap<String, f64> = HashMap::new();
-    for (sym, w) in &allocations {
-        current_weights.insert(sym.clone(), w / 100.0);
-    }
 
     let depegged_asset = rule.asset.to_uppercase();
     // Repoint the defensive sleeve to a target that can actually execute today.
@@ -392,56 +364,10 @@ async fn propose_defensive_plan(
         return Ok(None);
     };
 
-    // Best-effort recent prices for min_out computation. Missing prices fall
-    // back to the planner's internal defaults.
-    let relevant_symbols: Vec<String> = current_weights
-        .keys()
-        .chain(target_weights.keys())
-        .cloned()
-        .collect::<std::collections::HashSet<_>>()
-        .into_iter()
-        .collect();
-    let prices = if relevant_symbols.is_empty() {
-        HashMap::new()
-    } else {
-        crate::modules::market_data::service::get_historical_prices(
-            &state.db,
-            &relevant_symbols,
-            chrono::Utc::now(),
-        )
-        .await
-        .unwrap_or_default()
-    };
+    let prices = recent_defensive_prices(state, &current_weights, &target_weights).await;
 
-    // Seed the planner with the user's real Gateway USDC per chain. A defensive
-    // move converts the depegged USDC into the target stable, so the buy leg
-    // must be able to fund from the USDC actually in the wallet — a zero pool
-    // makes every buy `consumed == 0`, so no legs are emitted and the alert
-    // surfaces a plan that can't execute. If Gateway is unavailable we can't
-    // build a safe plan, so the alert downgrades to no plan rather than guessing.
-    let usdc_per_chain = match crate::modules::gateway::service::fetch_balance_for_user(
-        &state.db,
-        &state.http,
-        &state.config,
-        rule.user_id,
-    )
-    .await
-    {
-        Ok(balance) => {
-            let mut pool: HashMap<ChainKey, f64> = HashMap::new();
-            pool.insert(ChainKey::Arc, 0.0);
-            pool.insert(ChainKey::Base, 0.0);
-            for (chain, amount) in balance.per_chain {
-                if let Some(key) = ChainKey::parse(chain.to_lowercase().as_str()) {
-                    pool.insert(key, amount);
-                }
-            }
-            pool
-        }
-        Err(e) => {
-            warn!(rule_id=%rule.id, error=%e, "peg defense: gateway balance unavailable; no defensive plan");
-            return Ok(None);
-        }
+    let Some(usdc_per_chain) = fetch_usdc_pool(state, rule).await else {
+        return Ok(None);
     };
 
     let input = PlanInput {
@@ -465,14 +391,148 @@ async fn propose_defensive_plan(
         return Ok(None);
     }
 
-    // Synthetic agent_decisions row anchors the rebalance (rebalances.decision_id is NOT NULL).
-    // `triggered_by='peg_alert'` is a new variant; shared TS type already accepts
-    // unknown strings via the `(string & {})` union.
+    let rebalance_id = persist_defensive_plan(
+        state,
+        portfolio_id,
+        rule,
+        &target_asset,
+        depegged_weight,
+        &legs,
+    )
+    .await?;
+    info!(
+        rule_id=%rule.id,
+        %rebalance_id,
+        legs_count = legs.len(),
+        action = %rule.action_kind,
+        "peg-defense plan persisted"
+    );
+
+    Ok(Some(rebalance_id))
+}
+
+/// Resolve the portfolio a peg rule defends and load its current allocation.
+/// Prefers the rule's pinned `portfolio_id`, else the user's most-recently
+/// updated portfolio (multi-portfolio fan-out is a later follow-up). Returns
+/// `None` when the user has no portfolio. DB weights are 0–100; the planner
+/// wants 0–1 fractions, so they're normalized here.
+async fn load_defensive_portfolio(
+    state: &AppState,
+    rule: &PegRuleRow,
+) -> anyhow::Result<Option<(Uuid, f64, HashMap<String, f64>)>> {
+    let portfolio_id: Option<Uuid> = match rule.portfolio_id {
+        Some(pid) => Some(pid),
+        None => {
+            sqlx::query_scalar(
+                "SELECT id FROM portfolios WHERE user_id = $1 ORDER BY updated_at DESC LIMIT 1",
+            )
+            .bind(rule.user_id)
+            .fetch_optional(&state.db)
+            .await?
+        }
+    };
+    let Some(portfolio_id) = portfolio_id else {
+        warn!(rule_id=%rule.id, user_id=%rule.user_id, "peg rule has no portfolio; skipping defensive plan");
+        return Ok(None);
+    };
+
+    let total_value_usd: f64 = sqlx::query_scalar(
+        "SELECT total_value_usd::DOUBLE PRECISION FROM portfolios WHERE id = $1",
+    )
+    .bind(portfolio_id)
+    .fetch_one(&state.db)
+    .await?;
+
+    let allocations: Vec<(String, f64)> = sqlx::query_as(
+        "SELECT asset_symbol, current_weight::DOUBLE PRECISION FROM allocations WHERE portfolio_id = $1",
+    )
+    .bind(portfolio_id)
+    .fetch_all(&state.db)
+    .await?;
+
+    let current_weights = allocations
+        .into_iter()
+        .map(|(sym, w)| (sym, w / 100.0))
+        .collect();
+    Ok(Some((portfolio_id, total_value_usd, current_weights)))
+}
+
+/// Best-effort recent USD prices for every symbol involved in the move (the
+/// planner uses them for `min_out`). An empty symbol set or a failed lookup
+/// yields an empty map, and the planner falls back to its internal defaults.
+async fn recent_defensive_prices(
+    state: &AppState,
+    current_weights: &HashMap<String, f64>,
+    target_weights: &HashMap<String, f64>,
+) -> HashMap<String, f64> {
+    let relevant_symbols: Vec<String> = current_weights
+        .keys()
+        .chain(target_weights.keys())
+        .cloned()
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    if relevant_symbols.is_empty() {
+        return HashMap::new();
+    }
+    crate::modules::market_data::service::get_historical_prices(
+        &state.db,
+        &relevant_symbols,
+        chrono::Utc::now(),
+    )
+    .await
+    .unwrap_or_default()
+}
+
+/// The user's real Gateway USDC per chain (Arc + Base seeded to 0). A defensive
+/// move converts the depegged USDC into the target stable, so the buy leg must
+/// fund from the USDC actually in the wallet — a missing balance means we can't
+/// build a safe plan, so this returns `None` and the caller downgrades to an
+/// alert with no plan rather than guessing a pool.
+async fn fetch_usdc_pool(state: &AppState, rule: &PegRuleRow) -> Option<HashMap<ChainKey, f64>> {
+    match crate::modules::gateway::service::fetch_balance_for_user(
+        &state.db,
+        &state.http,
+        &state.config,
+        rule.user_id,
+    )
+    .await
+    {
+        Ok(balance) => {
+            let mut pool: HashMap<ChainKey, f64> = HashMap::new();
+            pool.insert(ChainKey::Arc, 0.0);
+            pool.insert(ChainKey::Base, 0.0);
+            for (chain, amount) in balance.per_chain {
+                if let Some(key) = ChainKey::parse(chain.to_lowercase().as_str()) {
+                    pool.insert(key, amount);
+                }
+            }
+            Some(pool)
+        }
+        Err(e) => {
+            warn!(rule_id=%rule.id, error=%e, "peg defense: gateway balance unavailable; no defensive plan");
+            None
+        }
+    }
+}
+
+/// Persist a defensive plan: a synthetic `peg_alert` agent_decisions row anchors
+/// the rebalance (rebalances.decision_id is NOT NULL), then the planned rebalance
+/// itself. `triggered_by='peg_alert'` is accepted by the shared TS type via its
+/// `(string & {})` union. Returns the new rebalance id.
+async fn persist_defensive_plan(
+    state: &AppState,
+    portfolio_id: Uuid,
+    rule: &PegRuleRow,
+    target_asset: &str,
+    depegged_weight: f64,
+    legs: &[PlannedLeg],
+) -> anyhow::Result<Uuid> {
     let reasoning = format!(
         "Peg-defense: {asset} observed at or below {threshold:.4} for the configured window; \
          shifting {pct}% of portfolio from {asset} into {target}.",
-        asset = depegged_asset,
-        threshold = rule.threshold_price,
+        asset = rule.asset.to_uppercase(),
+        threshold = rule.threshold_price.to_f64().unwrap_or(0.0),
         pct = (depegged_weight * 100.0).round() as i64,
         target = target_asset,
     );
@@ -486,16 +546,7 @@ async fn propose_defensive_plan(
     .fetch_one(&state.db)
     .await?;
 
-    let rebalance_id = create_plan(state, portfolio_id, decision_id, &legs).await?;
-    info!(
-        rule_id=%rule.id,
-        %rebalance_id,
-        legs_count = legs.len(),
-        action = %rule.action_kind,
-        "peg-defense plan persisted"
-    );
-
-    Ok(Some(rebalance_id))
+    Ok(create_plan(state, portfolio_id, decision_id, legs).await?)
 }
 
 /// Sample the current stablecoin prices via the platform price provider.
@@ -649,12 +700,21 @@ mod tests {
         cfg.chains[ChainKey::Base.index()].private_key = "0xbb".into();
         cfg.chains[ChainKey::Base.index()].usdc =
             "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
-        cfg.eurc_base = "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42".into();
+        cfg.set_token_address(
+            "EURC",
+            ChainKey::Base,
+            "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42",
+        );
         // The Base swap venue must be wired for EURC to count as executable.
         cfg.chains[ChainKey::Base.index()].swap_router =
             "0x1111111111111111111111111111111111111111".into();
         cfg.chains[ChainKey::Base.index()].swap_quoter =
             "0x2222222222222222222222222222222222222222".into();
+        // ...and EURC must be in the chain's liquid-venue allowlist: the default
+        // curates Base execution to ETH only (EURC/cbBTC have no usable Base
+        // Sepolia pool), so this test opts EURC in to prove the wired-sleeve path.
+        cfg.swap_liquid_tokens
+            .insert(ChainKey::Base, vec!["ETH".into(), "EURC".into()]);
 
         // USYC is disabled by default → never an executable stable, never chosen.
         assert!(!is_executable_stable(&cfg, "USYC"));
@@ -842,12 +902,13 @@ mod tests {
     }
 
     fn sample_rule() -> PegRuleRow {
+        use rust_decimal_macros::dec;
         PegRuleRow {
             id: Uuid::nil(),
             user_id: Uuid::nil(),
             portfolio_id: None,
             asset: "USDC".into(),
-            threshold_price: 0.995,
+            threshold_price: dec!(0.995),
             window_seconds: 300,
             action_kind: "alert".into(),
             target_asset: None,

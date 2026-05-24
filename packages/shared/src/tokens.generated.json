@@ -1,0 +1,142 @@
+[
+  {
+    "symbol": "USDC",
+    "label": "Cash (USDC)",
+    "designable": true,
+    "comingSoon": false,
+    "class": "stable"
+  },
+  {
+    "symbol": "USYC",
+    "label": "US Yield Coin",
+    "designable": true,
+    "comingSoon": true,
+    "class": "yield"
+  },
+  {
+    "symbol": "EURC",
+    "label": "Euro Coin",
+    "designable": true,
+    "comingSoon": false,
+    "class": "fx_stable"
+  },
+  {
+    "symbol": "ETH",
+    "label": "Ethereum",
+    "designable": true,
+    "comingSoon": false,
+    "class": "volatile"
+  },
+  {
+    "symbol": "cbBTC",
+    "label": "Bitcoin",
+    "designable": true,
+    "comingSoon": false,
+    "class": "volatile"
+  },
+  {
+    "symbol": "cbETH",
+    "label": "Staked ETH",
+    "designable": true,
+    "comingSoon": false,
+    "class": "volatile"
+  },
+  {
+    "symbol": "AERO",
+    "label": "Aerodrome",
+    "designable": true,
+    "comingSoon": false,
+    "class": "volatile"
+  },
+  {
+    "symbol": "LINK",
+    "label": "Chainlink",
+    "designable": true,
+    "comingSoon": false,
+    "class": "volatile"
+  },
+  {
+    "symbol": "UNI",
+    "label": "Uniswap",
+    "designable": true,
+    "comingSoon": false,
+    "class": "volatile"
+  },
+  {
+    "symbol": "sUSDS",
+    "label": "Savings USDS",
+    "designable": false,
+    "comingSoon": false,
+    "class": "volatile"
+  },
+  {
+    "symbol": "WBTC",
+    "label": "Wrapped BTC",
+    "designable": false,
+    "comingSoon": false,
+    "class": "volatile"
+  },
+  {
+    "symbol": "BTC",
+    "label": "Bitcoin (spot)",
+    "designable": false,
+    "comingSoon": false,
+    "class": "volatile"
+  },
+  {
+    "symbol": "SOL",
+    "label": "Solana",
+    "designable": false,
+    "comingSoon": false,
+    "class": "volatile"
+  },
+  {
+    "symbol": "BNB",
+    "label": "BNB",
+    "designable": false,
+    "comingSoon": false,
+    "class": "volatile"
+  },
+  {
+    "symbol": "AVAX",
+    "label": "Avalanche",
+    "designable": false,
+    "comingSoon": false,
+    "class": "volatile"
+  },
+  {
+    "symbol": "MATIC",
+    "label": "Polygon",
+    "designable": false,
+    "comingSoon": false,
+    "class": "volatile"
+  },
+  {
+    "symbol": "USDT",
+    "label": "Tether",
+    "designable": false,
+    "comingSoon": false,
+    "class": "stable"
+  },
+  {
+    "symbol": "DAI",
+    "label": "Dai",
+    "designable": false,
+    "comingSoon": false,
+    "class": "stable"
+  },
+  {
+    "symbol": "USDS",
+    "label": "USDS",
+    "designable": false,
+    "comingSoon": false,
+    "class": "stable"
+  },
+  {
+    "symbol": "FRAX",
+    "label": "Frax",
+    "designable": false,
+    "comingSoon": false,
+    "class": "stable"
+  }
+]

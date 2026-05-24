@@ -41,6 +41,8 @@ export default function RebalancePage({ params }: PageProps) {
   const [approved, setApproved] = useState(false);
   const [planStatus, setPlanStatus] = useState<string>("planned");
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [freshReviewLoading, setFreshReviewLoading] = useState(false);
+  const [freshReviewError, setFreshReviewError] = useState<string | null>(null);
   const [decision, setDecision] = useState<AgentDecision | null>(null);
   const [approvalSafety, setApprovalSafety] =
     useState<RebalanceApprovalSafety | null>(null);
@@ -48,6 +50,18 @@ export default function RebalancePage({ params }: PageProps) {
 
   useEffect(() => {
     let cancelled = false;
+    setShowApproval(true);
+    setApproved(false);
+    setPlanStatus("planned");
+    setPlan(null);
+    setPortfolioId(null);
+    setEstimatedFee(0);
+    setFeeFetchedAt(null);
+    setFeeSource("plan");
+    setLoadError(null);
+    setFreshReviewError(null);
+    setDecision(null);
+    setApprovalSafety(null);
     void rebalanceApi
       .get(planId)
       .then((detail) => {
@@ -117,6 +131,24 @@ export default function RebalancePage({ params }: PageProps) {
       cancelled = true;
     };
   }, [planId]);
+
+  const handleFreshReview = async () => {
+    if (!portfolioId || freshReviewLoading) return;
+    setFreshReviewLoading(true);
+    setFreshReviewError(null);
+    try {
+      const fresh = await rebalanceApi.plan(portfolioId);
+      router.replace(`/rebalance/${fresh.rebalanceId}`);
+    } catch (e) {
+      const raw =
+        e instanceof Error ? e.message : "Could not build a fresh review";
+      setFreshReviewError(
+        raw.replace(/^\d{3}:\s*/, "").replace(/^conflict:\s*/i, ""),
+      );
+    } finally {
+      setFreshReviewLoading(false);
+    }
+  };
 
   if (loadError) {
     const missing = loadError.includes("404");
@@ -215,12 +247,55 @@ export default function RebalancePage({ params }: PageProps) {
         </header>
 
         {approved ? (
-          <ExecutionTrace
-            rebalanceId={planId}
-            sseUrl={SSE_URL}
-            executionMode={plan?.executionMode}
-            onStatusChange={setPlanStatus}
-          />
+          <>
+            {planStatus === "failed" && (
+              <section
+                role="alert"
+                className="border-brutal border-risk/50 bg-risk/5 p-4 font-mono"
+              >
+                <p className="text-[10px] uppercase tracking-widest text-risk">
+                  Execution stopped
+                </p>
+                <h2 className="mt-2 text-lg font-semibold text-text-hi">
+                  Build a fresh review from current balances
+                </h2>
+                <p className="mt-2 max-w-3xl text-xs leading-relaxed text-text-lo">
+                  This review already failed and cannot be approved again. Some
+                  earlier legs may have changed wallet balances, so the next
+                  review must re-read Circle and size a new executable route.
+                </p>
+                <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                  <button
+                    type="button"
+                    onClick={() => void handleFreshReview()}
+                    disabled={!portfolioId || freshReviewLoading}
+                    className="inline-flex min-h-11 flex-1 items-center justify-center border-brutal border-black bg-accent-pnl px-4 text-sm font-semibold text-black shadow-brutal-sm hover:shadow-brutal disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {freshReviewLoading
+                      ? "Building fresh review..."
+                      : "Build fresh review"}
+                  </button>
+                  <Link
+                    href={portfolioId ? `/dashboard/${portfolioId}` : "/"}
+                    className="inline-flex min-h-11 flex-1 items-center justify-center border border-border-default bg-bg px-4 text-sm text-text-lo hover:border-border-hi hover:text-text-hi"
+                  >
+                    Back to dashboard
+                  </Link>
+                </div>
+                {freshReviewError && (
+                  <p className="mt-3 border border-risk/40 bg-risk/5 px-3 py-2 text-xs text-risk">
+                    {freshReviewError}
+                  </p>
+                )}
+              </section>
+            )}
+            <ExecutionTrace
+              rebalanceId={planId}
+              sseUrl={SSE_URL}
+              executionMode={plan?.executionMode}
+              onStatusChange={setPlanStatus}
+            />
+          </>
         ) : (
           <p className="text-sm text-text-lo">
             {approvalSafety?.approvable === false

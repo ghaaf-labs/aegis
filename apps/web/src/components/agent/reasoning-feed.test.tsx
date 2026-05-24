@@ -153,6 +153,113 @@ describe("<AgentReasoningFeed />", () => {
 
     act(() => root.unmount());
   });
+
+  it("keeps no-move monitor checks collapsed in Current", () => {
+    const moveDecision = {
+      id: "decision-move",
+      portfolioId: PORTFOLIO.id,
+      reasoning: "Move idle cash into the target allocation.",
+      recommendation: {
+        summary: "Move idle cash",
+        trades: [
+          {
+            symbol: "ETH",
+            action: "buy",
+            valueUsd: 100,
+            reason: "Base route",
+          },
+        ],
+        expectedImpact: {
+          riskDelta: 0,
+          diversificationScore: 0,
+        },
+      },
+      confidence: 0.91,
+      triggeredBy: "user_request",
+      createdAt: "2026-05-20T00:00:00Z",
+    } as unknown as AgentDecision;
+    const holdDecision = {
+      ...moveDecision,
+      id: "decision-hold",
+      reasoning: "Portfolio remains inside target bands.",
+      recommendation: {
+        summary: "No move needed",
+        trades: [],
+        expectedImpact: {
+          riskDelta: 0,
+          diversificationScore: 0,
+        },
+      },
+      confidence: 0.86,
+    } as unknown as AgentDecision;
+
+    usePortfolioStore.setState({
+      portfolios: [PORTFOLIO],
+      portfoliosLoaded: true,
+      activePortfolioId: PORTFOLIO.id,
+      decisions: [moveDecision, holdDecision],
+      unifiedUsdc: 500,
+    });
+
+    const { root, container } = render(<AgentReasoningFeed />);
+    const text = container.textContent ?? "";
+
+    expect(text).toContain("Current (1)");
+    expect(text).toContain("Move $100.00 to ETH");
+    expect(text).toContain("+ 1 monitor check reports no movement needed.");
+    expect(text).not.toContain("Portfolio remains inside target bands.");
+
+    act(() => root.unmount());
+  });
+
+  it("renders many future trade legs with arbitrary token symbols", () => {
+    const trades = Array.from({ length: 18 }, (_, i) => ({
+      symbol: `TOKEN${i + 1}`,
+      action: "buy",
+      valueUsd: 10 + i,
+      reason: i % 2 === 0 ? "Base route" : "Arc route",
+    }));
+    const largeDecision = {
+      id: "decision-many-legs",
+      portfolioId: PORTFOLIO.id,
+      reasoning: "Split across a wider token set.",
+      recommendation: {
+        summary: "Move into a wider token basket",
+        trades,
+        expectedImpact: {
+          riskDelta: 0,
+          diversificationScore: 0,
+        },
+      },
+      confidence: 0.89,
+      triggeredBy: "user_request",
+      createdAt: "2026-05-20T00:00:00Z",
+      modelSlug: "provider/future-model-with-a-long-routing-slug",
+    } as unknown as AgentDecision;
+
+    usePortfolioStore.setState({
+      portfolios: [PORTFOLIO],
+      portfoliosLoaded: true,
+      activePortfolioId: PORTFOLIO.id,
+      decisions: [largeDecision],
+      unifiedUsdc: 1_000,
+    });
+
+    const { root, container } = render(<AgentReasoningFeed />);
+    const text = container.textContent ?? "";
+
+    expect(text).toContain("18 legs");
+    expect(text).toContain(
+      "Move $333.00 to TOKEN1 / TOKEN2 / TOKEN3 / TOKEN4 / TOKEN5 + 13 more",
+    );
+    expect(text).toContain("TOKEN18");
+    expect(text).toContain("$27.00");
+    expect(text).toContain("provider/future-model-with-a-long-routing-slug");
+    expect(container.querySelector("table")).toBeTruthy();
+    expect(container.querySelectorAll("tbody tr")).toHaveLength(18);
+
+    act(() => root.unmount());
+  });
 });
 
 function render(element: React.ReactElement): {

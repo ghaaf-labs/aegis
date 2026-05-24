@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -8,8 +9,10 @@ pub struct Portfolio {
     pub id: Uuid,
     pub user_id: Uuid,
     pub name: String,
-    pub total_value_usd: f64,
-    pub total_pnl_usd: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub total_value_usd: Decimal,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub total_pnl_usd: Decimal,
     pub total_pnl_pct: f64,
     pub risk_score: i32,
     /// Goal-wizard output (Sprint 2). JSONB column; opaque to Rust until the
@@ -26,10 +29,12 @@ pub struct Allocation {
     pub id: Uuid,
     pub portfolio_id: Uuid,
     pub asset_symbol: String,
-    pub quantity: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub quantity: Decimal,
     pub target_weight: f64,
     pub current_weight: f64,
-    pub value_usd: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub value_usd: Decimal,
 }
 
 #[derive(Debug, Serialize)]
@@ -141,12 +146,13 @@ mod tests {
 
     #[test]
     fn portfolio_serializes_camel_case_keys() {
+        use rust_decimal_macros::dec;
         let p = Portfolio {
             id: Uuid::nil(),
             user_id: Uuid::nil(),
             name: "x".into(),
-            total_value_usd: 1.0,
-            total_pnl_usd: 2.0,
+            total_value_usd: dec!(1.0),
+            total_pnl_usd: dec!(2.0),
             total_pnl_pct: 0.5,
             risk_score: 50,
             goal: serde_json::json!({}),

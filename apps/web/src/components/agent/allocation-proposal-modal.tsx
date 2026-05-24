@@ -1,11 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
 
 import { agentApi, portfolioApi } from "@/lib/api";
+import { pollDecisionReady } from "@/lib/decision-poll";
 import type { AgentDecision, AssetSymbol, RiskTolerance } from "@/types";
 import { usePortfolioStore } from "@/stores/portfolio";
 import { ConstitutionClauseBadge } from "@/components/agent/constitution-clause-badge";
+import {
+  allocationDisplayMeta,
+  type RouteStateLabel,
+} from "@/lib/route-capabilities";
 import { ModelBadge } from "@aegis/ui";
 
 // Read-only target donut palette. Money/PnL surfaces use green; this is a
@@ -53,6 +59,14 @@ function allocationRows(
     .sort((a, b) => b.weight - a.weight);
 }
 
+function routeStateBadgeClass(state: RouteStateLabel): string {
+  // On-palette neutral tiers — route state is informational and must not borrow
+  // the green=money / cyan=agent accents.
+  return state === "executes-now"
+    ? "border-border-hi text-text-lo"
+    : "border-border-default text-text-mut";
+}
+
 const RISK_STEPS: { value: RiskTolerance; label: string }[] = [
   { value: "conservative", label: "Conservative" },
   { value: "moderate", label: "Moderate" },
@@ -73,7 +87,7 @@ interface AllocationProposalModalProps {
   /** Fired after the proposal is approved and the portfolio is refreshed.
    * The dashboard uses this to surface the "Review deployment plan" CTA and
    * trigger the existing deploy flow. */
-  onApproved: () => void;
+  onApproved: () => void | Promise<void>;
 }
 
 export function AllocationProposalModal({
@@ -87,19 +101,28 @@ export function AllocationProposalModal({
   const [current, setCurrent] = useState<AgentDecision | null>(decision);
   const [reproposing, setReproposing] = useState<RiskTolerance | null>(null);
   const [approving, setApproving] = useState(false);
-  const [approved, setApproved] = useState(false);
+  const [openingReview, setOpeningReview] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+  const parentDecisionIdRef = useRef(decision?.id ?? null);
 
-  // Keep the rendered proposal in sync when the parent swaps decisions.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!decision || reproposing || approving || openingReview) return;
+    if (parentDecisionIdRef.current === decision.id) return;
+    parentDecisionIdRef.current = decision.id;
+    setCurrent(decision);
+  }, [decision, reproposing, approving, openingReview]);
+
+  // Keep the rendered proposal stable while a re-propose job is running. The
+  // ready result replaces it atomically so the modal never blanks out.
   const active = current ?? decision;
-  if (decision && current && decision.id !== current.id && !reproposing) {
-    // A new decision flowed in from the parent (e.g. via ?proposal=). Adopt it.
-    setCurrent(decision);
-  }
-  if (!current && decision) {
-    setCurrent(decision);
-  }
-
   if (!open || !active) return null;
 
   const { headlinePct, rawPct, isCalibrated } = pickHeadlineConfidence(active);
@@ -112,21 +135,29 @@ export function AllocationProposalModal({
     active.criticVerdict?.verdict === "revised";
 
   const handleRepropose = async (risk: RiskTolerance) => {
+    const step = RISK_STEPS.find((item) => item.value === risk);
     setReproposing(risk);
     setError(null);
     try {
-      const next = await agentApi.proposeAllocation(portfolioId, risk);
+      const queued = await agentApi.proposeAllocation(portfolioId, risk);
+      const next = await pollDecisionReady(queued.id, () => mountedRef.current);
+      if (!mountedRef.current) return;
       setCurrent(next);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not re-propose.");
+      setError(
+        e instanceof Error
+          ? e.message
+          : `Could not design a ${step?.label.toLowerCase() ?? risk} plan.`,
+      );
     } finally {
-      setReproposing(null);
+      if (mountedRef.current) setReproposing(null);
     }
   };
 
   const handleApprove = async () => {
     if (!active) return;
     setApproving(true);
+    setOpeningReview(false);
     setError(null);
     try {
       await agentApi.approveAllocation(active.id);
@@ -139,13 +170,23 @@ export function AllocationProposalModal({
       } catch {
         /* the SSE/store refresh will catch up; don't block the success path */
       }
-      setApproved(true);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Approval failed.");
-    } finally {
+      if (!mountedRef.current) return;
       setApproving(false);
+      setOpeningReview(true);
+      await onApproved();
+    } catch (e) {
+      if (mountedRef.current) {
+        setOpeningReview(false);
+        setError(e instanceof Error ? e.message : "Approval failed.");
+      }
+    } finally {
+      if (mountedRef.current) setApproving(false);
     }
   };
+  const busy = approving || openingReview || reproposing !== null;
+  const reproposingLabel = RISK_STEPS.find(
+    (step) => step.value === reproposing,
+  )?.label.toLowerCase();
 
   return (
     <div
@@ -230,28 +271,43 @@ export function AllocationProposalModal({
               </p>
             ) : (
               <div className="space-y-2">
-                {rows.map((row, i) => (
-                  <div key={row.symbol} className="grid gap-1 font-mono">
-                    <div className="flex items-center justify-between gap-3 text-xs">
-                      <span className="min-w-0 truncate text-text-lo">
-                        {row.symbol}
-                      </span>
-                      <span className="shrink-0 font-semibold text-text-hi tabular-nums">
-                        {row.weight.toFixed(0)}%
-                      </span>
+                {rows.map((row, i) => {
+                  const meta = allocationDisplayMeta(
+                    row.symbol,
+                    active.routeStates?.[row.symbol as AssetSymbol],
+                  );
+                  return (
+                    <div key={row.symbol} className="grid gap-1 font-mono">
+                      <div className="flex items-center justify-between gap-3 text-xs">
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          <span className="truncate text-text-lo">
+                            {meta.label}
+                          </span>
+                          <span
+                            className={`shrink-0 whitespace-nowrap border px-1 py-px text-[9px] uppercase tracking-wider ${routeStateBadgeClass(
+                              meta.routeState,
+                            )}`}
+                          >
+                            {meta.badge}
+                          </span>
+                        </span>
+                        <span className="shrink-0 font-semibold text-text-hi tabular-nums">
+                          {row.weight.toFixed(0)}%
+                        </span>
+                      </div>
+                      <div className="h-1.5 border border-border-default bg-bg">
+                        <div
+                          className="h-full"
+                          style={{
+                            width: `${Math.max(0, Math.min(row.weight, 100))}%`,
+                            backgroundColor:
+                              TARGET_COLORS[i % TARGET_COLORS.length],
+                          }}
+                        />
+                      </div>
                     </div>
-                    <div className="h-1.5 border border-border-default bg-bg">
-                      <div
-                        className="h-full"
-                        style={{
-                          width: `${Math.max(0, Math.min(row.weight, 100))}%`,
-                          backgroundColor:
-                            TARGET_COLORS[i % TARGET_COLORS.length],
-                        }}
-                      />
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
             {typeof active.expectedMaxDrawdownPct === "number" && (
@@ -295,16 +351,30 @@ export function AllocationProposalModal({
             <p className="font-mono text-[10px] uppercase tracking-wider text-accent-agent">
               Risk dial — re-propose at a different posture
             </p>
+            {reproposingLabel && (
+              <p
+                className="mt-2 flex items-center gap-2 border border-accent-agent/30 bg-accent-agent/5 px-2 py-1.5 font-mono text-[11px] text-accent-agent"
+                role="status"
+                aria-live="polite"
+              >
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Designing {reproposingLabel} allocation…
+              </p>
+            )}
             <div className="mt-2 grid grid-cols-3 gap-2">
               {RISK_STEPS.map((step) => (
                 <button
                   key={step.value}
                   type="button"
-                  disabled={reproposing !== null || approving || approved}
+                  disabled={busy}
                   onClick={() => void handleRepropose(step.value)}
-                  className="min-h-9 rounded-sharp border border-accent-agent/40 bg-accent-agent/5 px-2 py-1 font-mono text-[11px] text-accent-agent hover:bg-accent-agent/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-busy={reproposing === step.value}
+                  className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-sharp border border-accent-agent/40 bg-accent-agent/5 px-2 py-1 font-mono text-[11px] text-accent-agent hover:bg-accent-agent/10 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {reproposing === step.value ? "Designing…" : step.label}
+                  {reproposing === step.value && (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  )}
+                  {reproposing === step.value ? "Designing" : step.label}
                 </button>
               ))}
             </div>
@@ -326,28 +396,27 @@ export function AllocationProposalModal({
           <button
             type="button"
             onClick={onClose}
+            disabled={busy}
             className="px-4 py-2 text-sm text-text-default hover:text-text-hi border border-white/10"
           >
             Not now
           </button>
-          {approved ? (
-            <button
-              type="button"
-              onClick={onApproved}
-              className={MONEY_CTA_CLASS}
-            >
-              Review deployment plan
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => void handleApprove()}
-              disabled={approving || reproposing !== null || rows.length === 0}
-              className={`${MONEY_CTA_CLASS} disabled:opacity-50 disabled:cursor-not-allowed`}
-            >
-              {approving ? "Approving…" : "Approve allocation"}
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => void handleApprove()}
+            disabled={busy || rows.length === 0}
+            aria-busy={approving || openingReview}
+            className={`${MONEY_CTA_CLASS} disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2`}
+          >
+            {(approving || openingReview) && (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            )}
+            {openingReview
+              ? "Opening review"
+              : approving
+                ? "Approving allocation"
+                : "Approve allocation"}
+          </button>
         </footer>
       </div>
     </div>

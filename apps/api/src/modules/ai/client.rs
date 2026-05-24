@@ -1,7 +1,7 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::config::{Config, ModelRoute};
 
@@ -25,22 +25,6 @@ impl Message {
             content: content.into(),
         }
     }
-}
-
-#[derive(Serialize)]
-struct ChatRequest<'a> {
-    model: &'a str,
-    messages: &'a [Message],
-    temperature: f32,
-    max_tokens: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    response_format: Option<ResponseFormat>,
-}
-
-#[derive(Serialize)]
-struct ResponseFormat {
-    #[serde(rename = "type")]
-    fmt_type: &'static str,
 }
 
 #[derive(Deserialize)]
@@ -123,55 +107,27 @@ impl<'a> OpenRouterClient<'a> {
         route: ModelRoute,
         messages: Vec<Message>,
     ) -> anyhow::Result<ChatResponse> {
-        let requested_slug = self.config.model_for(route);
-        let url = format!("{}/chat/completions", self.config.openrouter_base_url);
+        let models = self.config.models_for(route);
+        let primary = models.first().copied().unwrap_or_default();
 
-        let req = ChatRequest {
-            model: requested_slug,
-            messages: &messages,
-            temperature: 0.3,
+        let mut req = json!({
+            "messages": messages,
+            "temperature": 0.3,
             // 4000 covers DeepSeek-v4-pro's reasoning mode — it emits 200-1500
             // hidden CoT tokens before the visible answer, both of which count
-            // toward this budget. At ~$0.87/M output tokens, 4000 caps a single
-            // call at < $0.004. Claude/OpenAI don't reason out loud so they
+            // toward this budget. Claude/OpenAI don't reason out loud so they
             // typically use < 1000 of the budget.
-            max_tokens: 4000,
-            response_format: Some(ResponseFormat {
-                fmt_type: "json_object",
-            }),
-        };
+            "max_tokens": 4000,
+            "response_format": { "type": "json_object" },
+        });
+        self.apply_routing(&mut req, &models, route, true);
 
-        let start = Instant::now();
-        let mut builder = self
-            .http
-            .post(&url)
-            .bearer_auth(&self.config.openrouter_api_key)
-            .header("X-Title", &self.config.openrouter_app_name)
-            .json(&req);
-
-        if let Some(referer) = &self.config.openrouter_app_url {
-            builder = builder.header("HTTP-Referer", referer);
-        }
-
-        let resp = builder.send().await?;
-        let status = resp.status();
-        let body = resp.text().await?;
-        let latency_ms = start.elapsed().as_millis() as u64;
-
-        if !status.is_success() {
-            anyhow::bail!(
-                "OpenRouter {} for {}: {}",
-                status.as_u16(),
-                requested_slug,
-                openrouter_error_message(&body)
-                    .unwrap_or_else(|| body.chars().take(500).collect::<String>())
-            );
-        }
+        let (body, latency_ms) = self.post_with_retry(&req, primary).await?;
 
         let raw: RawChatResponse = serde_json::from_str(&body).map_err(|e| {
             anyhow::anyhow!(
                 "OpenRouter 200 for {} returned non-chat body ({}): {}",
-                requested_slug,
+                primary,
                 openrouter_error_message(&body).unwrap_or_else(|| e.to_string()),
                 body.chars().take(500).collect::<String>()
             )
@@ -184,7 +140,7 @@ impl<'a> OpenRouterClient<'a> {
             .ok_or_else(|| anyhow::anyhow!("empty response from OpenRouter"))?;
 
         let usage = raw.usage.unwrap_or_default();
-        let model_slug = raw.model.unwrap_or_else(|| requested_slug.to_string());
+        let model_slug = raw.model.unwrap_or_else(|| primary.to_string());
 
         check_budget_guard(
             self.config.openrouter_budget_guard_usd,
@@ -206,6 +162,106 @@ impl<'a> OpenRouterClient<'a> {
         })
     }
 
+    /// Attach the model fallback chain, JSON-repair plugin, and provider
+    /// preferences to a chat-completions body. `wants_json` is true when the
+    /// request asks for a structured response (so the repair plugin can act on
+    /// it); it is false on tool-selection turns.
+    fn apply_routing(&self, req: &mut Value, models: &[&str], route: ModelRoute, wants_json: bool) {
+        if let Some(primary) = models.first() {
+            req["model"] = json!(primary);
+        }
+        // A multi-entry chain triggers OpenRouter's automatic model fallback —
+        // it tries each in order and returns the first that doesn't 5xx/429/
+        // refuse, so a single bad provider can't stall or 500 the decision.
+        if models.len() > 1 {
+            req["models"] = json!(models);
+        }
+        if self.config.openrouter_response_healing && wants_json {
+            req["plugins"] = json!([{ "id": "response-healing" }]);
+        }
+        // Cheap, latency-sensitive classification: prefer the fastest provider.
+        if matches!(route, ModelRoute::RegimeClassify) {
+            req["provider"] = json!({ "sort": "latency" });
+        }
+    }
+
+    /// Send a chat-completions request with bounded, transient-only retries.
+    ///
+    /// Each attempt is capped by `openrouter_attempt_timeout_secs` (shorter than
+    /// reqwest's overall ceiling) so a stalled provider is abandoned and retried
+    /// rather than hanging. Retries fire only on a per-attempt timeout, a
+    /// transport error (incl. reqwest's "error decoding response body" on a
+    /// truncated stream), a 429, or a 5xx — never on a 4xx that retrying can't
+    /// fix. Returns the success body and total wall-clock latency across attempts.
+    async fn post_with_retry(
+        &self,
+        req: &Value,
+        primary_slug: &str,
+    ) -> anyhow::Result<(String, u64)> {
+        let url = format!("{}/chat/completions", self.config.openrouter_base_url);
+        let per_attempt = Duration::from_secs(self.config.openrouter_attempt_timeout_secs.max(1));
+        let max_retries = self.config.openrouter_max_retries;
+        let start = Instant::now();
+
+        let mut attempt: u32 = 0;
+        loop {
+            let mut builder = self
+                .http
+                .post(&url)
+                .bearer_auth(&self.config.openrouter_api_key)
+                .header("X-Title", &self.config.openrouter_app_name)
+                .json(req);
+            if let Some(referer) = &self.config.openrouter_app_url {
+                builder = builder.header("HTTP-Referer", referer);
+            }
+
+            let outcome = tokio::time::timeout(per_attempt, async move {
+                let resp = builder.send().await?;
+                let status = resp.status();
+                let text = resp.text().await?;
+                Ok::<(reqwest::StatusCode, String), reqwest::Error>((status, text))
+            })
+            .await;
+
+            // Success returns; a non-retryable HTTP error is terminal; everything
+            // else (retryable status, transport error, timeout) yields a reason
+            // string handled by the single exhaustion check below.
+            let reason = match outcome {
+                Ok(Ok((status, text))) if status.is_success() => {
+                    return Ok((text, start.elapsed().as_millis() as u64));
+                }
+                Ok(Ok((status, _text))) if is_retryable_status(status) => {
+                    format!("HTTP {} from {primary_slug}", status.as_u16())
+                }
+                Ok(Ok((status, text))) => {
+                    anyhow::bail!(
+                        "OpenRouter {} for {}: {}",
+                        status.as_u16(),
+                        primary_slug,
+                        openrouter_error_message(&text)
+                            .unwrap_or_else(|| text.chars().take(500).collect::<String>())
+                    );
+                }
+                Ok(Err(e)) => format!("transport error from {primary_slug}: {e}"),
+                Err(_elapsed) => {
+                    format!(
+                        "attempt exceeded {}s for {primary_slug}",
+                        per_attempt.as_secs()
+                    )
+                }
+            };
+
+            if attempt >= max_retries {
+                anyhow::bail!(
+                    "OpenRouter call failed for {primary_slug} after {} attempt(s): {reason}",
+                    attempt + 1
+                );
+            }
+            backoff(attempt, &reason).await;
+            attempt += 1;
+        }
+    }
+
     /// Tool-aware variant for the agentic loop. Caller passes the message
     /// trail as `serde_json::Value` dicts (richer than `Message` because
     /// assistant turns can carry `tool_calls` and tool turns have a
@@ -221,55 +277,32 @@ impl<'a> OpenRouterClient<'a> {
         tools: &[Value],
         force_final: bool,
     ) -> anyhow::Result<ChatToolResult> {
-        let requested_slug = self.config.model_for(route);
-        let url = format!("{}/chat/completions", self.config.openrouter_base_url);
+        let models = self.config.models_for(route);
+        let primary = models.first().copied().unwrap_or_default();
 
-        let mut body = json!({
-            "model": requested_slug,
+        let mut req = json!({
             "messages": messages,
             "temperature": 0.3,
             // See note on `chat()` — reasoning models eat budget for CoT.
             "max_tokens": 4000,
         });
+        let wants_json = force_final || tools.is_empty();
         if !force_final && !tools.is_empty() {
-            body["tools"] = Value::Array(tools.to_vec());
-            body["tool_choice"] = Value::String("auto".into());
+            req["tools"] = Value::Array(tools.to_vec());
+            req["tool_choice"] = Value::String("auto".into());
         } else {
             // Last iteration: force JSON object output for parseability and
             // strip tools so the model emits a proposal.
-            body["response_format"] = json!({ "type": "json_object" });
+            req["response_format"] = json!({ "type": "json_object" });
         }
+        self.apply_routing(&mut req, &models, route, wants_json);
 
-        let start = Instant::now();
-        let mut builder = self
-            .http
-            .post(&url)
-            .bearer_auth(&self.config.openrouter_api_key)
-            .header("X-Title", &self.config.openrouter_app_name)
-            .json(&body);
-        if let Some(referer) = &self.config.openrouter_app_url {
-            builder = builder.header("HTTP-Referer", referer);
-        }
-
-        let resp = builder.send().await?;
-        let status = resp.status();
-        let body = resp.text().await?;
-        let latency_ms = start.elapsed().as_millis() as u64;
-
-        if !status.is_success() {
-            anyhow::bail!(
-                "OpenRouter {} for {}: {}",
-                status.as_u16(),
-                requested_slug,
-                openrouter_error_message(&body)
-                    .unwrap_or_else(|| body.chars().take(500).collect::<String>())
-            );
-        }
+        let (body, latency_ms) = self.post_with_retry(&req, primary).await?;
 
         let raw: Value = serde_json::from_str(&body).map_err(|e| {
             anyhow::anyhow!(
                 "OpenRouter 200 for {} returned non-json body ({}): {}",
-                requested_slug,
+                primary,
                 e,
                 body.chars().take(500).collect::<String>()
             )
@@ -279,7 +312,7 @@ impl<'a> OpenRouterClient<'a> {
             .get("model")
             .and_then(|v| v.as_str())
             .map(str::to_string)
-            .unwrap_or_else(|| requested_slug.to_string());
+            .unwrap_or_else(|| primary.to_string());
         let prompt_tokens = raw
             .pointer("/usage/prompt_tokens")
             .and_then(|v| v.as_u64())
@@ -378,6 +411,26 @@ fn check_budget_guard(guard_usd: f64, cost_usd: Option<f64>, model_slug: &str, l
         latency_ms = latency_ms,
         "openrouter call exceeded budget guard"
     );
+}
+
+/// Transient HTTP statuses worth retrying: rate-limit (429) and any 5xx.
+/// A 4xx (bad request / auth / unsupported parameter) is the caller's bug and
+/// retrying won't fix it, so it is treated as terminal.
+fn is_retryable_status(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
+}
+
+/// Exponential backoff (400ms · 2^attempt, capped) with a structured warn so a
+/// flaky provider is visible in logs. Mirrors the regime-backtest retry cadence.
+async fn backoff(attempt: u32, reason: &str) {
+    let delay = Duration::from_millis(400 * (1u64 << attempt.min(4)));
+    tracing::warn!(
+        target: "agent.openrouter.retry",
+        attempt,
+        delay_ms = delay.as_millis() as u64,
+        "retrying OpenRouter call: {reason}"
+    );
+    tokio::time::sleep(delay).await;
 }
 
 /// One tool invocation the model wants to run.
@@ -520,5 +573,19 @@ mod tests {
     fn openrouter_error_message_returns_none_for_non_error_body() {
         let body = r#"{"choices":[{"message":{"role":"assistant","content":"hi"}}]}"#;
         assert!(openrouter_error_message(body).is_none());
+    }
+
+    #[test]
+    fn retryable_status_covers_429_and_5xx_only() {
+        use reqwest::StatusCode;
+        assert!(is_retryable_status(StatusCode::TOO_MANY_REQUESTS));
+        assert!(is_retryable_status(StatusCode::INTERNAL_SERVER_ERROR));
+        assert!(is_retryable_status(StatusCode::BAD_GATEWAY));
+        assert!(is_retryable_status(StatusCode::SERVICE_UNAVAILABLE));
+        // Client errors are the caller's bug — never retried.
+        assert!(!is_retryable_status(StatusCode::BAD_REQUEST));
+        assert!(!is_retryable_status(StatusCode::UNAUTHORIZED));
+        assert!(!is_retryable_status(StatusCode::UNPROCESSABLE_ENTITY));
+        assert!(!is_retryable_status(StatusCode::OK));
     }
 }

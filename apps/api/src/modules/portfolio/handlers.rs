@@ -6,7 +6,10 @@ use axum::{
 use uuid::Uuid;
 
 use super::models::*;
-use crate::{middleware::auth::Claims, router::AppState};
+use crate::{
+    config::Config, middleware::auth::Claims, modules::rebalance::registry::tokens,
+    router::AppState,
+};
 
 pub async fn list(
     State(state): State<AppState>,
@@ -59,7 +62,11 @@ pub async fn create(
     Extension(claims): Extension<Claims>,
     Json(body): Json<CreatePortfolioRequest>,
 ) -> crate::error::Result<(StatusCode, Json<Portfolio>)> {
-    let goal_value = body.goal.clone().unwrap_or(serde_json::json!({}));
+    let goal_value = sanitize_goal_targets(
+        body.goal.clone().unwrap_or(serde_json::json!({})),
+        &state.config,
+    );
+    let allocations = sanitize_allocation_targets(&body.allocations, &state.config);
 
     let mut tx = state.db.begin().await?;
     let existing_id = sqlx::query_scalar::<_, Uuid>(
@@ -111,13 +118,12 @@ pub async fn create(
     .execute(&mut *tx)
     .await?;
 
-    let target_symbols = body
-        .allocations
+    let target_symbols = allocations
         .iter()
         .map(|a| a.symbol.clone())
         .collect::<Vec<_>>();
 
-    for alloc in &body.allocations {
+    for alloc in &allocations {
         // Portfolio creation captures the target allocation only. Execution
         // updates real holdings later; trusting request quantity here makes
         // setup screens look invested before any approved leg confirms.
@@ -206,6 +212,9 @@ pub async fn update(
     Path(id): Path<Uuid>,
     Json(body): Json<UpdatePortfolioRequest>,
 ) -> crate::error::Result<Json<Portfolio>> {
+    let goal = body
+        .goal
+        .map(|goal| sanitize_goal_targets(goal, &state.config));
     let portfolio = sqlx::query_as::<_, Portfolio>(
         "UPDATE portfolios
          SET name = COALESCE($1, name),
@@ -214,7 +223,7 @@ pub async fn update(
          WHERE id = $3 AND user_id = $4 RETURNING *",
     )
     .bind(body.name)
-    .bind(body.goal)
+    .bind(goal)
     .bind(id)
     .bind(claims.sub)
     .fetch_optional(&state.db)
@@ -222,6 +231,139 @@ pub async fn update(
     .ok_or_else(|| crate::error::AppError::NotFound(format!("portfolio {id}")))?;
 
     Ok(Json(portfolio))
+}
+
+fn sanitize_goal_targets(mut goal: serde_json::Value, config: &Config) -> serde_json::Value {
+    if config.usyc_enabled {
+        return goal;
+    }
+
+    sweep_goal_target(&mut goal, tokens::USYC);
+    remove_route_target(&mut goal, tokens::USYC);
+    if let Some(obj) = goal.as_object_mut() {
+        obj.insert("includeUsyc".into(), serde_json::json!(false));
+    }
+    goal
+}
+
+fn sweep_goal_target(goal: &mut serde_json::Value, symbol: &str) {
+    let Some(targets) = goal
+        .get_mut("targetAllocation")
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+    let swept = targets
+        .remove(symbol)
+        .and_then(|value| value.as_f64())
+        .filter(|weight| weight.is_finite() && *weight > 0.0)
+        .unwrap_or(0.0);
+    if swept <= 0.0 {
+        return;
+    }
+
+    let current_usdc = targets
+        .get(tokens::USDC)
+        .and_then(serde_json::Value::as_f64)
+        .filter(|weight| weight.is_finite())
+        .unwrap_or(0.0);
+    targets.insert(
+        tokens::USDC.to_string(),
+        serde_json::json!(round_weight(current_usdc + swept)),
+    );
+}
+
+fn remove_route_target(goal: &mut serde_json::Value, symbol: &str) {
+    let Some(route_preferences) = goal
+        .get_mut("routePreferences")
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+
+    remove_string_from_array(route_preferences.get_mut("tokens"), symbol);
+    add_string_to_array(route_preferences, "watchlist", symbol);
+}
+
+fn remove_string_from_array(value: Option<&mut serde_json::Value>, symbol: &str) {
+    if let Some(items) = value.and_then(serde_json::Value::as_array_mut) {
+        items.retain(|item| {
+            item.as_str()
+                .is_none_or(|value| !value.eq_ignore_ascii_case(symbol))
+        });
+    }
+}
+
+fn add_string_to_array(
+    object: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    symbol: &str,
+) {
+    let entry = object
+        .entry(key.to_string())
+        .or_insert_with(|| serde_json::json!([]));
+    let Some(items) = entry.as_array_mut() else {
+        return;
+    };
+    if !items.iter().any(|item| {
+        item.as_str()
+            .is_some_and(|value| value.eq_ignore_ascii_case(symbol))
+    }) {
+        items.push(serde_json::json!(symbol));
+    }
+}
+
+fn sanitize_allocation_targets(
+    allocations: &[AllocationInput],
+    config: &Config,
+) -> Vec<AllocationInput> {
+    if config.usyc_enabled {
+        return allocations
+            .iter()
+            .map(|alloc| AllocationInput {
+                symbol: alloc.symbol.clone(),
+                quantity: alloc.quantity,
+                target_weight: alloc.target_weight,
+            })
+            .collect();
+    }
+
+    let mut swept = 0.0;
+    let mut sanitized = Vec::with_capacity(allocations.len());
+    for alloc in allocations {
+        if alloc.symbol.eq_ignore_ascii_case(tokens::USYC) {
+            if alloc.target_weight.is_finite() && alloc.target_weight > 0.0 {
+                swept += alloc.target_weight;
+            }
+            continue;
+        }
+        sanitized.push(AllocationInput {
+            symbol: alloc.symbol.clone(),
+            quantity: alloc.quantity,
+            target_weight: alloc.target_weight,
+        });
+    }
+
+    if swept > 0.0 {
+        if let Some(usdc) = sanitized
+            .iter_mut()
+            .find(|alloc| alloc.symbol.eq_ignore_ascii_case(tokens::USDC))
+        {
+            usdc.target_weight = round_weight(usdc.target_weight + swept);
+        } else {
+            sanitized.push(AllocationInput {
+                symbol: tokens::USDC.to_string(),
+                quantity: 0.0,
+                target_weight: round_weight(swept),
+            });
+        }
+    }
+
+    sanitized
+}
+
+fn round_weight(weight: f64) -> f64 {
+    (weight * 100.0).round() / 100.0
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -290,4 +432,91 @@ pub async fn delete(
     }
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{sanitize_allocation_targets, sanitize_goal_targets, AllocationInput};
+
+    #[test]
+    fn sanitize_goal_targets_sweeps_disabled_usyc_to_usdc() {
+        let cfg = crate::config::test_config();
+        let goal = json!({
+            "includeUsyc": true,
+            "targetAllocation": {
+                "EURC": 10,
+                "USDC": 70,
+                "USYC": 20
+            },
+            "routePreferences": {
+                "tokens": ["USDC", "USYC"],
+                "watchlist": ["EURC"]
+            }
+        });
+
+        let sanitized = sanitize_goal_targets(goal, &cfg);
+
+        assert_eq!(sanitized.pointer("/targetAllocation/USYC"), None);
+        assert_eq!(
+            sanitized
+                .pointer("/targetAllocation/USDC")
+                .and_then(|v| v.as_f64()),
+            Some(90.0)
+        );
+        assert_eq!(
+            sanitized
+                .pointer("/targetAllocation/EURC")
+                .and_then(|v| v.as_f64()),
+            Some(10.0)
+        );
+        assert_eq!(
+            sanitized.get("includeUsyc").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        let tokens = sanitized
+            .pointer("/routePreferences/tokens")
+            .and_then(|v| v.as_array())
+            .expect("tokens array");
+        assert!(!tokens.iter().any(|v| v.as_str() == Some("USYC")));
+        let watchlist = sanitized
+            .pointer("/routePreferences/watchlist")
+            .and_then(|v| v.as_array())
+            .expect("watchlist array");
+        assert!(watchlist.iter().any(|v| v.as_str() == Some("USYC")));
+    }
+
+    #[test]
+    fn sanitize_allocation_targets_sweeps_disabled_usyc_to_usdc() {
+        let cfg = crate::config::test_config();
+        let allocations = vec![
+            AllocationInput {
+                symbol: "EURC".into(),
+                quantity: 0.0,
+                target_weight: 10.0,
+            },
+            AllocationInput {
+                symbol: "USDC".into(),
+                quantity: 0.0,
+                target_weight: 70.0,
+            },
+            AllocationInput {
+                symbol: "USYC".into(),
+                quantity: 0.0,
+                target_weight: 20.0,
+            },
+        ];
+
+        let sanitized = sanitize_allocation_targets(&allocations, &cfg);
+
+        assert!(!sanitized.iter().any(|a| a.symbol == "USYC"));
+        assert_eq!(
+            sanitized
+                .iter()
+                .find(|a| a.symbol == "USDC")
+                .map(|a| a.target_weight),
+            Some(90.0)
+        );
+    }
 }

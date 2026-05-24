@@ -51,7 +51,9 @@ money. A human approves every action.
 
 ### Available yield + FX signals
 
-- **USYC annualized yield:** {{ usyc_rate }} (use as the risk-off parking option)
+- **USYC annualized yield:** {{ usyc_rate }} (coming-soon context unless the
+  route capability block lists USYC as Executable; otherwise keep the parking
+  weight in USDC)
 - **USDC ↔ EURC mid rate:** {{ usdc_eurc_basis }} (consider when the user opts into a EUR sleeve)
 
 ### Route execution capability

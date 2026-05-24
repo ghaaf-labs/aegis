@@ -201,11 +201,14 @@ async fn wallet_reconciler_heals_pending_wallet_without_user_polling() {
     let provider = MockProvider;
     let service = WalletService::new(&ctx.pool, &provider, &ctx.config, &sse);
 
-    let healed = service
+    // The reconcile pass must succeed. Its return value is a *global* count of
+    // healed wallets; under parallel integration tests a concurrent reconcile
+    // may heal this user first, so the count can legitimately be 0 here. Assert
+    // on THIS user's outcome below instead of the shared count.
+    service
         .reconcile_pending_wallets(5000)
         .await
         .expect("reconcile pending wallets");
-    assert!(healed >= 1);
 
     let status: String = sqlx::query_scalar("SELECT account_status FROM users WHERE id = $1")
         .bind(user_id)
@@ -536,6 +539,9 @@ fn test_config(database_url: &str) -> Config {
         model_commentary: "commentary-model".into(),
         openrouter_app_name: "Aegis".into(),
         openrouter_app_url: None,
+        openrouter_max_retries: 1,
+        openrouter_attempt_timeout_secs: 90,
+        openrouter_response_healing: true,
         coingecko_api_key: None,
         price_provider_primary: "defillama".into(),
         price_provider_fallback: "none".into(),
@@ -572,16 +578,8 @@ fn test_config(database_url: &str) -> Config {
         usyc_teller_arc: String::new(),
         usyc_oracle_arc: String::new(),
         usyc_enabled: false,
-        weth_base: String::new(),
-        cbbtc_base: String::new(),
-        cbeth_base: String::new(),
-        susds_base: String::new(),
-        eurc_base: String::new(),
-        weth_eth: String::new(),
-        weth_arb: String::new(),
-        weth_op: String::new(),
-        wbtc_eth: String::new(),
-        wbtc_arb: String::new(),
+        token_addrs: std::collections::HashMap::new(),
+        swap_liquid_tokens: std::collections::HashMap::new(),
         nanopayments_facilitator_url: "https://gateway-api-testnet.circle.com".into(),
         nanopayments_seller_address: String::new(),
         nanopayments_treasury_address: String::new(),

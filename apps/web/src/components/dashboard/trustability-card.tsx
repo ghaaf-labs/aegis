@@ -3,14 +3,33 @@
 import { useEffect, useState } from "react";
 import { ShieldCheck } from "lucide-react";
 import { trustabilityApi, type TrustabilityResponse } from "@/lib/api";
-import { ProvenanceLine } from "@aegis/ui";
+import { formatPercent, timeAgo } from "@/lib/utils";
+import {
+  BrutalCard as Card,
+  BrutalCardHeader as CardHeader,
+  BrutalCardTitle as CardTitle,
+  BrutalCardBody as CardContent,
+  ProvenanceLine,
+} from "@aegis/ui";
 
-const LABEL_TONE: Record<string, string> = {
+type TrustLabel = NonNullable<TrustabilityResponse["label"]>;
+
+const LABEL_TONE: Record<TrustLabel, string> = {
   excellent: "text-accent-agent border-accent-agent/40 bg-accent-agent/10",
   strong: "text-accent-agent/80 border-accent-agent/30 bg-accent-agent/5",
   stable: "text-text-hi border-border-default bg-bg",
-  shaky: "text-warn border-amber-500/30 bg-amber-500/5",
-  underperforming: "text-risk border-rose-500/30 bg-rose-500/5",
+  shaky: "text-warn border-warn/30 bg-warn/5",
+  underperforming: "text-risk border-risk/30 bg-risk/5",
+};
+
+const EMPTY_PROGRESS: TrustabilityResponse["progress"] = {
+  calibrationFloor: 50,
+  agentDecisions7d: 0,
+  eligibleOutcomes7d: 0,
+  pendingRealRebalances7d: 0,
+  completedRealRebalances7d: 0,
+  distinctModels7d: 0,
+  lastDecisionAt: null,
 };
 
 export function TrustabilityCard() {
@@ -35,122 +54,313 @@ export function TrustabilityCard() {
     };
   }, []);
 
-  if (loading) {
-    return <Shell>Loading agent trust score…</Shell>;
-  }
+  const progress = data?.progress ?? EMPTY_PROGRESS;
+  const row = data?.row ?? null;
 
-  if (!data || !data.row) {
-    return (
-      <Shell>
-        <p className="text-sm text-text-default mb-1">No score yet</p>
-        <p className="text-xs text-text-lo">
-          Review a few completed plans; the score appears after Aegis has enough
-          real outcomes to compare.
-        </p>
-      </Shell>
-    );
-  }
-
-  const { row, label } = data;
-  const sign = row.trustabilityDelta > 0 ? "+" : "";
-  const tone = label ? LABEL_TONE[label] : LABEL_TONE.stable;
-  // Calibration floor — the histogram-bin calibrator needs ≥50 outcomes
-  // before the trust score is meaningful. Showing "0.00%" with 5 decisions
-  // looks like the agent is broken; show the sample-size progress instead.
-  const CALIBRATION_FLOOR = 50;
-  const isPreCalibration = row.decisionsExecuted < CALIBRATION_FLOOR;
-
-  // Horizontal layout — the card used to be full-width vertical with one
-  // tiny "models routed" stat dangling at the bottom; now headline lives on
-  // the left, explainer in the middle, and stat tile on the right.
   return (
     <Shell>
-      <div className="grid grid-cols-1 md:grid-cols-[auto_1fr_auto] md:items-center gap-6">
-        <div>
-          <div className="flex items-baseline justify-between gap-3 mb-2">
-            <span className="text-[11px] uppercase tracking-wider text-accent-agent/70 font-mono">
-              Agent trust score
-            </span>
-            {!isPreCalibration && (
-              <span
-                className={`text-[10px] font-mono uppercase tracking-wider border px-1.5 py-0.5 ${tone}`}
-              >
-                {label}
-              </span>
-            )}
-          </div>
-          {isPreCalibration ? (
-            <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-mono text-text-mut tabular-nums">
-                {row.decisionsExecuted}
-                <span className="text-text-lo text-lg">
-                  {" / "}
-                  {CALIBRATION_FLOOR}
-                </span>
-              </span>
-              <span className="text-[11px] text-text-lo">decisions</span>
-            </div>
-          ) : (
-            <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-mono text-text-hi tabular-nums">
-                {sign}
-                {row.trustabilityDelta.toFixed(2)}%
-              </span>
-              <span className="text-[11px] text-text-lo">7-day outcome</span>
-            </div>
-          )}
-        </div>
-
-        <p className="text-[11px] text-text-mut font-mono leading-relaxed">
-          {isPreCalibration
-            ? `Trust score unlocks at ${CALIBRATION_FLOOR} completed decisions.`
-            : "Shows how recent completed plans performed over the trailing 7-day window."}
-        </p>
-
-        <div
-          className={`grid gap-2 text-[11px] font-mono ${
-            isPreCalibration ? "grid-cols-1" : "grid-cols-3"
-          }`}
-        >
-          {!isPreCalibration && (
-            <Stat label="decisions" value={String(row.decisionsExecuted)} />
-          )}
-          <Stat label="models routed" value={String(row.distinctModels)} />
-          {!isPreCalibration && (
-            <Stat
-              label="avg 7d return"
-              value={`${row.avg7dReturn >= 0 ? "+" : ""}${row.avg7dReturn.toFixed(2)}%`}
-            />
-          )}
-        </div>
-      </div>
+      {loading ? (
+        <LoadingState />
+      ) : row ? (
+        <ScoreState row={row} label={data?.label ?? null} progress={progress} />
+      ) : (
+        <EmptyState progress={progress} />
+      )}
     </Shell>
   );
 }
 
+function LoadingState() {
+  return (
+    <TrustContent
+      headline="Loading"
+      title="Reading outcome history"
+      body="Checking completed real plans, model coverage, and the calibration sample."
+      progress={0}
+      stats={[
+        { label: "eligible outcomes", value: "..." },
+        { label: "agent plans 7d", value: "..." },
+        { label: "pending real", value: "..." },
+        { label: "models used", value: "..." },
+      ]}
+    />
+  );
+}
+
+function EmptyState({
+  progress,
+}: {
+  progress: TrustabilityResponse["progress"];
+}) {
+  const floor = Math.max(progress.calibrationFloor, 1);
+  const state = emptyStateCopy(progress);
+  return (
+    <TrustContent
+      eyebrow="Outcome sample"
+      headline={`${progress.eligibleOutcomes7d} / ${floor}`}
+      title={state.title}
+      body={state.body}
+      progress={progress.eligibleOutcomes7d / floor}
+      stats={progressStats(progress, floor)}
+    />
+  );
+}
+
+function ScoreState({
+  row,
+  label,
+  progress,
+}: {
+  row: NonNullable<TrustabilityResponse["row"]>;
+  label: TrustabilityResponse["label"];
+  progress: TrustabilityResponse["progress"];
+}) {
+  const floor = Math.max(progress.calibrationFloor, 1);
+  const isPreCalibration = row.decisionsExecuted < floor;
+  const tone = label ? LABEL_TONE[label] : LABEL_TONE.stable;
+  const badge =
+    !isPreCalibration && label ? (
+      <LabelBadge label={label} tone={tone} />
+    ) : undefined;
+
+  return (
+    <TrustContent
+      eyebrow={isPreCalibration ? "Calibration sample" : "7-day edge"}
+      headline={scoreHeadline(row, floor, isPreCalibration)}
+      title={
+        isPreCalibration
+          ? "Sample building"
+          : `${label ?? "stable"} trust score`
+      }
+      body={scoreBody(floor, isPreCalibration)}
+      progress={isPreCalibration ? row.decisionsExecuted / floor : 1}
+      badge={badge}
+      stats={scoreStats(row, floor, isPreCalibration)}
+    />
+  );
+}
+
+function scoreHeadline(
+  row: NonNullable<TrustabilityResponse["row"]>,
+  floor: number,
+  isPreCalibration: boolean,
+): string {
+  if (isPreCalibration) return `${row.decisionsExecuted} / ${floor}`;
+  const sign = row.trustabilityDelta > 0 ? "+" : "";
+  return `${sign}${row.trustabilityDelta.toFixed(2)}%`;
+}
+
+function scoreBody(floor: number, isPreCalibration: boolean): string {
+  if (isPreCalibration) {
+    return `Score unlocks after ${floor} completed real outcomes. The card is tracking the sample before showing a calibrated delta.`;
+  }
+  return "Compares completed real plans against their counterfactual outcome over the trailing 7-day window.";
+}
+
+function LabelBadge({ label, tone }: { label: string; tone: string }) {
+  return (
+    <span
+      className={`border px-2 py-1 font-mono text-[10px] uppercase tracking-wider ${tone}`}
+    >
+      {label}
+    </span>
+  );
+}
+
+function scoreStats(
+  row: NonNullable<TrustabilityResponse["row"]>,
+  floor: number,
+  isPreCalibration: boolean,
+): Array<{ label: string; value: string; tone?: "positive" | "negative" }> {
+  return [
+    {
+      label: isPreCalibration ? "eligible outcomes" : "decisions",
+      value: isPreCalibration
+        ? `${row.decisionsExecuted} / ${floor}`
+        : String(row.decisionsExecuted),
+    },
+    {
+      label: "models routed",
+      value: String(row.distinctModels),
+    },
+    {
+      label: "avg 7d return",
+      value: formatPercent(row.avg7dReturn),
+      tone: row.avg7dReturn >= 0 ? "positive" : "negative",
+    },
+    {
+      label: "last plan",
+      value: row.lastDecisionAt ? timeAgo(row.lastDecisionAt) : "none",
+    },
+  ];
+}
+
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="space-y-1 border-brutal border-border-default bg-surface p-4 rounded-sharp">
-      <div className="flex items-center gap-2 mb-1">
-        <ShieldCheck className="w-3.5 h-3.5 text-accent-agent" />
-        <span className="text-xs font-semibold text-text-hi">Trust score</span>
+    <Card className="overflow-hidden">
+      <CardHeader className="min-h-[56px] shrink-0">
+        <CardTitle className="flex min-w-0 items-center gap-2">
+          <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-accent-agent" />
+          <span className="truncate">Trust Score</span>
+        </CardTitle>
+        <span className="hidden font-mono text-[10px] text-text-mut md:block">
+          Outcome-backed agent reliability
+        </span>
+      </CardHeader>
+      <CardContent className="p-0 font-mono">
+        {children}
+        <div className="border-t border-border-default px-4 py-3">
+          <ProvenanceLine
+            source="completed plan outcomes"
+            freshness="7d window"
+          />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function TrustContent({
+  eyebrow = "Trust score",
+  headline,
+  title,
+  body,
+  progress,
+  stats,
+  badge,
+}: {
+  eyebrow?: string;
+  headline: string;
+  title: string;
+  body: string;
+  progress: number;
+  stats: Array<{
+    label: string;
+    value: string;
+    tone?: "positive" | "negative";
+  }>;
+  badge?: React.ReactNode;
+}) {
+  return (
+    <div className="grid xl:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
+      <section className="min-w-0 border-b border-border-default p-3 sm:p-4 xl:border-b-0 xl:border-r">
+        <div className="flex min-w-0 items-center justify-between gap-3">
+          <span className="font-mono text-[11px] uppercase tracking-wider text-accent-agent/70">
+            {eyebrow}
+          </span>
+          {badge}
+        </div>
+        <div className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-4 gap-y-2">
+          <span className="min-w-0 font-mono text-[1.85rem] font-semibold leading-none text-text-hi tabular-nums sm:text-4xl">
+            {headline}
+          </span>
+          <div className="min-w-0">
+            <span className="block min-w-0 text-sm font-semibold leading-snug text-text-hi">
+              {title}
+            </span>
+            <p className="mt-1 max-w-3xl text-xs leading-relaxed text-text-lo">
+              {body}
+            </p>
+          </div>
+          <div className="col-span-2">
+            <ProgressRail value={progress} />
+          </div>
+        </div>
+      </section>
+
+      <section className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-2">
+        {stats.map((stat) => (
+          <Stat key={stat.label} {...stat} />
+        ))}
+      </section>
+    </div>
+  );
+}
+
+function ProgressRail({ value }: { value: number }) {
+  const pct = Math.max(0, Math.min(value, 1)) * 100;
+  return (
+    <div className="h-1.5 border border-border-default bg-bg">
+      <div className="h-full bg-accent-agent" style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: "positive" | "negative";
+}) {
+  const valueClass =
+    tone === "positive"
+      ? "text-accent-pnl"
+      : tone === "negative"
+        ? "text-risk"
+        : "text-text-default";
+
+  return (
+    <div className="min-h-[58px] min-w-0 border-b border-r border-border-default bg-bg px-3 py-2.5 text-[11px] last:border-r-0 even:border-r-0 [&:nth-child(3)]:border-b-0 [&:nth-child(4)]:border-b-0 sm:border-b-0 sm:even:border-r sm:[&:nth-child(4n)]:border-r-0 xl:border-b xl:[&:nth-child(2n)]:border-r-0 xl:[&:nth-child(3)]:border-b-0 xl:[&:nth-child(4)]:border-b-0">
+      <div className="truncate text-[10px] uppercase tracking-widest text-text-mut">
+        {label}
       </div>
-      {children}
-      <div className="pt-2 border-t border-white/10">
-        <ProvenanceLine
-          source="completed plan outcomes"
-          freshness="7d window"
-        />
+      <div
+        className={`mt-1 truncate font-semibold tabular-nums ${valueClass}`}
+        title={value}
+      >
+        {value}
       </div>
     </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="border border-border-default bg-bg px-2 py-1.5">
-      <div className="text-[10px] text-text-lo">{label}</div>
-      <div className="text-text-default tabular-nums">{value}</div>
-    </div>
-  );
+function emptyStateCopy(progress: TrustabilityResponse["progress"]): {
+  title: string;
+  body: string;
+} {
+  if (progress.agentDecisions7d === 0) {
+    return {
+      title: "Waiting for first decision",
+      body: "Ask the agent for a plan. Trust Score starts after a real rebalance completes and its outcome enters the 7-day window.",
+    };
+  }
+
+  if (progress.pendingRealRebalances7d > 0) {
+    return {
+      title: "Execution outcome pending",
+      body: "A real plan exists, but Trust Score only counts it after completion and outcome capture.",
+    };
+  }
+
+  return {
+    title: "Plans drafted, no eligible outcomes",
+    body: "The account has agent plans, but the score only uses completed real rebalances with comparable 7-day outcomes.",
+  };
+}
+
+function progressStats(
+  progress: TrustabilityResponse["progress"],
+  floor: number,
+): Array<{ label: string; value: string }> {
+  return [
+    {
+      label: "eligible outcomes",
+      value: `${progress.eligibleOutcomes7d} / ${floor}`,
+    },
+    {
+      label: "agent plans 7d",
+      value: String(progress.agentDecisions7d),
+    },
+    {
+      label: "pending real",
+      value: String(progress.pendingRealRebalances7d),
+    },
+    {
+      label: "models used",
+      value: String(progress.distinctModels7d),
+    },
+  ];
 }

@@ -166,6 +166,7 @@ async fn main() -> anyhow::Result<()> {
         sse: sse_tx.clone(),
         prompts,
         prices,
+        inference_permits: Arc::new(tokio::sync::Semaphore::new(1)),
     });
 
     for demo in DEMO_USERS {

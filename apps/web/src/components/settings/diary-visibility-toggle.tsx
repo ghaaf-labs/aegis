@@ -7,17 +7,19 @@ import { cn } from "@/lib/utils";
 interface DiaryVisibilityToggleProps {
   initialPublic: boolean;
   onChange: (next: boolean) => Promise<void>;
+  publicHandle?: string;
   walletAddress?: string;
 }
 
 /**
  * Single-control opt-in for public agent diary visibility.
  * Default is `false` (private). Flipping on exposes the portfolio's decisions
- * at `/diary/[wallet]`; flipping off hides them immediately on next request.
+ * at `/diary/[handle]`; flipping off hides them immediately on next request.
  */
 export function DiaryVisibilityToggle({
   initialPublic,
   onChange,
+  publicHandle,
   walletAddress,
 }: DiaryVisibilityToggleProps) {
   const [isPublic, setIsPublic] = useState(initialPublic);
@@ -65,7 +67,10 @@ export function DiaryVisibilityToggle({
             this portfolio at{" "}
             <code className="text-accent-agent font-mono">
               /diary/
-              {walletAddress ? walletAddress.slice(0, 10) + "…" : "your wallet"}
+              {publicHandle ??
+                (walletAddress
+                  ? walletAddress.slice(0, 10) + "…"
+                  : "your handle")}
             </code>
             . Off by default.
           </p>

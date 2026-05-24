@@ -4,6 +4,8 @@
 //! exceeds the sum of open lots, the caller has been served stale data and
 //! the helper returns an error — never silently over-closes.
 
+use rust_decimal::prelude::ToPrimitive;
+
 use super::models::{CostBasisLot, HarvestableLoss, HarvestableLot};
 use uuid::Uuid;
 
@@ -20,15 +22,17 @@ pub fn loss_for_allocation(
     let mut loss_lots = Vec::new();
     let mut total_loss = 0.0;
     for lot in lots.iter().filter(|l| l.disposed_at.is_none()) {
-        let current_value = lot.quantity * current_price_usd;
-        let lot_loss = lot.basis_usd - current_value;
+        let qty = lot.quantity.to_f64().unwrap_or(0.0);
+        let basis = lot.basis_usd.to_f64().unwrap_or(0.0);
+        let current_value = qty * current_price_usd;
+        let lot_loss = basis - current_value;
         if lot_loss > 0.0 {
             total_loss += lot_loss;
             loss_lots.push(HarvestableLot {
                 lot_id: lot.id,
                 acquired_at: lot.acquired_at,
-                quantity: lot.quantity,
-                basis_usd: lot.basis_usd,
+                quantity: qty,
+                basis_usd: basis,
                 current_value_usd: current_value,
             });
         }
@@ -63,7 +67,8 @@ pub fn plan_disposal(
         if remaining <= 0.0 {
             break;
         }
-        let take = remaining.min(lot.quantity);
+        let lot_qty = lot.quantity.to_f64().unwrap_or(0.0);
+        let take = remaining.min(lot_qty);
         plan.push((lot.id, take));
         remaining -= take;
     }
@@ -83,6 +88,9 @@ pub enum DisposalError {
 
 #[cfg(test)]
 mod tests {
+    use rust_decimal::prelude::FromPrimitive;
+    use rust_decimal::Decimal;
+
     use super::*;
     use chrono::TimeZone;
 
@@ -93,8 +101,8 @@ mod tests {
             acquired_at: Utc
                 .with_ymd_and_hms(2026, 1, 1 + (id as u32 % 28), 0, 0, 0)
                 .unwrap(),
-            quantity: qty,
-            basis_usd: basis,
+            quantity: Decimal::from_f64(qty).unwrap_or_default(),
+            basis_usd: Decimal::from_f64(basis).unwrap_or_default(),
             disposed_at: if disposed {
                 Some(Utc.with_ymd_and_hms(2026, 5, 1, 0, 0, 0).unwrap())
             } else {

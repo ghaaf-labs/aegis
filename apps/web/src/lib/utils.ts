@@ -46,5 +46,5 @@ export function timeAgo(dateStr: string): string {
 }
 
 export function changeColor(value: number): string {
-  return value >= 0 ? "text-emerald-400" : "text-red-400";
+  return value >= 0 ? "text-accent-pnl" : "text-risk";
 }

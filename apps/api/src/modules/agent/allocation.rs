@@ -64,9 +64,19 @@ pub(super) fn derive_guardrails(
     }
 }
 
-const STABLE_SYMBOLS: &[&str] = &["USDC", "sUSDS", "USYC", "EURC", "aUSDC"];
+/// Symbols treated as the stable / cash / yield reserve sleeve for risk
+/// purposes: exempt from the single-asset volatility cap and counted toward the
+/// reserve floor. Shared with the constitution evaluator (RISK-2) as the single
+/// source of truth, so a USDC-heavy reserve is never flagged as
+/// over-concentrated.
+pub(crate) const STABLE_SYMBOLS: &[&str] = &[
+    crate::domain::token::USDC,
+    crate::domain::token::SUSDS,
+    crate::domain::token::USYC,
+    crate::domain::token::EURC,
+];
 
-fn is_stable_symbol(sym: &str) -> bool {
+pub(crate) fn is_stable_symbol(sym: &str) -> bool {
     STABLE_SYMBOLS.iter().any(|s| s.eq_ignore_ascii_case(sym))
 }
 
@@ -192,6 +202,188 @@ pub(super) fn clamp_allocation(
     weights
 }
 
+/// The raw, pre-clamp allocator output handed to [`finalize_allocation`].
+/// Borrowed so the caller keeps ownership of the parsed proposal.
+pub(super) struct RawAllocation<'a> {
+    /// Model-proposed weights, `{ symbol: pct }`.
+    pub(super) weights: &'a serde_json::Map<String, serde_json::Value>,
+    /// Model reasoning, verbatim.
+    pub(super) reasoning: &'a str,
+    /// Model confidence, 0..1.
+    pub(super) confidence: f64,
+    /// Model's projected max drawdown (percent), if it gave one.
+    pub(super) expected_max_drawdown_pct: Option<f64>,
+}
+
+/// The reconciled, persist-ready allocation. Its payload fields are guaranteed
+/// mutually CONSISTENT: `reasoning` never describes a mix we didn't keep (a
+/// risk-adjustment note is appended whenever clamping changed the weights), and
+/// `expected_max_drawdown_pct` reflects the FINAL allocation, not the model's
+/// pre-clamp guess. This invariant is what stops the proposal modal from showing
+/// "USDC 100%" next to reasoning about cbBTC/cbETH.
+#[derive(Debug, Clone)]
+pub(super) struct FinalizedAllocation {
+    pub(super) allocation: std::collections::BTreeMap<String, f64>,
+    pub(super) reasoning: String,
+    pub(super) expected_max_drawdown_pct: Option<f64>,
+    /// Human-readable risk adjustments applied to the raw weights; empty when the
+    /// model's mix survived clamping unchanged.
+    pub(super) adjustments: Vec<String>,
+}
+
+/// Confidence below which the allocator declines to trust the raw weights and
+/// falls back to the stored target (then a USDC reserve). Mirrors the agent's
+/// abstain threshold; kept local so the clamp stays a self-contained pure unit.
+const LOW_CONFIDENCE_FALLBACK: f64 = 0.5;
+
+/// Conservative peak-to-trough proxy (percent) for the volatile sleeve when
+/// re-estimating a changed allocation's max drawdown; stables contribute ~0.
+const VOLATILE_DRAWDOWN_PCT: f64 = 55.0;
+
+/// Reconcile a raw model proposal into a consistent, persist-ready target.
+/// Deterministic and side-effect-free — the unit-testable core of
+/// [`propose_allocation`](super::service::propose_allocation):
+///
+/// 1. Clamp against the **designable** universe (NOT executable): a sleeve whose
+///    execution rail is offline stays in the target and is surfaced at approval,
+///    never silently collapsed to USDC.
+/// 2. A low-confidence or empty proposal falls back to `fallback_target` (the
+///    stored target), then a USDC reserve — never a no-op.
+/// 3. If clamping changed the intended mix, append a risk-adjustment note so the
+///    reasoning can never name an asset absent from the final allocation, and
+///    re-estimate the drawdown for the kept weights.
+pub(super) fn finalize_allocation(
+    raw: RawAllocation<'_>,
+    fallback_target: Option<&serde_json::Map<String, serde_json::Value>>,
+    designable: &[&str],
+    guardrails: Guardrails,
+) -> FinalizedAllocation {
+    let low_confidence = raw.confidence < LOW_CONFIDENCE_FALLBACK;
+
+    // Pick the source weights: the model's, unless they're untrustworthy
+    // (low-confidence) or empty, in which case fall back to the stored target,
+    // then a USDC reserve.
+    let source = if low_confidence || raw.weights.is_empty() {
+        match fallback_target {
+            Some(target) if !target.is_empty() => target,
+            _ => return usdc_reserve(raw.reasoning, low_confidence, raw.confidence),
+        }
+    } else {
+        raw.weights
+    };
+
+    let allocation = clamp_allocation(source, designable, guardrails);
+    let adjustments = diff_allocations(source, &allocation);
+    let changed = !adjustments.is_empty();
+
+    let mut reasoning = if low_confidence {
+        let confidence = raw.confidence;
+        format!(
+            "Low allocator confidence ({confidence:.2}); proposing a conservative reserve allocation. {}",
+            raw.reasoning.trim()
+        )
+        .trim()
+        .to_string()
+    } else {
+        raw.reasoning.trim().to_string()
+    };
+    if changed {
+        if !reasoning.is_empty() {
+            reasoning.push_str("\n\n");
+        }
+        reasoning.push_str(&format!(
+            "Adjusted to risk limits: {}.",
+            adjustments.join("; ")
+        ));
+    }
+
+    let expected_max_drawdown_pct = if changed {
+        Some(estimate_drawdown_pct(&allocation))
+    } else {
+        raw.expected_max_drawdown_pct
+    };
+
+    FinalizedAllocation {
+        allocation,
+        reasoning,
+        expected_max_drawdown_pct,
+        adjustments,
+    }
+}
+
+/// A 100% USDC reserve with reasoning consistent with that target — the floor
+/// fallback when there are no usable weights to clamp.
+fn usdc_reserve(raw_reasoning: &str, low_confidence: bool, confidence: f64) -> FinalizedAllocation {
+    let trimmed = raw_reasoning.trim();
+    let reasoning = if low_confidence {
+        format!(
+            "Low allocator confidence ({confidence:.2}); holding a 100% USDC reserve. {trimmed}"
+        )
+        .trim()
+        .to_string()
+    } else if trimmed.is_empty() {
+        "Holding a 100% USDC reserve — no valid designable weights were returned.".to_string()
+    } else {
+        format!(
+            "Holding a 100% USDC reserve — no valid designable weights were returned. {trimmed}"
+        )
+    };
+    FinalizedAllocation {
+        allocation: std::iter::once(("USDC".to_string(), 100.0)).collect(),
+        reasoning,
+        expected_max_drawdown_pct: Some(0.0),
+        adjustments: vec!["all weights swept to a USDC reserve".to_string()],
+    }
+}
+
+/// Human-readable risk adjustments between the intended (pre-clamp, normalized)
+/// weights and the final clamped allocation: dropped sleeves and significant
+/// per-asset weight changes. Sub-1pp (rounding-level) deltas are ignored, so a
+/// clean pass produces no note (and thus leaves reasoning/drawdown untouched).
+fn diff_allocations(
+    source: &serde_json::Map<String, serde_json::Value>,
+    final_alloc: &std::collections::BTreeMap<String, f64>,
+) -> Vec<String> {
+    let total: f64 = source
+        .values()
+        .filter_map(serde_json::Value::as_f64)
+        .filter(|w| *w > 0.0)
+        .sum();
+    if total <= 0.0 {
+        return Vec::new();
+    }
+    let mut notes = Vec::new();
+    for (symbol, value) in source {
+        let raw_weight = value.as_f64().unwrap_or(0.0);
+        if raw_weight <= 0.0 {
+            continue;
+        }
+        let intended = raw_weight / total * 100.0;
+        let final_weight = final_alloc
+            .iter()
+            .find(|&(key, _)| key.as_str().eq_ignore_ascii_case(symbol))
+            .map_or(0.0, |(_, w)| *w);
+        if final_weight <= 0.0 {
+            notes.push(format!("dropped {symbol}"));
+        } else if (final_weight - intended).abs() >= 1.0 {
+            notes.push(format!("{symbol} {intended:.0}->{final_weight:.0}%"));
+        }
+    }
+    notes
+}
+
+/// Deterministic projected-max-drawdown estimate (percent) for a final mix, used
+/// when clamping changed the allocation so the persisted figure matches the kept
+/// weights rather than the model's pre-clamp guess.
+fn estimate_drawdown_pct(alloc: &std::collections::BTreeMap<String, f64>) -> f64 {
+    let volatile: f64 = alloc
+        .iter()
+        .filter(|(symbol, _)| !is_stable_symbol(symbol))
+        .map(|(_, w)| *w)
+        .sum();
+    round2(volatile / 100.0 * VOLATILE_DRAWDOWN_PCT)
+}
+
 /// Read the user's high-level objective from the goal JSONB (set at onboarding).
 pub(super) fn goal_objective(goal: &serde_json::Value) -> String {
     goal.get("objective")
@@ -205,6 +397,144 @@ pub(super) fn goal_objective(goal: &serde_json::Value) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn clamp_keeps_designable_mix_executable_would_collapse() {
+        let raw = json!({ "USDC": 60.0, "cbBTC": 20.0, "SOL": 20.0 })
+            .as_object()
+            .unwrap()
+            .clone();
+        let g = derive_guardrails("aggressive", "neutral", 0.0);
+        // The bug: clamping against the executable set (just USDC when the swap
+        // rail is offline) drops cbBTC/SOL and collapses to USDC 100%.
+        let exec_only = clamp_allocation(&raw, &["USDC"], g);
+        assert_eq!(exec_only.get("USDC").copied(), Some(100.0));
+        assert!(!exec_only.contains_key("cbBTC"));
+        // The fix: clamping against the designable universe preserves the mix.
+        let designable = clamp_allocation(&raw, &["USDC", "cbBTC", "SOL"], g);
+        assert!(designable.get("cbBTC").copied().unwrap_or(0.0) > 0.0);
+        assert!(designable.get("SOL").copied().unwrap_or(0.0) > 0.0);
+    }
+
+    #[test]
+    fn finalize_preserves_reasoning_and_drawdown_when_unchanged() {
+        let raw = json!({ "USDC": 60.0, "cbBTC": 20.0, "SOL": 20.0 })
+            .as_object()
+            .unwrap()
+            .clone();
+        let out = finalize_allocation(
+            RawAllocation {
+                weights: &raw,
+                reasoning: "Balanced: 60% USDC reserve, 20% cbBTC, 20% SOL.",
+                confidence: 0.9,
+                expected_max_drawdown_pct: Some(12.5),
+            },
+            None,
+            &["USDC", "cbBTC", "SOL"],
+            derive_guardrails("aggressive", "neutral", 0.0),
+        );
+        // Clean pass within risk limits → no note, reasoning + drawdown intact.
+        assert!(out.adjustments.is_empty());
+        assert_eq!(
+            out.reasoning,
+            "Balanced: 60% USDC reserve, 20% cbBTC, 20% SOL."
+        );
+        assert_eq!(out.expected_max_drawdown_pct, Some(12.5));
+        assert!(out.allocation.contains_key("cbBTC"));
+    }
+
+    #[test]
+    fn finalize_annotates_and_recomputes_when_clamped() {
+        // Aggressive single-asset cap is 60; an 80% cbBTC proposal must be trimmed.
+        let raw = json!({ "cbBTC": 80.0, "USDC": 20.0 })
+            .as_object()
+            .unwrap()
+            .clone();
+        let out = finalize_allocation(
+            RawAllocation {
+                weights: &raw,
+                reasoning: "Max conviction: 80% cbBTC.",
+                confidence: 0.9,
+                expected_max_drawdown_pct: Some(9.0),
+            },
+            None,
+            &["USDC", "cbBTC"],
+            derive_guardrails("aggressive", "neutral", 0.0),
+        );
+        assert!(out.allocation.get("cbBTC").copied().unwrap() <= 60.0 + 0.05);
+        // The adjustment is disclosed in reasoning, not hidden.
+        assert!(!out.adjustments.is_empty());
+        assert!(out.reasoning.contains("Adjusted to risk limits"));
+        assert!(out.reasoning.contains("cbBTC"));
+        // Drawdown is recomputed for the kept mix, not the model's stale guess.
+        assert_ne!(out.expected_max_drawdown_pct, Some(9.0));
+    }
+
+    #[test]
+    fn finalize_discloses_dropped_assets_in_reasoning() {
+        // A non-designable token must be dropped AND disclosed — never leaving
+        // reasoning that names an asset absent from the final allocation.
+        let raw = json!({ "cbBTC": 50.0, "DOGE": 50.0 })
+            .as_object()
+            .unwrap()
+            .clone();
+        let out = finalize_allocation(
+            RawAllocation {
+                weights: &raw,
+                reasoning: "Half cbBTC, half DOGE.",
+                confidence: 0.9,
+                expected_max_drawdown_pct: Some(40.0),
+            },
+            None,
+            &["USDC", "cbBTC"],
+            derive_guardrails("aggressive", "neutral", 0.0),
+        );
+        assert!(!out.allocation.contains_key("DOGE"));
+        assert!(out.reasoning.contains("dropped DOGE"));
+        assert!(out.allocation.contains_key("cbBTC"));
+    }
+
+    #[test]
+    fn finalize_low_confidence_falls_back_to_reserve() {
+        let raw = json!({ "cbBTC": 100.0 }).as_object().unwrap().clone();
+        let out = finalize_allocation(
+            RawAllocation {
+                weights: &raw,
+                reasoning: "All in cbBTC.",
+                confidence: 0.2,
+                expected_max_drawdown_pct: Some(50.0),
+            },
+            None,
+            &["USDC", "cbBTC"],
+            derive_guardrails("aggressive", "neutral", 0.0),
+        );
+        // Low confidence + no stored target → conservative USDC reserve.
+        assert_eq!(out.allocation.get("USDC").copied(), Some(100.0));
+        assert!(!out.allocation.contains_key("cbBTC"));
+        assert!(out.reasoning.to_lowercase().contains("usdc reserve"));
+    }
+
+    #[test]
+    fn finalize_low_confidence_uses_stored_target_when_present() {
+        let empty = serde_json::Map::new();
+        let stored = json!({ "USDC": 70.0, "cbBTC": 30.0 })
+            .as_object()
+            .unwrap()
+            .clone();
+        let out = finalize_allocation(
+            RawAllocation {
+                weights: &empty,
+                reasoning: "",
+                confidence: 0.2,
+                expected_max_drawdown_pct: None,
+            },
+            Some(&stored),
+            &["USDC", "cbBTC"],
+            derive_guardrails("aggressive", "neutral", 0.0),
+        );
+        // Empty/low-confidence output prefers the user's stored target over USDC.
+        assert!(out.allocation.get("cbBTC").copied().unwrap_or(0.0) > 0.0);
+    }
 
     #[test]
     fn clamp_allocation_enforces_cap_floor_executable_and_sum() {

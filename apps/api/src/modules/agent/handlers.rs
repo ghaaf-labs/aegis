@@ -9,17 +9,46 @@ use super::{
     service,
 };
 use crate::modules::portfolio::models::Portfolio;
-use crate::{middleware::auth::Claims, router::AppState};
+use crate::modules::rebalance::registry::{
+    capabilities::RuntimeCapabilities, route::route_state_for_token,
+};
+use crate::{config::Config, middleware::auth::Claims, router::AppState};
+
+/// Annotate a decision with the live per-symbol execution-readiness of its
+/// proposed `recommended_allocation`, so the approval modal can badge each
+/// sleeve truthfully ("Executes now" vs "Track only") from the route engine
+/// rather than a static client guess. No-op for decisions without an allocation.
+fn attach_route_states(decision: &mut AgentDecision, config: &Config) {
+    let Some(symbols) = decision
+        .recommended_allocation
+        .as_ref()
+        .and_then(serde_json::Value::as_object)
+    else {
+        return;
+    };
+    let caps = RuntimeCapabilities::from_config(config);
+    let states: serde_json::Map<String, serde_json::Value> = symbols
+        .keys()
+        .map(|symbol| {
+            let state = route_state_for_token(&caps, config, symbol);
+            (symbol.clone(), serde_json::json!(state))
+        })
+        .collect();
+    decision.route_states = Some(serde_json::Value::Object(states));
+}
 
 pub async fn decisions(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
     Path(portfolio_id): Path<Uuid>,
 ) -> crate::error::Result<Json<Vec<AgentDecision>>> {
+    // Only terminal `ready` rows reach the client: a `queued`/`running`
+    // placeholder must not surface as a pending proposal (it would open Gate-1
+    // on an empty decision), and `failed` rows are recovered via the per-id poll.
     let decisions = sqlx::query_as::<_, AgentDecision>(
         "SELECT d.* FROM agent_decisions d
          JOIN portfolios p ON p.id = d.portfolio_id
-         WHERE d.portfolio_id = $1 AND p.user_id = $2
+         WHERE d.portfolio_id = $1 AND p.user_id = $2 AND d.status = 'ready'
          ORDER BY d.created_at DESC LIMIT 50",
     )
     .bind(portfolio_id)
@@ -27,6 +56,10 @@ pub async fn decisions(
     .fetch_all(&state.db)
     .await?;
 
+    let mut decisions = decisions;
+    for decision in &mut decisions {
+        attach_route_states(decision, &state.config);
+    }
     Ok(Json(decisions))
 }
 
@@ -50,6 +83,8 @@ pub async fn decision_by_id(
     .fetch_optional(&state.db)
     .await?
     .ok_or_else(|| crate::error::AppError::NotFound(format!("decision {decision_id}")))?;
+    let mut decision = decision;
+    attach_route_states(&mut decision, &state.config);
     Ok(Json(decision))
 }
 
@@ -73,8 +108,21 @@ pub async fn analyze(
         )));
     }
 
-    let decision = service::analyze_portfolio(&state, body).await?;
-    Ok(Json(decision))
+    // Async: enqueue a `queued` decision and return it immediately (the
+    // strategist→critic→revision pipeline can exceed nginx's 60s cap). The
+    // spawned, semaphore-bounded job flips the row to `ready`/`failed`; the
+    // client polls the decision id and opens on the SSE `agent.decision` event.
+    let (queued, is_new) = service::enqueue_analysis(&state, &body).await?;
+    if is_new {
+        let st = state.clone();
+        let decision_id = queued.id;
+        tokio::spawn(async move {
+            if let Err(e) = service::run_analysis_job(&st, decision_id, &body).await {
+                tracing::warn!(error = %e, decision_id = %decision_id, "spawned analysis job failed");
+            }
+        });
+    }
+    Ok(Json(queued))
 }
 
 /// Run the allocator — the agent designs a target allocation for the user's
@@ -97,8 +145,23 @@ pub async fn propose_allocation(
         )));
     }
 
-    let decision = service::propose_allocation(&state, body).await?;
-    Ok(Json(decision))
+    // Async: enqueue a `queued` decision and return it immediately so the request
+    // never blocks on the 38–240s pipeline (nginx caps the API at 60s). The slow
+    // work runs in a spawned, semaphore-bounded job that flips the row to
+    // `ready`/`failed`; the client opens Gate-1 on the SSE `agent.decision` event
+    // or by polling the decision id. A double-submit dedupes via the in-flight
+    // unique index, so we only spawn when a *new* job was enqueued.
+    let (queued, is_new) = service::enqueue_allocation(&state, &body).await?;
+    if is_new {
+        let st = state.clone();
+        let decision_id = queued.id;
+        tokio::spawn(async move {
+            if let Err(e) = service::run_allocation_job(&st, decision_id, &body).await {
+                tracing::warn!(error = %e, decision_id = %decision_id, "spawned allocation job failed");
+            }
+        });
+    }
+    Ok(Json(queued))
 }
 
 /// Approve an allocation proposal — write the agent's target into the
