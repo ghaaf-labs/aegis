@@ -401,12 +401,7 @@ fn auth_code_state_error(
     None
 }
 
-fn code_hash(
-    cfg: &crate::config::Config,
-    email: &str,
-    challenge_id: Uuid,
-    code: &str,
-) -> String {
+fn code_hash(cfg: &crate::config::Config, email: &str, challenge_id: Uuid, code: &str) -> String {
     type HmacSha = Hmac<Sha256>;
     let mut mac =
         HmacSha::new_from_slice(cfg.jwt_secret.as_bytes()).expect("HMAC accepts any key size");

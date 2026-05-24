@@ -56,7 +56,7 @@ export function FaucetButton() {
               href={result.claimUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-xs font-mono text-accent-agent hover:underline"
+              className="inline-flex min-h-11 items-center gap-1 rounded-sharp px-1 text-xs font-mono text-accent-agent hover:underline"
             >
               <ExternalLink className="w-3 h-3" />
               Open test faucet
@@ -64,7 +64,7 @@ export function FaucetButton() {
             <button
               type="button"
               onClick={() => void copyAddress()}
-              className="inline-flex items-center gap-1 text-[11px] font-mono text-text-lo hover:text-text-hi"
+              className="inline-flex min-h-11 items-center gap-1 rounded-sharp px-1 text-[11px] font-mono text-text-lo hover:text-text-hi"
               title="Copy ARC address"
             >
               {copyState === "copied" ? (
@@ -116,7 +116,7 @@ export function FaucetButton() {
             href="https://faucet.circle.com"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex min-h-8 items-center gap-1 rounded-sharp border border-accent-agent/45 bg-accent-agent/10 px-2 text-xs font-semibold text-accent-agent hover:bg-accent-agent/15"
+            className="inline-flex min-h-11 items-center gap-1 rounded-sharp border border-accent-agent/45 bg-accent-agent/10 px-2 text-xs font-semibold text-accent-agent hover:bg-accent-agent/15"
           >
             <ExternalLink className="w-3 h-3" />
             Open faucet
@@ -133,10 +133,10 @@ export function FaucetButton() {
   return (
     <div
       data-testid="faucet-button"
-      className="flex flex-wrap items-center gap-3"
+      className="flex w-full flex-col items-stretch gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-3"
     >
       <BrutalButton
-        variant="agent"
+        variant="pnl"
         onClick={() => void claim()}
         disabled={submitting}
       >

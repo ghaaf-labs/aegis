@@ -1,10 +1,12 @@
 "use client";
 
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
+import { PieChart as PieChartIcon } from "lucide-react";
 import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
 import { formatCurrency, formatPercent } from "@/lib/utils";
 import { derivePortfolioPositionMetrics } from "@/lib/portfolio-values";
 import { targetAllocationsForPortfolio } from "@/components/dashboard/target-allocations";
+import type { DashboardBalanceModel } from "@/lib/dashboard-balance-model";
 import {
   BrutalCard as Card,
   BrutalCardHeader as CardHeader,
@@ -25,9 +27,10 @@ const CHART_COLORS = [
 
 interface Props {
   compact?: boolean;
+  model?: DashboardBalanceModel;
 }
 
-export function AllocationChart({ compact = false }: Props) {
+export function AllocationChart({ compact = false, model }: Props) {
   const portfolio = useActivePortfolio();
   const snapshot = usePortfolioStore((s) => s.marketSnapshot);
   const livePrices = usePortfolioStore((s) => s.livePrices);
@@ -37,28 +40,42 @@ export function AllocationChart({ compact = false }: Props) {
 
   const allocations = targetAllocationsForPortfolio(portfolio);
   const metrics = derivePortfolioPositionMetrics(portfolio, snapshot);
+  const modelData =
+    model?.tokens
+      .filter((token) => token.totalUsd > 0.005)
+      .map((token) => ({
+        name: token.symbol,
+        value: token.weightPct,
+        valueUsd: token.totalUsd,
+      })) ?? [];
 
-  const isUninvested = metrics.investedUsd < 0.5; // ~half a dollar of dust
-  const data = isUninvested
-    ? allocations.map((a) => ({
-        name: a.symbol,
-        value: a.targetWeight,
-        valueUsd: 0,
-      }))
-    : metrics.positions.map((a) => ({
-        name: a.symbol,
-        value: a.currentWeight,
-        valueUsd: a.valueUsd,
-      }));
+  const usingModelData = modelData.length > 0;
+  const isUninvested = !usingModelData && metrics.investedUsd < 0.5;
+  const data = usingModelData
+    ? modelData
+    : isUninvested
+      ? allocations.map((a) => ({
+          name: a.symbol,
+          value: a.targetWeight,
+          valueUsd: 0,
+        }))
+      : metrics.positions.map((a) => ({
+          name: a.symbol,
+          value: a.currentWeight,
+          valueUsd: a.valueUsd,
+        }));
 
   if (data.length === 0 || data.every((d) => d.value === 0)) {
     return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Target Mix</CardTitle>
+      <Card className="flex h-full min-h-[280px] flex-col">
+        <CardHeader className="min-h-[52px] shrink-0">
+          <CardTitle className="flex items-center gap-2">
+            <PieChartIcon className="h-3.5 w-3.5 text-accent-agent" />
+            Target Mix
+          </CardTitle>
         </CardHeader>
-        <CardContent>
-          <div className="flex items-center justify-center h-32 text-center">
+        <CardContent className="flex min-h-[160px] flex-1 items-center justify-center">
+          <div className="text-center">
             <p className="text-xs text-text-mut font-mono px-4">
               No allocations yet — adopt a strategy or deposit USDC to get
               started
@@ -71,14 +88,17 @@ export function AllocationChart({ compact = false }: Props) {
 
   if (isUninvested) {
     return (
-      <Card>
-        <CardHeader className="gap-3">
-          <CardTitle className="min-w-0">Target Mix</CardTitle>
+      <Card className="flex h-full min-h-[280px] flex-col">
+        <CardHeader className="min-h-[52px] shrink-0 gap-3">
+          <CardTitle className="flex min-w-0 items-center gap-2">
+            <PieChartIcon className="h-3.5 w-3.5 text-accent-agent" />
+            Target Mix
+          </CardTitle>
           <span className="shrink-0 border border-text-mut/30 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-text-mut">
             plan only
           </span>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="flex flex-1 flex-col gap-3">
           <div className="border border-border-default bg-bg/70 px-3 py-2 font-mono">
             <p className="text-xs font-semibold text-text-hi">
               Target value after approval
@@ -96,7 +116,7 @@ export function AllocationChart({ compact = false }: Props) {
                   <span className="min-w-0 truncate text-text-lo">
                     {item.name}
                   </span>
-                  <span className="shrink-0 font-semibold text-text-hi">
+                  <span className="shrink-0 font-mono font-semibold tabular-nums text-text-hi">
                     {formatPercent(item.value, false)}
                   </span>
                 </div>
@@ -113,7 +133,7 @@ export function AllocationChart({ compact = false }: Props) {
             ))}
           </div>
 
-          <div className="border-t border-white/10 pt-2">
+          <div className="mt-auto border-t border-white/10 pt-2">
             <ProvenanceLine
               source="target allocation · no positions yet"
               freshness="live"
@@ -125,19 +145,20 @@ export function AllocationChart({ compact = false }: Props) {
   }
 
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between">
+    <Card className="flex h-full min-h-[280px] flex-col">
+      <CardHeader className="flex min-h-[52px] shrink-0 flex-row items-center justify-between">
         <CardTitle className="flex items-center gap-2">
+          <PieChartIcon className="h-3.5 w-3.5 text-accent-agent" />
           <span>Allocation</span>
         </CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="flex flex-1 flex-col">
         <div className={compact ? "grid gap-4" : "grid gap-4"}>
           <div
             className={
               compact
                 ? "mx-auto h-40 w-full max-w-[220px]"
-                : "mx-auto h-32 w-full max-w-[150px]"
+                : "mx-auto h-36 w-full max-w-[170px]"
             }
           >
             <ResponsiveContainer width="100%" height="100%">
@@ -146,8 +167,8 @@ export function AllocationChart({ compact = false }: Props) {
                   data={data}
                   cx="50%"
                   cy="50%"
-                  innerRadius={compact ? 45 : 48}
-                  outerRadius={compact ? 70 : 75}
+                  innerRadius={compact ? 45 : 40}
+                  outerRadius={compact ? 70 : 66}
                   paddingAngle={2}
                   dataKey="value"
                   strokeWidth={0}
@@ -165,9 +186,9 @@ export function AllocationChart({ compact = false }: Props) {
                     if (!active || !payload?.[0]) return null;
                     const d = payload[0].payload as (typeof data)[0];
                     return (
-                      <div className="bg-surface border-brutal border-border-default rounded-sharp px-3 py-2 text-xs">
+                      <div className="rounded-sharp border-brutal border-border-default bg-surface px-3 py-2 font-mono text-xs">
                         <p className="font-semibold text-text-hi">{d.name}</p>
-                        <p className="text-text-lo">
+                        <p className="tabular-nums text-text-lo">
                           {formatPercent(d.value, false)}
                         </p>
                       </div>
@@ -186,7 +207,7 @@ export function AllocationChart({ compact = false }: Props) {
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <span
-                    className="w-2 h-2 rounded-full shrink-0"
+                    className="w-2 h-2 rounded-sharp shrink-0"
                     style={{
                       background: CHART_COLORS[i % CHART_COLORS.length],
                     }}
@@ -195,7 +216,7 @@ export function AllocationChart({ compact = false }: Props) {
                     {item.name}
                   </span>
                 </div>
-                <span className="text-xs text-text-hi font-medium shrink-0">
+                <span className="shrink-0 font-mono text-xs font-medium tabular-nums text-text-hi">
                   {formatPercent(item.value, false)}
                 </span>
               </div>
@@ -203,12 +224,14 @@ export function AllocationChart({ compact = false }: Props) {
           </div>
         </div>
 
-        <div className="mt-4 pt-3 border-t border-white/10">
+        <div className="mt-auto border-t border-white/10 pt-3">
           <ProvenanceLine
             source={
               isUninvested
                 ? "target allocation · no positions yet"
-                : `current holdings × ${liveSource ?? "live"} prices`
+                : usingModelData
+                  ? "Circle balances + execution ledger"
+                  : `current holdings × ${liveSource ?? "live"} prices`
             }
             freshness="live"
           />

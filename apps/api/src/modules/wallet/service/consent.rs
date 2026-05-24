@@ -71,7 +71,8 @@ impl<'a> WalletService<'a> {
         if wallet.is_some() {
             user = self.find_user_by_id(user.id).await?.unwrap_or(user);
         }
-        let session_token = super::provisioning::mint_session_token(&user, self.config, self.db).await?;
+        let session_token =
+            super::provisioning::mint_session_token(&user, self.config, self.db).await?;
         if was_inserted {
             crate::modules::analytics::service::emit(
                 self.db,
@@ -131,7 +132,8 @@ impl<'a> WalletService<'a> {
                 user = self.find_user_by_id(user.id).await?.unwrap_or(user);
             }
         }
-        let session_token = super::provisioning::mint_session_token(&user, self.config, self.db).await?;
+        let session_token =
+            super::provisioning::mint_session_token(&user, self.config, self.db).await?;
         crate::modules::analytics::service::emit(
             self.db,
             Some(user.id),

@@ -107,7 +107,12 @@ export default function WalletPage() {
       const balance = await gatewayApi.balance();
       setUnifiedUsdc(balance.unifiedUsdc);
       setUnifiedEurc(balance.unifiedEurc);
-      setPerChain(balance.perChain ?? {}, balance.perChainEurc ?? {});
+      setPerChain(
+        balance.perChain ?? {},
+        balance.perChainEurc ?? {},
+        undefined,
+        balance.tokenBalancesByChain ?? {},
+      );
       setGatewayBalanceStatus("ready");
       setStatusMessage("Fresh wallet cash balance loaded.");
     } catch (e) {

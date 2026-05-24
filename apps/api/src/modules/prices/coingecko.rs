@@ -59,7 +59,7 @@ impl PriceProvider for CoinGeckoProvider {
                 let p = raw.get(s.cg_id_legacy)?;
                 let usd = p.usd?;
                 Some(SpotQuote {
-                    ticker: s.ticker,
+                    ticker: s.symbol,
                     price_usd: usd,
                     change_24h: p.usd_24h_change.unwrap_or(0.0),
                     change_7d: p.usd_7d_change.unwrap_or(0.0),

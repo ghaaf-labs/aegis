@@ -309,10 +309,8 @@ async fn match_fifo_basis(
     if lots.is_empty() {
         return Ok(None);
     }
-    let decimal_lots: Vec<(Decimal, Decimal)> = lots
-        .iter()
-        .map(|r| (r.quantity, r.basis_usd))
-        .collect();
+    let decimal_lots: Vec<(Decimal, Decimal)> =
+        lots.iter().map(|r| (r.quantity, r.basis_usd)).collect();
     Ok(Some(attribute_fifo_basis(&decimal_lots, qty_disposed)))
 }
 

@@ -20,7 +20,7 @@ use crate::error::{AppError, Result};
 use crate::modules::rebalance::models::ChainKey;
 
 #[cfg(feature = "real-cctp")]
-use fees::{BurnFeeChoice, CctpFeeEntry, max_fee_for, select_burn_fee};
+use fees::{max_fee_for, select_burn_fee, BurnFeeChoice, CctpFeeEntry};
 use mock::{mock_attestation, mock_burn_receipt, mock_tx_hash};
 
 mod fees;

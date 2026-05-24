@@ -127,15 +127,15 @@ impl<'a> WalletService<'a> {
         // causing a double redirect in the frontend.
         let just_persisted = self.persist_wallet(user_id, &info).await?;
         if just_persisted {
-            let _ = self
-                .sse
-                .send(SseEvent::WalletCreated(super::super::sse::WalletCreatedPayload {
+            let _ = self.sse.send(SseEvent::WalletCreated(
+                super::super::sse::WalletCreatedPayload {
                     user_id,
                     wallet_id: info.wallet_id.clone(),
                     arc_address: info.arc_address.clone(),
                     base_address: info.base_address.clone(),
                     created_at: info.created_at,
-                }));
+                },
+            ));
         }
         crate::modules::analytics::service::emit(
             self.db,

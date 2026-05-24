@@ -1,17 +1,11 @@
 // ── Core domain types shared between frontend and backend ──────────────────
 
-export type AssetSymbol =
-  | "BTC"
-  | "ETH"
-  | "SOL"
-  | "BNB"
-  | "AVAX"
-  | "LINK"
-  | "UNI"
-  | "MATIC"
-  | "USYC"
-  | "EURC"
-  | (string & {});
+// Any token symbol from the shared `TOKENS` table (see `tokens.ts`, the FE
+// projection of the backend registry). Kept as `string` because symbols cross
+// the boundary as raw values (DB rows, agent JSON, SSE) — validate against the
+// shared `TOKENS` table where it matters rather than relying on the type. This
+// replaces a hand-maintained union that drifted from the backend.
+export type AssetSymbol = string;
 export type UserId = string;
 export type PortfolioId = string;
 
@@ -227,7 +221,32 @@ export interface AgentDecision {
   /** Allocator's projected worst-case drawdown for the proposed mix.
    * Present on `allocation_proposal` decisions. */
   expectedMaxDrawdownPct?: number;
+
+  // Async inference lifecycle (migration 0004). The slow pipeline runs
+  // off-request: `proposeAllocation`/`analyze` return a `queued` placeholder
+  // and the worker flips it to `ready` (or `failed`). Only `ready` decisions
+  // appear in the decision list; the client polls a specific id to learn the
+  // outcome. Absent on legacy rows (treat as `ready`).
+  status?: "queued" | "running" | "ready" | "failed";
+  /** Failure reason, present when `status === "failed"`. */
+  error?: string;
+
+  /** Live per-symbol execution-readiness for the proposed `recommendedAllocation`,
+   * computed by the backend route engine at response time (not a static class
+   * guess). Lets the approval modal badge each sleeve truthfully. Absent on
+   * legacy/queued decisions (the UI falls back to the static route table). */
+  routeStates?: Partial<Record<AssetSymbol, RouteReadiness>>;
 }
+
+/** Backend route-engine readiness for a sleeve, mirroring Rust `RouteState`
+ * (kebab-case serde). `ready` = executes now; `track-only` = a real target with
+ * no liquid rail on this deployment; the `needs-*` states are not-yet-routable. */
+export type RouteReadiness =
+  | "ready"
+  | "track-only"
+  | "needs-route"
+  | "needs-quote"
+  | "needs-address";
 
 /** Gate-1 allocation proposal — the agent-authored target weights the user
  * approves before any execution plan. A flattened, modal-friendly view of an
@@ -398,6 +417,8 @@ export interface GatewayBalance extends UserScopedSseEvent {
   perChain: Record<string, number>;
   /** EURC per chain — same key set as `perChain`. */
   perChainEurc: Record<string, number>;
+  /** Non-cash token quantities per chain, normalized to Aegis symbols. */
+  tokenBalancesByChain?: Record<string, Record<string, number>>;
   observedAt: string;
 }
 

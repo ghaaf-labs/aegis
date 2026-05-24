@@ -2,11 +2,15 @@ use std::collections::{HashMap, HashSet};
 
 use uuid::Uuid;
 
+use crate::domain::token::native_chain;
+use crate::error::AppError;
 use crate::error::Result;
-use crate::modules::rebalance::models::{ChainKey, PlanInput, ARC_NATIVE_SYMBOLS, BASE_NATIVE_SYMBOLS};
+use crate::modules::rebalance::models::{ChainKey, PlanInput};
+use crate::modules::rebalance::registry::{executable_token_symbols, RuntimeCapabilities};
 use crate::modules::wallet_routes;
 use crate::router::AppState;
-use crate::error::AppError;
+
+const REAL_EXECUTION_CHAIN_USDC_BUFFER: f64 = 2.0;
 
 pub(super) async fn build_plan_input(state: &AppState, portfolio_id: Uuid) -> Result<PlanInput> {
     // The planner consumes fractions (0-1), but the persisted
@@ -41,6 +45,8 @@ pub(super) async fn build_plan_input(state: &AppState, portfolio_id: Uuid) -> Re
         }
     }
     apply_route_preferences_to_targets(&goal, &mut target_weights);
+    apply_execution_capabilities_to_targets(&state.config, &mut target_weights);
+    let wallet_cash_only = real_wallet_cash_only_planning(&state.config);
 
     let relevant_symbols: Vec<String> = allocations
         .iter()
@@ -59,14 +65,20 @@ pub(super) async fn build_plan_input(state: &AppState, portfolio_id: Uuid) -> Re
         })
         .collect();
 
-    let allocation_value_sum: f64 = allocation_values.iter().map(|(_, _, v)| v.max(0.0)).sum();
+    let allocation_value_sum: f64 = if wallet_cash_only {
+        0.0
+    } else {
+        allocation_values.iter().map(|(_, _, v)| v.max(0.0)).sum()
+    };
     let invested_value_usd = if allocation_value_sum > 0.0 {
         allocation_value_sum
+    } else if wallet_cash_only {
+        0.0
     } else {
         portfolio_value_usd
     };
     let mut invested_weights = HashMap::new();
-    if invested_value_usd > 0.0 {
+    if !wallet_cash_only && invested_value_usd > 0.0 {
         for (sym, weight, value_usd) in allocation_values {
             let confirmed_value = if allocation_value_sum > 0.0 {
                 value_usd.max(0.0)
@@ -82,7 +94,8 @@ pub(super) async fn build_plan_input(state: &AppState, portfolio_id: Uuid) -> Re
         target_weights = invested_weights.clone();
     }
 
-    let usdc_per_chain = load_gateway_pool(state, user_id).await?;
+    let mut usdc_per_chain = load_gateway_pool(state, user_id).await?;
+    reserve_real_execution_usdc_buffer(&state.config, &mut usdc_per_chain);
     let idle_usdc: f64 = usdc_per_chain.values().copied().sum();
     let plan_value_usd = invested_value_usd + idle_usdc;
     let current_weights = if idle_usdc > 0.0 && plan_value_usd > 0.0 {
@@ -118,6 +131,59 @@ pub(super) async fn build_plan_input(state: &AppState, portfolio_id: Uuid) -> Re
         prices,
         regime,
     })
+}
+
+fn real_wallet_cash_only_planning(cfg: &crate::config::Config) -> bool {
+    let caps = RuntimeCapabilities::from_config(cfg);
+    caps.real_mode && cfg.circle_wallet_exec
+}
+
+fn reserve_real_execution_usdc_buffer(
+    cfg: &crate::config::Config,
+    usdc_per_chain: &mut HashMap<ChainKey, f64>,
+) {
+    let caps = RuntimeCapabilities::from_config(cfg);
+    if !caps.real_mode {
+        return;
+    }
+
+    for amount in usdc_per_chain.values_mut() {
+        if *amount > 0.0 {
+            *amount = (*amount - REAL_EXECUTION_CHAIN_USDC_BUFFER).max(0.0);
+        }
+    }
+}
+
+pub(super) fn apply_execution_capabilities_to_targets(
+    cfg: &crate::config::Config,
+    target_weights: &mut HashMap<String, f64>,
+) {
+    if target_weights.is_empty() {
+        return;
+    }
+    let caps = RuntimeCapabilities::from_config(cfg);
+    if !caps.real_mode {
+        return;
+    }
+    let executable = executable_token_symbols(&caps, cfg);
+    retain_executable_targets(target_weights, &executable);
+}
+
+fn retain_executable_targets(target_weights: &mut HashMap<String, f64>, executable: &[&str]) {
+    let mut dropped_weight = 0.0;
+    target_weights.retain(|symbol, weight| {
+        let keep = executable.iter().any(|e| e.eq_ignore_ascii_case(symbol));
+        if !keep && weight.is_finite() && *weight > 0.0 {
+            dropped_weight += *weight;
+        }
+        keep
+    });
+    if dropped_weight > 0.0 {
+        *target_weights.entry("USDC".to_string()).or_insert(0.0) += dropped_weight;
+    }
+    if target_weights.is_empty() {
+        target_weights.insert("USDC".to_string(), 1.0);
+    }
 }
 
 pub(super) async fn load_planning_prices(
@@ -207,14 +273,14 @@ pub(super) fn apply_route_preferences_to_targets(
     let base_allowed = selected_networks.contains(wallet_routes::BASE_SEPOLIA)
         || selected_networks.contains("BASE");
     target_weights.retain(|symbol, _| {
-        let symbol = symbol.as_str();
-        if ARC_NATIVE_SYMBOLS.contains(&symbol) {
-            return arc_allowed;
+        // Gate each target by the chain it lands on (registry canonical chain;
+        // USYC→Arc, everything else→Base). Replaces the old native-symbol lists.
+        match native_chain(symbol) {
+            ChainKey::Arc => arc_allowed,
+            ChainKey::Base => base_allowed,
+            // Other execution chains aren't gated by the Arc/Base toggles.
+            _ => true,
         }
-        if BASE_NATIVE_SYMBOLS.contains(&symbol) {
-            return base_allowed;
-        }
-        true
     });
 }
 
@@ -346,7 +412,10 @@ mod tests {
         // which trades on the Base USDC/EURC pool) drop out; only Arc-native
         // USYC survives.
         assert_eq!(
-            targets.keys().cloned().collect::<std::collections::HashSet<_>>(),
+            targets
+                .keys()
+                .cloned()
+                .collect::<std::collections::HashSet<_>>(),
             std::collections::HashSet::from(["USYC".to_string()])
         );
     }
@@ -367,5 +436,83 @@ mod tests {
 
         assert!(targets.contains_key("EURC"));
         assert!(!targets.contains_key("USYC"));
+    }
+
+    #[test]
+    fn executable_filter_moves_unavailable_target_weight_to_usdc() {
+        let mut targets = HashMap::from([
+            ("LINK".to_string(), 0.25),
+            ("UNI".to_string(), 0.15),
+            ("USDC".to_string(), 0.60),
+        ]);
+
+        retain_executable_targets(&mut targets, &["USDC", "LINK"]);
+
+        assert_eq!(targets.get("LINK").copied(), Some(0.25));
+        let usdc = targets.get("USDC").copied().unwrap_or_default();
+        assert!((usdc - 0.75).abs() < 1e-9);
+        assert!(!targets.contains_key("UNI"));
+    }
+
+    #[test]
+    fn executable_filter_falls_back_to_usdc_when_all_targets_are_unavailable() {
+        let mut targets = HashMap::from([("UNI".to_string(), 1.0)]);
+
+        retain_executable_targets(&mut targets, &["USDC"]);
+
+        assert_eq!(targets, HashMap::from([("USDC".to_string(), 1.0)]));
+    }
+
+    #[test]
+    fn real_execution_pool_keeps_chain_usdc_buffer() {
+        let mut cfg = crate::config::test_config();
+        cfg.execution_mock = false;
+        cfg.circle_mock = false;
+        let mut pool = HashMap::from([
+            (ChainKey::Arc, 3.25),
+            (ChainKey::Base, 1.50),
+            (ChainKey::EthSepolia, 20.0),
+        ]);
+
+        reserve_real_execution_usdc_buffer(&cfg, &mut pool);
+
+        assert_eq!(pool.get(&ChainKey::Arc).copied(), Some(1.25));
+        assert_eq!(pool.get(&ChainKey::Base).copied(), Some(0.0));
+        assert_eq!(pool.get(&ChainKey::EthSepolia).copied(), Some(18.0));
+    }
+
+    #[test]
+    fn mock_execution_pool_does_not_keep_chain_buffer() {
+        let cfg = crate::config::test_config();
+        let mut pool = HashMap::from([(ChainKey::Arc, 3.25), (ChainKey::Base, 1.50)]);
+
+        reserve_real_execution_usdc_buffer(&cfg, &mut pool);
+
+        assert_eq!(pool.get(&ChainKey::Arc).copied(), Some(3.25));
+        assert_eq!(pool.get(&ChainKey::Base).copied(), Some(1.50));
+    }
+
+    #[test]
+    fn real_circle_wallet_planning_uses_gateway_cash_only() {
+        let mut cfg = crate::config::test_config();
+        cfg.execution_mock = false;
+        cfg.circle_mock = false;
+        cfg.circle_wallet_exec = true;
+
+        assert!(real_wallet_cash_only_planning(&cfg));
+    }
+
+    #[test]
+    fn eoa_or_mock_planning_may_use_allocation_book() {
+        let mut cfg = crate::config::test_config();
+        cfg.execution_mock = false;
+        cfg.circle_mock = false;
+        cfg.circle_wallet_exec = false;
+        assert!(!real_wallet_cash_only_planning(&cfg));
+
+        cfg.execution_mock = true;
+        cfg.circle_mock = true;
+        cfg.circle_wallet_exec = true;
+        assert!(!real_wallet_cash_only_planning(&cfg));
     }
 }

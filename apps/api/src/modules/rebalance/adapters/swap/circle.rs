@@ -14,7 +14,7 @@ use super::super::super::models::ChainKey;
 #[cfg(feature = "real-swap")]
 use super::super::RealReceipt;
 #[cfg(feature = "real-swap")]
-use super::{address_to_hex, confirm_allowance, IERC20Swap, ISwapRouter02, POOL_FEE};
+use super::{address_to_hex, confirm_allowance, IERC20Swap, ISwapRouter02};
 
 /// Resolved on-chain args for a non-custodial swap. Built once in `real_execute`
 /// so the Circle-wallet helper doesn't re-derive directions/addresses.
@@ -28,6 +28,9 @@ pub(super) struct CircleSwapArgs {
     pub(super) amount_in: u128,
     pub(super) min_out: u128,
     pub(super) is_sell: bool,
+    /// The V3 fee tier the quote selected via best-execution — the swap must
+    /// execute on this exact pool.
+    pub(super) fee_tier: u32,
 }
 
 /// Non-custodial swap (Part B0): ABI-encode the input-token `approve` and the
@@ -96,7 +99,7 @@ pub(super) async fn circle_wallet_swap(
     .await?;
 
     // 2) the swap itself (exact-output sell or exact-input buy).
-    let fee = POOL_FEE.try_into().expect("fee fits uint24");
+    let fee = args.fee_tier.try_into().expect("fee fits uint24");
     let zero_limit = alloy::primitives::Uint::<160, 3>::ZERO;
     let swap_calldata = if args.is_sell {
         ISwapRouter02::exactOutputSingleCall {

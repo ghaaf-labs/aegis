@@ -8,6 +8,8 @@ use serde::Serialize;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+pub const CALIBRATION_FLOOR: i64 = 50;
+
 #[derive(Debug, Serialize, Clone, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]
 pub struct TrustabilityRow {
@@ -36,6 +38,32 @@ pub struct TrustabilityRow {
     pub recent_critic_verdict: Option<serde_json::Value>,
 }
 
+#[derive(Debug, Serialize, Clone, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct TrustabilityProgress {
+    pub calibration_floor: i64,
+    pub agent_decisions_7d: i64,
+    pub eligible_outcomes_7d: i64,
+    pub pending_real_rebalances_7d: i64,
+    pub completed_real_rebalances_7d: i64,
+    pub distinct_models_7d: i64,
+    pub last_decision_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl Default for TrustabilityProgress {
+    fn default() -> Self {
+        Self {
+            calibration_floor: CALIBRATION_FLOOR,
+            agent_decisions_7d: 0,
+            eligible_outcomes_7d: 0,
+            pending_real_rebalances_7d: 0,
+            completed_real_rebalances_7d: 0,
+            distinct_models_7d: 0,
+            last_decision_at: None,
+        }
+    }
+}
+
 pub async fn for_user(db: &PgPool, user_id: Uuid) -> sqlx::Result<Option<TrustabilityRow>> {
     sqlx::query_as::<_, TrustabilityRow>(
         "SELECT user_id, handle, decisions_executed, decisions_per_week, distinct_models,
@@ -46,6 +74,56 @@ pub async fn for_user(db: &PgPool, user_id: Uuid) -> sqlx::Result<Option<Trustab
     .bind(user_id)
     .fetch_optional(db)
     .await
+}
+
+pub async fn progress_for_user(db: &PgPool, user_id: Uuid) -> sqlx::Result<TrustabilityProgress> {
+    let progress = sqlx::query_as::<_, TrustabilityProgress>(
+        r#"
+        SELECT
+            $2::bigint AS calibration_floor,
+            count(DISTINCT d.id) FILTER (
+                WHERE d.id IS NOT NULL AND d.triggered_by <> 'abstain'
+            ) AS agent_decisions_7d,
+            count(DISTINCT d.id) FILTER (
+                WHERE d.id IS NOT NULL
+                  AND d.triggered_by <> 'abstain'
+                  AND EXISTS (
+                      SELECT 1
+                      FROM rebalances done
+                      WHERE done.decision_id = d.id
+                        AND done.status = 'completed'
+                        AND done.execution_mode = 'real'
+                  )
+            ) AS eligible_outcomes_7d,
+            count(DISTINCT rb.id) FILTER (
+                WHERE rb.execution_mode = 'real'
+                  AND rb.status IN ('planned', 'approved', 'executing')
+            ) AS pending_real_rebalances_7d,
+            count(DISTINCT rb.id) FILTER (
+                WHERE rb.execution_mode = 'real' AND rb.status = 'completed'
+            ) AS completed_real_rebalances_7d,
+            count(DISTINCT d.model_slug) FILTER (
+                WHERE d.model_slug IS NOT NULL AND d.triggered_by <> 'abstain'
+            ) AS distinct_models_7d,
+            max(d.created_at) FILTER (
+                WHERE d.id IS NOT NULL AND d.triggered_by <> 'abstain'
+            ) AS last_decision_at
+        FROM users u
+        LEFT JOIN portfolios p ON p.user_id = u.id
+        LEFT JOIN agent_decisions d
+            ON d.portfolio_id = p.id
+           AND d.created_at > now() - INTERVAL '7 days'
+        LEFT JOIN rebalances rb ON rb.decision_id = d.id
+        WHERE u.id = $1
+        GROUP BY u.id
+        "#,
+    )
+    .bind(user_id)
+    .bind(CALIBRATION_FLOOR)
+    .fetch_optional(db)
+    .await?;
+
+    Ok(progress.unwrap_or_default())
 }
 
 pub async fn leaderboard(db: &PgPool, limit: i64) -> sqlx::Result<Vec<TrustabilityRow>> {

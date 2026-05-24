@@ -40,6 +40,12 @@ pub struct ValidatedQuote {
     /// Unix timestamp (seconds) embedded in the on-chain call.
     pub deadline: u64,
     pub provider: String,
+    /// The Uniswap-V3 pool fee tier (e.g. 500 / 3000 / 10000) this quote was
+    /// priced against, chosen by best-execution tier selection. `None` for
+    /// quotes with no V3 fee tier (the 1:1 CCTP bridge, Trader Joe LB). The
+    /// executor MUST submit the swap on this exact tier — pricing on the best
+    /// pool but executing on another would miss `min_out` or fill worse.
+    pub fee_tier: Option<u32>,
 }
 
 impl ValidatedQuote {
@@ -67,6 +73,8 @@ impl ValidatedQuote {
             slippage_bps: 0,
             deadline: (now + Duration::seconds(600)).timestamp() as u64,
             provider: "cctp-1to1".into(),
+            // A pure USDC bridge is not an AMM swap — no fee tier.
+            fee_tier: None,
         }
     }
 }
@@ -159,6 +167,7 @@ mod tests {
             slippage_bps: 50,
             deadline: (now + Duration::seconds(300)).timestamp() as u64,
             provider: "uniswap-v3".into(),
+            fee_tier: Some(3000),
         }
     }
 

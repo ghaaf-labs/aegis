@@ -3,24 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  Bell,
-  LogIn,
-  LogOut,
-  Wifi,
-  WifiOff,
-  Wallet as WalletIcon,
-} from "lucide-react";
+import { Bell, LogIn, Wifi, WifiOff, Wallet as WalletIcon } from "lucide-react";
 import { BrutalButton, BrutalPill } from "@aegis/ui";
-import type { Portfolio } from "@/types";
-import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
-import { gatewayApi, walletApi } from "@/lib/api";
+import { usePortfolioStore } from "@/stores/portfolio";
+import { gatewayApi } from "@/lib/api";
 import { safeNextPath } from "@/lib/auth-routing";
-import { logoutFailureMessage, logoutRedirect } from "./logout-copy";
 
 export function Header() {
   const pathname = usePathname();
-  const portfolio = useActivePortfolio();
   const sseConnected = usePortfolioStore((s) => s.sseConnected);
   const unifiedUsdc = usePortfolioStore((s) => s.unifiedUsdc);
   const unifiedEurc = usePortfolioStore((s) => s.unifiedEurc);
@@ -31,29 +21,14 @@ export function Header() {
     (s) => s.setGatewayBalanceStatus,
   );
   const wallet = usePortfolioStore((s) => s.wallet);
-  const resetSession = usePortfolioStore((s) => s.resetSession);
   const sessionActive = usePortfolioStore((s) => s.sessionActive);
   const walletPending = sessionActive && !wallet;
 
   const [notifOpen, setNotifOpen] = useState(false);
   const [userOpen, setUserOpen] = useState(false);
-  const [logoutError, setLogoutError] = useState<string | null>(null);
   const notifRef = useRef<HTMLDivElement>(null);
   const userRef = useRef<HTMLDivElement>(null);
   const pegAlerts = usePortfolioStore((s) => s.pegAlerts);
-
-  const handleLogout = async () => {
-    setLogoutError(null);
-    try {
-      await walletApi.logout();
-    } catch (e) {
-      setLogoutError(logoutFailureMessage(e));
-      return;
-    }
-    resetSession();
-    setUserOpen(false);
-    window.location.replace(logoutRedirect());
-  };
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -65,8 +40,6 @@ export function Header() {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, []);
-  const activePortfolioName = portfolio ? displayPortfolioName(portfolio) : "";
-
   // Fetch unified balance on first render — Gateway SSE keeps it fresh after.
   useEffect(() => {
     if (!wallet) return;
@@ -78,7 +51,12 @@ export function Header() {
         if (!alive) return;
         setUnifiedUsdc(b.unifiedUsdc);
         setUnifiedEurc(b.unifiedEurc);
-        setPerChain(b.perChain ?? {}, b.perChainEurc ?? {});
+        setPerChain(
+          b.perChain ?? {},
+          b.perChainEurc ?? {},
+          undefined,
+          b.tokenBalancesByChain ?? {},
+        );
         setGatewayBalanceStatus("ready");
       })
       .catch((err) => {
@@ -101,23 +79,8 @@ export function Header() {
   ]);
 
   return (
-    <header className="flex items-center justify-between px-6 h-16 border-b-brutal border-border-default bg-surface shrink-0">
-      <div className="flex items-center gap-4">
-        {portfolio ? (
-          <div className="flex items-center gap-2 px-3 py-1.5 border-brutal border-border-default rounded-sharp bg-bg">
-            <span className="text-xs text-text-lo font-mono">Portfolio</span>
-            <span className="text-sm font-semibold text-text-hi">
-              {activePortfolioName}
-            </span>
-          </div>
-        ) : null}
-
-        {/* PORTFOLIO VALUE / ALL-TIME PNL / GATEWAY all duplicated the
-            Net Worth card on the dashboard, with one critical bug — the
-            header showed `portfolio.totalValueUsd` ("invested only") while
-            the card showed invested + wallet. Same label, different number.
-            Single source of truth lives on the Net Worth card now. */}
-      </div>
+    <header className="flex h-14 shrink-0 items-center justify-between border-b-brutal border-border-default bg-surface px-5">
+      <div aria-hidden="true" />
 
       <div className="flex items-center gap-3 ml-auto">
         {wallet ? (
@@ -132,7 +95,7 @@ export function Header() {
         ) : walletPending ? (
           <Link
             href="/wallets"
-            className="touch-target inline-flex min-h-[36px] items-center justify-center gap-2 rounded-sharp border border-warn/40 bg-warn/5 px-3 text-[10px] font-mono uppercase tracking-widest text-warn transition-colors hover:bg-warn/10"
+            className="touch-target inline-flex min-h-11 items-center justify-center gap-2 rounded-sharp border border-warn/40 bg-warn/5 px-3 text-[10px] font-mono uppercase tracking-widest text-warn transition-colors hover:bg-warn/10"
           >
             <WalletIcon className="h-3.5 w-3.5" />
             Account setup
@@ -150,7 +113,7 @@ export function Header() {
             >
               <Bell className="w-4 h-4" />
               {pegAlerts.length > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-risk" />
+                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-sharp bg-risk" />
               )}
             </BrutalButton>
             {notifOpen && (
@@ -195,32 +158,20 @@ export function Header() {
           <div className="hidden items-center gap-2 sm:flex">
             <Link
               href={authHref("/login", pathname)}
-              className="touch-target inline-flex min-h-[36px] items-center justify-center gap-2 rounded-sharp border border-black bg-accent-agent px-3 text-xs font-mono font-semibold text-black shadow-brutal-sm transition-shadow hover:shadow-brutal"
+              className="touch-target inline-flex min-h-11 items-center justify-center gap-2 rounded-sharp border border-black bg-accent-agent px-3 text-xs font-mono font-semibold text-black shadow-brutal-sm transition-shadow hover:shadow-brutal"
             >
               <LogIn className="h-3.5 w-3.5" />
               Sign in
             </Link>
           </div>
         )}
-        {sessionActive && (
-          <button
-            type="button"
-            data-testid="header-logout-direct"
-            onClick={() => void handleLogout()}
-            aria-label="Log out"
-            className="touch-target min-h-[36px] inline-flex items-center justify-center gap-2 rounded-sharp border border-border-default bg-bg px-2.5 text-xs font-mono text-text-lo hover:border-risk/50 hover:bg-risk/5 hover:text-risk transition-colors"
-          >
-            <LogOut className="w-3.5 h-3.5" aria-hidden="true" />
-            <span className="hidden sm:inline">Log out</span>
-          </button>
-        )}
         {wallet && (
           <div ref={userRef} className="relative">
             <button
               onClick={() => setUserOpen((v) => !v)}
-              className="touch-target w-7 h-7 rounded-sharp bg-accent-agent flex items-center justify-center border-brutal border-black hover:opacity-90"
-              title="Account menu"
-              aria-label="Account menu"
+              className="touch-target flex h-11 w-11 items-center justify-center rounded-sharp border-brutal border-black bg-accent-agent hover:opacity-90"
+              title="Wallet menu"
+              aria-label="Wallet menu"
               aria-haspopup="menu"
               aria-expanded={userOpen}
             >
@@ -252,25 +203,8 @@ export function Header() {
                   <WalletIcon className="w-3 h-3" />
                   Open wallet
                 </Link>
-                <button
-                  type="button"
-                  data-testid="header-logout"
-                  onClick={() => void handleLogout()}
-                  className="flex items-center gap-2 w-full border-t border-border-default px-3 py-2 text-left text-sm font-mono text-text-lo hover:bg-risk/5 hover:text-risk"
-                >
-                  <LogOut className="w-3 h-3" aria-hidden="true" />
-                  Log out
-                </button>
               </div>
             )}
-          </div>
-        )}
-        {logoutError && (
-          <div
-            role="alert"
-            className="absolute right-4 top-14 z-50 max-w-sm border border-risk/50 bg-risk/10 px-3 py-2 font-mono text-[11px] leading-relaxed text-risk shadow-brutal"
-          >
-            {logoutError}
           </div>
         )}
       </div>
@@ -284,8 +218,4 @@ function authHref(path: "/login", next: string) {
   if (safeNext) params.set("next", safeNext);
   const query = params.toString();
   return query ? `${path}?${query}` : path;
-}
-
-function displayPortfolioName(portfolio: Pick<Portfolio, "name">) {
-  return portfolio.name;
 }

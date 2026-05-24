@@ -351,6 +351,9 @@ mod tests {
             kind: Some("allocation_proposal".into()),
             recommended_allocation: None,
             allocation_applied_at: None,
+            status: Some("ready".into()),
+            error: None,
+            route_states: None,
         }
     }
 

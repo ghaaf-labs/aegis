@@ -12,7 +12,7 @@
 //! symbols, never generic crypto trades.
 
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use rust_decimal::prelude::ToPrimitive;
 use serde::Deserialize;
@@ -20,7 +20,10 @@ use serde_json::json;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
-use super::allocation::{clamp_allocation, derive_guardrails, goal_objective, round2};
+use super::allocation::{
+    clamp_allocation, derive_guardrails, finalize_allocation, goal_objective, round2,
+    FinalizedAllocation, RawAllocation,
+};
 use super::calibration_train;
 use super::constitution::{self, ClauseViolation, Tier};
 use super::critic as critic_mod;
@@ -93,6 +96,97 @@ pub async fn analyze_portfolio(
     state: &AppState,
     req: AnalyzeRequest,
 ) -> crate::error::Result<AgentDecision> {
+    // Synchronous (run-to-completion) entry for the scheduler. The HTTP route
+    // uses `enqueue_analysis` + a spawned `run_analysis_job` so the request
+    // returns immediately (see agent::handlers::analyze).
+    let (queued, is_new) = enqueue_analysis(state, &req).await?;
+    if is_new {
+        return run_analysis_job(state, queued.id, &req).await;
+    }
+    await_decision_ready(state, queued.id).await
+}
+
+/// Enqueue a rebalance-analysis job: insert a `queued` placeholder (kind
+/// `rebalance`) and return it, deduping to any in-flight analysis for the
+/// portfolio. `is_new = false` ⇒ a job is already running; don't start another.
+pub async fn enqueue_analysis(
+    state: &AppState,
+    req: &AnalyzeRequest,
+) -> crate::error::Result<(AgentDecision, bool)> {
+    let triggered_by = req
+        .triggered_by
+        .clone()
+        .unwrap_or_else(|| "user_request".to_string());
+    let inserted: Option<AgentDecision> = sqlx::query_as(
+        r#"INSERT INTO agent_decisions
+               (id, portfolio_id, reasoning, triggered_by, kind, status)
+           VALUES ($1, $2, '', $3, 'rebalance', 'queued')
+           ON CONFLICT (portfolio_id, kind) WHERE status IN ('queued', 'running')
+           DO NOTHING
+           RETURNING *"#,
+    )
+    .bind(Uuid::new_v4())
+    .bind(req.portfolio_id)
+    .bind(&triggered_by)
+    .fetch_optional(&state.db)
+    .await?;
+    if let Some(row) = inserted {
+        return Ok((row, true));
+    }
+    let existing: AgentDecision = sqlx::query_as(
+        r#"SELECT * FROM agent_decisions
+           WHERE portfolio_id = $1 AND kind = 'rebalance'
+                 AND status IN ('queued', 'running')
+           ORDER BY created_at DESC LIMIT 1"#,
+    )
+    .bind(req.portfolio_id)
+    .fetch_one(&state.db)
+    .await?;
+    Ok((existing, false))
+}
+
+/// Run a queued analysis job to completion (semaphore-bounded); flips the row to
+/// `ready`, or `failed` so the client recovers via a retry.
+pub async fn run_analysis_job(
+    state: &AppState,
+    decision_id: Uuid,
+    req: &AnalyzeRequest,
+) -> crate::error::Result<AgentDecision> {
+    let _permit = state
+        .inference_permits
+        .acquire()
+        .await
+        .map_err(|e| anyhow::anyhow!("inference semaphore closed: {e}"))?;
+    sqlx::query(
+        "UPDATE agent_decisions SET status = 'running', started_at = now() WHERE id = $1 AND status = 'queued'",
+    )
+    .bind(decision_id)
+    .execute(&state.db)
+    .await?;
+    match run_analysis_pipeline(state, decision_id, req).await {
+        Ok(decision) => Ok(decision),
+        Err(e) => {
+            let msg = e.to_string();
+            let _ = sqlx::query(
+                "UPDATE agent_decisions SET status = 'failed', error = $2, completed_at = now() WHERE id = $1",
+            )
+            .bind(decision_id)
+            .bind(&msg)
+            .execute(&state.db)
+            .await;
+            tracing::warn!(decision_id = %decision_id, error = %msg, "analysis job failed");
+            Err(e)
+        }
+    }
+}
+
+/// The strategist → critic → (optional) revision pipeline proper. Finalizes the
+/// queued row via `persist_and_broadcast_decision`.
+async fn run_analysis_pipeline(
+    state: &AppState,
+    decision_id: Uuid,
+    req: &AnalyzeRequest,
+) -> crate::error::Result<AgentDecision> {
     let start = Instant::now();
     let triggered_by = req
         .triggered_by
@@ -118,7 +212,7 @@ pub async fn analyze_portfolio(
         model_slug,
         mut prompt_tokens,
         mut completion_tokens,
-    } = run_strategist_with_critic(state, &ai, &req, &ctx, tier_models).await?;
+    } = run_strategist_with_critic(state, &ai, req, &ctx, tier_models).await?;
 
     // Revision (optional).
     if verdict.demands_revision {
@@ -178,7 +272,7 @@ pub async fn analyze_portfolio(
         state,
         &ctx,
         PersistArgs {
-            portfolio_id: req.portfolio_id,
+            decision_id,
             proposal: &proposal,
             verdict: &verdict,
             final_triggered_by: &final_triggered_by,
@@ -432,7 +526,9 @@ async fn apply_calibration_and_counterfactual(
 /// Inputs for persisting + broadcasting a `rebalance` decision. Grouped into a
 /// struct so the helper stays under the argument-count threshold.
 struct PersistArgs<'a> {
-    portfolio_id: Uuid,
+    /// The queued row to finalize (flip to `ready` with the decision). Its
+    /// `portfolio_id` is already set, so the persist step only updates content.
+    decision_id: Uuid,
     proposal: &'a StrategistProposal,
     verdict: &'a CriticOutput,
     final_triggered_by: &'a str,
@@ -453,7 +549,7 @@ async fn persist_and_broadcast_decision(
     args: PersistArgs<'_>,
 ) -> crate::error::Result<AgentDecision> {
     let PersistArgs {
-        portfolio_id,
+        decision_id,
         proposal,
         verdict,
         final_triggered_by,
@@ -491,17 +587,19 @@ async fn persist_and_broadcast_decision(
     let critic_value = serde_json::to_value(verdict)?;
     let snapshot_value = build_decision_snapshot(&ctx.portfolio, &ctx.allocations, &ctx.snapshot);
 
+    // Flip the queued row to `ready` with the full decision (the async
+    // analyze pipeline pre-inserted it; see `enqueue_analysis`).
     let decision: AgentDecision = sqlx::query_as(
-        r#"INSERT INTO agent_decisions
-           (id, portfolio_id, reasoning, recommendation, confidence,
-            triggered_by, model_slug, regime, prompt_tokens,
-            completion_tokens, latency_ms, critic_verdict, snapshot,
-            raw_confidence, calibrated_confidence, counterfactual)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        r#"UPDATE agent_decisions SET
+               reasoning = $2, recommendation = $3, confidence = $4, triggered_by = $5,
+               model_slug = $6, regime = $7, prompt_tokens = $8, completion_tokens = $9,
+               latency_ms = $10, critic_verdict = $11, snapshot = $12, raw_confidence = $13,
+               calibrated_confidence = $14, counterfactual = $15,
+               status = 'ready', completed_at = now()
+           WHERE id = $1
            RETURNING *"#,
     )
-    .bind(Uuid::new_v4())
-    .bind(portfolio_id)
+    .bind(decision_id)
     .bind(&proposal.reasoning)
     .bind(&recommendation_value)
     .bind(proposal.confidence)
@@ -595,14 +693,119 @@ pub async fn propose_allocation(
     state: &AppState,
     req: ProposeAllocationRequest,
 ) -> crate::error::Result<AgentDecision> {
-    use crate::modules::rebalance::registry::{
-        capabilities::RuntimeCapabilities, executable_token_symbols,
-    };
-    let start = Instant::now();
+    // Synchronous (run-to-completion) entry, used by the auto-pilot / scheduler
+    // which already run off the request path. The user-facing HTTP route instead
+    // calls `enqueue_allocation` + a spawned `run_allocation_job` so the request
+    // returns immediately (see agent::handlers::propose_allocation).
+    let (queued, is_new) = enqueue_allocation(state, &req).await?;
+    if is_new {
+        return run_allocation_job(state, queued.id, &req).await;
+    }
+    // A job for this portfolio is already in flight (a concurrent request / tab);
+    // wait for it to finish rather than starting a duplicate model call.
+    await_decision_ready(state, queued.id).await
+}
+
+/// Enqueue an allocation-proposal job: insert a `queued` placeholder row and
+/// return it. The partial unique index `agent_decisions_one_inflight_per_*`
+/// guarantees at most one in-flight job per portfolio, so a double-submit
+/// (React StrictMode, double-click, retry-while-running) dedupes onto the
+/// existing row. Returns `(row, is_new)` — `is_new = false` means an in-flight
+/// job already existed and the caller must NOT start a second one. The
+/// placeholder stays out of the decision list (Gate-1 never opens on it) until
+/// the worker flips it to `ready`.
+pub async fn enqueue_allocation(
+    state: &AppState,
+    req: &ProposeAllocationRequest,
+) -> crate::error::Result<(AgentDecision, bool)> {
     let triggered_by = req
         .triggered_by
         .clone()
         .unwrap_or_else(|| "allocation_proposal".to_string());
+
+    let inserted: Option<AgentDecision> = sqlx::query_as(
+        r#"INSERT INTO agent_decisions
+               (id, portfolio_id, reasoning, triggered_by, kind, status)
+           VALUES ($1, $2, '', $3, 'allocation_proposal', 'queued')
+           ON CONFLICT (portfolio_id, kind) WHERE status IN ('queued', 'running')
+           DO NOTHING
+           RETURNING *"#,
+    )
+    .bind(Uuid::new_v4())
+    .bind(req.portfolio_id)
+    .bind(&triggered_by)
+    .fetch_optional(&state.db)
+    .await?;
+
+    if let Some(row) = inserted {
+        return Ok((row, true));
+    }
+
+    let existing: AgentDecision = sqlx::query_as(
+        r#"SELECT * FROM agent_decisions
+           WHERE portfolio_id = $1 AND kind = 'allocation_proposal'
+                 AND status IN ('queued', 'running')
+           ORDER BY created_at DESC
+           LIMIT 1"#,
+    )
+    .bind(req.portfolio_id)
+    .fetch_one(&state.db)
+    .await?;
+    Ok((existing, false))
+}
+
+/// Run a queued allocation job to completion: mark it `running`, run the
+/// pipeline, then flip the row to `ready` (persisting the full decision) or
+/// `failed` (so the client recovers via a retry instead of hanging on an SSE
+/// event that never arrives). Bounded by the inference semaphore so an
+/// onboarding burst can't open unbounded OpenRouter calls.
+pub async fn run_allocation_job(
+    state: &AppState,
+    decision_id: Uuid,
+    req: &ProposeAllocationRequest,
+) -> crate::error::Result<AgentDecision> {
+    let _permit = state
+        .inference_permits
+        .acquire()
+        .await
+        .map_err(|e| anyhow::anyhow!("inference semaphore closed: {e}"))?;
+
+    sqlx::query(
+        "UPDATE agent_decisions SET status = 'running', started_at = now() WHERE id = $1 AND status = 'queued'",
+    )
+    .bind(decision_id)
+    .execute(&state.db)
+    .await?;
+
+    match run_allocation_pipeline(state, decision_id, req).await {
+        Ok(decision) => Ok(decision),
+        Err(e) => {
+            let msg = e.to_string();
+            // Best-effort failure mark; the boot reconciler is the backstop.
+            let _ = sqlx::query(
+                "UPDATE agent_decisions SET status = 'failed', error = $2, completed_at = now() WHERE id = $1",
+            )
+            .bind(decision_id)
+            .bind(&msg)
+            .execute(&state.db)
+            .await;
+            tracing::warn!(decision_id = %decision_id, error = %msg, "allocation job failed");
+            Err(e)
+        }
+    }
+}
+
+/// The allocation pipeline proper: classify regime, call the allocator, finalize
+/// (the deterministic clamp keeps the persisted target honest regardless of
+/// model), constitution-check, then flip the queued row to `ready` and broadcast
+/// `agent.decision`.
+async fn run_allocation_pipeline(
+    state: &AppState,
+    decision_id: Uuid,
+    req: &ProposeAllocationRequest,
+) -> crate::error::Result<AgentDecision> {
+    use crate::modules::rebalance::registry::allocation_target_symbols;
+    let start = Instant::now();
 
     // Shared scaffolding: load + classify + assemble context. The Gate-1 risk
     // dial re-proposes at a different risk level via `risk_override` without
@@ -633,43 +836,46 @@ pub async fn propose_allocation(
         .await?;
     let parsed = parse_proposal(&resp.content)?;
 
-    let caps = RuntimeCapabilities::from_config(&state.config);
-    let executable = executable_token_symbols(&caps, &state.config);
     let guardrails = derive_guardrails(
         &user_profile.risk_tolerance,
         regime.regime.as_str(),
         regime.signals.btc_vol_30d,
     );
-
-    // Conservative fallback instead of abstain: a low-confidence or empty
-    // proposal falls back to the current target (re-clamped) or USDC-only,
-    // never a no-op — the user always gets something to approve.
-    let low_conf = parsed.confidence < ABSTAIN_CONFIDENCE_THRESHOLD;
+    let target_universe = allocation_target_symbols(&state.config);
     let raw_map = parsed.recommended_allocation.clone().unwrap_or_default();
-    let clamped = if low_conf || raw_map.is_empty() {
-        match portfolio
+    let confidence = parsed.confidence.clamp(0.0, 1.0);
+
+    // Reconcile the raw model output into a consistent, persist-ready target:
+    // clamp against the runtime target universe, annotate the reasoning with any
+    // risk adjustments, and keep the drawdown consistent with the final mix. In
+    // real mode that universe is executable-only so Gate-1 cannot approve a mix
+    // that Gate-2 must reject.
+    let FinalizedAllocation {
+        allocation: clamped,
+        reasoning,
+        expected_max_drawdown_pct,
+        adjustments,
+    } = finalize_allocation(
+        RawAllocation {
+            weights: &raw_map,
+            reasoning: &parsed.reasoning,
+            confidence: parsed.confidence,
+            expected_max_drawdown_pct: parsed.expected_max_drawdown_pct,
+        },
+        portfolio
             .goal
             .get("targetAllocation")
-            .and_then(|v| v.as_object())
-        {
-            Some(obj) if !obj.is_empty() => clamp_allocation(obj, &executable, guardrails),
-            _ => std::iter::once(("USDC".to_string(), 100.0)).collect(),
-        }
-    } else {
-        clamp_allocation(&raw_map, &executable, guardrails)
-    };
-
-    let reasoning = if low_conf {
-        format!(
-            "Low allocator confidence ({:.2}); proposing a conservative reserve allocation. {}",
-            parsed.confidence, parsed.reasoning
-        )
-        .trim()
-        .to_string()
-    } else {
-        parsed.reasoning.clone()
-    };
-    let confidence = parsed.confidence.clamp(0.0, 1.0);
+            .and_then(|v| v.as_object()),
+        &target_universe,
+        guardrails,
+    );
+    if !adjustments.is_empty() {
+        tracing::info!(
+            portfolio_id = %req.portfolio_id,
+            adjustments = ?adjustments,
+            "allocator proposal clamped to risk limits; reasoning annotated"
+        );
+    }
 
     let alloc_obj: serde_json::Map<String, serde_json::Value> = clamped
         .iter()
@@ -688,10 +894,10 @@ pub async fn propose_allocation(
                 .iter()
                 .map(|(k, v)| json!({ "asset": k, "targetWeightPct": v }))
                 .collect::<Vec<_>>(),
-            "expectedMaxDrawdownPct": parsed.expected_max_drawdown_pct,
+            "expectedMaxDrawdownPct": expected_max_drawdown_pct,
         }),
         recommended_allocation: Some(alloc_obj.clone()),
-        expected_max_drawdown_pct: parsed.expected_max_drawdown_pct,
+        expected_max_drawdown_pct,
     };
     let violations = evaluate_constitution(
         &constitution_proposal,
@@ -729,28 +935,27 @@ pub async fn propose_allocation(
     let recommendation_value = json!({
         "summary": summary,
         "recommendedAllocation": alloc_value,
-        "expectedMaxDrawdownPct": parsed.expected_max_drawdown_pct,
+        "expectedMaxDrawdownPct": expected_max_drawdown_pct,
     });
     let critic_value = serde_json::to_value(&verdict)?;
     let snapshot_value = build_decision_snapshot(&portfolio, &allocations, &snapshot);
     let latency_ms = start.elapsed().as_millis() as i32;
 
+    // Flip the queued row to `ready` with the full decision in one statement.
     let decision: AgentDecision = sqlx::query_as(
-        r#"INSERT INTO agent_decisions
-           (id, portfolio_id, reasoning, recommendation, confidence,
-            triggered_by, model_slug, regime, prompt_tokens, completion_tokens,
-            latency_ms, critic_verdict, snapshot, raw_confidence,
-            calibrated_confidence, counterfactual, kind, recommended_allocation)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-                   $15, $16, $17, $18)
+        r#"UPDATE agent_decisions SET
+               reasoning = $2, recommendation = $3, confidence = $4, model_slug = $5,
+               regime = $6, prompt_tokens = $7, completion_tokens = $8, latency_ms = $9,
+               critic_verdict = $10, snapshot = $11, raw_confidence = $12,
+               calibrated_confidence = $13, recommended_allocation = $14,
+               status = 'ready', completed_at = now()
+           WHERE id = $1
            RETURNING *"#,
     )
-    .bind(Uuid::new_v4())
-    .bind(req.portfolio_id)
+    .bind(decision_id)
     .bind(&reasoning)
     .bind(&recommendation_value)
     .bind(confidence)
-    .bind(&triggered_by)
     .bind(&resp.model_slug)
     .bind(regime.regime.as_str())
     .bind(resp.prompt_tokens as i32)
@@ -760,8 +965,6 @@ pub async fn propose_allocation(
     .bind(&snapshot_value)
     .bind(confidence)
     .bind(confidence)
-    .bind(Option::<String>::None)
-    .bind("allocation_proposal")
     .bind(&alloc_value)
     .fetch_one(&state.db)
     .await?;
@@ -795,6 +998,58 @@ pub async fn propose_allocation(
     Ok(decision)
 }
 
+/// Poll a decision row until it leaves the in-flight states, returning the
+/// terminal row. Used when a blocking caller (auto-pilot) deduped onto an
+/// already-running job; bounded so a wedged worker can't hang it forever.
+async fn await_decision_ready(
+    state: &AppState,
+    decision_id: Uuid,
+) -> crate::error::Result<AgentDecision> {
+    let deadline =
+        Instant::now() + Duration::from_secs(state.config.openrouter_attempt_timeout_secs * 3 + 30);
+    loop {
+        let row: AgentDecision = sqlx::query_as("SELECT * FROM agent_decisions WHERE id = $1")
+            .bind(decision_id)
+            .fetch_one(&state.db)
+            .await?;
+        match row.status.as_deref() {
+            // `None` covers legacy rows written before migration 0004.
+            Some("ready") | None => return Ok(row),
+            Some("failed") => {
+                return Err(anyhow::anyhow!(row
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "allocation job failed".to_string()))
+                .into())
+            }
+            _ if Instant::now() >= deadline => {
+                return Err(anyhow::anyhow!("allocation job did not complete in time").into())
+            }
+            _ => tokio::time::sleep(Duration::from_millis(750)).await,
+        }
+    }
+}
+
+/// Mark inference jobs orphaned by a process restart as `failed`. A single API
+/// replica means anything still `queued`/`running` at boot was abandoned when
+/// the previous process exited; the client then recovers via a retry instead of
+/// waiting on an SSE event that will never arrive. Run once at startup.
+pub async fn reconcile_orphaned_inference(state: &AppState) -> crate::error::Result<u64> {
+    let res = sqlx::query(
+        "UPDATE agent_decisions SET status = 'failed', error = 'interrupted by restart', completed_at = now() WHERE status IN ('queued', 'running')",
+    )
+    .execute(&state.db)
+    .await?;
+    let n = res.rows_affected();
+    if n > 0 {
+        tracing::warn!(
+            count = n,
+            "reconciled orphaned inference jobs to failed at boot"
+        );
+    }
+    Ok(n)
+}
+
 /// Row shape for the allocation-proposal ownership/state lookup in
 /// [`apply_allocation`]: (portfolio_id, kind, recommended_allocation, applied_at).
 type AllocationDecisionRow = (
@@ -816,9 +1071,7 @@ pub async fn apply_allocation(
     decision_id: Uuid,
     user_id: Uuid,
 ) -> crate::error::Result<Portfolio> {
-    use crate::modules::rebalance::registry::{
-        capabilities::RuntimeCapabilities, executable_token_symbols,
-    };
+    use crate::modules::rebalance::registry::allocation_target_symbols;
 
     let row: Option<AllocationDecisionRow> = sqlx::query_as(
         r#"SELECT d.portfolio_id, d.kind, d.recommended_allocation,
@@ -849,24 +1102,23 @@ pub async fn apply_allocation(
         return Ok(p);
     }
 
-    // Re-clamp the stored allocation (defense in depth — never trust a stored
-    // value blindly) against the current executable set + user guardrails.
+    // Re-clamp the stored allocation against the runtime target universe + user
+    // guardrails. This is defense in depth for older/stale proposals: in real
+    // mode we only persist targets that can build an executable review.
     let raw = rec_alloc
         .as_ref()
         .and_then(|v| v.as_object().cloned())
         .unwrap_or_default();
     let user_profile = fetch_user_profile(state, user_id).await?;
-    let caps = RuntimeCapabilities::from_config(&state.config);
-    let executable = executable_token_symbols(&caps, &state.config);
-    // Re-clamp as defense-in-depth (never trust a stored value blindly: drop a
-    // token that became non-executable since propose, re-normalize). Use the
-    // *decision's own regime* so the guardrails match the ones the proposal was
-    // clamped under — otherwise a regime-tilted proposal (e.g. a wider risk_on
-    // single-asset cap) would be silently re-tightened under a neutral baseline,
-    // making the adopted target diverge from the one the user/auto-pilot saw.
+    let target_universe = allocation_target_symbols(&state.config);
+    // Use the *decision's own regime* so the guardrails match the ones the
+    // proposal was clamped under — otherwise a regime-tilted proposal (e.g. a
+    // wider risk_on single-asset cap) would be silently re-tightened under a
+    // neutral baseline, making the adopted target diverge from the one the
+    // user/auto-pilot saw.
     let clamped = clamp_allocation(
         &raw,
-        &executable,
+        &target_universe,
         derive_guardrails(
             &user_profile.risk_tolerance,
             decision_regime.as_deref().unwrap_or("neutral"),

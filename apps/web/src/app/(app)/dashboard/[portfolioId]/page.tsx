@@ -1,41 +1,37 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import {
-  CircleAlert,
-  Loader2,
-  LockKeyhole,
-  Rocket,
-  Sparkles,
-} from "lucide-react";
-import { PortfolioSummaryCard } from "@/components/dashboard/portfolio-summary-card";
+import { Loader2, Sparkles } from "lucide-react";
 import { AllocationChart } from "@/components/dashboard/allocation-chart";
 import { AssetTable } from "@/components/dashboard/asset-table";
 import { AgentReasoningFeed } from "@/components/agent/reasoning-feed";
 import { PerformanceChart } from "@/components/dashboard/performance-chart";
 import { MarketOverview } from "@/components/dashboard/market-overview";
 import { TrustabilityCard } from "@/components/dashboard/trustability-card";
-import { IdleCashCard } from "@/components/dashboard/idle-cash-card";
-import { targetAllocationsForPortfolio } from "@/components/dashboard/target-allocations";
-import { FaucetButton } from "@/components/wallet/faucet-button";
+import {
+  AssetControlTower,
+  type ExecutionProgressSummary,
+} from "@/components/dashboard/asset-control-tower";
+import { RouteStackMatrix } from "@/components/dashboard/route-stack-matrix";
 import { ApprovalModal } from "@/components/rebalance/approval-modal";
 import { AllocationProposalModal } from "@/components/agent/allocation-proposal-modal";
-import { BrutalButton } from "@aegis/ui";
+import { DashboardSkeleton } from "../dashboard-loading";
 import {
   agentApi,
+  gatewayApi,
+  portfolioApi,
   rebalanceApi,
   userAgentApi,
   type RebalanceApprovalSafety,
   type RebalancePlanResponse,
 } from "@/lib/api";
 import { dismissProposal, isProposalDismissed } from "@/lib/proposal-dismissal";
+import { pollDecisionReady } from "@/lib/decision-poll";
 import type { AgentDecision } from "@/types";
 import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
-import { formatCurrency } from "@/lib/utils";
-import { derivePortfolioPositionMetrics } from "@/lib/portfolio-values";
-import { deriveCashSplit } from "@/lib/cash-model";
+import { deriveDashboardBalanceModel } from "@/lib/dashboard-balance-model";
 
 const stagger = { visible: { transition: { staggerChildren: 0.08 } } };
 const fadeUp = {
@@ -56,12 +52,34 @@ export default function PortfolioDashboardPage() {
 
   const unifiedUsdc = usePortfolioStore((s) => s.unifiedUsdc);
   const unifiedEurc = usePortfolioStore((s) => s.unifiedEurc);
+  const perChainUsdc = usePortfolioStore((s) => s.perChainUsdc);
+  const perChainEurc = usePortfolioStore((s) => s.perChainEurc);
+  const tokenBalancesByChain = usePortfolioStore((s) => s.tokenBalancesByChain);
   const snapshot = usePortfolioStore((s) => s.marketSnapshot);
   const wallet = usePortfolioStore((s) => s.wallet);
   const portfolios = usePortfolioStore((s) => s.portfolios);
   const portfoliosLoaded = usePortfolioStore((s) => s.portfoliosLoaded);
+  const activePortfolioDetailId = usePortfolioStore(
+    (s) => s.activePortfolioDetailId,
+  );
+  const activePortfolioDetailStatus = usePortfolioStore(
+    (s) => s.activePortfolioDetailStatus,
+  );
+  const decisionsPortfolioId = usePortfolioStore((s) => s.decisionsPortfolioId);
+  const decisionsStatus = usePortfolioStore((s) => s.decisionsStatus);
+  const marketSnapshotStatus = usePortfolioStore((s) => s.marketSnapshotStatus);
   const gatewayBalanceStatus = usePortfolioStore((s) => s.gatewayBalanceStatus);
   const gatewayBalanceError = usePortfolioStore((s) => s.gatewayBalanceError);
+  const gatewayBalanceUpdatedAt = usePortfolioStore(
+    (s) => s.gatewayBalanceUpdatedAt,
+  );
+  const patchPortfolio = usePortfolioStore((s) => s.patchPortfolio);
+  const setUnifiedUsdc = usePortfolioStore((s) => s.setUnifiedUsdc);
+  const setUnifiedEurc = usePortfolioStore((s) => s.setUnifiedEurc);
+  const setPerChain = usePortfolioStore((s) => s.setPerChain);
+  const setGatewayBalanceStatus = usePortfolioStore(
+    (s) => s.setGatewayBalanceStatus,
+  );
   const activePortfolio = useActivePortfolio();
   const router = useRouter();
   const [deploying, setDeploying] = useState(false);
@@ -78,6 +96,8 @@ export default function PortfolioDashboardPage() {
   const [estimatedFeeUsdc, setEstimatedFeeUsdc] = useState(0);
   const [feeFetchedAt, setFeeFetchedAt] = useState<Date | null>(null);
   const [reviewMessage, setReviewMessage] = useState<string | null>(null);
+  const [executionProgress, setExecutionProgress] =
+    useState<ExecutionProgressSummary | null>(null);
   const decisions = usePortfolioStore((s) => s.decisions);
   const [proposalDecision, setProposalDecision] =
     useState<AgentDecision | null>(null);
@@ -86,7 +106,24 @@ export default function PortfolioDashboardPage() {
   // Auto-pilot ON suppresses the Gate-1 modal entirely — proposals auto-apply
   // and the result shows in the activity feed + Transactions, no modal.
   const [autoPilotEnabled, setAutoPilotEnabled] = useState(false);
+  const [designError, setDesignError] = useState(false);
   const proposalParam = searchParams?.get("proposal") ?? null;
+  // Onboarding routes here with `?designing=1` rather than blocking on the slow
+  // allocator call; this stable, mounted page kicks the design off once (below)
+  // and opens Gate 1 when the proposal lands.
+  const designing = searchParams?.get("designing") === "1";
+  const designStartedRef = useRef(false);
+  const executionSyncedRef = useRef<string | null>(null);
+  // Tracks a real unmount (not effect re-runs) so a slow in-flight proposal
+  // still resolves into state instead of being discarded when the effect's deps
+  // churn mid-call (the dashboard re-renders on every price/balance tick).
+  const designMountedRef = useRef(true);
+  useEffect(() => {
+    designMountedRef.current = true;
+    return () => {
+      designMountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -157,88 +194,257 @@ export default function PortfolioDashboardPage() {
   }, [activePortfolio, portfolios, portfoliosLoaded, router]);
 
   const gatewayBalanceReady = gatewayBalanceStatus === "ready";
-  const gatewayBalanceUnavailable = gatewayBalanceStatus === "error";
-  const positionMetrics = derivePortfolioPositionMetrics(
-    activePortfolio,
+  const balanceModel = deriveDashboardBalanceModel({
+    portfolio: activePortfolio,
     snapshot,
-  );
-  const investedUsd = positionMetrics.investedUsd;
-  const hasInvestedPositions = investedUsd > 0.5;
-  const targetAllocations = targetAllocationsForPortfolio(activePortfolio);
-  // Only the idle USDC ABOVE the intended USDC reserve is actually deployable;
-  // the rest is the target cash reserve. The shared cash-model helper is the
-  // single source of this split across the whole platform.
-  const cashSplit = deriveCashSplit({
+    wallet,
     unifiedUsdc,
     unifiedEurc,
-    targetAllocations,
-    investedUsd,
-    snapshot,
+    perChainUsdc,
+    perChainEurc,
+    extraTokenBalancesByChain: tokenBalancesByChain,
+    gatewayBalanceStatus,
+    gatewayBalanceError,
+    gatewayBalanceUpdatedAt,
   });
-  const usdcTargetWeight = cashSplit.usdcTargetWeight;
-  const deployableUsdc = cashSplit.deployableUsd;
-  const hasIdleCash =
-    gatewayBalanceReady && (unifiedUsdc > 0.5 || unifiedEurc > 0.5);
-  const showFaucet =
-    !!wallet && gatewayBalanceReady && !hasInvestedPositions && !hasIdleCash;
-  const showNoIdleCash =
-    !!wallet &&
-    gatewayBalanceReady &&
-    hasInvestedPositions &&
-    !hasIdleCash &&
-    !!activePortfolio;
+  const hasInvestedPositions = balanceModel.hasInvestedPositions;
+  const hasAgentTarget = balanceModel.hasAgentTarget;
+  const deployableUsdc = balanceModel.deployableUsd;
+  // Deploy/rebalance is only meaningful once the agent has designed a target.
+  // Without one, "Review plan" dead-ends with "already matches target" (an empty
+  // target reads as an all-cash portfolio), stranding the funds — so gate it on
+  // hasAgentTarget and route untargeted accounts to design instead.
   const showDeploy =
-    gatewayBalanceReady && deployableUsdc > 5 && !!activePortfolio;
-  const maxTargetDriftPct = positionMetrics.maxDriftPct;
-  const hasReviewableDrift = maxTargetDriftPct >= 5;
-  const isFirstDeploy = investedUsd <= 5;
+    gatewayBalanceReady &&
+    deployableUsdc > 5 &&
+    hasAgentTarget &&
+    !!activePortfolio;
+  // Funded but no target designed yet (and nothing already in review): guide the
+  // user to design an allocation (Gate 1) rather than the dead-end "Review plan".
+  // A pending proposal the user hasn't dismissed auto-opens Gate 1; only when
+  // there's none to act on (none yet, or it was dismissed) do we surface the
+  // design CTA — so dismissing a proposal can't strand a funded account either.
+  const pendingProposalActionable =
+    !!pendingProposal && !isProposalDismissed(pendingProposal.id);
   const portfolioTitle = AGENT_PORTFOLIO_NAME;
-  const agentModelSlug = proposalDecision?.modelSlug;
-  const agentRegime = proposalDecision?.regime;
-  const hasAgentTarget = targetAllocations.length > 0;
+  const showAssetDetails = hasAgentTarget || hasInvestedPositions;
+  const activePortfolioId = activePortfolio?.id ?? null;
+  const activePortfolioDetailSettled =
+    activePortfolioId !== null &&
+    activePortfolioDetailId === activePortfolioId &&
+    isSettledStatus(activePortfolioDetailStatus);
+  const decisionsSettled =
+    activePortfolioId !== null &&
+    decisionsPortfolioId === activePortfolioId &&
+    isSettledStatus(decisionsStatus);
+  const gatewayBalanceSettled =
+    !wallet || isSettledStatus(gatewayBalanceStatus);
+  const marketSnapshotSettled = isSettledStatus(marketSnapshotStatus);
+  const dashboardLoading =
+    !portfoliosLoaded ||
+    !activePortfolio ||
+    !activePortfolioDetailSettled ||
+    !decisionsSettled ||
+    !gatewayBalanceSettled ||
+    !marketSnapshotSettled;
+  // Async allocation generation shared by the `?designing=1` handoff and the
+  // retry / re-propose CTA: enqueue the job (the POST returns a `queued`
+  // placeholder immediately — no 38–240s block), then poll until the worker
+  // flips it to `ready`. The SSE `agent.decision` path also opens Gate-1 the
+  // moment the ready decision lands — whichever wins; opening is idempotent.
+  // Throws on failure/timeout so callers surface the retry CTA. Auto-pilot still
+  // suppresses Gate 1.
+  const generateAllocation = useCallback(async () => {
+    if (!activePortfolio) return;
+    const queued = await agentApi.proposeAllocation(activePortfolio.id);
+    const ready = await pollDecisionReady(
+      queued.id,
+      () => designMountedRef.current,
+    );
+    if (!designMountedRef.current) return;
+    setProposalDecision(ready);
+    if (!autoPilotEnabled) setProposalOpen(true);
+  }, [activePortfolio, autoPilotEnabled]);
+
+  // `?designing=1` handoff from onboarding: generate exactly once. Ref-guarded
+  // against a re-render / StrictMode double-invoke, and skipped when a proposal
+  // (or an already-designed target) is present so a refresh with a stale
+  // `?designing=1` never regenerates.
+  useEffect(() => {
+    if (!designing || !activePortfolio) return;
+    if (designStartedRef.current) return;
+    if (pendingProposal || proposalDecision || hasAgentTarget) return;
+    designStartedRef.current = true;
+    setDesignError(false);
+    void generateAllocation().catch(() => {
+      if (designMountedRef.current) setDesignError(true);
+    });
+  }, [
+    designing,
+    activePortfolio,
+    pendingProposal,
+    proposalDecision,
+    hasAgentTarget,
+    generateAllocation,
+  ]);
 
   const handleRepropose = async () => {
     if (!activePortfolio) return;
     setReproposing(true);
+    setDesignError(false);
     try {
-      const decision = await agentApi.proposeAllocation(activePortfolio.id);
-      setProposalDecision(decision);
-      setProposalOpen(true);
+      await generateAllocation();
     } catch {
-      /* surfaced via the modal/feed; keep the dashboard responsive */
+      // Surfaced via the designing banner's retry; keep the dashboard responsive.
+      setDesignError(true);
     } finally {
       setReproposing(false);
     }
   };
 
-  if (!portfoliosLoaded || !activePortfolio) {
-    return (
-      <div className="flex min-h-[50vh] items-center justify-center">
-        <div className="max-w-sm border-brutal border-border-default bg-raised p-6 text-center">
-          <Loader2 className="mx-auto mb-3 h-5 w-5 animate-spin text-accent-agent" />
-          <h1 className="font-mono text-sm font-semibold text-text-hi">
-            Loading dashboard
-          </h1>
-          <p className="mt-2 font-mono text-xs leading-relaxed text-text-lo">
-            Loading your portfolio data.
-          </p>
-        </div>
-      </div>
-    );
-  }
+  const syncPortfolioAndBalances = useCallback(async () => {
+    if (!activePortfolioId) return;
+    await Promise.all([
+      portfolioApi
+        .get(activePortfolioId)
+        .then((portfolio) => {
+          patchPortfolio(activePortfolioId, portfolio);
+        })
+        .catch(() => undefined),
+      gatewayApi
+        .balance()
+        .then((balance) => {
+          setUnifiedUsdc(balance.unifiedUsdc);
+          setUnifiedEurc(balance.unifiedEurc);
+          setPerChain(
+            balance.perChain ?? {},
+            balance.perChainEurc ?? {},
+            undefined,
+            balance.tokenBalancesByChain ?? {},
+          );
+          setGatewayBalanceStatus("ready");
+        })
+        .catch(() => {
+          setGatewayBalanceStatus("error", "Wallet balance is unavailable.");
+        }),
+    ]);
+  }, [
+    activePortfolioId,
+    patchPortfolio,
+    setGatewayBalanceStatus,
+    setPerChain,
+    setUnifiedEurc,
+    setUnifiedUsdc,
+  ]);
+
+  const refreshExecutionProgress = useCallback(
+    async (rebalanceId: string) => {
+      const detail = await rebalanceApi.get(rebalanceId);
+      const next = executionProgressFromDetail(detail);
+      setExecutionProgress(next);
+      if (
+        isTerminalExecutionStatus(next.status) &&
+        executionSyncedRef.current !== next.rebalanceId
+      ) {
+        executionSyncedRef.current = next.rebalanceId;
+        void syncPortfolioAndBalances();
+      }
+      return next;
+    },
+    [syncPortfolioAndBalances],
+  );
+
+  useEffect(() => {
+    if (!activePortfolioId) {
+      setExecutionProgress(null);
+      return;
+    }
+    let cancelled = false;
+    void rebalanceApi
+      .history(activePortfolioId)
+      .then((rows) => {
+        if (cancelled) return;
+        const row =
+          rows.find((candidate) => candidate.status === "executing") ??
+          rows.find((candidate) => isRecentTerminalExecution(candidate));
+        if (!row) {
+          setExecutionProgress(null);
+          return;
+        }
+        const next = executionProgressFromHistory(row);
+        setExecutionProgress(next);
+        if (
+          isTerminalExecutionStatus(next.status) &&
+          executionSyncedRef.current !== next.rebalanceId
+        ) {
+          executionSyncedRef.current = next.rebalanceId;
+          void syncPortfolioAndBalances();
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [activePortfolioId, syncPortfolioAndBalances]);
+
+  useEffect(() => {
+    if (
+      !executionProgress ||
+      isTerminalExecutionStatus(executionProgress.status)
+    ) {
+      return;
+    }
+    let cancelled = false;
+    const poll = () => {
+      void refreshExecutionProgress(executionProgress.rebalanceId).catch(() => {
+        if (!cancelled) {
+          setReviewMessage(
+            "Execution is running; waiting for the next status.",
+          );
+        }
+      });
+    };
+    poll();
+    const timer = window.setInterval(poll, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [
+    executionProgress?.rebalanceId,
+    executionProgress?.status,
+    refreshExecutionProgress,
+  ]);
+
+  if (!activePortfolio || dashboardLoading) return <DashboardSkeleton />;
 
   const handleDeploy = async () => {
-    if (!activePortfolio) return;
+    if (!activePortfolio || deploying) return;
+    if (
+      executionProgress &&
+      !isTerminalExecutionStatus(executionProgress.status)
+    ) {
+      setDeployError(
+        `Plan ${executionProgress.rebalanceId.slice(
+          0,
+          8,
+        )} is still executing (${executionProgress.completedLegs}/${executionProgress.totalLegs} moves confirmed). Open the trace before building another review.`,
+      );
+      setReviewMessage(null);
+      return;
+    }
     setDeploying(true);
     setDeployError(null);
-    setReviewMessage(null);
+    setReviewMessage("Building execution review...");
     try {
       const planned = await withTimeout(
         rebalanceApi.plan(activePortfolio.id),
         "Plan creation is taking longer than expected. Try again in a moment.",
       );
+      setExecutionProgress(null);
       setReviewPlan(planned);
       setReviewOpen(true);
+      setReviewMessage(null);
       try {
         const detail = await rebalanceApi.get(planned.rebalanceId);
         setReviewPlan(rebalancePlanFromDetail(detail));
@@ -268,6 +474,7 @@ export default function PortfolioDashboardPage() {
           ? "Aegis could not format the plan. Try Review plan again."
           : raw;
       setDeployError(friendly);
+      setReviewMessage(null);
     } finally {
       setDeploying(false);
     }
@@ -278,17 +485,18 @@ export default function PortfolioDashboardPage() {
       initial="hidden"
       animate="visible"
       variants={stagger}
-      className="max-w-[1400px] mx-auto space-y-6"
+      className="mx-auto w-full max-w-[1280px] space-y-5 md:space-y-6"
     >
       {autoPilotEnabled && (
         <motion.div
           variants={fadeUp}
           role="status"
+          aria-live="polite"
           className="border-brutal border-accent-agent/40 bg-accent-agent/5 p-3 md:p-4 rounded-sharp flex flex-wrap items-center justify-between gap-3"
         >
           <div className="flex items-center gap-2 min-w-0">
             <span
-              className="inline-block h-2 w-2 shrink-0 rounded-full bg-accent-agent animate-pulse"
+              className="inline-block h-2 w-2 shrink-0 rounded-sharp bg-accent-agent animate-pulse"
               aria-hidden
             />
             <p className="text-xs font-mono text-text-hi">
@@ -301,283 +509,117 @@ export default function PortfolioDashboardPage() {
           </div>
           <a
             href="/settings/agent"
-            className="inline-flex min-h-9 shrink-0 items-center rounded-sharp border border-accent-agent/40 px-3 font-mono text-xs font-semibold text-accent-agent hover:bg-accent-agent/10"
+            className="inline-flex min-h-11 shrink-0 items-center rounded-sharp border border-accent-agent/40 px-3 font-mono text-xs font-semibold text-accent-agent hover:bg-accent-agent/10"
           >
             Manage
           </a>
         </motion.div>
       )}
 
-      <motion.div
-        variants={fadeUp}
-        className="rounded-sharp border-brutal border-border-default bg-surface p-4 md:p-5"
-      >
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="border border-accent-agent/50 bg-accent-agent/10 px-2 py-1 text-[10px] font-mono uppercase text-accent-agent">
-                Dashboard
-              </span>
-              <span className="max-w-full truncate border border-accent-agent/40 bg-accent-agent/5 px-2 py-1 text-[10px] font-mono uppercase tracking-widest text-accent-agent">
-                {AGENT_PORTFOLIO_NAME}
-              </span>
-            </div>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <h1 className="text-2xl font-semibold text-text-hi font-mono tracking-tight">
-                {portfolioTitle}
-              </h1>
-            </div>
-            {hasAgentTarget && (
-              <div className="mt-2 flex flex-wrap items-center gap-2 font-mono text-[11px]">
-                <span className="text-text-mut">
-                  Agent decided this allocation
-                  {agentModelSlug ? ` · via ${agentModelSlug}` : ""}
-                  {agentRegime ? ` · ${agentRegime}` : ""}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => void handleRepropose()}
-                  disabled={reproposing}
-                  className="inline-flex min-h-7 items-center gap-1 rounded-sharp border border-accent-agent/40 bg-accent-agent/5 px-2 py-0.5 text-accent-agent hover:bg-accent-agent/10 disabled:opacity-50"
-                >
-                  <Sparkles className="h-3 w-3" />
-                  {reproposing ? "Re-proposing…" : "Re-propose"}
-                </button>
-              </div>
+      {designing && !proposalOpen && !hasAgentTarget && !pendingProposal && (
+        <motion.div
+          variants={fadeUp}
+          role="status"
+          aria-live="polite"
+          className="border-brutal border-accent-agent/40 bg-accent-agent/5 p-3 md:p-4 rounded-sharp flex flex-wrap items-center justify-between gap-3"
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            {!designError && (
+              <Loader2
+                className="h-4 w-4 shrink-0 animate-spin text-accent-agent"
+                aria-hidden
+              />
             )}
-            <p className="mt-2 max-w-2xl text-xs font-mono leading-relaxed text-text-lo">
-              {dashboardGuidance({
-                gatewayBalanceUnavailable,
-                gatewayBalanceStatus,
-                showDeploy,
-                showFaucet,
-                showNoIdleCash,
-                hasReviewableDrift,
-                hasInvestedPositions,
-              })}
+            <p className="font-mono text-xs text-text-hi">
+              {designError ? (
+                <>
+                  <span className="font-semibold text-risk">
+                    The agent could not finish designing your allocation.
+                  </span>{" "}
+                  Retry to run it again.
+                </>
+              ) : (
+                <>
+                  <span className="font-semibold text-accent-agent">
+                    The agent is designing your allocation…
+                  </span>{" "}
+                  This takes a few seconds — Gate 1 opens automatically when it
+                  is ready.
+                </>
+              )}
             </p>
           </div>
-          {wallet && (
-            <div className="inline-flex min-h-9 shrink-0 items-center gap-2 self-start rounded-sharp border border-accent-agent/35 bg-accent-agent/5 px-3 font-mono text-[10px] uppercase tracking-widest text-accent-agent lg:self-auto">
-              Account connected
-            </div>
+          {designError && (
+            <button
+              type="button"
+              onClick={() => void handleRepropose()}
+              disabled={reproposing}
+              className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-sharp border border-accent-agent/40 bg-accent-agent/5 px-3 font-mono text-xs font-semibold text-accent-agent hover:bg-accent-agent/10 disabled:opacity-50"
+            >
+              <Sparkles className="h-3 w-3" />
+              {reproposing ? "Retrying…" : "Retry"}
+            </button>
           )}
-        </div>
+        </motion.div>
+      )}
+
+      <motion.div
+        variants={fadeUp}
+        role="region"
+        aria-label="Portfolio controls"
+        className="grid gap-5"
+      >
+        <AssetControlTower
+          model={balanceModel}
+          executionProgress={executionProgress}
+          onReviewPlan={() => void handleDeploy()}
+          reviewPlanLoading={deploying}
+          onDesignAllocation={() => void handleRepropose()}
+          designLoading={reproposing}
+          designError={designError}
+          deployError={deployError}
+          reviewMessage={reviewMessage}
+          proposalPending={proposalOpen || pendingProposalActionable}
+        />
+        <RouteStackMatrix model={balanceModel} />
       </motion.div>
 
-      {gatewayBalanceUnavailable && (
-        <motion.div
-          variants={fadeUp}
-          className="border-brutal border-warn/50 bg-warn/5 p-4 rounded-sharp"
-        >
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-            <div className="flex items-start gap-3">
-              <CircleAlert className="mt-0.5 h-5 w-5 shrink-0 text-warn" />
-              <div>
-                <p className="font-mono text-sm font-semibold text-text-hi">
-                  Wallet balance could not be confirmed
-                </p>
-                <p className="mt-1 max-w-3xl font-mono text-xs leading-relaxed text-text-lo">
-                  {gatewayBalanceError ??
-                    "The balance check did not return a current wallet total."}{" "}
-                  Cash actions stay hidden so an outage cannot look like a real
-                  $0 wallet.
-                </p>
-                {hasReviewableDrift && (
-                  <div className="mt-3 grid gap-2 border border-warn/40 bg-bg/70 p-3 font-mono text-xs md:grid-cols-[auto_1fr]">
-                    <LockKeyhole className="h-4 w-4 text-warn" />
-                    <div>
-                      <p className="font-semibold text-text-hi">
-                        Review is waiting for a wallet check
-                      </p>
-                      <p className="mt-1 leading-relaxed text-text-lo">
-                        Aegis sees {maxTargetDriftPct.toFixed(1)}% target drift,
-                        but it will not prepare trades until the current wallet
-                        cash is confirmed.
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2 lg:min-w-[260px] lg:grid-cols-1">
-              {hasReviewableDrift && (
-                <div className="grid grid-cols-3 gap-2 text-center text-[10px] font-mono">
-                  <StepBadge active label="1 Drift" />
-                  <StepBadge active={false} label="2 Balance" />
-                  <StepBadge active={false} label="3 Review" />
-                </div>
-              )}
-              <a
-                href="/wallets"
-                className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-sharp border border-warn/40 bg-warn/10 px-3 font-mono text-xs font-semibold text-warn hover:bg-warn/15"
-              >
-                Open wallet status
-              </a>
-            </div>
-          </div>
-        </motion.div>
-      )}
-
-      {showFaucet && (
-        <motion.div
-          variants={fadeUp}
-          className="border-brutal border-accent-agent/40 bg-accent-agent/5 p-4 rounded-sharp flex flex-wrap items-center justify-between gap-3"
-        >
-          <div>
-            <p className="text-sm font-semibold text-text-hi font-mono">
-              Empty wallet — add test USDC to start
-            </p>
-            <p className="text-xs text-text-lo font-mono mt-1">
-              Adds test USDC to this account so you can review the first
-              investment plan.
-            </p>
-          </div>
-          <FaucetButton />
-        </motion.div>
-      )}
-
-      {showNoIdleCash && (
-        <motion.div
-          variants={fadeUp}
-          className="border-brutal border-border-default bg-raised p-4 md:p-5 rounded-sharp"
-        >
-          <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-center">
-            <div className="min-w-0">
-              <p className="text-[10px] font-mono uppercase tracking-widest text-accent-agent">
-                {hasReviewableDrift
-                  ? "Target drift detected · no wallet cash"
-                  : "No wallet cash available"}
-              </p>
-              <h2 className="mt-1 text-lg font-mono font-semibold text-text-hi">
-                {hasReviewableDrift
-                  ? `${maxTargetDriftPct.toFixed(1)}% target drift needs review`
-                  : `${formatCurrency(investedUsd)} is already invested`}
-              </h2>
-              <p className="text-xs text-text-lo font-mono mt-2 max-w-3xl leading-relaxed">
-                {hasReviewableDrift
-                  ? "Your wallet has no spare USDC, but the current mix no longer matches the target. Review the plan before any trade executes."
-                  : "There is no spare USDC in the wallet right now. Add funds if you want Aegis to prepare a new move."}
-              </p>
-              {deployError && (
-                <p className="text-xs text-risk font-mono mt-2">
-                  {deployError}
-                </p>
-              )}
-            </div>
-            <div className="grid gap-3 lg:min-w-[320px]">
-              <div className="grid gap-2 text-[10px] font-mono sm:grid-cols-3">
-                <StepBadge active label="1 Invested" />
-                <StepBadge active={hasReviewableDrift} label="2 Review" />
-                <StepBadge active={false} label="3 Execute" />
-              </div>
-              {hasReviewableDrift && (
-                <BrutalButton
-                  variant="agent"
-                  onClick={() => void handleDeploy()}
-                  disabled={deploying}
-                  className="w-full"
-                >
-                  {deploying ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Preparing review…
-                    </>
-                  ) : (
-                    <>
-                      <Rocket className="w-4 h-4 mr-2" />
-                      Review plan
-                    </>
-                  )}
-                </BrutalButton>
-              )}
-            </div>
-          </div>
-        </motion.div>
-      )}
-
-      {showDeploy && (
-        <motion.div
-          variants={fadeUp}
-          className="border-brutal border-accent-pnl bg-accent-pnl/5 p-4 rounded-sharp shadow-brutal-sm md:p-5"
-        >
-          <div className="min-w-0">
-            <p className="text-[10px] font-mono uppercase tracking-widest text-accent-pnl">
-              Next step
-            </p>
-            <h2 className="mt-1 text-xl font-mono font-semibold text-text-hi">
-              {isFirstDeploy
-                ? `${formatCurrency(deployableUsdc)} USDC ready to review`
-                : `${formatCurrency(deployableUsdc)} USDC ready to move`}
-            </h2>
-            <div className="mt-4 grid gap-2 font-mono text-xs sm:grid-cols-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(240px,320px)] lg:items-stretch">
-              <MoneyStep active label="Wallet" value="Funded" />
-              <MoneyStep active label="Review" value="You approve" />
-              <MoneyStep label="Invested" value="After approval" />
-              <div className="flex items-center sm:col-span-3 lg:col-span-1">
-                <BrutalButton
-                  variant="pnl"
-                  onClick={() => void handleDeploy()}
-                  disabled={deploying}
-                  className="w-full py-2"
-                >
-                  {deploying ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Preparing plan…
-                    </>
-                  ) : (
-                    <>
-                      <Rocket className="w-4 h-4 mr-2" />
-                      Review plan
-                    </>
-                  )}
-                </BrutalButton>
-              </div>
-            </div>
-            {(usdcTargetWeight > 0 || unifiedEurc > 0) && (
-              <p className="mt-3 font-mono text-[11px] leading-relaxed text-text-lo">
-                {usdcTargetWeight > 0 &&
-                  `${usdcTargetWeight.toFixed(0)}% remains USDC reserve.`}
-                {unifiedEurc > 0 &&
-                  " EURC stays separate until a review includes it."}
-              </p>
-            )}
-            {deployError && (
-              <p className="text-xs text-risk font-mono mt-2">{deployError}</p>
-            )}
-            {reviewMessage && (
-              <p className="mt-2 text-xs font-mono text-accent-agent">
-                {reviewMessage}
-              </p>
-            )}
-          </div>
-        </motion.div>
-      )}
-
       <motion.div
         variants={fadeUp}
-        className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))] items-start gap-4"
+        role="region"
+        aria-label="Portfolio overview"
+        className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,0.38fr)_minmax(0,0.62fr)]"
       >
-        <PortfolioSummaryCard />
-        <IdleCashCard />
-        {!showDeploy && <AllocationChart />}
-        <MarketOverview />
+        {!showDeploy && <AllocationChart model={balanceModel} />}
+        <div className={showDeploy ? "xl:col-span-2" : ""}>
+          <MarketOverview />
+        </div>
       </motion.div>
 
       <motion.div variants={fadeUp}>
         <TrustabilityCard />
       </motion.div>
 
-      <motion.div variants={fadeUp}>
-        <PerformanceChart />
-      </motion.div>
+      <PerformanceChart />
 
       <motion.div
         variants={fadeUp}
-        className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(320px,380px)] gap-6"
+        role="region"
+        aria-label="Portfolio details and decision log"
+        className="grid grid-cols-1 gap-5 md:gap-6"
       >
-        <AssetTable />
+        {showAssetDetails && (
+          <AssetTable
+            model={balanceModel}
+            onReviewPlan={() => void handleDeploy()}
+            reviewPlanDisabled={
+              deploying ||
+              (!!executionProgress &&
+                !isTerminalExecutionStatus(executionProgress.status))
+            }
+            reviewPlanLoading={deploying}
+          />
+        )}
         <AgentReasoningFeed />
       </motion.div>
 
@@ -606,9 +648,16 @@ export default function PortfolioDashboardPage() {
         feeSource="plan"
         decision={reviewDecision}
         approvalSafety={approvalSafety}
-        onApproved={() => {
+        onApproved={(rebalanceId) => {
           setReviewOpen(false);
-          setReviewMessage("Approved. Execution status will update live.");
+          setReviewMessage("Approved. Opening the execution trace.");
+          setExecutionProgress({
+            rebalanceId,
+            status: "executing",
+            completedLegs: 0,
+            totalLegs: reviewPlan?.totalLegs ?? 0,
+          });
+          router.push(`/rebalance/${rebalanceId}`);
         }}
         onClose={() => setReviewOpen(false)}
       />
@@ -633,89 +682,53 @@ async function withTimeout<T>(
   }
 }
 
-function dashboardGuidance({
-  gatewayBalanceUnavailable,
-  gatewayBalanceStatus,
-  showDeploy,
-  showFaucet,
-  showNoIdleCash,
-  hasReviewableDrift,
-  hasInvestedPositions,
-}: {
-  gatewayBalanceUnavailable: boolean;
-  gatewayBalanceStatus: "idle" | "loading" | "ready" | "error";
-  showDeploy: boolean;
-  showFaucet: boolean;
-  showNoIdleCash: boolean;
-  hasReviewableDrift: boolean;
-  hasInvestedPositions: boolean;
-}) {
-  if (gatewayBalanceUnavailable) {
-    return "Wallet balance is unavailable, so cash actions are paused until the balance check succeeds.";
-  }
-  if (gatewayBalanceStatus === "idle" || gatewayBalanceStatus === "loading") {
-    return "Syncing balances before showing cash actions.";
-  }
-  if (showDeploy) {
-    return "Cash is ready. Review and approve before anything moves.";
-  }
-  if (showFaucet) {
-    return "Your wallet is empty. Add test USDC, then review the first plan.";
-  }
-  if (showNoIdleCash && hasReviewableDrift) {
-    return "Your current holdings drifted from target. Review the plan before any trade runs.";
-  }
-  if (hasInvestedPositions) {
-    return "Your portfolio is invested. Aegis is monitoring for drift and new review opportunities.";
-  }
-  return "Choose a target mix and add funds to start.";
+function isSettledStatus(status: "idle" | "loading" | "ready" | "error") {
+  return status === "ready" || status === "error";
 }
 
-function MoneyStep({
-  active = false,
-  label,
-  value,
-}: {
-  active?: boolean;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div
-      className={
-        "min-h-16 border px-3 py-2 rounded-sharp " +
-        (active
-          ? "border-accent-pnl/50 bg-accent-pnl/10"
-          : "border-border-default bg-bg/80")
-      }
-    >
-      <p className="text-[9px] uppercase tracking-widest text-text-mut">
-        {label}
-      </p>
-      <p
-        className={
-          "mt-1 text-sm font-semibold " +
-          (active ? "text-accent-pnl" : "text-text-lo")
-        }
-      >
-        {value}
-      </p>
-    </div>
+function isTerminalExecutionStatus(status: string) {
+  return ["completed", "failed", "cancelled", "canceled", "denied"].includes(
+    status.toLowerCase(),
   );
 }
 
-function StepBadge({ active, label }: { active: boolean; label: string }) {
+type RebalanceDetail = Awaited<ReturnType<typeof rebalanceApi.get>>;
+type RebalanceHistoryRow = Awaited<
+  ReturnType<typeof rebalanceApi.history>
+>[number];
+
+function executionProgressFromDetail(
+  detail: RebalanceDetail,
+): ExecutionProgressSummary {
+  return {
+    rebalanceId: detail.id,
+    status: detail.status,
+    completedLegs: detail.completedLegs,
+    totalLegs: detail.totalLegs,
+    failureReason: detail.failureReason,
+  };
+}
+
+function executionProgressFromHistory(
+  row: RebalanceHistoryRow,
+): ExecutionProgressSummary {
+  return {
+    rebalanceId: row.id,
+    status: row.status,
+    completedLegs: row.completedLegs,
+    totalLegs: row.totalLegs,
+    failureReason: row.failureReason ?? null,
+  };
+}
+
+const RECENT_TERMINAL_EXECUTION_MS = 15 * 60 * 1000;
+
+function isRecentTerminalExecution(row: RebalanceHistoryRow) {
+  if (!isTerminalExecutionStatus(row.status)) return false;
+  const updatedAt = Date.parse(row.updatedAt);
   return (
-    <span
-      className={
-        "flex min-h-8 items-center justify-center border px-2 py-1 text-center rounded-sharp " +
-        (active
-          ? "border-accent-pnl bg-accent-pnl text-black"
-          : "border-border-default bg-raised text-text-mut")
-      }
-    >
-      {label}
-    </span>
+    Number.isFinite(updatedAt) &&
+    Date.now() - updatedAt <= RECENT_TERMINAL_EXECUTION_MS
   );
 }
 

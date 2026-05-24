@@ -91,6 +91,11 @@ describe("<Sidebar />", () => {
       'a[aria-label="Dashboard: account setup pending"]',
     );
     expect(dashboardLink).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="sidebar-logout"]'),
+    ).not.toBeNull();
+    expect(container.textContent).toContain("Sign out");
+    expect(container.textContent).not.toContain("Sign out from the top bar.");
 
     act(() => root.unmount());
   });

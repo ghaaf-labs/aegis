@@ -181,7 +181,7 @@ pub(super) mod test_helpers {
 mod tests {
     use chrono::Utc;
 
-    use super::test_helpers::{make_swap_leg};
+    use super::test_helpers::make_swap_leg;
     use super::*;
 
     #[test]

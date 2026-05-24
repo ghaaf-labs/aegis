@@ -77,7 +77,7 @@ impl PriceProvider for PythProvider {
             if let Some(c) = conf {
                 if c / price.abs() > MAX_CONF_RATIO {
                     tracing::debug!(
-                        ticker = sym.ticker,
+                        ticker = sym.symbol,
                         conf_ratio = c / price.abs(),
                         "pyth quote rejected (low confidence)"
                     );
@@ -89,7 +89,7 @@ impl PriceProvider for PythProvider {
                 .single()
                 .unwrap_or_else(Utc::now);
             out.push(SpotQuote {
-                ticker: sym.ticker,
+                ticker: sym.symbol,
                 price_usd: price,
                 change_24h: 0.0,
                 change_7d: 0.0,

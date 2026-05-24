@@ -49,12 +49,46 @@ use circle::CircleSwapArgs;
 #[cfg(feature = "real-swap")]
 use trader_joe::LbSwapArgs;
 
-/// Uniswap V3 pool fee tier used for USDC↔token routing (0.3%).
+/// Default Uniswap V3 pool fee tier (0.3%) — the fallback when a quote carries
+/// no chosen tier. Best-execution quoting now probes [`FEE_TIERS`] and stamps
+/// the winning tier on the quote; this remains the safe default.
 #[cfg(feature = "real-swap")]
 pub(super) const POOL_FEE: u32 = 3000;
 /// Slippage tolerance applied to the quoted output to derive `min_out`.
 #[cfg(feature = "real-swap")]
 pub(super) const SLIPPAGE_BPS: u32 = 50;
+
+/// The V3 fee tiers probed for every USDC↔token pair, in canonical order
+/// (0.05% / 0.30% / 1.00%). Best-execution quotes each live pool and routes
+/// through whichever gives the user the best fill — "different markets, highest
+/// amount." Compiled for the `real-swap` quoter loop and for the (always-on)
+/// selection unit tests.
+#[cfg(any(feature = "real-swap", test))]
+pub(super) const FEE_TIERS: [u32; 3] = [500, 3000, 10000];
+
+/// Pick the best **buy** pool from per-tier `(fee_tier, amount_out)` quotes:
+/// the most token out, ties broken toward the cheaper (lower) fee tier.
+/// `None` when no tier returned a non-zero quote (no liquidity on any pool).
+#[cfg(any(feature = "real-swap", test))]
+pub(super) fn best_buy_tier(quotes: &[(u32, u128)]) -> Option<(u32, u128)> {
+    quotes
+        .iter()
+        .copied()
+        .filter(|&(_, out)| out > 0)
+        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
+}
+
+/// Pick the best **sell** pool from per-tier `(fee_tier, amount_in)` quotes:
+/// the least token spent to realize the target USDC, ties broken toward the
+/// cheaper (lower) fee tier. `None` when no tier returned a quote.
+#[cfg(any(feature = "real-swap", test))]
+pub(super) fn best_sell_tier(quotes: &[(u32, u128)]) -> Option<(u32, u128)> {
+    quotes
+        .iter()
+        .copied()
+        .filter(|&(_, amt_in)| amt_in > 0)
+        .min_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)))
+}
 
 /// Aggregate capability of the swap adapter, anchored on Base (the chain whose
 /// venue is wired today). The route rule engine still resolves per-token
@@ -276,7 +310,10 @@ pub fn swap_venue(chain: ChainKey) -> SwapVenue {
 
 /// Classify a leg as a buy or sell. Returns `None` for anything that isn't a
 /// USDC↔token swap (e.g. token↔token, which the planner never emits).
-pub(super) fn swap_direction(src_symbol: Option<&str>, dest_symbol: Option<&str>) -> Option<SwapDir> {
+pub(super) fn swap_direction(
+    src_symbol: Option<&str>,
+    dest_symbol: Option<&str>,
+) -> Option<SwapDir> {
     match (src_symbol, dest_symbol) {
         (Some(s), Some(d)) if s.eq_ignore_ascii_case("USDC") && !d.eq_ignore_ascii_case("USDC") => {
             Some(SwapDir::Buy(d.to_string()))
@@ -313,7 +350,9 @@ pub async fn quote(cfg: &Config, leg: &RouteLeg, now: DateTime<Utc>) -> Result<V
             (SwapVenue::UniswapV3, SwapDir::Sell(token)) => {
                 uniswap::real_quote_sell(cfg, chain, &token, leg.amount_usdc, now).await
             }
-            (SwapVenue::TraderJoeLb, dir) => trader_joe::lb_quote(cfg, chain, &dir, leg.amount_usdc, now).await,
+            (SwapVenue::TraderJoeLb, dir) => {
+                trader_joe::lb_quote(cfg, chain, &dir, leg.amount_usdc, now).await
+            }
         }
     }
 }
@@ -462,6 +501,51 @@ mod tests {
     }
 
     #[test]
+    fn fee_tiers_are_the_canonical_ascending_v3_set() {
+        // 0.05% / 0.30% / 1.00% — the tiers the quoter probes for best execution.
+        assert_eq!(FEE_TIERS, [500, 3000, 10000]);
+    }
+
+    #[test]
+    fn best_buy_tier_picks_the_pool_with_the_most_token_out() {
+        // 0.30% pool fills best for this size → route there, not the default.
+        assert_eq!(
+            best_buy_tier(&[(500, 100), (3000, 250), (10000, 90)]),
+            Some((3000, 250))
+        );
+    }
+
+    #[test]
+    fn best_buy_tier_breaks_ties_toward_the_cheaper_fee() {
+        assert_eq!(best_buy_tier(&[(3000, 200), (500, 200)]), Some((500, 200)));
+    }
+
+    #[test]
+    fn best_buy_tier_is_none_when_no_pool_has_liquidity() {
+        assert_eq!(best_buy_tier(&[(500, 0), (3000, 0), (10000, 0)]), None);
+        assert_eq!(best_buy_tier(&[]), None);
+    }
+
+    #[test]
+    fn best_sell_tier_picks_the_pool_that_spends_the_least_token() {
+        assert_eq!(
+            best_sell_tier(&[(500, 300), (3000, 280), (10000, 310)]),
+            Some((3000, 280))
+        );
+    }
+
+    #[test]
+    fn best_sell_tier_breaks_ties_toward_the_cheaper_fee() {
+        assert_eq!(best_sell_tier(&[(3000, 150), (500, 150)]), Some((500, 150)));
+    }
+
+    #[test]
+    fn best_sell_tier_is_none_when_no_pool_has_liquidity() {
+        assert_eq!(best_sell_tier(&[(3000, 0)]), None);
+        assert_eq!(best_sell_tier(&[]), None);
+    }
+
+    #[test]
     fn avax_routes_to_trader_joe_lb_others_to_uniswap_v3() {
         assert_eq!(swap_venue(ChainKey::AvaxFuji), SwapVenue::TraderJoeLb);
         for chain in [
@@ -570,7 +654,11 @@ mod tests {
         let mut cfg = crate::config::test_config();
         cfg.chains[ChainKey::OpSepolia.index()].usdc =
             "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
-        cfg.weth_op = "0x4200000000000000000000000000000000000006".into();
+        cfg.set_token_address(
+            "ETH",
+            ChainKey::OpSepolia,
+            "0x4200000000000000000000000000000000000006",
+        );
         cfg.chains[ChainKey::OpSepolia.index()].swap_router =
             "0x1111111111111111111111111111111111111111".into();
         cfg.chains[ChainKey::OpSepolia.index()].swap_quoter =
@@ -582,7 +670,10 @@ mod tests {
             address_to_hex(usdc),
             cfg.chain(ChainKey::OpSepolia).usdc.to_ascii_lowercase()
         );
-        assert_eq!(address_to_hex(token), cfg.weth_op.to_ascii_lowercase());
+        assert_eq!(
+            address_to_hex(token),
+            "0x4200000000000000000000000000000000000006".to_ascii_lowercase()
+        );
         assert_eq!(
             address_to_hex(router),
             cfg.chain(ChainKey::OpSepolia).swap_router

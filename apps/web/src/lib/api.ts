@@ -202,6 +202,8 @@ export interface UnifiedBalance {
   perChain: Record<string, number>;
   /** EURC per chain — same key set as `perChain`. */
   perChainEurc: Record<string, number>;
+  /** Non-cash token quantities per chain, normalized to Aegis symbols. */
+  tokenBalancesByChain?: Record<string, Record<string, number>>;
   arcAddress?: string | null;
   baseAddress?: string | null;
 }
@@ -816,14 +818,27 @@ export interface TrustabilityRow {
   userId: string;
   handle: string;
   decisionsExecuted: number;
+  decisionsPerWeek?: number;
   distinctModels: number;
   avg7dReturn: number;
   trustabilityDelta: number;
+  lastDecisionAt: string | null;
+  aumUsd?: number;
+}
+
+export interface TrustabilityProgress {
+  calibrationFloor: number;
+  agentDecisions7d: number;
+  eligibleOutcomes7d: number;
+  pendingRealRebalances7d: number;
+  completedRealRebalances7d: number;
+  distinctModels7d: number;
   lastDecisionAt: string | null;
 }
 
 export interface TrustabilityResponse {
   row: TrustabilityRow | null;
+  progress: TrustabilityProgress;
   label: "excellent" | "strong" | "stable" | "shaky" | "underperforming" | null;
 }
 

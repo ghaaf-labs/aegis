@@ -39,8 +39,17 @@ export function formatRelativeSeconds(at: Date): string {
 }
 
 export function routedAmountUsdc(plan: RebalancePlanResponse): number {
+  // Count only terminal acquisitions (swaps / USYC parks), NOT the CCTP bridge
+  // legs: a `cross_chain_burn` relocates USDC that a later swap leg then spends,
+  // so counting both double-counts the bridged amount — it inflated the
+  // "Deploy $X" headline past the real "final exposure" (e.g. $784 vs $412 when
+  // $372 was bridged then swapped). Excluding both bridge legs makes the
+  // headline equal the money actually deployed into assets.
   return plan.legs
-    .filter((leg) => leg.kind !== "cross_chain_mint")
+    .filter(
+      (leg) =>
+        leg.kind !== "cross_chain_mint" && leg.kind !== "cross_chain_burn",
+    )
     .reduce((acc, leg) => acc + leg.amountUsdc, 0);
 }
 

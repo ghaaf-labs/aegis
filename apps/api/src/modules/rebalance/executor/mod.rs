@@ -42,7 +42,15 @@ use leg_status::{
     bump_attempt_count, mark_leg_confirmed, mark_leg_failed, mark_leg_stranded, mark_leg_submitted,
 };
 use legs::{blockchain_for_chain, parse_kind, quote_filled_qty, LegRow, MAX_LEG_ATTEMPTS};
-use stranding::{idempotency_key_for_leg, leg_strands_funds_on_failure, pending_funding_dependency, protocol_fee_notional_from_legs};
+use stranding::{
+    idempotency_key_for_leg, leg_strands_funds_on_failure, pending_funding_dependency,
+    protocol_fee_notional_from_legs,
+};
+
+/// Fraction of the live USDC balance a buy-swap may spend, leaving a small
+/// cushion for gas/rounding so the clamped `amountIn` never tips back over the
+/// wallet's balance and re-triggers Circle's `INSUFFICIENT_TOKEN`.
+const LIVE_BALANCE_SPEND_MARGIN: f64 = 0.995;
 
 /// Persist a planned set of legs as a new `rebalances` + `rebalance_legs`
 /// rows. Status starts as `planned`; the user must approve via
@@ -168,17 +176,33 @@ async fn estimate_total_gas(state: &AppState, legs: &[PlannedLeg]) -> f64 {
 /// concurrent approval calls return `Conflict` instead of double-spawning.
 pub async fn approve_and_execute(state: AppState, rebalance_id: Uuid) -> Result<()> {
     let portfolio_id: Option<Uuid> = sqlx::query_scalar(
-        "UPDATE rebalances
-            SET status = 'executing', approved_at = NOW()
-          WHERE id = $1 AND status = 'planned'
-          RETURNING portfolio_id",
+        "WITH target AS (
+             SELECT id, portfolio_id
+             FROM rebalances
+             WHERE id = $1 AND status = 'planned'
+         ),
+         updated AS (
+             UPDATE rebalances r
+                SET status = 'executing', approved_at = NOW()
+               FROM target t
+              WHERE r.id = t.id
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM rebalances active
+                    WHERE active.portfolio_id = t.portfolio_id
+                      AND active.id <> r.id
+                      AND active.status = 'executing'
+                )
+              RETURNING r.portfolio_id
+         )
+         SELECT portfolio_id FROM updated",
     )
     .bind(rebalance_id)
     .fetch_optional(&state.db)
     .await?;
     let portfolio_id = portfolio_id.ok_or_else(|| {
         AppError::Conflict(format!(
-            "rebalance {rebalance_id} not in 'planned' state or already approved"
+            "rebalance {rebalance_id} is not ready to execute, or another rebalance is already executing for this portfolio"
         ))
     })?;
 
@@ -440,7 +464,52 @@ async fn dispatch(
     // no real dispatch path without a ticket, so a fake hash cannot be produced
     // here by construction. Blocked routes (USYC disabled, StableFX KYB-gated,
     // missing address/feature/signer) fail closed at `mint`.
-    let amount_usdc_f64 = leg.amount_usdc.to_f64().unwrap_or(0.0);
+    let mut amount_usdc_f64 = leg.amount_usdc.to_f64().unwrap_or(0.0);
+
+    // Clamp a USDC-spending leg's amount to the wallet's *live* balance on the
+    // chain it debits, before quoting/minting. Leg amounts are sized once at plan
+    // time from a Gateway snapshot; by the time a leg runs, CCTP fees on a prior
+    // bridge (minted USDC < planned), earlier spends, a stale snapshot, or an
+    // interrupted prior plan can leave less USDC than planned — Circle then
+    // rejects with INSUFFICIENT_TOKEN. Re-reading and spending min(planned, live)
+    // under-deploys at worst instead of failing the whole plan. Covers BOTH the
+    // post-bridge buy-swap and the cross-chain burn (both debit USDC from a
+    // wallet). Non-custodial (Circle) path only — that's where `fetch_chain_usdc`
+    // reflects the wallet the leg actually spends from.
+    if state.config.circle_wallet_exec {
+        let spend_chain = match kind {
+            LegKind::LocalSwap if leg.src_symbol.as_deref() == Some("USDC") => {
+                leg.dest_chain.as_deref().or(leg.src_chain.as_deref())
+            }
+            LegKind::CrossChainBurn => leg.src_chain.as_deref(),
+            _ => None,
+        }
+        .and_then(ChainKey::parse);
+        if let Some(chain) = spend_chain {
+            if let Ok(live) = crate::modules::gateway::service::fetch_chain_usdc(
+                &state.http,
+                &state.config,
+                &state.db,
+                user_id,
+                chain,
+            )
+            .await
+            {
+                let spendable = live * LIVE_BALANCE_SPEND_MARGIN;
+                if spendable < amount_usdc_f64 {
+                    tracing::info!(
+                        chain = chain.as_str(),
+                        kind = kind.as_str(),
+                        planned = amount_usdc_f64,
+                        spendable,
+                        "clamping USDC-spending leg to live balance"
+                    );
+                    amount_usdc_f64 = spendable;
+                }
+            }
+        }
+    }
+
     let route_leg = RouteLeg::from_parts(
         kind.as_str(),
         leg.src_chain.clone(),
@@ -651,7 +720,11 @@ mod tests {
         let mut cfg = crate::config::test_config();
         cfg.chains[ChainKey::Base.index()].usdc =
             "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
-        cfg.weth_base = "0x4200000000000000000000000000000000000006".into();
+        cfg.set_token_address(
+            "ETH",
+            ChainKey::Base,
+            "0x4200000000000000000000000000000000000006",
+        );
         cfg
     }
 
@@ -693,7 +766,7 @@ mod tests {
             Utc::now(),
         )
         .unwrap();
-        assert_eq!(hook.token_out, cfg.weth_base);
+        assert_eq!(hook.token_out, "0x4200000000000000000000000000000000000006");
         assert_eq!(hook.min_out, 500_000_000_000_000_000);
         assert_eq!(hook.pool_fee, 3000);
     }
@@ -701,7 +774,7 @@ mod tests {
     #[test]
     fn cross_chain_hook_fails_closed_without_dest_erc20() {
         let mut cfg = hook_cfg();
-        cfg.weth_base = String::new();
+        cfg.set_token_address("ETH", ChainKey::Base, "");
         let err = build_cross_chain_hook(
             &cfg,
             "0xR",
@@ -720,7 +793,7 @@ mod tests {
         let hook =
             build_cross_chain_hook(&cfg, "0xR", ChainKey::Base, Some("ETH"), None, Utc::now())
                 .unwrap();
-        assert_eq!(hook.token_out, cfg.weth_base);
+        assert_eq!(hook.token_out, "0x4200000000000000000000000000000000000006");
         assert_eq!(hook.min_out, 0);
     }
 }

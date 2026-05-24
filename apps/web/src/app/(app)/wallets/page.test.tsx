@@ -147,7 +147,7 @@ describe("<NetworkTokenPanel />", () => {
     const expectedTokens = [
       ["USDC", "Cash · Reserve, funding, and transfer route is ready"],
       [
-        "BTC",
+        "cbBTC",
         "Market target · Price tracking is ready; swap execution is not connected yet",
       ],
       [
@@ -155,7 +155,19 @@ describe("<NetworkTokenPanel />", () => {
         "Market target · Price tracking is ready; swap execution is not connected yet",
       ],
       [
-        "SOL",
+        "cbETH",
+        "Market target · Price tracking is ready; swap execution is not connected yet",
+      ],
+      [
+        "AERO",
+        "Market target · Price tracking is ready; swap execution is not connected yet",
+      ],
+      [
+        "LINK",
+        "Market target · Price tracking is ready; swap execution is not connected yet",
+      ],
+      [
+        "UNI",
         "Market target · Price tracking is ready; swap execution is not connected yet",
       ],
       [
@@ -174,7 +186,7 @@ describe("<NetworkTokenPanel />", () => {
     expect(text).toContain("Current selection");
     expect(text).toContain("Arc testnet, Base Sepolia");
     expect(text).toContain("Can rebalance now");
-    expect(text).toContain("BTC, ETH, SOL, EURC");
+    expect(text).toContain("EURC, ETH, cbBTC, cbETH, AERO, LINK, UNI");
     expect(text).toContain("Coming soon");
     expect(text).toContain("USYC");
     expect(text).toContain(
@@ -208,7 +220,7 @@ describe("<NetworkTokenPanel />", () => {
 
     const suggestedText = container.textContent ?? "";
     expect(suggestedText).toContain("USDC");
-    expect(suggestedText).toContain("BTC, ETH, SOL, EURC");
+    expect(suggestedText).toContain("EURC, ETH, cbBTC, cbETH, AERO, LINK, UNI");
     expect(suggestedText).toContain(
       "Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji",
     );
@@ -216,11 +228,11 @@ describe("<NetworkTokenPanel />", () => {
       networks: ["ARC-TESTNET", "BASE-SEPOLIA"],
       networkWatchlist: ["ETH-SEPOLIA", "ARB-SEPOLIA", "AVAX-FUJI"],
       tokens: ["USDC"],
-      watchlist: ["BTC", "ETH", "SOL", "EURC"],
+      watchlist: ["EURC", "ETH", "cbBTC", "cbETH", "AERO", "LINK", "UNI"],
     });
     expect(
       window.localStorage.getItem("aegis.wallet.route-preferences.v2"),
-    ).toContain("BTC");
+    ).toContain("cbBTC");
 
     act(() => root.unmount());
   });
@@ -305,7 +317,10 @@ describe("<NetworkTokenPanel />", () => {
       "Arc testnet, Base Sepolia, Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji",
     );
     expect(text).toContain("USDC");
-    expect(text).toContain("BTC, ETH, SOL, EURC");
+    // This scenario's watchlist resolves to EURC + ETH (the malformed
+    // "BTC_ETH_SOL" id is dropped, USYC is coming-soon); rendered in registry
+    // order (EURC precedes ETH).
+    expect(text).toContain("EURC, ETH");
     expect(text).toContain("Coming soon");
     expect(text).toContain("USYC");
     expect(text).toContain("All supported routes ready");

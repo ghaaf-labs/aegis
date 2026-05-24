@@ -22,6 +22,10 @@ pub struct GatewayBalance {
     pub per_chain: HashMap<String, f64>,
     /// EURC per chain — same key set as `per_chain`.
     pub per_chain_eurc: HashMap<String, f64>,
+    /// Non-cash token quantities per chain, normalized to Aegis symbols
+    /// (for example Circle WETH => ETH). USDC/EURC stay in the dedicated cash
+    /// maps above.
+    pub token_balances_by_chain: HashMap<String, HashMap<String, f64>>,
     pub arc_address: Option<String>,
     pub base_address: Option<String>,
 }
@@ -45,6 +49,7 @@ pub async fn fetch_balance(
         unified_eurc: 0.0,
         per_chain: HashMap::new(),
         per_chain_eurc: HashMap::new(),
+        token_balances_by_chain: HashMap::new(),
         arc_address: None,
         base_address: None,
     };
@@ -60,7 +65,10 @@ pub async fn fetch_balance(
         let tokens = fetch_wallet_tokens(http, config, &w.id).await?;
         for tb in tokens {
             let amount: f64 = tb.amount.parse().unwrap_or(0.0);
-            match tb.token.symbol.to_ascii_uppercase().as_str() {
+            let Some(symbol) = normalize_balance_symbol(&tb.token.symbol) else {
+                continue;
+            };
+            match symbol.as_str() {
                 "USDC" => {
                     *balance.per_chain.entry(chain_key.clone()).or_insert(0.0) += amount;
                     balance.unified_usdc += amount;
@@ -72,7 +80,14 @@ pub async fn fetch_balance(
                         .or_insert(0.0) += amount;
                     balance.unified_eurc += amount;
                 }
-                _ => {} // ignore native gas tokens etc.
+                _ => {
+                    *balance
+                        .token_balances_by_chain
+                        .entry(chain_key.clone())
+                        .or_default()
+                        .entry(symbol)
+                        .or_insert(0.0) += amount;
+                }
             }
         }
     }
@@ -239,6 +254,7 @@ fn empty_balance() -> GatewayBalance {
         unified_eurc: 0.0,
         per_chain: HashMap::new(),
         per_chain_eurc: HashMap::new(),
+        token_balances_by_chain: HashMap::new(),
         arc_address: None,
         base_address: None,
     }
@@ -391,6 +407,7 @@ fn mock_balance(user_id: Uuid) -> GatewayBalance {
         unified_eurc: 100.0,
         per_chain,
         per_chain_eurc,
+        token_balances_by_chain: HashMap::new(),
         arc_address: None,
         base_address: None,
     }
@@ -418,8 +435,28 @@ pub fn broadcast(sse: &SseSender, user_id: uuid::Uuid, balance: &GatewayBalance)
         unified_eurc: balance.unified_eurc,
         per_chain: balance.per_chain.clone(),
         per_chain_eurc: balance.per_chain_eurc.clone(),
+        token_balances_by_chain: balance.token_balances_by_chain.clone(),
         observed_at: Utc::now(),
     }));
+}
+
+fn normalize_balance_symbol(symbol: &str) -> Option<String> {
+    let normalized = match symbol.trim().to_ascii_uppercase().as_str() {
+        "" => return None,
+        "USDC" => "USDC",
+        "EURC" => "EURC",
+        "WETH" | "ETH" => "ETH",
+        "CBBTC" => "cbBTC",
+        "CBETH" => "cbETH",
+        "SUSDS" => "sUSDS",
+        "LINK" => "LINK",
+        "UNI" => "UNI",
+        "AERO" => "AERO",
+        // Ignore native gas dust and unpriced wallet tokens until the token
+        // registry can price them consistently.
+        _ => return None,
+    };
+    Some(normalized.to_string())
 }
 
 #[cfg(test)]
@@ -461,6 +498,7 @@ mod tests {
             unified_eurc: 0.0,
             per_chain: HashMap::new(),
             per_chain_eurc: HashMap::new(),
+            token_balances_by_chain: HashMap::new(),
             arc_address: None,
             base_address: None,
         };
@@ -474,6 +512,7 @@ mod tests {
             unified_eurc: 0.0,
             per_chain: HashMap::new(),
             per_chain_eurc: HashMap::new(),
+            token_balances_by_chain: HashMap::new(),
             arc_address: Some("0x1111111111111111111111111111111111111111".into()),
             base_address: Some("0x2222222222222222222222222222222222222222".into()),
         };

@@ -14,8 +14,8 @@ pub mod tokens;
 
 pub use capabilities::{AdapterCapability, RuntimeCapabilities};
 pub use route::{
-    executable_token_symbols, route_state_for_token, validate_legs, BlockerCode, RouteBlocker,
-    RouteState,
+    allocation_target_symbols, designable_allocation_symbols, executable_token_symbols,
+    route_state_for_token, validate_legs, BlockerCode, RouteBlocker, RouteState,
 };
 pub use ticket::ExecutionTicket;
 pub use tokens::{token, TokenSpec, TOKEN_REGISTRY};

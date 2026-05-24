@@ -7,10 +7,9 @@
 //!
 //! Decisions encoded here:
 //!
-//! - Symbols in `ARC_NATIVE_SYMBOLS` land on Arc; anything in
-//!   `BASE_NATIVE_SYMBOLS` lands on Base (Uniswap V3 / Aerodrome venue). EURC is
-//!   Base-native here — the EUR sleeve trades on the permissionless USDC/EURC
-//!   pool, superseding the KYB-gated Arc StableFX rail.
+//! - A symbol lands on its registry canonical chain (`tokens::native_chain`):
+//!   USYC on Arc; everything else (incl. EURC, which trades on the permissionless
+//!   Base USDC/EURC pool) defaults to Base (Uniswap V3 / Aerodrome venue).
 //! - A buy that needs USDC on Base while liquidity is on Arc emits a
 //!   `cross_chain_burn` + `cross_chain_mint` pair instead of two legs.
 //! - Sells route through `redeem_usyc` (USYC → USDC) or a local swap into USDC
@@ -24,9 +23,8 @@
 
 use std::collections::HashMap;
 
-use super::models::{
-    ChainKey, LegKind, PlanInput, PlannedLeg, ARC_NATIVE_SYMBOLS, BASE_NATIVE_SYMBOLS,
-};
+use super::models::{ChainKey, LegKind, PlanInput, PlannedLeg};
+use crate::domain::token::native_chain;
 
 /// Compute the minimum set of legs to bring `current_weights` to
 /// `target_weights`. Returns an empty Vec if no leg exceeds the drift / dust
@@ -193,17 +191,6 @@ fn symbol_deltas(input: &PlanInput) -> Vec<SymbolDelta> {
         .collect()
 }
 
-fn native_chain(symbol: &str) -> ChainKey {
-    if ARC_NATIVE_SYMBOLS.contains(&symbol) {
-        ChainKey::Arc
-    } else if BASE_NATIVE_SYMBOLS.contains(&symbol) {
-        ChainKey::Base
-    } else {
-        // Default: USDC stays where it lives; anything unknown lands on Base.
-        ChainKey::Base
-    }
-}
-
 fn append_sell_legs(
     legs: &mut Vec<PlannedLeg>,
     next_idx: &mut i32,
@@ -364,7 +351,15 @@ fn append_buy_legs(
         _ => LegKind::LocalSwap,
     };
 
-    push_acquire_leg(legs, next_idx, kind, target_chain, &d.symbol, consumed, prices);
+    push_acquire_leg(
+        legs,
+        next_idx,
+        kind,
+        target_chain,
+        &d.symbol,
+        consumed,
+        prices,
+    );
 }
 
 /// Emit a same-chain "acquire" leg: spend `amount_usdc` of USDC on `chain` to

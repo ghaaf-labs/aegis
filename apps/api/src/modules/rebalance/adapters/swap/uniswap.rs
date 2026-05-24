@@ -21,8 +21,8 @@ use super::super::super::registry::ticket::ExecutionTicket;
 use super::super::RealReceipt;
 #[cfg(feature = "real-swap")]
 use super::{
-    swap_addresses, swap_direction, swap_venue, CircleSwapArgs, IQuoterV2, ISwapRouter02,
-    LbSwapArgs, SwapDir, SwapVenue, POOL_FEE, SLIPPAGE_BPS,
+    best_buy_tier, best_sell_tier, swap_addresses, swap_direction, swap_venue, CircleSwapArgs,
+    IQuoterV2, ISwapRouter02, LbSwapArgs, SwapDir, SwapVenue, FEE_TIERS, POOL_FEE, SLIPPAGE_BPS,
 };
 
 #[cfg(feature = "real-swap")]
@@ -43,26 +43,36 @@ pub(super) async fn real_quote_buy(
             .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
     );
     let q = IQuoterV2::new(quoter, &provider);
-    let params = IQuoterV2::QuoteExactInputSingleParams {
-        tokenIn: usdc,
-        tokenOut: token,
-        amountIn: U256::from(amount_in),
-        fee: POOL_FEE.try_into().expect("fee fits uint24"),
-        sqrtPriceLimitX96: alloy::primitives::Uint::<160, 3>::ZERO,
-    };
-    let out =
-        q.quoteExactInputSingle(params).call().await.map_err(|e| {
-            AppError::Internal(anyhow::anyhow!("quoter call failed (no pool?): {e}"))
-        })?;
-    let amount_out: u128 = out
-        .amountOut
-        .try_into()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("quoted amountOut overflow")))?;
-    if amount_out == 0 {
-        return Err(AppError::Internal(anyhow::anyhow!(
-            "quoter returned zero output; no liquidity"
-        )));
+
+    // Best-execution: quote every fee tier and route through the pool that
+    // returns the most token for this exact USDC input. A tier with no pool
+    // reverts — skip it and keep the rest; fail closed only when no tier has
+    // liquidity. "Different markets, highest amount."
+    let mut quotes: Vec<(u32, u128)> = Vec::new();
+    let mut last_err: Option<String> = None;
+    for &fee in &FEE_TIERS {
+        let params = IQuoterV2::QuoteExactInputSingleParams {
+            tokenIn: usdc,
+            tokenOut: token,
+            amountIn: U256::from(amount_in),
+            fee: fee.try_into().expect("fee fits uint24"),
+            sqrtPriceLimitX96: alloy::primitives::Uint::<160, 3>::ZERO,
+        };
+        match q.quoteExactInputSingle(params).call().await {
+            Ok(out) => match out.amountOut.try_into() {
+                Ok(amount_out) => quotes.push((fee, amount_out)),
+                Err(_) => last_err = Some(format!("amountOut overflow on fee {fee}")),
+            },
+            Err(e) => last_err = Some(e.to_string()),
+        }
     }
+    let (fee_tier, amount_out) = best_buy_tier(&quotes).ok_or_else(|| {
+        AppError::Internal(anyhow::anyhow!(
+            "no Uniswap V3 pool with liquidity for USDC→{token_symbol} on {} across fee tiers {FEE_TIERS:?}{}",
+            chain.as_str(),
+            last_err.map(|e| format!(" (last error: {e})")).unwrap_or_default(),
+        ))
+    })?;
     let min_out = amount_out.saturating_mul((10_000 - SLIPPAGE_BPS) as u128) / 10_000;
 
     Ok(ValidatedQuote {
@@ -81,6 +91,7 @@ pub(super) async fn real_quote_buy(
         slippage_bps: SLIPPAGE_BPS,
         deadline: (now + Duration::seconds(600)).timestamp() as u64,
         provider: "uniswap-v3".into(),
+        fee_tier: Some(fee_tier),
     })
 }
 
@@ -104,27 +115,34 @@ pub(super) async fn real_quote_sell(
             .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
     );
     let q = IQuoterV2::new(quoter, &provider);
-    let params = IQuoterV2::QuoteExactOutputSingleParams {
-        tokenIn: token,
-        tokenOut: usdc,
-        amount: U256::from(amount_out_usdc),
-        fee: POOL_FEE.try_into().expect("fee fits uint24"),
-        sqrtPriceLimitX96: alloy::primitives::Uint::<160, 3>::ZERO,
-    };
-    let out = q.quoteExactOutputSingle(params).call().await.map_err(|e| {
+
+    // Best-execution for a sell: quote every fee tier and route through the pool
+    // that spends the *least* token to realize the target USDC.
+    let mut quotes: Vec<(u32, u128)> = Vec::new();
+    let mut last_err: Option<String> = None;
+    for &fee in &FEE_TIERS {
+        let params = IQuoterV2::QuoteExactOutputSingleParams {
+            tokenIn: token,
+            tokenOut: usdc,
+            amount: U256::from(amount_out_usdc),
+            fee: fee.try_into().expect("fee fits uint24"),
+            sqrtPriceLimitX96: alloy::primitives::Uint::<160, 3>::ZERO,
+        };
+        match q.quoteExactOutputSingle(params).call().await {
+            Ok(out) => match out.amountIn.try_into() {
+                Ok(amount_in_token) => quotes.push((fee, amount_in_token)),
+                Err(_) => last_err = Some(format!("amountIn overflow on fee {fee}")),
+            },
+            Err(e) => last_err = Some(e.to_string()),
+        }
+    }
+    let (fee_tier, amount_in_token) = best_sell_tier(&quotes).ok_or_else(|| {
         AppError::Internal(anyhow::anyhow!(
-            "quoter (exact-output) call failed (no pool?): {e}"
+            "no Uniswap V3 pool with liquidity for {token_symbol}→USDC on {} across fee tiers {FEE_TIERS:?}{}",
+            chain.as_str(),
+            last_err.map(|e| format!(" (last error: {e})")).unwrap_or_default(),
         ))
     })?;
-    let amount_in_token: u128 = out
-        .amountIn
-        .try_into()
-        .map_err(|_| AppError::Internal(anyhow::anyhow!("quoted amountIn overflow")))?;
-    if amount_in_token == 0 {
-        return Err(AppError::Internal(anyhow::anyhow!(
-            "quoter returned zero input; no liquidity"
-        )));
-    }
     // Slippage headroom on the max token input.
     let max_in = amount_in_token.saturating_mul((10_000 + SLIPPAGE_BPS) as u128) / 10_000;
 
@@ -144,6 +162,7 @@ pub(super) async fn real_quote_sell(
         slippage_bps: SLIPPAGE_BPS,
         deadline: (now + Duration::seconds(600)).timestamp() as u64,
         provider: "uniswap-v3".into(),
+        fee_tier: Some(fee_tier),
     })
 }
 
@@ -191,6 +210,9 @@ pub(super) async fn real_execute(
     let (usdc, token, router, _quoter) = swap_addresses(cfg, chain, &token_symbol)?;
     let amount_in = q.amount_in;
     let min_out = q.min_out;
+    // Execute on the exact pool the quote priced (best-execution tier selection),
+    // falling back to the default tier for older quotes that carry none.
+    let fee_tier = q.fee_tier.unwrap_or(POOL_FEE);
 
     // The router pulls the INPUT token: USDC on a buy, the sold token on a sell.
     let (token_in, token_out, approve_token) = if is_sell {
@@ -219,6 +241,7 @@ pub(super) async fn real_execute(
                 amount_in,
                 min_out,
                 is_sell,
+                fee_tier,
             },
         )
         .await;
@@ -265,7 +288,7 @@ pub(super) async fn real_execute(
     }
 
     let router_c = ISwapRouter02::new(router, &provider);
-    let fee = POOL_FEE.try_into().expect("fee fits uint24");
+    let fee = fee_tier.try_into().expect("fee fits uint24");
     let zero_limit = alloy::primitives::Uint::<160, 3>::ZERO;
     let receipt = if is_sell {
         // exactOutput: realize `min_out` USDC, spending up to `amount_in` token.

@@ -232,7 +232,6 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
   // DOM entirely — signed-out users only see public destinations.
   const signedOut = sessionResolved && !sessionActive;
   const navSections = NAV_SECTIONS;
-  const showLogoutInSidebar = Boolean(onClose);
 
   const handleLogout = async () => {
     setLogoutError(null);
@@ -541,24 +540,18 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
                 : "Account setup pending"}
             </span>
           </div>
-          {showLogoutInSidebar ? (
-            <button
-              type="button"
-              data-testid="sidebar-logout"
-              onClick={() => void handleLogout()}
-              title="Log out"
-              aria-label="Log out"
-              className="touch-target w-full min-h-[36px] inline-flex items-center justify-center gap-2 rounded-sharp border border-border-default bg-bg px-3 text-xs font-mono text-text-lo hover:border-risk/50 hover:bg-risk/5 hover:text-risk transition-colors"
-            >
-              <LogOut className="w-3.5 h-3.5" aria-hidden="true" />
-              Log out
-            </button>
-          ) : (
-            <p className="text-[10px] font-mono leading-relaxed text-text-mut">
-              Sign out from the top bar.
-            </p>
-          )}
-          {showLogoutInSidebar && logoutError && (
+          <button
+            type="button"
+            data-testid="sidebar-logout"
+            onClick={() => void handleLogout()}
+            title="Sign out"
+            aria-label="Sign out"
+            className="touch-target inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-sharp border border-border-default bg-bg px-3 text-xs font-mono text-text-lo transition-colors hover:border-risk/50 hover:bg-risk/5 hover:text-risk"
+          >
+            <LogOut className="w-3.5 h-3.5" aria-hidden="true" />
+            Sign out
+          </button>
+          {logoutError && (
             <p role="alert" className="text-[11px] font-mono text-risk">
               {logoutError}
             </p>

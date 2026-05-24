@@ -3,6 +3,10 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+// `ChainKey` and `TokenClass` moved to `crate::domain`; re-exported here so the
+// many `rebalance::models::{ChainKey, TokenClass}` import paths keep working.
+pub use crate::domain::{ChainKey, TokenClass};
+
 /// Top-level rebalance lifecycle row. Mirrors `rebalances` (migration 0004).
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -83,122 +87,6 @@ impl LegKind {
         })
     }
 }
-
-/// Economic class of a token, used by the route registry to decide which
-/// adapter (and capability checks) a leg touching it must clear.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TokenClass {
-    /// USDC — the settlement unit; bridged via CCTP, never swapped.
-    Stable,
-    /// USYC — yield sleeve, minted/redeemed via the Hashnote Teller.
-    Yield,
-    /// EURC — FX sleeve. Economically an FX stablecoin, but now executed via
-    /// the permissionless USDC/EURC pool on Base (the gated Arc StableFX rail
-    /// is superseded). The route registry routes an `FxStable` token with a
-    /// Base ERC-20 through the swap adapter.
-    FxStable,
-    /// BTC/ETH/SOL/… — market exposure acquired via a per-chain AMM swap.
-    Volatile,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
-#[serde(rename_all = "snake_case")]
-pub enum ChainKey {
-    Arc,
-    Base,
-    EthSepolia,
-    ArbSepolia,
-    AvaxFuji,
-    OpSepolia,
-}
-
-impl ChainKey {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Arc => "arc",
-            Self::Base => "base",
-            Self::EthSepolia => "eth_sepolia",
-            Self::ArbSepolia => "arb_sepolia",
-            Self::AvaxFuji => "avax_fuji",
-            Self::OpSepolia => "op_sepolia",
-        }
-    }
-    /// Dense index into a per-chain collection (e.g. `Config`'s `[ChainConfig; 6]`).
-    /// The ordering matches the variant declaration order and is the single
-    /// source of truth for indexing per-chain config.
-    pub fn index(self) -> usize {
-        match self {
-            Self::Arc => 0,
-            Self::Base => 1,
-            Self::EthSepolia => 2,
-            Self::ArbSepolia => 3,
-            Self::AvaxFuji => 4,
-            Self::OpSepolia => 5,
-        }
-    }
-    pub fn parse(s: &str) -> Option<Self> {
-        // Accept both the canonical snake_case `as_str()` form and the
-        // hyphenated Circle wallet `blockchain` form (e.g. "eth-sepolia"),
-        // so a chain stamped by either layer round-trips.
-        match s.to_ascii_lowercase().replace('-', "_").as_str() {
-            "arc" => Some(Self::Arc),
-            "base" => Some(Self::Base),
-            "eth_sepolia" => Some(Self::EthSepolia),
-            "arb_sepolia" => Some(Self::ArbSepolia),
-            "avax_fuji" => Some(Self::AvaxFuji),
-            "op_sepolia" => Some(Self::OpSepolia),
-            _ => None,
-        }
-    }
-    /// Circle CCTP V2 domain id. Source domain for the attestation URL.
-    /// Mirrors `CHAIN_DOMAINS` in `packages/shared/src/constants.ts`.
-    /// Verified against the deployed Arc testnet MessageTransmitter
-    /// (`localDomain() = 26`); 13 was a stale guess that silently
-    /// passed CI (no on-chain test) and surfaced only when an
-    /// attested message reverted with "Invalid destination domain".
-    pub fn domain_id(&self) -> u32 {
-        match self {
-            Self::EthSepolia => 0,
-            Self::AvaxFuji => 1,
-            Self::OpSepolia => 2,
-            Self::ArbSepolia => 3,
-            Self::Base => 6,
-            Self::Arc => 26,
-        }
-    }
-
-    /// Whether this chain is wired for live rebalance execution. The execution
-    /// set is exactly the chains where a Circle wallet is provisioned
-    /// (`wallet_routes::SUPPORTED_WALLET_BLOCKCHAINS`): Arc/Base run the full
-    /// path (deployed RebalanceExecutor + swap venue); Eth/Arb/Avax are CCTP
-    /// source/dest chains for the plain-USDC consolidation baseline. Membership
-    /// here is necessary but not sufficient — the route registry then validates
-    /// each leg's CCTP/swap config *per chain* (`adapters::cctp::capability_for_route`
-    /// / `adapters::swap::capability_for`), so an execution chain still fails
-    /// closed if its USDC/messenger/venue/executor is unset. OP-Sepolia is
-    /// excluded: it has no provisioned wallet route, so funds can never land
-    /// there. An unparsable / non-EVM chain also fails closed (`parse` → `None`).
-    pub fn is_execution(&self) -> bool {
-        matches!(
-            self,
-            Self::Arc | Self::Base | Self::EthSepolia | Self::ArbSepolia | Self::AvaxFuji
-        )
-    }
-}
-
-/// Symbols whose canonical residency is Arc. Anything not in here defaults to
-/// Base for cross-chain planning. USYC lives on Arc (Hashnote Teller), and
-/// USDC is multi-chain so it stays where the user holds it. EURC moved to Base
-/// once the EUR sleeve switched to the permissionless USDC/EURC DEX pool.
-pub const ARC_NATIVE_SYMBOLS: &[&str] = &["USYC"];
-
-/// Symbols whose canonical residency is Base (Uniswap V3 / Aerodrome venue).
-/// EURC settles here via the permissionless USDC/EURC pool (supersedes the
-/// KYB-gated Arc StableFX rail).
-pub const BASE_NATIVE_SYMBOLS: &[&str] = &[
-    "BTC", "ETH", "SOL", "BNB", "AVAX", "MATIC", "LINK", "UNI", "EURC",
-];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlannedLeg {

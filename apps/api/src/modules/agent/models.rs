@@ -54,6 +54,26 @@ pub struct AgentDecision {
     pub recommended_allocation: Option<serde_json::Value>,
     #[sqlx(default)]
     pub allocation_applied_at: Option<DateTime<Utc>>,
+
+    // Async inference lifecycle (migration 0004). `status` is
+    // queued|running|ready|failed; the decision list only ever surfaces
+    // `ready` rows (a queued/running placeholder must not open Gate-1), but the
+    // client can poll a specific id and observe `failed` to show a retry.
+    // `error` carries the failure reason. Legacy rows default to `ready`.
+    #[sqlx(default)]
+    pub status: Option<String>,
+    #[sqlx(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+
+    /// Per-symbol execution-readiness for the proposed `recommended_allocation`,
+    /// computed fresh at response time from the live route engine
+    /// (`route_state_for_token`) — NOT a DB column. The approval modal reads it
+    /// to badge each sleeve truthfully ("Executes now" vs "Track only") instead
+    /// of a static class guess. `{symbol: "ready"|"track-only"|"needs-route"|…}`.
+    #[sqlx(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub route_states: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]

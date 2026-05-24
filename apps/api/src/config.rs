@@ -1,6 +1,6 @@
 use anyhow::Context;
 
-use crate::modules::rebalance::models::ChainKey;
+use crate::domain::ChainKey;
 
 /// Per-task model resolution: every AI call site declares its `ModelRoute`,
 /// and `Config::model_for(route)` returns the slug. Slugs are env-driven so
@@ -52,12 +52,26 @@ pub struct Config {
     pub openrouter_api_key: String,
     pub openrouter_base_url: String,
 
-    // Per-route model slugs. Defaults below; override via env.
+    // Per-route model slugs. Each value is an ordered, comma-separated
+    // fallback chain: `primary[,fallback,…]`. OpenRouter tries them in order
+    // and falls back on a provider 5xx/429/refusal (see `models_for`). A bare
+    // single slug stays valid (a one-element chain). Defaults below; override
+    // via env.
     pub model_regime: String,
     pub model_strategist: String,
     pub model_critic: String,
     pub model_tax: String,
     pub model_commentary: String,
+
+    // Per-attempt resilience for OpenRouter calls. `max_retries` are reqwest-
+    // level retries on a *transient* failure (timeout / 5xx / 429), on top of
+    // the in-request `models[]` fallback; `attempt_timeout_secs` caps a single
+    // attempt (shorter than reqwest's 240s ceiling) so a stalled provider is
+    // abandoned and retried instead of hanging. `response_healing` toggles
+    // OpenRouter's JSON-repair plugin.
+    pub openrouter_max_retries: u32,
+    pub openrouter_attempt_timeout_secs: u64,
+    pub openrouter_response_healing: bool,
 
     // Optional referer / app name OpenRouter records for analytics.
     pub openrouter_app_name: String,
@@ -142,40 +156,24 @@ pub struct Config {
     /// EOA is allowlisted and the real Teller path is wired.
     pub usyc_enabled: bool,
 
-    // ── Per-token ERC-20s on Base ──────────────────────────────────────────
-    /// Wrapped-ETH ERC-20 on Base Sepolia — the concrete token behind the
-    /// "ETH" symbol for swap routing. Other volatiles have no canonical Base
-    /// Sepolia ERC-20 + pool, so they fail closed (`NeedsAddress`).
-    #[allow(dead_code)]
-    pub weth_base: String,
-    /// Coinbase Wrapped BTC ERC-20 on Base (BTC sleeve). Empty ⇒ track-only.
-    #[allow(dead_code)]
-    pub cbbtc_base: String,
-    /// Coinbase Wrapped Staked ETH ERC-20 on Base (staked-ETH yield sleeve).
-    #[allow(dead_code)]
-    pub cbeth_base: String,
-    /// Sky sUSDS ERC-20 on Base (permissionless savings-yield sleeve).
-    #[allow(dead_code)]
-    pub susds_base: String,
-    /// EURC ERC-20 on Base (the EUR sleeve). EURC is a freely-transferable
-    /// Circle stablecoin with a real USDC/EURC pool on Base (Aerodrome /
-    /// Uniswap V3), so the EUR sleeve now executes via the permissionless DEX
-    /// swap rather than KYB-gated Arc StableFX. Empty ⇒ track-only (fail closed).
-    #[allow(dead_code)]
-    pub eurc_base: String,
+    // ── Per-(symbol, chain) ERC-20 addresses ───────────────────────────────
+    /// Built in `from_env` by iterating the token registry × its `Env`-sourced
+    /// residencies and reading `{PREFIX}_{CHAIN}` (e.g. `WETH_BASE`, `WBTC_ETH`,
+    /// `CBBTC_BASE`, `LINK_BASE`). USDC (per-chain `ChainConfig`) and USYC
+    /// (`usyc_token_arc`) are resolved separately and are NOT in this map. Empty
+    /// / zero values are kept verbatim and normalized to `None` at read time by
+    /// `TokenSpec::address_for`. Resolve via [`Config::token_address`]; mutate in
+    /// tests via `Config::set_token_address`.
+    pub token_addrs: std::collections::HashMap<(&'static str, ChainKey), String>,
 
-    /// Canonical volatile ERC-20s on the additional execution chains. Empty ⇒
-    /// the symbol is track-only on that chain (the registry fails closed).
-    #[allow(dead_code)]
-    pub weth_eth: String,
-    #[allow(dead_code)]
-    pub weth_arb: String,
-    #[allow(dead_code)]
-    pub weth_op: String,
-    #[allow(dead_code)]
-    pub wbtc_eth: String,
-    #[allow(dead_code)]
-    pub wbtc_arb: String,
+    // ── Per-chain swap-venue liquidity allowlist ──────────────────────────
+    /// Symbols that have a tradeable swap pool with real liquidity on a given
+    /// chain. Built in `from_env` from `SWAP_LIQUID_TOKENS_{CHAIN}` (e.g.
+    /// `SWAP_LIQUID_TOKENS_BASE=ETH`). When set, the list is authoritative.
+    /// When absent, Aegis uses a tiny curated testnet default instead of
+    /// trusting every configured ERC-20; addresses alone do not prove liquidity.
+    /// Resolve via [`Config::swap_token_has_venue`].
+    pub swap_liquid_tokens: std::collections::HashMap<ChainKey, Vec<String>>,
 
     // ── Nanopayments (x402) for 25bps protocol fee + referrals ────────────
     #[allow(dead_code)]
@@ -327,15 +325,20 @@ impl Config {
             // not a self-edit. Claude slugs (`anthropic/claude-opus-4.7`,
             // `~anthropic/claude-sonnet-latest`) remain valid env overrides
             // for any route at ~10–50× the per-token cost.
+            // model_bench (2026-05-24, on the real allocator task) measured the
+            // candidates: gemini-flash p50 7.9s / p95 8.7s @ 100% valid; sonnet
+            // p50 8.8s @ 100%; deepseek p50 8.9s @ 100% (its prior 38–240s was a
+            // transient provider stall, not inherent) — and qwen3.5-flash the
+            // actual laggard at p50 25s / p95 40s @ 83% (one timeout). So both
+            // hot paths now LEAD with the fastest reliable model and keep
+            // cross-vendor fallbacks: OpenRouter falls back on a 5xx/429/refusal
+            // so a single bad route can't stall or 500 the decision.
             model_regime: std::env::var("MODEL_REGIME")
-                .unwrap_or_else(|_| "qwen/qwen3.5-flash-02-23".into()),
-            // F-COST-1: default to deepseek-v4-flash. The previous default
-            // `deepseek/deepseek-v4-pro` had a promo price ($0.435/$0.87 per
-            // Mtok) that expired 2026-05-31 → 4× cliff to $1.74/$3.48.
-            // v4-flash is permanently $0.112/$0.224 per Mtok with the same
-            // 1M context and strong-enough reasoning for this use case.
-            model_strategist: std::env::var("MODEL_STRATEGIST")
-                .unwrap_or_else(|_| "deepseek/deepseek-v4-flash".into()),
+                .unwrap_or_else(|_| "~google/gemini-flash-latest,qwen/qwen3.5-flash-02-23".into()),
+            model_strategist: std::env::var("MODEL_STRATEGIST").unwrap_or_else(|_| {
+                "~google/gemini-flash-latest,~anthropic/claude-sonnet-latest,deepseek/deepseek-v4-flash"
+                    .into()
+            }),
             model_critic: std::env::var("MODEL_CRITIC")
                 .unwrap_or_else(|_| "~openai/gpt-mini-latest".into()),
             model_tax: std::env::var("MODEL_TAX").unwrap_or_else(|_| "qwen/qwen3.6-flash".into()),
@@ -345,6 +348,10 @@ impl Config {
             openrouter_app_name: std::env::var("OPENROUTER_APP_NAME")
                 .unwrap_or_else(|_| "Aegis".into()),
             openrouter_app_url: std::env::var("OPENROUTER_APP_URL").ok(),
+
+            openrouter_max_retries: parse_or("OPENROUTER_MAX_RETRIES", 1)?,
+            openrouter_attempt_timeout_secs: parse_or("OPENROUTER_ATTEMPT_TIMEOUT_SECS", 90)?,
+            openrouter_response_healing: parse_or("OPENROUTER_RESPONSE_HEALING", true)?,
 
             coingecko_api_key: std::env::var("COINGECKO_API_KEY").ok(),
 
@@ -383,17 +390,8 @@ impl Config {
             usyc_oracle_arc: std::env::var("USYC_ORACLE_ARC").unwrap_or_default(),
             usyc_enabled: parse_or("USYC_ENABLED", false)?,
 
-            weth_base: std::env::var("WETH_BASE").unwrap_or_default(),
-            cbbtc_base: std::env::var("CBBTC_BASE").unwrap_or_default(),
-            cbeth_base: std::env::var("CBETH_BASE").unwrap_or_default(),
-            susds_base: std::env::var("SUSDS_BASE").unwrap_or_default(),
-            eurc_base: std::env::var("EURC_BASE").unwrap_or_default(),
-
-            weth_eth: std::env::var("WETH_ETH").unwrap_or_default(),
-            weth_arb: std::env::var("WETH_ARB").unwrap_or_default(),
-            weth_op: std::env::var("WETH_OP").unwrap_or_default(),
-            wbtc_eth: std::env::var("WBTC_ETH").unwrap_or_default(),
-            wbtc_arb: std::env::var("WBTC_ARB").unwrap_or_default(),
+            token_addrs: token_addrs_from_env(),
+            swap_liquid_tokens: swap_liquid_tokens_from_env(),
 
             // Nanopayments (x402) for protocol fee (25bps) and referral payouts.
             nanopayments_facilitator_url: std::env::var("NANOPAYMENTS_FACILITATOR_URL")
@@ -546,8 +544,8 @@ impl Config {
         Ok(())
     }
 
-    /// Resolve a `ModelRoute` to its configured OpenRouter slug.
-    pub fn model_for(&self, route: ModelRoute) -> &str {
+    /// The raw, possibly-comma-separated chain configured for a route.
+    fn model_spec(&self, route: ModelRoute) -> &str {
         match route {
             ModelRoute::RegimeClassify => &self.model_regime,
             ModelRoute::RebalanceReason => &self.model_strategist,
@@ -555,6 +553,27 @@ impl Config {
             ModelRoute::MarketCommentary => &self.model_commentary,
             ModelRoute::CritiqueAgent => &self.model_critic,
         }
+    }
+
+    /// Resolve a `ModelRoute` to its **primary** OpenRouter slug (the first
+    /// entry of the chain). Used for error messages and as the requested-slug
+    /// fallback in telemetry; the wire request sends the whole [`models_for`]
+    /// chain.
+    pub fn model_for(&self, route: ModelRoute) -> &str {
+        let raw = self.model_spec(route);
+        raw.split(',').next().unwrap_or(raw).trim()
+    }
+
+    /// Resolve a `ModelRoute` to its ordered OpenRouter fallback chain
+    /// (`primary` first). Empty entries are dropped so trailing commas and
+    /// stray whitespace in env overrides are harmless. Always non-empty for a
+    /// configured route.
+    pub fn models_for(&self, route: ModelRoute) -> Vec<&str> {
+        self.model_spec(route)
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect()
     }
 
     /// Per-chain settlement infrastructure for `chain` — RPC URL, EOA signing
@@ -566,10 +585,101 @@ impl Config {
     pub fn chain(&self, chain: ChainKey) -> &ChainConfig {
         &self.chains[chain.index()]
     }
+
+    /// Raw (un-normalized) ERC-20 for `symbol` on `chain` from the flat env-built
+    /// token map, or `None` when the token has no `Env`-sourced residency there.
+    /// Normalization (empty / zero placeholder → `None`) is applied by the
+    /// caller, `TokenSpec::address_for`. The map is small (one entry per
+    /// configured token×chain), so a linear scan keeps the key lifetime simple.
+    pub fn token_address_raw(&self, symbol: &str, chain: ChainKey) -> Option<&str> {
+        self.token_addrs
+            .iter()
+            .find(|((sym, ch), _)| *sym == symbol && *ch == chain)
+            .map(|(_, addr)| addr.as_str())
+    }
+
+    /// Set a token's ERC-20 on a chain — the ergonomic seam that replaces the
+    /// old flat `cfg.weth_base = …` field pokes (used by unit + integration
+    /// tests, and available for any runtime wiring).
+    pub fn set_token_address(&mut self, symbol: &'static str, chain: ChainKey, addr: &str) {
+        self.token_addrs.insert((symbol, chain), addr.into());
+    }
+
+    /// Whether `symbol` has a tradeable (liquid) swap venue on `chain`. A
+    /// configured allowlist is authoritative; an absent/empty one falls back to
+    /// the small curated default below. Case-insensitive so
+    /// `SWAP_LIQUID_TOKENS_BASE=eth` matches `ETH`.
+    pub fn swap_token_has_venue(&self, symbol: &str, chain: ChainKey) -> bool {
+        match self.swap_liquid_tokens.get(&chain) {
+            Some(list) if !list.is_empty() => list.iter().any(|s| s.eq_ignore_ascii_case(symbol)),
+            _ => default_swap_liquid_token(symbol, chain),
+        }
+    }
 }
 
 fn required(key: &str) -> anyhow::Result<String> {
     std::env::var(key).with_context(|| format!("missing required env var: {key}"))
+}
+
+/// Build the per-(symbol, chain) ERC-20 map from env: for every registry token,
+/// read `{PREFIX}_{CHAIN}` for each `Env(prefix)` residency. Env var names are
+/// unchanged (`WETH_BASE`, `WBTC_ETH`, `CBBTC_BASE`, `LINK_BASE`, …). USDC
+/// (per-`ChainConfig`) and USYC (`usyc_token_arc`) have their own slots and are
+/// not `Env`-sourced, so they're skipped here. Empty values are kept (the
+/// registry normalizes them to `None` / track-only at read time).
+fn token_addrs_from_env() -> std::collections::HashMap<(&'static str, ChainKey), String> {
+    use crate::domain::token::{AddrSource, TOKEN_REGISTRY};
+    let mut map = std::collections::HashMap::new();
+    for spec in TOKEN_REGISTRY {
+        for res in spec.residencies {
+            if let AddrSource::Env(prefix) = res.addr {
+                let key = format!("{prefix}_{}", chain_env_suffix(res.chain));
+                map.insert(
+                    (spec.symbol, res.chain),
+                    std::env::var(key).unwrap_or_default(),
+                );
+            }
+        }
+    }
+    map
+}
+
+/// Build the per-chain swap-venue liquidity allowlist from
+/// `SWAP_LIQUID_TOKENS_{CHAIN}` (comma-separated symbols, e.g.
+/// `SWAP_LIQUID_TOKENS_BASE=ETH`). Only chains with a non-empty env var get an
+/// entry; missing env falls back to `default_swap_liquid_token`.
+fn swap_liquid_tokens_from_env() -> std::collections::HashMap<ChainKey, Vec<String>> {
+    let mut map = std::collections::HashMap::new();
+    for chain in ChainKey::ALL {
+        let key = format!("SWAP_LIQUID_TOKENS_{}", chain_env_suffix(chain));
+        if let Ok(raw) = std::env::var(&key) {
+            let list: Vec<String> = raw
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !list.is_empty() {
+                map.insert(chain, list);
+            }
+        }
+    }
+    map
+}
+
+fn default_swap_liquid_token(symbol: &str, chain: ChainKey) -> bool {
+    chain == ChainKey::Base && symbol.eq_ignore_ascii_case("ETH")
+}
+
+/// The env-var chain suffix matching the historical `{PREFIX}_{CHAIN}` names.
+fn chain_env_suffix(chain: ChainKey) -> &'static str {
+    match chain {
+        ChainKey::Arc => "ARC",
+        ChainKey::Base => "BASE",
+        ChainKey::EthSepolia => "ETH",
+        ChainKey::ArbSepolia => "ARB",
+        ChainKey::AvaxFuji => "AVAX",
+        ChainKey::OpSepolia => "OP",
+    }
 }
 
 /// Build the per-chain config array from env, indexed by [`ChainKey::index`].
@@ -732,6 +842,9 @@ pub(crate) fn test_config() -> Config {
         model_commentary: "commentary-model".into(),
         openrouter_app_name: "Aegis".into(),
         openrouter_app_url: None,
+        openrouter_max_retries: 1,
+        openrouter_attempt_timeout_secs: 90,
+        openrouter_response_healing: true,
         coingecko_api_key: None,
         price_provider_primary: "defillama".into(),
         price_provider_fallback: "pyth".into(),
@@ -768,16 +881,8 @@ pub(crate) fn test_config() -> Config {
         usyc_teller_arc: String::new(),
         usyc_oracle_arc: String::new(),
         usyc_enabled: false,
-        weth_base: String::new(),
-        cbbtc_base: String::new(),
-        cbeth_base: String::new(),
-        susds_base: String::new(),
-        eurc_base: String::new(),
-        weth_eth: String::new(),
-        weth_arb: String::new(),
-        weth_op: String::new(),
-        wbtc_eth: String::new(),
-        wbtc_arb: String::new(),
+        token_addrs: std::collections::HashMap::new(),
+        swap_liquid_tokens: std::collections::HashMap::new(),
         nanopayments_facilitator_url: "https://gateway-api-testnet.circle.com".into(),
         nanopayments_seller_address: String::new(),
         nanopayments_treasury_address: String::new(),
@@ -862,6 +967,24 @@ mod tests {
         assert_eq!(
             cfg.model_for(ModelRoute::MarketCommentary),
             "commentary-model"
+        );
+    }
+
+    #[test]
+    fn models_for_parses_fallback_chain_primary_first() {
+        let mut cfg = test_config();
+        cfg.model_strategist = " a/primary , b/fallback ,, c/last ".into();
+        // `model_for` is the trimmed primary; `models_for` is the full chain
+        // with blank entries dropped and whitespace trimmed.
+        assert_eq!(cfg.model_for(ModelRoute::RebalanceReason), "a/primary");
+        assert_eq!(
+            cfg.models_for(ModelRoute::RebalanceReason),
+            vec!["a/primary", "b/fallback", "c/last"]
+        );
+        // A bare single slug is a one-element chain.
+        assert_eq!(
+            cfg.models_for(ModelRoute::CritiqueAgent),
+            vec!["critic-model"]
         );
     }
 

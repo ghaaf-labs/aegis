@@ -84,7 +84,7 @@ rsa = "0.9"
 alloy = { version = "2.0.5", features = ["contract", "json", "node-bindings", "signer-local", "sol-types"], optional = true }
 
 [features]
-default = []
+default = ["real-cctp", "real-usyc", "real-swap"]
 real-cctp = ["dep:alloy"]
 real-usyc = ["dep:alloy"]
 # Compile the real per-chain swap adapter (Uniswap V3 QuoterV2 + SwapRouter02

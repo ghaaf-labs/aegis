@@ -60,6 +60,19 @@ describe("portfolio store onboarding state", () => {
       "Wallet balance unavailable",
     );
   });
+
+  it("tracks active dashboard hydration statuses by portfolio", () => {
+    const store = usePortfolioStore.getState();
+
+    store.setActivePortfolioDetailStatus("p1", "loading");
+    store.setDecisionsStatus("p1", "ready");
+
+    const state = usePortfolioStore.getState();
+    expect(state.activePortfolioDetailId).toBe("p1");
+    expect(state.activePortfolioDetailStatus).toBe("loading");
+    expect(state.decisionsPortfolioId).toBe("p1");
+    expect(state.decisionsStatus).toBe("ready");
+  });
 });
 
 function portfolio(

@@ -117,6 +117,7 @@ async fn main() -> anyhow::Result<()> {
         sse: sse_tx,
         prompts,
         prices,
+        inference_permits: Arc::new(tokio::sync::Semaphore::new(1)),
     });
 
     let portfolio_id: Uuid = PORTFOLIO_ID.parse()?;

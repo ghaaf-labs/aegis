@@ -124,8 +124,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen bg-bg text-text-default overflow-hidden">
-      {/* Desktop sidebar — hidden on small screens. */}
-      <div className="hidden md:flex">
+      {/* Desktop sidebar — hidden until the content area has enough width. */}
+      <div className="hidden xl:flex">
         <Sidebar />
       </div>
 
@@ -136,16 +136,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {/* Backdrop: aria-hidden so AT skips it. */}
           <div
             aria-hidden="true"
-            className="md:hidden fixed inset-0 z-40 bg-black/60"
+            className="fixed inset-0 z-40 bg-black/60 xl:hidden"
             onClick={() => setOpen(false)}
           />
           {/* Drawer panel as a dialog. */}
           <div
+            id="mobile-nav-dialog"
             ref={drawerRef}
             role="dialog"
             aria-modal="true"
             aria-labelledby={DRAWER_TITLE_ID}
-            className="md:hidden fixed inset-y-0 left-0 z-50 w-[min(340px,100vw)]"
+            className="fixed inset-y-0 left-0 z-50 w-[min(340px,100vw)] xl:hidden"
           >
             {/* Visually-hidden title for the dialog. */}
             <span id={DRAWER_TITLE_ID} className="sr-only">
@@ -157,7 +158,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       )}
 
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-        <div className="flex min-h-[58px] items-center gap-2 border-b border-border-default bg-surface px-3 py-2 md:hidden">
+        <div className="flex min-h-[58px] items-center gap-2 border-b border-border-default bg-surface px-3 py-2 xl:hidden">
           <button
             ref={toggleRef}
             type="button"
@@ -166,7 +167,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             aria-label={open ? "Close navigation" : "Open navigation"}
             aria-expanded={open}
             aria-controls="mobile-nav-dialog"
-            className="touch-target inline-flex min-h-[42px] min-w-[42px] items-center justify-center rounded-sharp border-brutal border-border-default bg-raised"
+            className="touch-target inline-flex min-h-11 min-w-11 items-center justify-center rounded-sharp border-brutal border-border-default bg-raised"
           >
             {open ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
           </button>
@@ -183,8 +184,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               href={mobileAction.href}
               className={
                 mobileAction.tone === "warn"
-                  ? "touch-target inline-flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-sharp border border-warn/40 bg-warn/5 px-2.5 font-mono text-[10px] uppercase tracking-widest text-warn"
-                  : "touch-target inline-flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-sharp border border-black bg-accent-agent px-2.5 font-mono text-[10px] font-semibold uppercase tracking-widest text-black shadow-brutal-sm"
+                  ? "touch-target inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-sharp border border-warn/40 bg-warn/5 px-2.5 font-mono text-[10px] uppercase tracking-widest text-warn"
+                  : "touch-target inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-sharp border border-black bg-accent-agent px-2.5 font-mono text-[10px] font-semibold uppercase tracking-widest text-black shadow-brutal-sm"
               }
             >
               {mobileAction.tone === "warn" ? (
@@ -196,10 +197,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </Link>
           )}
         </div>
-        <div className="hidden md:block">
+        <div className="hidden xl:block">
           <Header />
         </div>
-        <main className="flex-1 overflow-y-auto p-4 md:p-6 scrollbar-thin">
+        <main className="flex-1 overflow-y-auto p-4 xl:p-6 scrollbar-thin">
           <ErrorBoundary>{children}</ErrorBoundary>
         </main>
       </div>

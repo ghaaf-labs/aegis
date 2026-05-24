@@ -9,6 +9,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
+import { Activity } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import {
   BrutalCard as Card,
@@ -34,15 +35,18 @@ export function PerformanceChart() {
 
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between pb-3">
-        <CardTitle>Performance (30d)</CardTitle>
-        <div className="flex items-center gap-4 text-xs text-text-mut">
+      <CardHeader className="flex min-h-[52px] flex-row items-center justify-between gap-3">
+        <CardTitle className="flex items-center gap-2">
+          <Activity className="h-3.5 w-3.5 text-accent-pnl" />
+          Performance
+        </CardTitle>
+        <div className="flex items-center gap-4 font-mono text-xs text-text-mut">
           <span className="flex items-center gap-1.5">
-            <span className="w-3 h-0.5 bg-blue-500 inline-block rounded" />
+            <span className="inline-block h-0.5 w-3 bg-accent-pnl" />
             Portfolio
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="w-3 h-0.5 bg-violet-500/50 inline-block rounded" />
+            <span className="inline-block h-0.5 w-3 bg-text-hi/50" />
             Benchmark
           </span>
         </div>
@@ -61,28 +65,6 @@ export function PerformanceChart() {
               data={data}
               margin={{ top: 4, right: 4, left: 0, bottom: 0 }}
             >
-              <defs>
-                <linearGradient
-                  id="portfolioGradient"
-                  x1="0"
-                  y1="0"
-                  x2="0"
-                  y2="1"
-                >
-                  <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2} />
-                  <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                </linearGradient>
-                <linearGradient
-                  id="benchmarkGradient"
-                  x1="0"
-                  y1="0"
-                  x2="0"
-                  y2="1"
-                >
-                  <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.1} />
-                  <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
-                </linearGradient>
-              </defs>
               <CartesianGrid
                 strokeDasharray="3 3"
                 stroke="rgba(255,255,255,0.04)"
@@ -122,19 +104,20 @@ export function PerformanceChart() {
                 type="monotone"
                 dataKey="value"
                 name="Portfolio"
-                stroke="#3b82f6"
+                stroke="#00FF88"
                 strokeWidth={2}
-                fill="url(#portfolioGradient)"
+                fill="#00FF88"
+                fillOpacity={0.08}
                 dot={false}
               />
               <Area
                 type="monotone"
                 dataKey="benchmark"
                 name="Benchmark"
-                stroke="#8b5cf6"
+                stroke="#FFFFFF"
                 strokeWidth={1.5}
                 strokeDasharray="4 2"
-                fill="url(#benchmarkGradient)"
+                fill="transparent"
                 dot={false}
               />
             </AreaChart>

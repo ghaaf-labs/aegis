@@ -271,24 +271,40 @@ pub(super) async fn previous_regime(state: &AppState, portfolio_id: Uuid) -> Opt
 
 // ── Context builders ───────────────────────────────────────────────────────
 
-/// Render the route-execution capability block for the strategist prompt:
-/// which tokens can actually be traded vs. which are price-tracked only.
+/// Render the route-capability block shared by the strategist and allocator
+/// prompts. It separates allocation targets from track-only context. In real
+/// mode, allocation targets are executable-only so a Gate-1 approval can build
+/// a Gate-2 execution review without asking the user to resolve hidden rails.
 pub(super) fn format_route_capabilities(cfg: &crate::config::Config) -> String {
     use crate::modules::rebalance::registry::{
-        capabilities::RuntimeCapabilities, executable_token_symbols, tokens::TOKEN_REGISTRY,
+        allocation_target_symbols, capabilities::RuntimeCapabilities,
+        designable_allocation_symbols, executable_token_symbols,
     };
     let caps = RuntimeCapabilities::from_config(cfg);
-    let executable = executable_token_symbols(&caps, cfg);
-    let tracked: Vec<&str> = TOKEN_REGISTRY
+    let targets = allocation_target_symbols(cfg);
+    let designable = designable_allocation_symbols(cfg);
+    let executable = if caps.real_mode {
+        executable_token_symbols(&caps, cfg)
+    } else {
+        targets.clone()
+    };
+    let pending: Vec<&str> = designable
         .iter()
-        .map(|s| s.symbol)
-        .filter(|s| !executable.contains(s))
+        .copied()
+        .filter(|s| !targets.iter().any(|e| e.eq_ignore_ascii_case(s)))
         .collect();
+    let target_mode = if caps.real_mode {
+        "real-mode executable sleeves"
+    } else {
+        "mock/demo designable sleeves"
+    };
     format!(
-        "- **Executable now** (you MAY propose buying/parking/selling these): {}\n\
-         - **Track-only** (price-tracked but NOT executable — do NOT propose trades into these; mention as context only): {}",
+        "- **Allocation targets** ({target_mode}; allocator may assign target weight only here): {}\n\
+         - **Executable now** (rails accepted by the planner and approval gate today): {}\n\
+         - **Track-only today** (supported/visible, but do not target until the route is configured): {}",
+        targets.join(", "),
         executable.join(", "),
-        if tracked.is_empty() { "none".to_string() } else { tracked.join(", ") },
+        if pending.is_empty() { "none".to_string() } else { pending.join(", ") },
     )
 }
 

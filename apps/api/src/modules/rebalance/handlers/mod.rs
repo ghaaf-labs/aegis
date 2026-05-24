@@ -32,8 +32,9 @@ use crate::router::AppState;
 use approval::{approval_safety, history_approval_safety, ApprovalSafety};
 use plan_input::build_plan_input;
 use shared::{
-    ensure_rebalance_wallet_ready, execution_mode, noop_plan_message, own_portfolio_or_404,
-    own_rebalance_or_404, plan_leg_view, rebalance_totals_by_id, reusable_planned_rebalance,
+    ensure_no_active_execution, ensure_rebalance_wallet_ready, execution_mode, noop_plan_message,
+    own_portfolio_or_404, own_rebalance_or_404, plan_leg_view, rebalance_totals_by_id,
+    reusable_planned_rebalance,
 };
 
 use autonomous::{mock_agent_decision, planner_agent_decision};
@@ -89,6 +90,7 @@ pub async fn create(
 ) -> Result<Json<PlanResponse>> {
     own_portfolio_or_404(&state, claims.sub, portfolio_id).await?;
     ensure_rebalance_wallet_ready(&state, claims.sub).await?;
+    ensure_no_active_execution(&state, portfolio_id).await?;
     let input = build_plan_input(&state, portfolio_id).await?;
     let legs = plan_legs(&input);
     if legs.is_empty() {

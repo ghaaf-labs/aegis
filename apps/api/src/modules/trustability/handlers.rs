@@ -11,7 +11,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::service::{self, TrustabilityRow};
+use super::service::{self, TrustabilityProgress, TrustabilityRow};
 use crate::error::Result;
 use crate::middleware::auth::Claims;
 use crate::router::AppState;
@@ -20,6 +20,7 @@ use crate::router::AppState;
 #[serde(rename_all = "camelCase")]
 pub struct TrustabilityResponse {
     pub row: Option<TrustabilityRow>,
+    pub progress: TrustabilityProgress,
     /// `null` when there's no row yet (new user, no decisions in 7 days).
     pub label: Option<&'static str>,
 }
@@ -29,10 +30,15 @@ pub async fn me(
     Extension(claims): Extension<Claims>,
 ) -> Result<Json<TrustabilityResponse>> {
     let row = service::for_user(&state.db, claims.sub).await?;
+    let progress = service::progress_for_user(&state.db, claims.sub).await?;
     let label = row
         .as_ref()
         .map(|r| service::label_for_delta(r.trustability_delta));
-    Ok(Json(TrustabilityResponse { row, label }))
+    Ok(Json(TrustabilityResponse {
+        row,
+        progress,
+        label,
+    }))
 }
 
 #[derive(Debug, Deserialize, Default)]

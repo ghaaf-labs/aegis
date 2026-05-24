@@ -391,9 +391,15 @@ async fn propose_defensive_plan(
         return Ok(None);
     }
 
-    let rebalance_id =
-        persist_defensive_plan(state, portfolio_id, rule, &target_asset, depegged_weight, &legs)
-            .await?;
+    let rebalance_id = persist_defensive_plan(
+        state,
+        portfolio_id,
+        rule,
+        &target_asset,
+        depegged_weight,
+        &legs,
+    )
+    .await?;
     info!(
         rule_id=%rule.id,
         %rebalance_id,
@@ -694,12 +700,21 @@ mod tests {
         cfg.chains[ChainKey::Base.index()].private_key = "0xbb".into();
         cfg.chains[ChainKey::Base.index()].usdc =
             "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
-        cfg.eurc_base = "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42".into();
+        cfg.set_token_address(
+            "EURC",
+            ChainKey::Base,
+            "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42",
+        );
         // The Base swap venue must be wired for EURC to count as executable.
         cfg.chains[ChainKey::Base.index()].swap_router =
             "0x1111111111111111111111111111111111111111".into();
         cfg.chains[ChainKey::Base.index()].swap_quoter =
             "0x2222222222222222222222222222222222222222".into();
+        // ...and EURC must be in the chain's liquid-venue allowlist: the default
+        // curates Base execution to ETH only (EURC/cbBTC have no usable Base
+        // Sepolia pool), so this test opts EURC in to prove the wired-sleeve path.
+        cfg.swap_liquid_tokens
+            .insert(ChainKey::Base, vec!["ETH".into(), "EURC".into()]);
 
         // USYC is disabled by default → never an executable stable, never chosen.
         assert!(!is_executable_stable(&cfg, "USYC"));

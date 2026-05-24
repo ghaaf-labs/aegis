@@ -78,6 +78,7 @@ export function RealtimeBridge() {
         data.perChain ?? {},
         data.perChainEurc ?? {},
         Number.isFinite(observedAt) ? observedAt : undefined,
+        data.tokenBalancesByChain ?? {},
       );
     },
     [setUnifiedUsdc, setUnifiedEurc, setPerChain],

@@ -34,15 +34,16 @@ pub(super) async fn latest_spot_price_with_stable_fallback(state: &AppState, sym
     })
 }
 
-/// Increment `allocations.quantity` by the asset amount acquired on a buy
-/// leg. Best-effort — failures here log and continue; the on-chain leg is
+/// Increment `allocations.quantity` and economic value by the asset acquired on
+/// a buy leg. Best-effort — failures here log and continue; the on-chain leg is
 /// already settled.
 ///
 /// `filled_qty` is the real on-chain fill from the executed swap quote (the
 /// pool's true exchange rate). It is the source of truth so `allocations.quantity`
-/// matches the tokens that actually landed on-chain — not `amount_usdc / mainnet_price`,
-/// which diverges badly on testnet pools. Falls back to the price-derived estimate
-/// only when the leg can't supply a real fill (mock mode, cross-chain hook swap).
+/// matches the tokens that actually landed on-chain. `value_usd` intentionally
+/// moves by the economic notional the user approved, not `quantity × mainnet
+/// spot`; testnet pools can fill at non-economic ratios, and using that for UI
+/// value makes holdings look wildly wrong.
 pub(super) async fn record_acquisition_for_leg(
     state: &AppState,
     portfolio_id: Uuid,
@@ -53,23 +54,25 @@ pub(super) async fn record_acquisition_for_leg(
         return Ok(());
     };
     let spot_price = latest_spot_price_with_stable_fallback(state, symbol).await;
-    let Some(acquired_qty) =
-        settled_quantity(filled_qty, leg.amount_usdc.to_f64().unwrap_or(0.0), spot_price)
-    else {
+    let Some(acquired_qty) = settled_quantity(
+        filled_qty,
+        leg.amount_usdc.to_f64().unwrap_or(0.0),
+        spot_price,
+    ) else {
         return Ok(());
     };
 
     let result = sqlx::query(
         "UPDATE allocations
             SET quantity = quantity + $3,
-                value_usd = (quantity + $3) * $4,
+                value_usd = value_usd + $4,
                 updated_at = NOW()
           WHERE portfolio_id = $1 AND asset_symbol = $2",
     )
     .bind(portfolio_id)
     .bind(symbol)
     .bind(acquired_qty)
-    .bind(spot_price)
+    .bind(leg.amount_usdc)
     .execute(&state.db)
     .await?;
 
@@ -86,7 +89,7 @@ pub(super) async fn record_acquisition_for_leg(
         .bind(portfolio_id)
         .bind(symbol)
         .bind(acquired_qty)
-        .bind(acquired_qty * spot_price)
+        .bind(leg.amount_usdc)
         .execute(&state.db)
         .await?;
     }
@@ -106,23 +109,25 @@ pub(super) async fn record_allocation_disposal_for_leg(
         return Ok(());
     };
     let spot_price = latest_spot_price_with_stable_fallback(state, symbol).await;
-    let Some(sold_qty) =
-        settled_quantity(filled_qty, leg.amount_usdc.to_f64().unwrap_or(0.0), spot_price)
-    else {
+    let Some(sold_qty) = settled_quantity(
+        filled_qty,
+        leg.amount_usdc.to_f64().unwrap_or(0.0),
+        spot_price,
+    ) else {
         return Ok(());
     };
 
     sqlx::query(
         "UPDATE allocations
             SET quantity = GREATEST(quantity - $3, 0),
-                value_usd = GREATEST(quantity - $3, 0) * $4,
+                value_usd = GREATEST(value_usd - $4, 0),
                 updated_at = NOW()
           WHERE portfolio_id = $1 AND asset_symbol = $2",
     )
     .bind(portfolio_id)
     .bind(symbol)
     .bind(sold_qty)
-    .bind(spot_price)
+    .bind(leg.amount_usdc)
     .execute(&state.db)
     .await?;
     Ok(())
@@ -225,7 +230,8 @@ pub(super) async fn apply_leg_writeback(
     let mut holdings_changed = false;
 
     if is_sell_leg(kind, leg) {
-        if let Err(e) = record_allocation_disposal_for_leg(state, portfolio_id, leg, filled_qty).await
+        if let Err(e) =
+            record_allocation_disposal_for_leg(state, portfolio_id, leg, filled_qty).await
         {
             tracing::warn!(leg_id=?leg.id, error=%e, "allocations: disposal writeback failed");
         } else {

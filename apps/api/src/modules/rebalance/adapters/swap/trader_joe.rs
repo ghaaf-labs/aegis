@@ -21,12 +21,12 @@ use super::super::super::quote::{ValidatedQuote, MAX_QUOTE_TTL_SECS};
 #[cfg(feature = "real-swap")]
 use super::super::RealReceipt;
 #[cfg(feature = "real-swap")]
+use super::SwapDir;
+#[cfg(feature = "real-swap")]
 use super::{
-    address_to_hex, confirm_allowance, swap_addresses, ILBQuoter, ILBRouter, IERC20Swap,
+    address_to_hex, confirm_allowance, swap_addresses, IERC20Swap, ILBQuoter, ILBRouter,
     SLIPPAGE_BPS,
 };
-#[cfg(feature = "real-swap")]
-use super::SwapDir;
 
 /// Resolved args for a Trader Joe LB swap, bundled so `lb_execute` keeps a small
 /// signature (mirrors `CircleSwapArgs` on the V3 path).
@@ -90,6 +90,8 @@ pub(super) async fn lb_quote(
                 slippage_bps: SLIPPAGE_BPS,
                 deadline: (now + Duration::seconds(600)).timestamp() as u64,
                 provider: "trader-joe-lb".into(),
+                // LB routes by bin step, not a V3 fee tier.
+                fee_tier: None,
             })
         }
         SwapDir::Sell(_) => {
@@ -118,6 +120,8 @@ pub(super) async fn lb_quote(
                 slippage_bps: SLIPPAGE_BPS,
                 deadline: (now + Duration::seconds(600)).timestamp() as u64,
                 provider: "trader-joe-lb".into(),
+                // LB routes by bin step, not a V3 fee tier.
+                fee_tier: None,
             })
         }
     }

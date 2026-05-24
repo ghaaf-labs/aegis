@@ -173,7 +173,7 @@ export function ExecutionTrace({
     walletRouteFromKey(settlementChain)?.shortLabel ?? settlementChain;
 
   useEffect(() => {
-    if (status !== "completed" || !portfolioId || synced) return;
+    if (!isTerminalTraceStatus(status) || !portfolioId || synced) return;
     let cancelled = false;
     setSynced(true);
     void Promise.all([
@@ -189,7 +189,12 @@ export function ExecutionTrace({
           if (cancelled) return;
           setUnifiedUsdc(balance.unifiedUsdc);
           setUnifiedEurc(balance.unifiedEurc);
-          setPerChain(balance.perChain, balance.perChainEurc);
+          setPerChain(
+            balance.perChain,
+            balance.perChainEurc,
+            undefined,
+            balance.tokenBalancesByChain ?? {},
+          );
         })
         .catch(() => undefined),
     ]);
@@ -271,6 +276,12 @@ export function ExecutionTrace({
             ))
         )}
       </div>
+      {status === "failed" && (
+        <div className="mt-3 border border-rose-500/30 bg-rose-500/5 p-3 text-[12px] font-mono text-risk">
+          Execution stopped. Dashboard balances were refreshed from Circle where
+          available; build a fresh review before approving more movement.
+        </div>
+      )}
       {status === "completed" && decisionId && (
         <>
           <div className="mt-3 border border-cyan-500/30 bg-cyan-500/5 p-3 text-[12px] font-mono text-accent-agent">
@@ -326,6 +337,10 @@ export function ExecutionTrace({
       )}
     </section>
   );
+}
+
+function isTerminalTraceStatus(status: string) {
+  return status === "completed" || status === "failed";
 }
 
 function settlementChainForLegs(legs: InternalLeg[]): ExplorerChain {

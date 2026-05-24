@@ -177,6 +177,9 @@ pub struct GatewayBalance {
     pub per_chain: std::collections::HashMap<String, f64>,
     /// EURC per chain — same keys as `per_chain` (e.g. "arc", "base").
     pub per_chain_eurc: std::collections::HashMap<String, f64>,
+    /// Non-cash token quantities per chain, normalized to Aegis symbols.
+    pub token_balances_by_chain:
+        std::collections::HashMap<String, std::collections::HashMap<String, f64>>,
     pub observed_at: DateTime<Utc>,
 }
 

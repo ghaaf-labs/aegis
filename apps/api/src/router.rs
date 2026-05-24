@@ -20,6 +20,11 @@ use crate::{config::Config, db::Db};
 
 pub type AppState = Arc<AppStateInner>;
 
+/// Max concurrent agent inference jobs. Bounds the fan-out of spawned
+/// `run_allocation_job` / analyze workers so an onboarding burst can't open
+/// unbounded OpenRouter calls (each acquires a permit for its whole pipeline).
+const AGENT_INFERENCE_CONCURRENCY: usize = 8;
+
 pub struct AppStateInner {
     pub db: Db,
     pub config: Config,
@@ -27,6 +32,8 @@ pub struct AppStateInner {
     pub sse: SseSender,
     pub prompts: Arc<ai::PromptRegistry>,
     pub prices: Arc<dyn prices::PriceProvider>,
+    /// Concurrency limiter for off-request agent inference jobs.
+    pub inference_permits: Arc<tokio::sync::Semaphore>,
 }
 
 pub async fn build(db: Db, config: Config) -> Router {
@@ -42,7 +49,15 @@ pub async fn build(db: Db, config: Config) -> Router {
         sse: sse_tx.clone(),
         prompts,
         prices: price_provider,
+        inference_permits: Arc::new(tokio::sync::Semaphore::new(AGENT_INFERENCE_CONCURRENCY)),
     });
+
+    // Recover from a restart: any inference job left `queued`/`running` by the
+    // previous process is orphaned (single replica) — mark it `failed` so the
+    // client retries instead of waiting on an SSE event that never comes.
+    if let Err(e) = agent::service::reconcile_orphaned_inference(&state).await {
+        tracing::warn!(error = %e, "inference orphan reconciliation failed at boot");
+    }
 
     spawn_background_tasks(&state, db, http, sse_tx);
 

@@ -32,12 +32,19 @@ export function PortfolioLoader() {
   const setPortfoliosError = usePortfolioStore((s) => s.setPortfoliosError);
   const setWallet = usePortfolioStore((s) => s.setWallet);
   const setMarketSnapshot = usePortfolioStore((s) => s.setMarketSnapshot);
+  const setMarketSnapshotStatus = usePortfolioStore(
+    (s) => s.setMarketSnapshotStatus,
+  );
   const setDecisions = usePortfolioStore((s) => s.setDecisions);
+  const setDecisionsStatus = usePortfolioStore((s) => s.setDecisionsStatus);
   const setUnifiedUsdc = usePortfolioStore((s) => s.setUnifiedUsdc);
   const setUnifiedEurc = usePortfolioStore((s) => s.setUnifiedEurc);
   const setPerChain = usePortfolioStore((s) => s.setPerChain);
   const setGatewayBalanceStatus = usePortfolioStore(
     (s) => s.setGatewayBalanceStatus,
+  );
+  const setActivePortfolioDetailStatus = usePortfolioStore(
+    (s) => s.setActivePortfolioDetailStatus,
   );
   const patchPortfolio = usePortfolioStore((s) => s.patchPortfolio);
   const activePortfolioId = usePortfolioStore((s) => s.activePortfolioId);
@@ -85,11 +92,15 @@ export function PortfolioLoader() {
     // Market snapshot drives MarketOverview, AssetTable prices, etc. SSE only
     // emits per-tick deltas — without the initial snapshot the panels render
     // as loading skeletons forever.
+    setMarketSnapshotStatus("loading");
     marketApi
       .snapshot()
-      .then(setMarketSnapshot)
+      .then((snapshot) => {
+        if (!alive) return;
+        setMarketSnapshot(snapshot);
+      })
       .catch(() => {
-        /* upstream provider may rate-limit — panels degrade to skeleton */
+        if (alive) setMarketSnapshotStatus("error");
       });
     return () => {
       alive = false;
@@ -101,17 +112,26 @@ export function PortfolioLoader() {
     setPortfoliosError,
     setWallet,
     setMarketSnapshot,
+    setMarketSnapshotStatus,
   ]);
 
   // Whenever the active portfolio changes, fetch detail + merge allocations.
   useEffect(() => {
     if (!activePortfolioId || isExplore) return;
+    let alive = true;
+    setActivePortfolioDetailStatus(activePortfolioId, "loading");
+    setDecisionsStatus(activePortfolioId, "loading");
     portfolioApi
       .get(activePortfolioId)
-      .then((p) => patchPortfolio(activePortfolioId, p))
+      .then((p) => {
+        if (!alive) return;
+        patchPortfolio(activePortfolioId, p);
+        setActivePortfolioDetailStatus(activePortfolioId, "ready");
+      })
       .catch((e) => {
         // 401 means session expired — handled by other paths. Anything else
         // surfaces as a debug log; the panels gracefully degrade to empty.
+        if (alive) setActivePortfolioDetailStatus(activePortfolioId, "error");
         console.warn("portfolio detail fetch failed", e);
       });
     // Hydrate the AI Reasoning feed. Without this the dashboard says "No
@@ -119,26 +139,45 @@ export function PortfolioLoader() {
     // ever delivers *new* decisions, never history.
     agentApi
       .decisions(activePortfolioId)
-      .then(setDecisions)
-      .catch((e) => console.warn("agent decisions fetch failed", e));
+      .then((decisions) => {
+        if (!alive) return;
+        setDecisions(decisions);
+        setDecisionsStatus(activePortfolioId, "ready");
+      })
+      .catch((e) => {
+        if (alive) setDecisionsStatus(activePortfolioId, "error");
+        console.warn("agent decisions fetch failed", e);
+      });
     setGatewayBalanceStatus("loading");
     gatewayApi
       .balance()
       .then((b) => {
+        if (!alive) return;
         setUnifiedUsdc(b.unifiedUsdc);
         setUnifiedEurc(b.unifiedEurc);
-        setPerChain(b.perChain ?? {}, b.perChainEurc ?? {});
+        setPerChain(
+          b.perChain ?? {},
+          b.perChainEurc ?? {},
+          undefined,
+          b.tokenBalancesByChain ?? {},
+        );
         setGatewayBalanceStatus("ready");
       })
       .catch((e) => {
+        if (!alive) return;
         setGatewayBalanceStatus("error", gatewayBalanceError(e));
         console.warn("gateway balance fetch failed", e);
       });
+    return () => {
+      alive = false;
+    };
   }, [
     activePortfolioId,
     isExplore,
     patchPortfolio,
+    setActivePortfolioDetailStatus,
     setDecisions,
+    setDecisionsStatus,
     setGatewayBalanceStatus,
     setPerChain,
     setUnifiedEurc,

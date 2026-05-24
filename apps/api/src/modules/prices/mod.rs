@@ -14,8 +14,23 @@ pub mod pyth;
 pub use cache::FallbackProvider;
 pub use coingecko::CoinGeckoProvider;
 pub use defillama::DefiLlamaProvider;
-pub use provider::{lookup_symbol, PriceProvider, SpotQuote, Symbol, SYMBOLS};
+pub use provider::{PriceProvider, SpotQuote, Symbol};
 pub use pyth::PythProvider;
+
+/// Tokens that have a price feed (a non-empty `defillama_key`), derived from the
+/// token registry so the priced set can never drift from a parallel list.
+pub fn priceable_symbols() -> Vec<&'static Symbol> {
+    crate::domain::token::TOKEN_REGISTRY
+        .iter()
+        .filter(|s| !s.defillama_key.is_empty())
+        .collect()
+}
+
+/// Resolve a ticker to its registry entry, if it is priceable. Replaces the old
+/// hand-written `SYMBOLS` lookup; the registry is the single source.
+pub fn lookup_symbol(ticker: &str) -> Option<&'static Symbol> {
+    crate::domain::token::token(ticker).filter(|s| !s.defillama_key.is_empty())
+}
 
 use std::sync::Arc;
 
@@ -56,5 +71,23 @@ fn construct(name: &str, http: reqwest::Client, config: &Config) -> Arc<dyn Pric
             }
             Arc::new(DefiLlamaProvider::new(http))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lookup_resolves_known_tickers_and_priceable_set_is_the_registry() {
+        assert_eq!(lookup_symbol("BTC").map(|s| s.symbol), Some("BTC"));
+        assert_eq!(lookup_symbol("USDC").map(|s| s.symbol), Some("USDC"));
+        assert!(lookup_symbol("BOGUS").is_none());
+        // Every registry token is priceable (guarded in domain::token), so the
+        // priceable set is exactly the registry — no parallel list to drift.
+        assert_eq!(
+            priceable_symbols().len(),
+            crate::domain::token::TOKEN_REGISTRY.len()
+        );
     }
 }

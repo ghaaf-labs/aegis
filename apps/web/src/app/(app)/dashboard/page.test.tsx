@@ -62,12 +62,11 @@ describe("<DashboardIndex />", () => {
     await flushEffects();
 
     expect(routerReplace).toHaveBeenCalledWith("/dashboard/p1");
-    expect(container.textContent).toContain("Opening dashboard");
-    expect(container.textContent).toContain("Taking you to Primary.");
+    expect(container.textContent).toContain("Loading dashboard data");
+    expect(container.textContent).not.toContain("Opening dashboard");
     expect(
-      container.querySelector<HTMLAnchorElement>('a[href="/dashboard/p1"]')
-        ?.textContent,
-    ).toContain("Open dashboard");
+      container.querySelector<HTMLAnchorElement>('a[href="/dashboard/p1"]'),
+    ).toBeNull();
 
     act(() => root.unmount());
   });

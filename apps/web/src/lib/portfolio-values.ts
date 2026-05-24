@@ -40,15 +40,18 @@ export function derivePortfolioPositionMetrics(
       price !== null && allocation.quantity > 0 && allocation.valueUsd > 0
         ? price * allocation.quantity
         : null;
+    const useLiveValue =
+      liveValue !== null &&
+      liveValue > 0 &&
+      liveValueLooksPlausible(liveValue, allocation.valueUsd);
     return {
       symbol: allocation.symbol,
       quantity: allocation.quantity,
       targetWeight: allocation.targetWeight,
-      valueUsd:
-        liveValue !== null && liveValue > 0 ? liveValue : allocation.valueUsd,
+      valueUsd: useLiveValue ? liveValue : allocation.valueUsd,
       currentWeight: 0,
       driftPct: 0,
-      usedLivePrice: liveValue !== null && liveValue > 0,
+      usedLivePrice: useLiveValue,
     };
   });
 
@@ -89,4 +92,10 @@ function priceUsdForSymbol(
   return (
     snapshot?.assets.find((asset) => asset.symbol === symbol)?.priceUsd ?? null
   );
+}
+
+function liveValueLooksPlausible(liveValue: number, storedValue: number) {
+  if (storedValue <= 0) return true;
+  const ratio = liveValue / storedValue;
+  return ratio >= 0.4 && ratio <= 2.5;
 }

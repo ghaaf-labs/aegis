@@ -50,6 +50,27 @@ pub(super) async fn own_rebalance_or_404(
     Ok(())
 }
 
+pub(super) async fn ensure_no_active_execution(state: &AppState, portfolio_id: Uuid) -> Result<()> {
+    let active: Option<(Uuid, i32, i32)> = sqlx::query_as(
+        "SELECT id, completed_legs, total_legs
+         FROM rebalances
+         WHERE portfolio_id = $1 AND status = 'executing'
+         ORDER BY approved_at DESC NULLS LAST, created_at DESC
+         LIMIT 1",
+    )
+    .bind(portfolio_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    if let Some((id, completed, total)) = active {
+        return Err(AppError::Conflict(format!(
+            "Rebalance {id} is already executing ({completed}/{total} legs confirmed). Open the trace and wait for it to finish before building another review."
+        )));
+    }
+
+    Ok(())
+}
+
 pub(super) async fn reusable_planned_rebalance(
     state: &AppState,
     portfolio_id: Uuid,
