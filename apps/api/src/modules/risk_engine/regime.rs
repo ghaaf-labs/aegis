@@ -14,6 +14,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tracing::warn;
 
 use crate::config::ModelRoute;
 use crate::modules::ai::{Message, OpenRouterClient, PromptKey};
@@ -82,8 +83,9 @@ pub async fn classify(
         "btc_dominance": signals.btc_dominance,
     });
 
+    let features_json = serde_json::to_string_pretty(&features)?;
     let mut ctx = HashMap::new();
-    ctx.insert("features_json", serde_json::to_string_pretty(&features)?);
+    ctx.insert("features_json", features_json.clone());
     let prompt = prompts.render(PromptKey::Regime, &ctx);
 
     let response = ai
@@ -91,12 +93,24 @@ pub async fn classify(
             ModelRoute::RegimeClassify,
             vec![
                 Message::system(prompt),
-                Message::user("Label the regime.".to_string()),
+                Message::user(format!(
+                    "Label the regime from these precomputed features. Return valid JSON only:\n{features_json}"
+                )),
             ],
         )
         .await?;
 
-    let parsed = parse_label(&response.content)?;
+    let parsed = match parse_label(&response.content) {
+        Ok(parsed) => parsed,
+        Err(e) => {
+            warn!(
+                error = %e,
+                features = %features_json,
+                "regime classifier returned invalid JSON; using deterministic fallback"
+            );
+            fallback_label(signals)
+        }
+    };
 
     Ok(RegimeClassification {
         regime: parsed.regime,
@@ -121,6 +135,38 @@ fn parse_label(raw: &str) -> anyhow::Result<ModelLabel> {
     let stripped = crate::modules::ai::strip_json_fences(raw);
     serde_json::from_str(stripped)
         .map_err(|e| anyhow::anyhow!("regime classifier: invalid JSON ({e}): {raw}"))
+}
+
+fn fallback_label(signals: RegimeSignals) -> ModelLabel {
+    if signals.fear_greed <= 35
+        || signals.max_drawdown >= 0.10
+        || signals.btc_vol_30d >= 0.80
+        || signals.corr_90d >= 0.85
+    {
+        return ModelLabel {
+            regime: MarketRegime::RiskOff,
+            confidence: 0.62,
+            rationale: "Deterministic fallback: defensive signal from fear, drawdown, volatility, or correlation.".into(),
+        };
+    }
+
+    if signals.fear_greed >= 60
+        && signals.max_drawdown < 0.05
+        && signals.btc_vol_30d < 0.50
+        && signals.corr_90d < 0.70
+    {
+        return ModelLabel {
+            regime: MarketRegime::RiskOn,
+            confidence: 0.58,
+            rationale: "Deterministic fallback: constructive sentiment with contained volatility and drawdown.".into(),
+        };
+    }
+
+    ModelLabel {
+        regime: MarketRegime::Neutral,
+        confidence: 0.55,
+        rationale: "Deterministic fallback: mixed market signals.".into(),
+    }
 }
 
 /// Compute statistical regime features from the latest snapshot (fast path).
@@ -384,5 +430,29 @@ mod tests {
     fn parse_label_rejects_bad_label() {
         let raw = r#"{"regime":"unknown","confidence":0.5}"#;
         assert!(parse_label(raw).is_err());
+    }
+
+    #[test]
+    fn fallback_label_prefers_risk_off_for_defensive_signals() {
+        let label = fallback_label(RegimeSignals {
+            btc_vol_30d: 0.3,
+            corr_90d: 0.2,
+            max_drawdown: 0.02,
+            fear_greed: 20,
+            btc_dominance: 50.0,
+        });
+        assert_eq!(label.regime, MarketRegime::RiskOff);
+    }
+
+    #[test]
+    fn fallback_label_prefers_risk_on_for_constructive_signals() {
+        let label = fallback_label(RegimeSignals {
+            btc_vol_30d: 0.25,
+            corr_90d: 0.4,
+            max_drawdown: 0.01,
+            fear_greed: 70,
+            btc_dominance: 50.0,
+        });
+        assert_eq!(label.regime, MarketRegime::RiskOn);
     }
 }

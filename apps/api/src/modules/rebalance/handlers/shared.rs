@@ -167,6 +167,13 @@ pub(super) fn noop_plan_message(input: &crate::modules::rebalance::models::PlanI
     {
         return "No rebalance plan was created because this portfolio has no confirmed positions and no deployable USDC above the $5 dust threshold. Fund the wallet first, then review deployment.".into();
     }
+    let non_usdc_target = input.target_weights.iter().any(|(symbol, weight)| {
+        symbol != "USDC" && weight * input.portfolio_value_usd > input.dust_threshold_usd
+    });
+    if idle_usdc > input.dust_threshold_usd && !input.target_weights.is_empty() && !non_usdc_target
+    {
+        return "No rebalance plan was created because the approved target is a USDC reserve, so wallet cash is already in the target asset and no market move is required.".into();
+    }
     if idle_usdc > 0.0 && idle_usdc <= input.dust_threshold_usd {
         return format!(
             "No rebalance plan was created because only ${idle_usdc:.2} USDC is idle, below the ${:.2} dust threshold.",

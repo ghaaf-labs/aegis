@@ -92,6 +92,5 @@ export const config = {
     "/tax/:path*",
     "/tax-center/:path*",
     "/rebalance/:path*",
-    "/onboarding/:path*",
   ],
 };

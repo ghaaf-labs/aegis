@@ -112,6 +112,8 @@ export default function PortfolioDashboardPage() {
   // allocator call; this stable, mounted page kicks the design off once (below)
   // and opens Gate 1 when the proposal lands.
   const designing = searchParams?.get("designing") === "1";
+  const searchParamsString = searchParams?.toString() ?? "";
+  const [designHandoffActive, setDesignHandoffActive] = useState(false);
   const designStartedRef = useRef(false);
   const executionSyncedRef = useRef<string | null>(null);
   // Tracks a real unmount (not effect re-runs) so a slow in-flight proposal
@@ -247,6 +249,25 @@ export default function PortfolioDashboardPage() {
     !decisionsSettled ||
     !gatewayBalanceSettled ||
     !marketSnapshotSettled;
+
+  const clearDesigningParam = useCallback(() => {
+    const portfolioId = params?.portfolioId ?? activePortfolio?.id;
+    if (!portfolioId || !designing) return;
+
+    const nextParams = new URLSearchParams(searchParamsString);
+    nextParams.delete("designing");
+    const query = nextParams.toString();
+    router.replace(`/dashboard/${portfolioId}${query ? `?${query}` : ""}`, {
+      scroll: false,
+    });
+  }, [
+    activePortfolio?.id,
+    designing,
+    params?.portfolioId,
+    router,
+    searchParamsString,
+  ]);
+
   // Async allocation generation shared by the `?designing=1` handoff and the
   // retry / re-propose CTA: enqueue the job (the POST returns a `queued`
   // placeholder immediately — no 38–240s block), then poll until the worker
@@ -262,30 +283,57 @@ export default function PortfolioDashboardPage() {
       () => designMountedRef.current,
     );
     if (!designMountedRef.current) return;
+    setDesignHandoffActive(false);
+    setDesignError(false);
+    clearDesigningParam();
     setProposalDecision(ready);
     if (!autoPilotEnabled) setProposalOpen(true);
-  }, [activePortfolio, autoPilotEnabled]);
+  }, [activePortfolio, autoPilotEnabled, clearDesigningParam]);
+
+  useEffect(() => {
+    if (!designing) {
+      setDesignHandoffActive(false);
+      designStartedRef.current = false;
+      return;
+    }
+
+    const navigation = performance.getEntriesByType("navigation")[0] as
+      | PerformanceNavigationTiming
+      | undefined;
+    if (navigation?.type === "reload") {
+      setDesignHandoffActive(false);
+      setDesignError(false);
+      designStartedRef.current = false;
+      clearDesigningParam();
+      return;
+    }
+
+    setDesignHandoffActive(true);
+  }, [clearDesigningParam, designing]);
 
   // `?designing=1` handoff from onboarding: generate exactly once. Ref-guarded
   // against a re-render / StrictMode double-invoke, and skipped when a proposal
   // (or an already-designed target) is present so a refresh with a stale
   // `?designing=1` never regenerates.
   useEffect(() => {
-    if (!designing || !activePortfolio) return;
+    if (!designHandoffActive || !activePortfolio) return;
     if (designStartedRef.current) return;
     if (pendingProposal || proposalDecision || hasAgentTarget) return;
     designStartedRef.current = true;
     setDesignError(false);
     void generateAllocation().catch(() => {
-      if (designMountedRef.current) setDesignError(true);
+      if (!designMountedRef.current) return;
+      setDesignError(true);
+      clearDesigningParam();
     });
   }, [
-    designing,
+    designHandoffActive,
     activePortfolio,
     pendingProposal,
     proposalDecision,
     hasAgentTarget,
     generateAllocation,
+    clearDesigningParam,
   ]);
 
   const handleRepropose = async () => {
@@ -300,6 +348,13 @@ export default function PortfolioDashboardPage() {
     } finally {
       setReproposing(false);
     }
+  };
+
+  const handleOpenProposal = () => {
+    const next = proposalDecision ?? pendingProposal;
+    if (!next) return;
+    setProposalDecision(next);
+    setProposalOpen(true);
   };
 
   const syncPortfolioAndBalances = useCallback(async () => {
@@ -516,52 +571,55 @@ export default function PortfolioDashboardPage() {
         </motion.div>
       )}
 
-      {designing && !proposalOpen && !hasAgentTarget && !pendingProposal && (
-        <motion.div
-          variants={fadeUp}
-          role="status"
-          aria-live="polite"
-          className="border-brutal border-accent-agent/40 bg-accent-agent/5 p-3 md:p-4 rounded-sharp flex flex-wrap items-center justify-between gap-3"
-        >
-          <div className="flex min-w-0 items-center gap-2">
-            {!designError && (
-              <Loader2
-                className="h-4 w-4 shrink-0 animate-spin text-accent-agent"
-                aria-hidden
-              />
-            )}
-            <p className="font-mono text-xs text-text-hi">
-              {designError ? (
-                <>
-                  <span className="font-semibold text-risk">
-                    The agent could not finish designing your allocation.
-                  </span>{" "}
-                  Retry to run it again.
-                </>
-              ) : (
-                <>
-                  <span className="font-semibold text-accent-agent">
-                    The agent is designing your allocation…
-                  </span>{" "}
-                  This takes a few seconds — Gate 1 opens automatically when it
-                  is ready.
-                </>
+      {designHandoffActive &&
+        !proposalOpen &&
+        !hasAgentTarget &&
+        !pendingProposal && (
+          <motion.div
+            variants={fadeUp}
+            role="status"
+            aria-live="polite"
+            className="border-brutal border-accent-agent/40 bg-accent-agent/5 p-3 md:p-4 rounded-sharp flex flex-wrap items-center justify-between gap-3"
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              {!designError && (
+                <Loader2
+                  className="h-4 w-4 shrink-0 animate-spin text-accent-agent"
+                  aria-hidden
+                />
               )}
-            </p>
-          </div>
-          {designError && (
-            <button
-              type="button"
-              onClick={() => void handleRepropose()}
-              disabled={reproposing}
-              className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-sharp border border-accent-agent/40 bg-accent-agent/5 px-3 font-mono text-xs font-semibold text-accent-agent hover:bg-accent-agent/10 disabled:opacity-50"
-            >
-              <Sparkles className="h-3 w-3" />
-              {reproposing ? "Retrying…" : "Retry"}
-            </button>
-          )}
-        </motion.div>
-      )}
+              <p className="font-mono text-xs text-text-hi">
+                {designError ? (
+                  <>
+                    <span className="font-semibold text-risk">
+                      The agent could not finish designing your allocation.
+                    </span>{" "}
+                    Retry to run it again.
+                  </>
+                ) : (
+                  <>
+                    <span className="font-semibold text-accent-agent">
+                      The agent is designing your allocation…
+                    </span>{" "}
+                    This takes a few seconds — Gate 1 opens automatically when
+                    it is ready.
+                  </>
+                )}
+              </p>
+            </div>
+            {designError && (
+              <button
+                type="button"
+                onClick={() => void handleRepropose()}
+                disabled={reproposing}
+                className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-sharp border border-accent-agent/40 bg-accent-agent/5 px-3 font-mono text-xs font-semibold text-accent-agent hover:bg-accent-agent/10 disabled:opacity-50"
+              >
+                <Sparkles className="h-3 w-3" />
+                {reproposing ? "Retrying…" : "Retry"}
+              </button>
+            )}
+          </motion.div>
+        )}
 
       <motion.div
         variants={fadeUp}
@@ -575,7 +633,8 @@ export default function PortfolioDashboardPage() {
           onReviewPlan={() => void handleDeploy()}
           reviewPlanLoading={deploying}
           onDesignAllocation={() => void handleRepropose()}
-          designLoading={reproposing}
+          onOpenProposal={handleOpenProposal}
+          designLoading={reproposing || (designHandoffActive && !designError)}
           designError={designError}
           deployError={deployError}
           reviewMessage={reviewMessage}

@@ -153,6 +153,8 @@ pub struct AgentDecisionPayload {
     pub kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recommended_allocation: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allocation_applied_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -362,6 +364,7 @@ mod contract_tests {
             counterfactual: None,
             kind: None,
             recommended_allocation: None,
+            allocation_applied_at: None,
         };
         let v = json(&payload);
         for key in [
@@ -428,6 +431,7 @@ mod contract_tests {
             counterfactual: None,
             kind: None,
             recommended_allocation: None,
+            allocation_applied_at: None,
         });
         let agent_for_other = SseEvent::AgentDecision(AgentDecisionPayload {
             id: uuid::Uuid::nil(),
@@ -449,6 +453,7 @@ mod contract_tests {
             counterfactual: None,
             kind: None,
             recommended_allocation: None,
+            allocation_applied_at: None,
         });
         let public_event = SseEvent::PriceTick(PriceTick {
             symbol: "BTC".into(),

@@ -654,13 +654,18 @@ async fn persist_and_broadcast_decision(
         }
     }
 
-    // Broadcast the final decision over SSE.
+    broadcast_agent_decision(state, ctx.portfolio.user_id, &decision);
+
+    Ok(decision)
+}
+
+pub(crate) fn broadcast_agent_decision(state: &AppState, user_id: Uuid, decision: &AgentDecision) {
     let _ = state
         .sse
         .send(SseEvent::AgentDecision(AgentDecisionPayload {
             id: decision.id,
             portfolio_id: decision.portfolio_id,
-            user_id: ctx.portfolio.user_id,
+            user_id,
             reasoning: decision.reasoning.clone(),
             recommendation: decision.recommendation.clone(),
             confidence: decision.confidence,
@@ -677,9 +682,8 @@ async fn persist_and_broadcast_decision(
             counterfactual: decision.counterfactual.clone(),
             kind: decision.kind.clone(),
             recommended_allocation: decision.recommended_allocation.clone(),
+            allocation_applied_at: decision.allocation_applied_at,
         }));
-
-    Ok(decision)
 }
 
 // ── Agent-decided allocation (the headline) ─────────────────────────────────
@@ -971,29 +975,7 @@ async fn run_allocation_pipeline(
 
     crate::modules::observability::counters::record_agent_decision();
 
-    let _ = state
-        .sse
-        .send(SseEvent::AgentDecision(AgentDecisionPayload {
-            id: decision.id,
-            portfolio_id: decision.portfolio_id,
-            user_id: portfolio.user_id,
-            reasoning: decision.reasoning.clone(),
-            recommendation: decision.recommendation.clone(),
-            confidence: decision.confidence,
-            triggered_by: decision.triggered_by.clone(),
-            created_at: decision.created_at,
-            model_slug: decision.model_slug.clone(),
-            regime: decision.regime.clone(),
-            prompt_tokens: decision.prompt_tokens,
-            completion_tokens: decision.completion_tokens,
-            latency_ms: decision.latency_ms,
-            critic_verdict: decision.critic_verdict.clone(),
-            raw_confidence: decision.raw_confidence,
-            calibrated_confidence: decision.calibrated_confidence,
-            counterfactual: decision.counterfactual.clone(),
-            kind: decision.kind.clone(),
-            recommended_allocation: decision.recommended_allocation.clone(),
-        }));
+    broadcast_agent_decision(state, portfolio.user_id, &decision);
 
     Ok(decision)
 }
@@ -1001,7 +983,7 @@ async fn run_allocation_pipeline(
 /// Poll a decision row until it leaves the in-flight states, returning the
 /// terminal row. Used when a blocking caller (auto-pilot) deduped onto an
 /// already-running job; bounded so a wedged worker can't hang it forever.
-async fn await_decision_ready(
+pub(crate) async fn await_decision_ready(
     state: &AppState,
     decision_id: Uuid,
 ) -> crate::error::Result<AgentDecision> {
@@ -1071,6 +1053,21 @@ pub async fn apply_allocation(
     decision_id: Uuid,
     user_id: Uuid,
 ) -> crate::error::Result<Portfolio> {
+    Ok(apply_allocation_once(state, decision_id, user_id)
+        .await?
+        .portfolio)
+}
+
+pub(crate) struct AllocationApplyOutcome {
+    pub portfolio: Portfolio,
+    pub newly_applied: bool,
+}
+
+pub(crate) async fn apply_allocation_once(
+    state: &AppState,
+    decision_id: Uuid,
+    user_id: Uuid,
+) -> crate::error::Result<AllocationApplyOutcome> {
     use crate::modules::rebalance::registry::allocation_target_symbols;
 
     let row: Option<AllocationDecisionRow> = sqlx::query_as(
@@ -1099,7 +1096,10 @@ pub async fn apply_allocation(
             .bind(portfolio_id)
             .fetch_one(&state.db)
             .await?;
-        return Ok(p);
+        return Ok(AllocationApplyOutcome {
+            portfolio: p,
+            newly_applied: false,
+        });
     }
 
     // Re-clamp the stored allocation against the runtime target universe + user
@@ -1209,10 +1209,15 @@ pub async fn apply_allocation(
     .execute(&mut *tx)
     .await?;
 
-    sqlx::query("UPDATE agent_decisions SET allocation_applied_at = NOW() WHERE id = $1")
-        .bind(decision_id)
-        .execute(&mut *tx)
-        .await?;
+    let apply_claim = sqlx::query(
+        "UPDATE agent_decisions
+         SET allocation_applied_at = NOW()
+         WHERE id = $1 AND allocation_applied_at IS NULL",
+    )
+    .bind(decision_id)
+    .execute(&mut *tx)
+    .await?;
+    let newly_applied = apply_claim.rows_affected() > 0;
 
     tx.commit().await?;
 
@@ -1220,7 +1225,17 @@ pub async fn apply_allocation(
         .bind(portfolio_id)
         .fetch_one(&state.db)
         .await?;
-    Ok(p)
+    let decision: AgentDecision = sqlx::query_as("SELECT * FROM agent_decisions WHERE id = $1")
+        .bind(decision_id)
+        .fetch_one(&state.db)
+        .await?;
+    if newly_applied {
+        broadcast_agent_decision(state, user_id, &decision);
+    }
+    Ok(AllocationApplyOutcome {
+        portfolio: p,
+        newly_applied,
+    })
 }
 
 // ── Context builders ───────────────────────────────────────────────────────

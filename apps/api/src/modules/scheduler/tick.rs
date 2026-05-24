@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 use crate::modules::agent::models::{AgentDecision, AnalyzeRequest, ProposeAllocationRequest};
 use crate::modules::agent::service::{
-    analyze_portfolio, apply_allocation, propose_allocation, CriticOutput,
+    analyze_portfolio, apply_allocation_once, propose_allocation, CriticOutput,
 };
 use crate::modules::rebalance::executor::approve_and_execute;
 use crate::modules::rebalance::handlers::{prepare_autonomous_plan, AutonomousPlan};
@@ -147,16 +147,6 @@ async fn run_autopilot(
     user_id: Uuid,
     triggered_by: &str,
 ) -> crate::error::Result<()> {
-    // Defer to peg defense during an active depeg rather than rebalancing into
-    // a destabilized market.
-    if peg_defense_active(state, user_id).await {
-        tracing::info!(
-            ?portfolio_id,
-            "auto-pilot: depeg active; deferring to peg defense"
-        );
-        return Ok(());
-    }
-
     // 1. Propose a fresh target. This runs the allocator, the deterministic
     //    clamp (single-asset cap, stable floor, executable-only), and the
     //    constitution check — all surfaced over SSE for the activity feed.
@@ -170,22 +160,47 @@ async fn run_autopilot(
     )
     .await?;
 
-    // 2. Constitution gate (C4): never auto-adopt/execute an allocation the
-    //    constitution flags. The proposal stays as a Gate-1 review for the user.
-    if !proposal_constitution_clean(&proposal) {
-        tracing::info!(?portfolio_id, decision_id=?proposal.id, "auto-pilot: constitution flagged proposal; left as review");
+    adopt_and_execute_autopilot_proposal(state, proposal, user_id).await
+}
+
+pub(crate) async fn adopt_and_execute_autopilot_proposal(
+    state: &AppState,
+    proposal: AgentDecision,
+    user_id: Uuid,
+) -> crate::error::Result<()> {
+    if peg_defense_active(state, user_id).await {
+        tracing::info!(
+            portfolio_id = ?proposal.portfolio_id,
+            "auto-pilot: depeg active; deferring to peg defense"
+        );
         return Ok(());
     }
 
-    // 3. Adopt the target (idempotent; the user's own approval would do the same).
-    apply_allocation(state, proposal.id, user_id).await?;
+    // Constitution gate (C4): never auto-adopt/execute an allocation the
+    // constitution flags. The proposal stays as a Gate-1 review for the user.
+    if !proposal_constitution_clean(&proposal) {
+        tracing::info!(portfolio_id=?proposal.portfolio_id, decision_id=?proposal.id, "auto-pilot: constitution flagged proposal; left as review");
+        return Ok(());
+    }
 
-    // 4. Build the real rebalance plan toward the new target + its safety verdict.
-    let prepared = prepare_autonomous_plan(state, portfolio_id).await?;
+    // Adopt the target. The first caller that stamps `allocation_applied_at`
+    // owns the downstream execution; concurrent retries stop here.
+    let applied = apply_allocation_once(state, proposal.id, user_id).await?;
+    if !applied.newly_applied {
+        tracing::info!(
+            portfolio_id = ?proposal.portfolio_id,
+            decision_id = ?proposal.id,
+            "auto-pilot: proposal already adopted; skipping duplicate execution"
+        );
+        return Ok(());
+    }
+
+    // Build the real rebalance plan toward the new target + its safety verdict.
+    let prepared = prepare_autonomous_plan(state, proposal.portfolio_id).await?;
     let (rebalance_id, safety) = match prepared {
         AutonomousPlan::NoOp => {
             tracing::info!(
-                ?portfolio_id,
+                portfolio_id = ?proposal.portfolio_id,
                 "auto-pilot: target adopted, nothing to move (on-target / dust)"
             );
             return Ok(());
@@ -196,10 +211,10 @@ async fn run_autopilot(
         } => (rebalance_id, safety),
     };
 
-    // 5. Approval-safety gate: only execute a plan the manual flow would accept.
+    // Approval-safety gate: only execute a plan the manual flow would accept.
     if !safety.approvable {
         tracing::info!(
-            ?portfolio_id,
+            portfolio_id = ?proposal.portfolio_id,
             ?rebalance_id,
             code = %safety.code,
             "auto-pilot: plan not approvable; left as review"
@@ -207,10 +222,10 @@ async fn run_autopilot(
         return Ok(());
     }
 
-    // 6. Execute via the exact path the approval endpoint uses.
+    // Execute via the exact path the approval endpoint uses.
     approve_and_execute(state.clone(), rebalance_id).await?;
     tracing::info!(
-        ?portfolio_id,
+        portfolio_id = ?proposal.portfolio_id,
         ?rebalance_id,
         "auto-pilot: executing rebalance autonomously"
     );

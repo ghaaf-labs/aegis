@@ -6,9 +6,11 @@ import { walletApi } from "@/lib/api";
 import { usePortfolioStore } from "@/stores/portfolio";
 
 const replace = vi.fn();
+const push = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({
+    push,
     replace,
   }),
 }));
@@ -38,6 +40,25 @@ afterEach(() => {
 });
 
 describe("<OnboardingPage /> auth boundary", () => {
+  it("sends signed-out users to the email flow from the setup button", async () => {
+    vi.mocked(walletApi.session).mockRejectedValue(new Error("401"));
+
+    const { container, root } = render(<OnboardingPage />);
+    await flushEffects();
+
+    expect(container.textContent).toContain("Continue before portfolio setup");
+
+    const continueButton = buttonByText(container, "Continue");
+    await act(async () => {
+      continueButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(push).toHaveBeenCalledWith("/login?next=%2Fonboarding&entry=signup");
+
+    act(() => root.unmount());
+  });
+
   it("shows the verified session and logout before rendering portfolio setup", async () => {
     vi.mocked(walletApi.session).mockResolvedValue({
       user: {

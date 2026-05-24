@@ -209,7 +209,9 @@ fn conflict_detail(message: &str) -> ErrorDetail {
         // Preserve *why* the plan is a no-op instead of always saying "add cash":
         // a portfolio that already matches its target has plenty of cash, it just
         // has nothing to move. (`message` is `&str`, so map to canned copy.)
-        let detail = if message.contains("already within the execution thresholds") {
+        let detail = if message.contains("approved target is a USDC reserve") {
+            "The allocation is approved. The target is USDC reserve, so no execution is needed right now."
+        } else if message.contains("already within the execution thresholds") {
             "Your portfolio already matches the agent's target allocation, so there's nothing to rebalance right now."
         } else if message.contains("no confirmed positions") {
             "Add USDC to your wallet to fund your first allocation, then build a new review."
@@ -424,6 +426,12 @@ mod tests {
         ));
         assert_eq!(on_target.code, "no_rebalance_plan");
         assert!(on_target.message.contains("already matches"));
+
+        let usdc_reserve = ErrorDetail::from(&AppError::Conflict(
+            "No rebalance plan was created because the approved target is a USDC reserve, so wallet cash is already in the target asset and no market move is required.".into(),
+        ));
+        assert_eq!(usdc_reserve.code, "no_rebalance_plan");
+        assert!(usdc_reserve.message.contains("allocation is approved"));
 
         // Dust-only surplus → "$5 minimum move size".
         let dust = ErrorDetail::from(&AppError::Conflict(
