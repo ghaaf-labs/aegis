@@ -326,8 +326,8 @@ jobs:
           set -e
           git config --global --add safe.directory /opt/aegis
           cd /opt/aegis
-          git checkout -- .env 2>/dev/null || true
-          git pull origin main
+          git fetch origin main
+          git reset --hard origin/main
           bash scripts/fetch-secrets.sh
           docker compose -f docker-compose.deploy.yml up --build -d --remove-orphans
           docker image prune -f
