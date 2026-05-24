@@ -6,6 +6,8 @@
 
 use std::collections::HashMap;
 
+use rust_decimal::prelude::{FromPrimitive, ToPrimitive};
+use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::error::{AppError, Result};
@@ -135,21 +137,29 @@ pub async fn record_disposal(state: &AppState, allocation_id: Uuid, qty: f64) ->
         // If we take exactly the lot's quantity, mark the whole lot disposed.
         // Otherwise split: shrink the original lot, insert a disposed sibling.
         let lot = lots.iter().find(|l| &l.id == lot_id).unwrap();
-        if (take - lot.quantity).abs() < 1e-9 {
+        let lot_qty = lot.quantity.to_f64().unwrap_or(0.0);
+        let lot_basis = lot.basis_usd.to_f64().unwrap_or(0.0);
+        if (take - lot_qty).abs() < 1e-9 {
             sqlx::query("UPDATE cost_basis_lots SET disposed_at = NOW() WHERE id = $1")
                 .bind(lot_id)
                 .execute(&mut *tx)
                 .await?;
         } else {
-            let basis_share = lot.basis_usd * (take / lot.quantity);
+            let basis_share = if lot_qty > 0.0 {
+                lot_basis * (take / lot_qty)
+            } else {
+                0.0
+            };
+            let take_dec = Decimal::from_f64(*take).unwrap_or_default();
+            let basis_share_dec = Decimal::from_f64(basis_share).unwrap_or_default();
             sqlx::query(
                 "UPDATE cost_basis_lots
                     SET quantity = quantity - $2, basis_usd = basis_usd - $3
                     WHERE id = $1",
             )
             .bind(lot_id)
-            .bind(take)
-            .bind(basis_share)
+            .bind(take_dec)
+            .bind(basis_share_dec)
             .execute(&mut *tx)
             .await?;
             sqlx::query(
@@ -158,8 +168,8 @@ pub async fn record_disposal(state: &AppState, allocation_id: Uuid, qty: f64) ->
             )
             .bind(allocation_id)
             .bind(lot.acquired_at + chrono::Duration::microseconds(1))
-            .bind(take)
-            .bind(basis_share)
+            .bind(take_dec)
+            .bind(basis_share_dec)
             .execute(&mut *tx)
             .await?;
         }

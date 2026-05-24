@@ -14,6 +14,7 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
+use rust_decimal::prelude::ToPrimitive;
 use serde::Deserialize;
 use serde_json::json;
 use tracing::{debug, warn};
@@ -1284,7 +1285,12 @@ fn evaluate_constitution(
         legs,
     };
 
-    constitution::evaluate(constitution, &proposal, tier, portfolio.total_value_usd)
+    constitution::evaluate(
+        constitution,
+        &proposal,
+        tier,
+        portfolio.total_value_usd.to_f64().unwrap_or(0.0),
+    )
 }
 
 /// Derive the user's tier for constitution evaluation. A2's billing schema
@@ -1379,14 +1385,15 @@ mod tests {
 
     #[test]
     fn format_allocations_renders_table() {
+        use rust_decimal_macros::dec;
         let allocs = vec![Allocation {
             id: Uuid::nil(),
             portfolio_id: Uuid::nil(),
             asset_symbol: "BTC".into(),
-            quantity: 0.5,
+            quantity: dec!(0.5),
             target_weight: 50.0,
             current_weight: 55.0,
-            value_usd: 30000.0,
+            value_usd: dec!(30000.0),
         }];
         let table = format_allocations(&allocs);
         assert!(table.contains("BTC"));
@@ -1414,12 +1421,13 @@ mod tests {
     use chrono::Utc;
 
     fn sample_portfolio() -> Portfolio {
+        use rust_decimal_macros::dec;
         Portfolio {
             id: Uuid::nil(),
             user_id: Uuid::nil(),
             name: "Retirement".into(),
-            total_value_usd: 12_345.67,
-            total_pnl_usd: 234.50,
+            total_value_usd: dec!(12345.67),
+            total_pnl_usd: dec!(234.50),
             total_pnl_pct: 1.9,
             risk_score: 50,
             goal: serde_json::json!({}),
@@ -1429,24 +1437,25 @@ mod tests {
     }
 
     fn sample_allocs() -> Vec<Allocation> {
+        use rust_decimal_macros::dec;
         vec![
             Allocation {
                 id: Uuid::nil(),
                 portfolio_id: Uuid::nil(),
                 asset_symbol: "BTC".into(),
-                quantity: 0.5,
+                quantity: dec!(0.5),
                 target_weight: 60.0,
                 current_weight: 55.0,
-                value_usd: 33_000.0,
+                value_usd: dec!(33000.0),
             },
             Allocation {
                 id: Uuid::nil(),
                 portfolio_id: Uuid::nil(),
                 asset_symbol: "ETH".into(),
-                quantity: 4.0,
+                quantity: dec!(4.0),
                 target_weight: 40.0,
                 current_weight: 45.0,
-                value_usd: 14_000.0,
+                value_usd: dec!(14000.0),
             },
         ]
     }

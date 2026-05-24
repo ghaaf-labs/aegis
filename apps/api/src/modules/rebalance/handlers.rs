@@ -14,6 +14,9 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::Decimal;
+
 use crate::config::Config;
 use crate::error::{AppError, Result};
 use crate::middleware::auth::Claims;
@@ -142,7 +145,8 @@ pub struct RebalanceView {
     pub status: String,
     pub total_legs: i32,
     pub completed_legs: i32,
-    pub total_gas_usdc: Option<f64>,
+    #[serde(with = "rust_decimal::serde::float_option")]
+    pub total_gas_usdc: Option<Decimal>,
     pub failure_reason: Option<String>,
     pub approved_at: Option<chrono::DateTime<chrono::Utc>>,
     pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -165,7 +169,8 @@ pub struct LegView {
     pub dest_chain: Option<String>,
     pub src_symbol: Option<String>,
     pub dest_symbol: Option<String>,
-    pub amount_usdc: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub amount_usdc: Decimal,
     pub status: String,
     pub tx_hash: Option<String>,
     pub failure_reason: Option<String>,
@@ -734,7 +739,7 @@ fn route_blockers(cfg: &Config, legs: &[LegView]) -> Vec<MissingCapability> {
                 l.dest_chain.clone(),
                 l.src_symbol.clone(),
                 l.dest_symbol.clone(),
-                l.amount_usdc,
+                l.amount_usdc.to_f64().unwrap_or(0.0),
             )
         })
         .collect();
@@ -764,7 +769,8 @@ fn execution_blocked_message(missing: &[MissingCapability]) -> String {
     )
 }
 
-fn amount_matches(stored: f64, current: f64) -> bool {
+fn amount_matches(stored: Decimal, current: f64) -> bool {
+    let stored = stored.to_f64().unwrap_or(0.0);
     let tolerance = (current.abs() * 0.005).max(0.01);
     (stored - current).abs() <= tolerance
 }
@@ -1050,7 +1056,7 @@ fn plan_leg_view_from_row(leg: &LegView) -> PlanLegView {
         dest_chain: leg.dest_chain.clone(),
         src_symbol: leg.src_symbol.clone(),
         dest_symbol: leg.dest_symbol.clone(),
-        amount_usdc: leg.amount_usdc,
+        amount_usdc: leg.amount_usdc.to_f64().unwrap_or(0.0),
     }
 }
 

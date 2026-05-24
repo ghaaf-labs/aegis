@@ -15,6 +15,8 @@
 //! reverting leg can't spin forever.
 
 use chrono::Utc;
+use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::config::Config;
@@ -527,13 +529,14 @@ async fn dispatch(
     // no real dispatch path without a ticket, so a fake hash cannot be produced
     // here by construction. Blocked routes (USYC disabled, StableFX KYB-gated,
     // missing address/feature/signer) fail closed at `mint`.
+    let amount_usdc_f64 = leg.amount_usdc.to_f64().unwrap_or(0.0);
     let route_leg = RouteLeg::from_parts(
         kind.as_str(),
         leg.src_chain.clone(),
         leg.dest_chain.clone(),
         leg.src_symbol.clone(),
         leg.dest_symbol.clone(),
-        leg.amount_usdc,
+        amount_usdc_f64,
     )
     .ok_or_else(|| AppError::Internal(anyhow::anyhow!("unparsable leg kind")))?;
 
@@ -541,7 +544,7 @@ async fn dispatch(
     let src_chain = ChainKey::parse(leg.src_chain.as_deref().unwrap_or(""))
         .or_else(|| ChainKey::parse(leg.dest_chain.as_deref().unwrap_or("")));
     let dest_chain = ChainKey::parse(leg.dest_chain.as_deref().unwrap_or("")).or(src_chain);
-    let amount_base = (leg.amount_usdc * 1_000_000.0) as u128;
+    let amount_base = (amount_usdc_f64 * 1_000_000.0) as u128;
 
     let quote = match kind {
         LegKind::LocalSwap => adapters::swap::quote(&state.config, &route_leg, now).await?,
@@ -595,7 +598,7 @@ async fn dispatch(
                 &recipient,
                 ticket.dest_chain(),
                 leg.dest_symbol.as_deref(),
-                leg.min_out,
+                leg.min_out.and_then(|d| d.to_f64()),
                 now,
             )?;
             let r = adapters::cctp::burn(
@@ -748,11 +751,11 @@ struct LegRow {
     dest_chain: Option<String>,
     src_symbol: Option<String>,
     dest_symbol: Option<String>,
-    amount_usdc: f64,
+    amount_usdc: Decimal,
     /// Planner-computed minimum destination output (token units, slippage
     /// applied). Set on CrossChainBurn hook-swap legs; `None` for plain
     /// USDC bridges. Used to size the hook's `min_out`.
-    min_out: Option<f64>,
+    min_out: Option<Decimal>,
     /// Per-leg state-machine status (`pending`/`submitted`/`confirmed`/`failed`).
     /// Read on every walk so a resumed plan can skip legs already confirmed
     /// rather than re-submitting them. NOT NULL DEFAULT in the schema.
@@ -771,7 +774,7 @@ const MAX_LEG_ATTEMPTS: i32 = 5;
 fn protocol_fee_notional_from_legs(legs: &[LegRow]) -> f64 {
     legs.iter()
         .filter(|leg| leg.kind != LegKind::CrossChainMint.as_str())
-        .map(|leg| leg.amount_usdc)
+        .map(|leg| leg.amount_usdc.to_f64().unwrap_or(0.0))
         .sum()
 }
 
@@ -910,7 +913,7 @@ fn pending_funding_dependency(leg: &LegRow, confirmed: &[LegRow]) -> Option<(Cha
     if !delivered_here {
         return None;
     }
-    Some((spend_chain, leg.amount_usdc))
+    Some((spend_chain, leg.amount_usdc.to_f64().unwrap_or(0.0)))
 }
 
 async fn mark_leg_submitted(
@@ -1063,7 +1066,7 @@ fn broadcast_leg(
         dest_chain: leg.dest_chain.clone(),
         src_symbol: leg.src_symbol.clone(),
         dest_symbol: leg.dest_symbol.clone(),
-        amount_usdc: leg.amount_usdc,
+        amount_usdc: leg.amount_usdc.to_f64().unwrap_or(0.0),
         status: status.to_string(),
         tx_hash: tx_hash.map(str::to_string),
         failure_reason: failure_reason.map(str::to_string),
@@ -1116,7 +1119,9 @@ async fn record_acquisition_for_leg(
         return Ok(());
     };
     let spot_price = latest_spot_price_with_stable_fallback(state, symbol).await;
-    let Some(acquired_qty) = settled_quantity(filled_qty, leg.amount_usdc, spot_price) else {
+    let Some(acquired_qty) =
+        settled_quantity(filled_qty, leg.amount_usdc.to_f64().unwrap_or(0.0), spot_price)
+    else {
         return Ok(());
     };
 
@@ -1167,7 +1172,9 @@ async fn record_allocation_disposal_for_leg(
         return Ok(());
     };
     let spot_price = latest_spot_price_with_stable_fallback(state, symbol).await;
-    let Some(sold_qty) = settled_quantity(filled_qty, leg.amount_usdc, spot_price) else {
+    let Some(sold_qty) =
+        settled_quantity(filled_qty, leg.amount_usdc.to_f64().unwrap_or(0.0), spot_price)
+    else {
         return Ok(());
     };
 
@@ -1306,12 +1313,14 @@ async fn record_tax_disposal_for_leg(
     if price <= 0.0 {
         return Ok(());
     }
-    let qty = leg.amount_usdc / price;
+    let qty = leg.amount_usdc.to_f64().unwrap_or(0.0) / price;
     crate::modules::tax::service::record_disposal(state, allocation_id, qty).await
 }
 
 #[cfg(test)]
 mod tests {
+    use rust_decimal::prelude::FromPrimitive;
+
     use super::*;
 
     fn leg(kind: LegKind, amount_usdc: f64) -> LegRow {
@@ -1323,7 +1332,7 @@ mod tests {
             dest_chain: None,
             src_symbol: None,
             dest_symbol: None,
-            amount_usdc,
+            amount_usdc: Decimal::from_f64(amount_usdc).unwrap_or_default(),
             min_out: None,
             status: "pending".into(),
             attempt_count: 0,
@@ -1339,7 +1348,7 @@ mod tests {
             dest_chain: Some(ChainKey::Base.as_str().to_string()),
             src_symbol: Some(src.to_string()),
             dest_symbol: Some(dest.to_string()),
-            amount_usdc: 600.0,
+            amount_usdc: Decimal::from_f64(600.0).unwrap_or_default(),
             min_out: None,
             status: "pending".into(),
             attempt_count: 0,
@@ -1617,7 +1626,7 @@ mod tests {
             dest_chain: Some(dest.as_str().to_string()),
             src_symbol: Some("USDC".into()),
             dest_symbol: Some("USDC".into()),
-            amount_usdc: amount,
+            amount_usdc: Decimal::from_f64(amount).unwrap_or_default(),
             min_out: None,
             status: "confirmed".into(),
             attempt_count: 0,

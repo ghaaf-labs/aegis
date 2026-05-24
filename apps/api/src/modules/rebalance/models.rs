@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -13,7 +14,8 @@ pub struct Rebalance {
     pub status: String,
     pub total_legs: i32,
     pub completed_legs: i32,
-    pub total_gas_usdc: Option<f64>,
+    #[serde(with = "rust_decimal::serde::float_option")]
+    pub total_gas_usdc: Option<Decimal>,
     pub failure_reason: Option<String>,
     pub approved_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
@@ -33,8 +35,10 @@ pub struct RebalanceLeg {
     pub dest_chain: Option<String>,
     pub src_symbol: Option<String>,
     pub dest_symbol: Option<String>,
-    pub amount_usdc: f64,
-    pub min_out: Option<f64>,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub amount_usdc: Decimal,
+    #[serde(with = "rust_decimal::serde::float_option")]
+    pub min_out: Option<Decimal>,
     pub status: String,
     pub tx_hash: Option<String>,
     pub cctp_message_hash: Option<String>,

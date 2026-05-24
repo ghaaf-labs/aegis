@@ -12,6 +12,7 @@
 
 use std::collections::HashMap;
 
+use rust_decimal::prelude::ToPrimitive;
 use uuid::Uuid;
 
 use super::memory;
@@ -473,21 +474,23 @@ pub(super) fn build_decision_snapshot(
         .map(|a| {
             // Prefer the market snapshot price; fall back to value/qty for
             // assets the market data feed doesn't cover (e.g., USDC, USYC).
+            let qty_f64 = a.quantity.to_f64().unwrap_or(0.0);
+            let value_f64 = a.value_usd.to_f64().unwrap_or(0.0);
             let price = price_by_symbol
                 .get(&a.asset_symbol)
                 .copied()
                 .unwrap_or_else(|| {
-                    if a.quantity.abs() > f64::EPSILON {
-                        a.value_usd / a.quantity
+                    if qty_f64.abs() > f64::EPSILON {
+                        value_f64 / qty_f64
                     } else {
                         0.0
                     }
                 });
             json!({
                 "symbol": a.asset_symbol,
-                "quantity": a.quantity,
+                "quantity": qty_f64,
                 "priceUsd": price,
-                "valueUsd": a.value_usd,
+                "valueUsd": value_f64,
             })
         })
         .collect();

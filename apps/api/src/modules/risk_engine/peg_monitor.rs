@@ -24,6 +24,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::Decimal;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
@@ -86,7 +88,7 @@ pub struct PegRuleRow {
     pub user_id: Uuid,
     pub portfolio_id: Option<Uuid>,
     pub asset: String,
-    pub threshold_price: f64,
+    pub threshold_price: Decimal,
     pub window_seconds: i32,
     pub action_kind: String,
     pub target_asset: Option<String>,
@@ -196,7 +198,11 @@ async fn tick_once(state: &AppState, monitor: &PegMonitor) -> anyhow::Result<()>
             continue;
         }
         let buf = monitor.snapshot(rule.id).await;
-        if !should_fire(&buf, rule.threshold_price, rule.window_seconds as i64) {
+        if !should_fire(
+            &buf,
+            rule.threshold_price.to_f64().unwrap_or(0.0),
+            rule.window_seconds as i64,
+        ) {
             continue;
         }
 
@@ -246,12 +252,13 @@ async fn handle_fire(
         .execute(&state.db)
         .await?;
 
+    let threshold_f64 = rule.threshold_price.to_f64().unwrap_or(0.0);
     let payload = PegAlertPayload {
         user_id: rule.user_id,
         rule_id: rule.id,
         asset: rule.asset.clone(),
         observed_price: sample.price,
-        threshold_price: rule.threshold_price,
+        threshold_price: threshold_f64,
         observed_at: sample.observed_at,
         action_taken: action_taken.clone(),
         rebalance_id,
@@ -261,7 +268,7 @@ async fn handle_fire(
         rule_id=%rule.id,
         asset=%rule.asset,
         price=sample.price,
-        threshold=rule.threshold_price,
+        threshold=threshold_f64,
         action=%action_taken,
         "peg rule fired"
     );
@@ -472,7 +479,7 @@ async fn propose_defensive_plan(
         "Peg-defense: {asset} observed at or below {threshold:.4} for the configured window; \
          shifting {pct}% of portfolio from {asset} into {target}.",
         asset = depegged_asset,
-        threshold = rule.threshold_price,
+        threshold = rule.threshold_price.to_f64().unwrap_or(0.0),
         pct = (depegged_weight * 100.0).round() as i64,
         target = target_asset,
     );
@@ -842,12 +849,13 @@ mod tests {
     }
 
     fn sample_rule() -> PegRuleRow {
+        use rust_decimal_macros::dec;
         PegRuleRow {
             id: Uuid::nil(),
             user_id: Uuid::nil(),
             portfolio_id: None,
             asset: "USDC".into(),
-            threshold_price: 0.995,
+            threshold_price: dec!(0.995),
             window_seconds: 300,
             action_kind: "alert".into(),
             target_asset: None,

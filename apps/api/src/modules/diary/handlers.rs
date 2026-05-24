@@ -6,6 +6,8 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use uuid::Uuid;
 
+use rust_decimal::Decimal;
+
 use crate::error::{AppError, Result};
 use crate::modules::wallet_routes;
 use crate::router::AppState;
@@ -170,7 +172,8 @@ pub struct DecisionLeg {
     pub dest_chain: Option<String>,
     pub src_symbol: Option<String>,
     pub dest_symbol: Option<String>,
-    pub amount_usdc: f64,
+    #[serde(with = "rust_decimal::serde::float")]
+    pub amount_usdc: Decimal,
     pub status: String,
     pub tx_hash: Option<String>,
 }

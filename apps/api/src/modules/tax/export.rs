@@ -17,7 +17,6 @@
 //! provenance gap to the user.
 
 use chrono::{DateTime, Datelike, Utc};
-use rust_decimal::prelude::*;
 use rust_decimal::Decimal;
 use serde::Serialize;
 use sqlx::PgPool;
@@ -139,7 +138,7 @@ pub async fn export_portfolio(pool: &PgPool, portfolio_id: Uuid, year: i32) -> R
         let Some(confirmed_at) = leg.confirmed_at else {
             continue;
         };
-        let amount = Decimal::from_f64(leg.amount_usdc).unwrap_or_default();
+        let amount = leg.amount_usdc;
         let kind = leg.kind.as_str();
 
         match kind {
@@ -150,8 +149,7 @@ pub async fn export_portfolio(pool: &PgPool, portfolio_id: Uuid, year: i32) -> R
             "fx_stablefx" => {
                 let src = leg.src_symbol.clone().unwrap_or_else(|| "USDC".into());
                 let dest = leg.dest_symbol.clone().unwrap_or_else(|| "EURC".into());
-                let proceeds =
-                    Decimal::from_f64(leg.min_out.unwrap_or(leg.amount_usdc)).unwrap_or_default();
+                let proceeds = leg.min_out.unwrap_or(amount);
                 let gain = proceeds - amount;
                 lines.push(TaxLine {
                     occurred_at: confirmed_at,
@@ -186,8 +184,7 @@ pub async fn export_portfolio(pool: &PgPool, portfolio_id: Uuid, year: i32) -> R
                 });
             }
             "redeem_usyc" => {
-                let proceeds =
-                    Decimal::from_f64(leg.min_out.unwrap_or(leg.amount_usdc)).unwrap_or_default();
+                let proceeds = leg.min_out.unwrap_or(amount);
                 let gain = proceeds - amount;
                 lines.push(TaxLine {
                     occurred_at: confirmed_at,
@@ -210,8 +207,7 @@ pub async fn export_portfolio(pool: &PgPool, portfolio_id: Uuid, year: i32) -> R
             "local_swap" | "cross_chain_mint" => {
                 let src = leg.src_symbol.clone().unwrap_or_else(|| "USDC".into());
                 let dest = leg.dest_symbol.clone().unwrap_or_else(|| "USDC".into());
-                let proceeds =
-                    Decimal::from_f64(leg.min_out.unwrap_or(leg.amount_usdc)).unwrap_or_default();
+                let proceeds = leg.min_out.unwrap_or(amount);
                 let basis_match = match_fifo_basis(pool, portfolio_id, &src, amount).await?;
                 let basis_usd = basis_match.unwrap_or(amount);
                 let gain = proceeds - basis_usd;
@@ -265,8 +261,8 @@ struct LegRow {
     kind: String,
     src_symbol: Option<String>,
     dest_symbol: Option<String>,
-    amount_usdc: f64,
-    min_out: Option<f64>,
+    amount_usdc: Decimal,
+    min_out: Option<Decimal>,
     confirmed_at: Option<DateTime<Utc>>,
     tx_hash: Option<String>,
 }
@@ -283,8 +279,8 @@ async fn match_fifo_basis(
 ) -> Result<Option<Decimal>> {
     #[derive(sqlx::FromRow)]
     struct LotRow {
-        quantity: f64,
-        basis_usd: f64,
+        quantity: Decimal,
+        basis_usd: Decimal,
     }
     let lots: Vec<LotRow> = sqlx::query_as(
         r#"
@@ -306,12 +302,7 @@ async fn match_fifo_basis(
     }
     let decimal_lots: Vec<(Decimal, Decimal)> = lots
         .iter()
-        .map(|r| {
-            (
-                Decimal::from_f64(r.quantity).unwrap_or_default(),
-                Decimal::from_f64(r.basis_usd).unwrap_or_default(),
-            )
-        })
+        .map(|r| (r.quantity, r.basis_usd))
         .collect();
     Ok(Some(attribute_fifo_basis(&decimal_lots, qty_disposed)))
 }
