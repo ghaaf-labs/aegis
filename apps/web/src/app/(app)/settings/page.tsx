@@ -247,7 +247,7 @@ export default function SettingsIndex() {
       href: "/settings/agent",
       icon: Shield,
       title: "Agent",
-      description: "Pause automatic checks and review agent controls",
+      description: "Auto-pilot on/off, pause automatic checks, agent controls",
     },
     {
       href: "/agent-logs",

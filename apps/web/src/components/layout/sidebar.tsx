@@ -9,6 +9,8 @@ import {
   CreditCard,
   CircleHelp,
   Compass,
+  Gauge,
+  Home,
   Info,
   LayoutDashboard,
   ListChecks,
@@ -103,6 +105,12 @@ const BASE_NAV_SECTIONS: NavSection[] = [
         description: "ask a question",
       },
       {
+        href: "/settings/agent",
+        icon: Gauge,
+        label: "Auto-pilot",
+        description: "autonomous mode & pause",
+      },
+      {
         href: "/settings/peg",
         icon: Shield,
         label: "Peg defense",
@@ -181,6 +189,13 @@ const NAV_SECTIONS = PRICING_UI_ENABLED
 const PUBLIC_NAV_HREFS = new Set(["/explore", "/leaderboard", "/help"]);
 
 const SIGNED_OUT_NAV: NavItem[] = [
+  {
+    href: "/",
+    icon: Home,
+    label: "Home",
+    description: "Aegis overview",
+    exact: true,
+  },
   {
     href: "/explore",
     icon: Compass,
@@ -263,18 +278,24 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
     >
       {/* Logo */}
       <div className="flex items-center gap-2.5 px-5 h-16 shrink-0 border-b border-border-default">
-        <div
-          className="w-7 h-7 rounded-sharp bg-accent-agent flex items-center justify-center border-brutal border-black shrink-0"
-          aria-hidden="true"
+        <Link
+          href="/"
+          aria-label="Aegis home"
+          className="group flex min-w-0 items-center gap-2.5 rounded-sharp focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-agent"
         >
-          <Shield className="w-3.5 h-3.5 text-black" />
-        </div>
-        <span className="font-bold text-text-hi text-sm tracking-tight font-mono">
-          Aegis
-        </span>
-        <span className="hidden xl:inline text-[10px] font-mono uppercase tracking-widest text-text-mut">
-          Console
-        </span>
+          <span
+            className="w-7 h-7 rounded-sharp bg-accent-agent flex items-center justify-center border-brutal border-black shrink-0"
+            aria-hidden="true"
+          >
+            <Shield className="w-3.5 h-3.5 text-black" />
+          </span>
+          <span className="font-bold text-text-hi text-sm tracking-tight font-mono group-hover:text-accent-agent">
+            Aegis
+          </span>
+          <span className="hidden xl:inline text-[10px] font-mono uppercase tracking-widest text-text-mut">
+            Console
+          </span>
+        </Link>
         {onClose && (
           <button
             type="button"
