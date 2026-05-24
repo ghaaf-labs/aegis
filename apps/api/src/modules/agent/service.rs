@@ -19,23 +19,23 @@ use serde_json::json;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
+use super::allocation::{clamp_allocation, derive_guardrails, goal_objective, round2};
 use super::calibration_train;
 use super::constitution::{self, ClauseViolation, Tier};
 use super::critic as critic_mod;
-use super::memory;
+use super::decision_context::{
+    build_decision_context, build_decision_snapshot, fetch_user_profile, format_allocations,
+    DecisionContext, UserProfile,
+};
 use super::models::{AgentDecision, AnalyzeRequest, ProposeAllocationRequest};
 use super::tools;
 use crate::config::ModelRoute;
 use crate::modules::ai::{ChatToolResult, Message, OpenRouterClient, PromptKey};
-use crate::modules::fx;
-use crate::modules::market_data::MarketSnapshot;
 use crate::modules::portfolio::models::{Allocation, Portfolio};
-use crate::modules::risk_engine::{self, RegimeClassification};
+use crate::modules::risk_engine::RegimeClassification;
 use crate::modules::sse::{
-    AgentAbstainedPayload, AgentDecisionPayload, AgentToolInvokedPayload, RegimeFlip,
-    RegimeSignals as SseRegimeSignals, SseEvent,
+    AgentAbstainedPayload, AgentDecisionPayload, AgentToolInvokedPayload, SseEvent,
 };
-use crate::modules::treasury;
 use crate::router::AppState;
 
 const ABSTAIN_CONFIDENCE_THRESHOLD: f64 = 0.5;
@@ -98,154 +98,131 @@ pub async fn analyze_portfolio(
         .clone()
         .unwrap_or_else(|| "user_request".to_string());
 
-    // 1. Fetch portfolio + allocations + user (for risk tolerance + horizon).
-    let portfolio: Portfolio = sqlx::query_as("SELECT * FROM portfolios WHERE id = $1")
-        .bind(req.portfolio_id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| {
-            crate::error::AppError::NotFound(format!("portfolio {}", req.portfolio_id))
-        })?;
-
-    let allocations: Vec<Allocation> = sqlx::query_as(
-        "SELECT * FROM allocations WHERE portfolio_id = $1 ORDER BY current_weight DESC",
-    )
-    .bind(req.portfolio_id)
-    .fetch_all(&state.db)
-    .await?;
-
-    // Tier gate + model routing: resolve once, use for both the cap check
-    // and the strategist/critic model selection. When billing v2 is OFF we
-    // keep the original Pro-equivalent pipeline so the golden path is
-    // untouched.
-    let tier = if state.config.billing_v2_enabled {
-        let t = crate::middleware::tier::resolve_tier(&state.db, portfolio.user_id).await?;
-        crate::middleware::tier::enforce_decision_cap(&state.db, portfolio.user_id, t).await?;
-        t
-    } else {
-        crate::modules::billing::types::Tier::Pro
-    };
+    // Shared scaffolding: load + classify + assemble the strategist context.
+    // `enforce_cap` runs the tier resolution + decision-cap gate inside the
+    // helper, right after the portfolio loads (before any LLM call or SSE) —
+    // matching the original ordering so a capped user fails fast.
+    let ctx = build_decision_context(state, req.portfolio_id, None, true).await?;
+    let tier = ctx
+        .tier
+        .unwrap_or(crate::modules::billing::types::Tier::Pro);
     let tier_models = pick_models(tier);
-
-    let user_profile = fetch_user_profile(state, portfolio.user_id).await?;
-
-    let snapshot =
-        crate::modules::market_data::service::fetch_snapshot(state.prices.as_ref()).await?;
 
     let ai = OpenRouterClient::new(&state.http, &state.config);
 
-    // 2. Regime classifier — cheap pass that conditions the strategist.
-    // Phase 1: pass the DB so we get real 30d vol + 90d correlation from price_history
-    let regime =
-        risk_engine::classify(&ai, &snapshot, state.prompts.as_ref(), Some(&state.db)).await?;
+    // Strategist → critic → single revision.
+    let StrategistRun {
+        mut proposal,
+        verdict,
+        model_slug,
+        mut prompt_tokens,
+        mut completion_tokens,
+    } = run_strategist_with_critic(state, &ai, &req, &ctx, tier_models).await?;
 
-    // Broadcast the regime read immediately so the UI can react before the
-    // strategist call completes (sub-second feedback even when Opus is slow).
-    let _ = state.sse.send(SseEvent::RegimeFlip(RegimeFlip {
-        from: previous_regime(state, req.portfolio_id).await,
-        to: regime.regime.as_str().to_string(),
-        confidence: regime.confidence,
-        signals: SseRegimeSignals {
-            btc_vol_30d: regime.signals.btc_vol_30d,
-            corr_90d: regime.signals.corr_90d,
-            max_drawdown: regime.signals.max_drawdown,
-        },
-        classified_at: chrono::Utc::now(),
-    }));
-
-    // 3. Risk engine — concentration + vol + drift; orthogonal to regime.
-    let risk = risk_engine::evaluate(&allocations, &snapshot.assets);
-
-    // 3b. Personalization signals: per-user memory, USYC rate, EURC basis.
-    let memory_block = memory::build_memory_block(&state.db, req.portfolio_id).await?;
-    let usyc_rate = treasury::service::rate(&state.http, &state.config)
-        .await
-        .map(|r| r.annualized_yield)
-        .unwrap_or(0.0510);
-    let eurc_basis = fx::service::usdc_eurc_basis(state.prices.as_ref(), &state.config)
-        .await
-        .map(|b| b.mid_rate)
-        .unwrap_or(0.92);
-
-    // 4. Strategist proposal.
-    let mut strategist_ctx = build_strategist_context(
-        &portfolio,
-        &allocations,
-        &user_profile,
-        &snapshot,
-        &regime,
-        &risk,
-    );
-    strategist_ctx.insert("memory", memory_block);
-    strategist_ctx.insert("usyc_rate", format!("{:.4}", usyc_rate));
-    strategist_ctx.insert("usdc_eurc_basis", format!("{:.4}", eurc_basis));
-    strategist_ctx.insert("goal_block", format_goal_block(&portfolio.goal));
-
-    // Wallet awareness: the strategist used to see only `portfolios.total_value_usd`
-    // (invested positions) and concluded "portfolio is empty, deposit funds"
-    // on every run — even when the user had already funded $100s of USDC + EURC
-    // into Circle Gateway. Inject the Gateway balance so the agent knows
-    // there's deployable capital and can propose a first-deploy plan.
-    let gateway_block = match crate::modules::gateway::service::fetch_balance_for_user(
-        &state.db,
-        &state.http,
-        &state.config,
-        portfolio.user_id,
-    )
-    .await
-    {
-        Ok(b) => format_gateway_block(&b),
-        Err(e) => {
-            tracing::debug!(error=%e, "agent: gateway balance fetch failed; strategist sees no wallet info");
-            "Wallet balance: unavailable (Gateway lookup failed).".to_string()
-        }
-    };
-    strategist_ctx.insert("wallet_block", gateway_block);
-    let harvestable = crate::modules::tax::service::harvestable_losses(
-        state,
-        portfolio.user_id,
-        req.portfolio_id,
-    )
-    .await
-    .unwrap_or_default();
-    strategist_ctx.insert(
-        "harvestable_losses",
-        format_harvestable_losses(&harvestable),
-    );
-    // Route-execution awareness: the strategist must only propose moving funds
-    // into tokens that can actually execute. Track-only tokens (disabled USYC,
-    // KYB-gated EURC, volatiles without a live swap route) may be discussed but
-    // not traded — the registry would otherwise block them at approval/execute.
-    strategist_ctx.insert(
-        "route_capabilities",
-        format_route_capabilities(&state.config),
-    );
-    // Per-user signal: broadcast a tax.harvest.proposed event for any open
-    // loss above the configured threshold so the UI surfaces it ahead of the
-    // strategist's full reasoning.
-    let threshold = state.config.harvest_threshold_usd;
-    for loss in &harvestable {
-        if loss.unrealized_loss_usd >= threshold {
-            let _ = state.sse.send(SseEvent::TaxHarvestProposed(
-                crate::modules::sse::TaxHarvestPayload {
-                    user_id: portfolio.user_id,
-                    portfolio_id: req.portfolio_id,
-                    allocation_id: loss.allocation_id,
-                    symbol: loss.symbol.clone(),
-                    unrealized_loss_usd: loss.unrealized_loss_usd,
-                    proposed_at: chrono::Utc::now(),
-                },
-            ));
-        }
+    // Revision (optional).
+    if verdict.demands_revision {
+        debug!("critic demanded revision: {}", verdict.notes);
+        let mut revision_ctx = ctx.strategist_ctx.clone();
+        revision_ctx.insert("original_proposal_json", json_string(&proposal)?);
+        revision_ctx.insert("critic_verdict_json", json_string(&verdict)?);
+        let revision_prompt = state.prompts.render(PromptKey::Revision, &revision_ctx);
+        let revised = ai
+            .chat(
+                tier_models.strategist_route,
+                vec![
+                    Message::system(revision_prompt),
+                    Message::user("Provide the revised proposal.".to_string()),
+                ],
+            )
+            .await?;
+        proposal = parse_proposal(&revised.content)?;
+        prompt_tokens = prompt_tokens.saturating_add(revised.prompt_tokens);
+        completion_tokens = completion_tokens.saturating_add(revised.completion_tokens);
     }
-    let strategist_prompt = state.prompts.render(PromptKey::Strategist, &strategist_ctx);
+
+    // Decide on triggered_by — abstain if the strategist isn't confident.
+    let final_triggered_by = if proposal.confidence < ABSTAIN_CONFIDENCE_THRESHOLD {
+        let _ = state
+            .sse
+            .send(SseEvent::AgentAbstained(AgentAbstainedPayload {
+                user_id: ctx.portfolio.user_id,
+                portfolio_id: req.portfolio_id,
+                confidence: proposal.confidence,
+                reason: if proposal.reasoning.is_empty() {
+                    "confidence below threshold".to_string()
+                } else {
+                    proposal.reasoning.clone()
+                },
+                decided_at: chrono::Utc::now(),
+            }));
+        "abstain".to_string()
+    } else {
+        triggered_by
+    };
+
+    // Calibration + optional counterfactual second pass.
+    let calibration = apply_calibration_and_counterfactual(
+        state,
+        &ai,
+        &proposal,
+        &verdict,
+        ctx.regime.regime.as_str(),
+        &mut prompt_tokens,
+        &mut completion_tokens,
+    )
+    .await;
+
+    let latency_ms = start.elapsed().as_millis() as i32;
+    persist_and_broadcast_decision(
+        state,
+        &ctx,
+        PersistArgs {
+            portfolio_id: req.portfolio_id,
+            proposal: &proposal,
+            verdict: &verdict,
+            final_triggered_by: &final_triggered_by,
+            model_slug: &model_slug,
+            tier,
+            tier_models,
+            prompt_tokens,
+            completion_tokens,
+            latency_ms,
+            calibration,
+        },
+    )
+    .await
+}
+
+/// Outcome of the strategist → critic loop (pre-revision): the parsed proposal,
+/// the critic verdict, the slug + token usage to roll into the persisted row.
+struct StrategistRun {
+    proposal: StrategistProposal,
+    verdict: CriticOutput,
+    model_slug: String,
+    prompt_tokens: u32,
+    completion_tokens: u32,
+}
+
+/// Run the tool-aware strategist, then the critic pass. Free tier skips the
+/// critic entirely; otherwise the proposal is checked against the constitution
+/// YAML (immediate VETO citing clause IDs) before the LLM critic runs.
+async fn run_strategist_with_critic(
+    state: &AppState,
+    ai: &OpenRouterClient<'_>,
+    req: &AnalyzeRequest,
+    ctx: &DecisionContext,
+    tier_models: TierModels,
+) -> crate::error::Result<StrategistRun> {
+    let strategist_prompt = state
+        .prompts
+        .render(PromptKey::Strategist, &ctx.strategist_ctx);
     // Tool-aware strategist loop. The model can call `fetch_news`,
     // `fetch_onchain_metric`, `fetch_correlation` up to MAX_TOOL_ITERATIONS-1
     // times; the final iteration forces a JSON proposal output.
     let strategist = run_strategist_with_tools(
         state,
-        &ai,
-        portfolio.user_id,
+        ai,
+        ctx.portfolio.user_id,
         req.portfolio_id,
         &strategist_prompt,
         tier_models.strategist_route,
@@ -257,11 +234,11 @@ pub async fn analyze_portfolio(
             strategist.latency_ms, strategist.model_slug
         );
     }
-    let mut proposal = parse_proposal(&strategist.content)?;
+    let proposal = parse_proposal(&strategist.content)?;
     let mut prompt_tokens = strategist.prompt_tokens;
     let mut completion_tokens = strategist.completion_tokens;
 
-    // 5. Critic pass — adversarial review.
+    // Critic pass — adversarial review.
     //
     // Free tier short-circuit: skip the critic entirely (the Haiku strategist
     // already ran; no extra token spend on no-revenue users).
@@ -274,9 +251,9 @@ pub async fn analyze_portfolio(
     let constitution_violations = if state.config.constitution_enabled && tier_models.run_critic {
         evaluate_constitution(
             &proposal,
-            &allocations,
-            &portfolio,
-            tier_for_user(&user_profile),
+            &ctx.allocations,
+            &ctx.portfolio,
+            tier_for_user(&ctx.user_profile),
         )
     } else {
         Vec::new()
@@ -312,8 +289,13 @@ pub async fn analyze_portfolio(
             verdict: Some("veto".into()),
         }
     } else {
-        let critic_ctx =
-            build_critic_context(&proposal, &allocations, &user_profile, &regime, &risk);
+        let critic_ctx = build_critic_context(
+            &proposal,
+            &ctx.allocations,
+            &ctx.user_profile,
+            &ctx.regime,
+            &ctx.risk,
+        );
         let critic_prompt = state.prompts.render(PromptKey::Critic, &critic_ctx);
         let critic = ai
             .chat(
@@ -340,53 +322,42 @@ pub async fn analyze_portfolio(
         v
     };
 
-    // 6. Revision (optional).
-    if verdict.demands_revision {
-        debug!("critic demanded revision: {}", verdict.notes);
-        let mut revision_ctx = strategist_ctx.clone();
-        revision_ctx.insert("original_proposal_json", json_string(&proposal)?);
-        revision_ctx.insert("critic_verdict_json", json_string(&verdict)?);
-        let revision_prompt = state.prompts.render(PromptKey::Revision, &revision_ctx);
-        let revised = ai
-            .chat(
-                tier_models.strategist_route,
-                vec![
-                    Message::system(revision_prompt),
-                    Message::user("Provide the revised proposal.".to_string()),
-                ],
-            )
-            .await?;
-        proposal = parse_proposal(&revised.content)?;
-        prompt_tokens = prompt_tokens.saturating_add(revised.prompt_tokens);
-        completion_tokens = completion_tokens.saturating_add(revised.completion_tokens);
-    }
+    Ok(StrategistRun {
+        proposal,
+        verdict,
+        model_slug: strategist.model_slug,
+        prompt_tokens,
+        completion_tokens,
+    })
+}
 
-    // 7. Decide on triggered_by — abstain if the strategist isn't confident.
-    let final_triggered_by = if proposal.confidence < ABSTAIN_CONFIDENCE_THRESHOLD {
-        let _ = state
-            .sse
-            .send(SseEvent::AgentAbstained(AgentAbstainedPayload {
-                user_id: portfolio.user_id,
-                portfolio_id: req.portfolio_id,
-                confidence: proposal.confidence,
-                reason: if proposal.reasoning.is_empty() {
-                    "confidence below threshold".to_string()
-                } else {
-                    proposal.reasoning.clone()
-                },
-                decided_at: chrono::Utc::now(),
-            }));
-        "abstain".to_string()
-    } else {
-        triggered_by
-    };
+/// Calibration + counterfactual artifacts threaded into the persisted decision.
+struct CalibrationOutcome {
+    raw_confidence: f64,
+    calibrated_confidence: f64,
+    calibration_id: Option<Uuid>,
+    counterfactual: Option<String>,
+}
 
-    // 7b. F-CONF-4: apply the strategist calibrator, if one has been fit.
+/// F-CONF-4/5: apply the strategist calibrator (cold start ⇒ calibrated == raw)
+/// and, when calibration is enabled, run an optional counterfactual second-pass
+/// on the critic. Token usage from the extra call accumulates into the
+/// caller's counters.
+async fn apply_calibration_and_counterfactual(
+    state: &AppState,
+    ai: &OpenRouterClient<'_>,
+    proposal: &StrategistProposal,
+    verdict: &CriticOutput,
+    regime: &str,
+    prompt_tokens: &mut u32,
+    completion_tokens: &mut u32,
+) -> CalibrationOutcome {
+    // F-CONF-4: apply the strategist calibrator, if one has been fit.
     // Cold start (no calibrations row) ⇒ calibrated == raw; the headline UI
     // number falls back to the raw confidence so behavior is unchanged with
     // the feature flag off.
     let raw_confidence = proposal.confidence;
-    let (calibrated_confidence, calibration_id_opt) = if state.config.calibrated_conf_enabled {
+    let (calibrated_confidence, calibration_id) = if state.config.calibrated_conf_enabled {
         match calibration_train::latest_for(&state.db, calibration_train::TASK_STRATEGIST).await {
             Ok(Some(latest)) => {
                 let cal_conf = crate::modules::agent::calibration::apply_scalar(
@@ -411,11 +382,11 @@ pub async fn analyze_portfolio(
         (raw_confidence, None)
     };
 
-    // 7c. F-CONF-5: optional counterfactual second-pass on the critic.
-    let counterfactual_opt = if state.config.calibrated_conf_enabled {
+    // F-CONF-5: optional counterfactual second-pass on the critic.
+    let counterfactual = if state.config.calibrated_conf_enabled {
         let cf_prompt = critic_mod::build_prompt(
-            &json_string(&proposal).unwrap_or_default(),
-            regime.regime.as_str(),
+            &json_string(proposal).unwrap_or_default(),
+            regime,
             &verdict.notes,
         );
         match ai
@@ -429,8 +400,8 @@ pub async fn analyze_portfolio(
             .await
         {
             Ok(resp) => {
-                prompt_tokens = prompt_tokens.saturating_add(resp.prompt_tokens);
-                completion_tokens = completion_tokens.saturating_add(resp.completion_tokens);
+                *prompt_tokens = prompt_tokens.saturating_add(resp.prompt_tokens);
+                *completion_tokens = completion_tokens.saturating_add(resp.completion_tokens);
                 match critic_mod::parse(&resp.content) {
                     Ok(out) if !out.is_empty() => Some(out.counterfactual),
                     Ok(_) => None,
@@ -449,8 +420,57 @@ pub async fn analyze_portfolio(
         None
     };
 
-    // 8. Persist with full telemetry.
-    let latency_ms = start.elapsed().as_millis() as i32;
+    CalibrationOutcome {
+        raw_confidence,
+        calibrated_confidence,
+        calibration_id,
+        counterfactual,
+    }
+}
+
+/// Inputs for persisting + broadcasting a `rebalance` decision. Grouped into a
+/// struct so the helper stays under the argument-count threshold.
+struct PersistArgs<'a> {
+    portfolio_id: Uuid,
+    proposal: &'a StrategistProposal,
+    verdict: &'a CriticOutput,
+    final_triggered_by: &'a str,
+    model_slug: &'a str,
+    tier: crate::modules::billing::types::Tier,
+    tier_models: TierModels,
+    prompt_tokens: u32,
+    completion_tokens: u32,
+    latency_ms: i32,
+    calibration: CalibrationOutcome,
+}
+
+/// Persist the rebalance decision with full telemetry, bump usage meters /
+/// calibration audit rows, and broadcast the final `agent.decision` over SSE.
+async fn persist_and_broadcast_decision(
+    state: &AppState,
+    ctx: &DecisionContext,
+    args: PersistArgs<'_>,
+) -> crate::error::Result<AgentDecision> {
+    let PersistArgs {
+        portfolio_id,
+        proposal,
+        verdict,
+        final_triggered_by,
+        model_slug,
+        tier,
+        tier_models,
+        prompt_tokens,
+        completion_tokens,
+        latency_ms,
+        calibration,
+    } = args;
+    let CalibrationOutcome {
+        raw_confidence,
+        calibrated_confidence,
+        calibration_id,
+        counterfactual,
+    } = calibration;
+
     let mut recommendation_value = serde_json::to_value(&proposal.recommendation)?;
     // Inject tier_features into the recommendation JSONB so downstream
     // consumers (A8 calibration, A9 constitution-aware critic) can read what
@@ -467,8 +487,8 @@ pub async fn analyze_portfolio(
             }),
         );
     }
-    let critic_value = serde_json::to_value(&verdict)?;
-    let snapshot_value = build_decision_snapshot(&portfolio, &allocations, &snapshot);
+    let critic_value = serde_json::to_value(verdict)?;
+    let snapshot_value = build_decision_snapshot(&ctx.portfolio, &ctx.allocations, &ctx.snapshot);
 
     let decision: AgentDecision = sqlx::query_as(
         r#"INSERT INTO agent_decisions
@@ -480,13 +500,13 @@ pub async fn analyze_portfolio(
            RETURNING *"#,
     )
     .bind(Uuid::new_v4())
-    .bind(req.portfolio_id)
+    .bind(portfolio_id)
     .bind(&proposal.reasoning)
     .bind(&recommendation_value)
     .bind(proposal.confidence)
-    .bind(&final_triggered_by)
-    .bind(&strategist.model_slug)
-    .bind(regime.regime.as_str())
+    .bind(final_triggered_by)
+    .bind(model_slug)
+    .bind(ctx.regime.regime.as_str())
     .bind(prompt_tokens as i32)
     .bind(completion_tokens as i32)
     .bind(latency_ms)
@@ -494,26 +514,27 @@ pub async fn analyze_portfolio(
     .bind(&snapshot_value)
     .bind(raw_confidence)
     .bind(calibrated_confidence)
-    .bind(counterfactual_opt.as_deref())
+    .bind(counterfactual.as_deref())
     .fetch_one(&state.db)
     .await?;
 
     crate::modules::observability::counters::record_agent_decision();
 
-    // 8b. Increment usage_meters.decisions_count for the current period (A3).
+    // Increment usage_meters.decisions_count for the current period (A3).
     // Only when billing v2 is on — otherwise the table may be untouched and
     // the UPSERT would create spurious rows for users that won't ever pay.
     if state.config.billing_v2_enabled {
-        if let Err(e) = crate::middleware::tier::record_decision(&state.db, portfolio.user_id).await
+        if let Err(e) =
+            crate::middleware::tier::record_decision(&state.db, ctx.portfolio.user_id).await
         {
             warn!(
                 "usage_meters bump failed for user {}: {e}",
-                portfolio.user_id
+                ctx.portfolio.user_id
             );
         }
     }
 
-    // 8c. F-CONF-4: insert the calibrated_predictions audit row when
+    // F-CONF-4: insert the calibrated_predictions audit row when
     // calibration ran. Best-effort — if this insert fails we still surface
     // the decision (the columns on agent_decisions are the source of truth).
     if state.config.calibrated_conf_enabled {
@@ -525,8 +546,8 @@ pub async fn analyze_portfolio(
         .bind(decision.id)
         .bind(raw_confidence)
         .bind(calibrated_confidence)
-        .bind(calibration_id_opt)
-        .bind(counterfactual_opt.as_deref())
+        .bind(calibration_id)
+        .bind(counterfactual.as_deref())
         .execute(&state.db)
         .await
         {
@@ -534,13 +555,13 @@ pub async fn analyze_portfolio(
         }
     }
 
-    // 9. Broadcast the final decision over SSE.
+    // Broadcast the final decision over SSE.
     let _ = state
         .sse
         .send(SseEvent::AgentDecision(AgentDecisionPayload {
             id: decision.id,
             portfolio_id: decision.portfolio_id,
-            user_id: portfolio.user_id,
+            user_id: ctx.portfolio.user_id,
             reasoning: decision.reasoning.clone(),
             recommendation: decision.recommendation.clone(),
             confidence: decision.confidence,
@@ -564,196 +585,6 @@ pub async fn analyze_portfolio(
 
 // ── Agent-decided allocation (the headline) ─────────────────────────────────
 
-/// Structural + risk guardrails the clamp enforces. Phase 1 extends this with
-/// regime/vol/correlation tilts; Phase 0 keeps the invariant set: a per-asset
-/// cap on volatile sleeves (≤ the constitution's RISK-2 60%) plus a stable +
-/// yield reserve floor derived from the user's risk tolerance.
-#[derive(Debug, Clone, Copy)]
-struct Guardrails {
-    /// Max weight (%) for any single non-stable asset (≤ RISK-2 60%).
-    single_asset_cap: f64,
-    /// Minimum combined weight (%) for the stable/yield reserve sleeve.
-    stable_floor: f64,
-    /// Max combined weight (%) across ALL non-stable assets. This is the
-    /// correlation-diversification guardrail: cbBTC/WETH/cbETH move together,
-    /// so the whole crypto sleeve is bounded, not just each leg.
-    volatile_cluster_cap: f64,
-}
-
-/// Regime/vol-aware guardrails. Base caps/floors come from risk tolerance;
-/// `risk_off` raises the stable+yield floor and trims volatile caps, `risk_on`
-/// loosens them, and high BTC realized vol scales the volatile sleeve down.
-fn derive_guardrails(risk_tolerance: &str, regime: &str, btc_vol_30d: f64) -> Guardrails {
-    let (mut single_asset_cap, mut stable_floor, mut volatile_cluster_cap): (f64, f64, f64) =
-        match risk_tolerance.to_lowercase().as_str() {
-            "aggressive" => (60.0, 5.0, 90.0),
-            "moderate" => (45.0, 20.0, 70.0),
-            // conservative (also the safe default for unknown values)
-            _ => (25.0, 50.0, 45.0),
-        };
-    match regime.to_lowercase().as_str() {
-        "risk_off" => {
-            stable_floor = (stable_floor + 20.0).min(80.0);
-            volatile_cluster_cap = (volatile_cluster_cap - 20.0).max(10.0);
-            single_asset_cap = single_asset_cap.min(40.0);
-        }
-        "risk_on" => {
-            stable_floor = (stable_floor - 5.0).max(5.0);
-            volatile_cluster_cap = (volatile_cluster_cap + 10.0).min(95.0);
-        }
-        _ => {}
-    }
-    // High realized vol → trim the volatile sleeve further.
-    if btc_vol_30d > 0.8 {
-        volatile_cluster_cap = (volatile_cluster_cap - 15.0).max(10.0);
-        single_asset_cap = (single_asset_cap - 10.0).max(10.0);
-    }
-    // RISK-2 hard ceiling regardless of inputs.
-    single_asset_cap = single_asset_cap.min(60.0);
-    Guardrails {
-        single_asset_cap,
-        stable_floor,
-        volatile_cluster_cap,
-    }
-}
-
-const STABLE_SYMBOLS: &[&str] = &["USDC", "sUSDS", "USYC", "EURC", "aUSDC"];
-
-fn is_stable_symbol(sym: &str) -> bool {
-    STABLE_SYMBOLS.iter().any(|s| s.eq_ignore_ascii_case(sym))
-}
-
-fn round2(x: f64) -> f64 {
-    (x * 100.0).round() / 100.0
-}
-
-/// Deterministic safety net: turn a raw LLM allocation map into a valid target.
-/// Drops non-executable tokens (USDC always allowed) and non-positive weights,
-/// caps any single non-stable asset at the guardrail cap, enforces the
-/// stable/yield reserve floor, normalizes to sum 100, and sweeps the rounding
-/// residual into USDC. Always returns a non-empty map summing to ~100 (USDC-only
-/// in the worst case) — so a bad/refused LLM output can never produce an invalid
-/// or over-concentrated target.
-fn clamp_allocation(
-    raw: &serde_json::Map<String, serde_json::Value>,
-    executable: &[&str],
-    guardrails: Guardrails,
-) -> std::collections::BTreeMap<String, f64> {
-    use std::collections::BTreeMap;
-    let usdc_only =
-        || -> BTreeMap<String, f64> { std::iter::once(("USDC".to_string(), 100.0)).collect() };
-    let exec_ok = |sym: &str| {
-        sym.eq_ignore_ascii_case("USDC") || executable.iter().any(|e| e.eq_ignore_ascii_case(sym))
-    };
-
-    // 1. Keep executable, positive weights (canonicalize USDC casing).
-    let mut weights: BTreeMap<String, f64> = BTreeMap::new();
-    for (sym, v) in raw {
-        let w = v.as_f64().unwrap_or(0.0);
-        if w <= 0.0 || !exec_ok(sym) {
-            continue;
-        }
-        let key = if sym.eq_ignore_ascii_case("USDC") {
-            "USDC".to_string()
-        } else {
-            sym.clone()
-        };
-        *weights.entry(key).or_insert(0.0) += w;
-    }
-    let total: f64 = weights.values().sum();
-    if total <= 0.0 {
-        return usdc_only();
-    }
-
-    // 2. Normalize to sum 100.
-    for w in weights.values_mut() {
-        *w = (*w / total) * 100.0;
-    }
-
-    // 3. Cap each non-stable asset; route the excess into USDC (a stable, so
-    //    this can never re-violate a cap).
-    let mut excess = 0.0;
-    for (k, w) in weights.iter_mut() {
-        if !is_stable_symbol(k) && *w > guardrails.single_asset_cap {
-            excess += *w - guardrails.single_asset_cap;
-            *w = guardrails.single_asset_cap;
-        }
-    }
-    if excess > 0.0 {
-        *weights.entry("USDC".to_string()).or_insert(0.0) += excess;
-    }
-
-    // 3b. Cap the combined non-stable (correlated) cluster; route the excess
-    //     into USDC. Scaling down can't re-violate the single-asset cap.
-    let cluster_sum: f64 = weights
-        .iter()
-        .filter(|(k, _)| !is_stable_symbol(k))
-        .map(|(_, w)| *w)
-        .sum();
-    if cluster_sum > guardrails.volatile_cluster_cap && cluster_sum > 0.0 {
-        let scale = guardrails.volatile_cluster_cap / cluster_sum;
-        let mut moved = 0.0;
-        for (k, w) in weights.iter_mut() {
-            if !is_stable_symbol(k) {
-                let nw = *w * scale;
-                moved += *w - nw;
-                *w = nw;
-            }
-        }
-        *weights.entry("USDC".to_string()).or_insert(0.0) += moved;
-    }
-
-    // 4. Enforce the stable/yield reserve floor by scaling non-stables DOWN
-    //    proportionally (never up — so caps still hold) and topping up USDC.
-    let stable_sum: f64 = weights
-        .iter()
-        .filter(|(k, _)| is_stable_symbol(k))
-        .map(|(_, w)| *w)
-        .sum();
-    if stable_sum < guardrails.stable_floor {
-        let nonstable_sum: f64 = weights
-            .iter()
-            .filter(|(k, _)| !is_stable_symbol(k))
-            .map(|(_, w)| *w)
-            .sum();
-        let deficit = (guardrails.stable_floor - stable_sum).min(nonstable_sum);
-        if nonstable_sum > 0.0 && deficit > 0.0 {
-            let scale = (nonstable_sum - deficit) / nonstable_sum;
-            for (k, w) in weights.iter_mut() {
-                if !is_stable_symbol(k) {
-                    *w *= scale;
-                }
-            }
-            *weights.entry("USDC".to_string()).or_insert(0.0) += deficit;
-        }
-    }
-
-    // 5. Round to 0.01 and sweep the residual into USDC so the map sums to 100.
-    for w in weights.values_mut() {
-        *w = round2(*w);
-    }
-    let sum: f64 = weights.values().sum();
-    let residual = round2(100.0 - sum);
-    if residual.abs() >= 0.01 {
-        let usdc = weights.entry("USDC".to_string()).or_insert(0.0);
-        *usdc = round2((*usdc + residual).max(0.0));
-    }
-    weights.retain(|_, w| *w > 0.0);
-    if weights.is_empty() {
-        return usdc_only();
-    }
-    weights
-}
-
-/// Read the user's high-level objective from the goal JSONB (set at onboarding).
-fn goal_objective(goal: &serde_json::Value) -> String {
-    goal.get("objective")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .unwrap_or("grow")
-        .to_string()
-}
-
 /// Run the allocator: the agent designs a full target allocation from the
 /// user's objective/horizon/risk + market regime, deterministically clamped to
 /// a valid, executable, non-over-concentrated target. Persists an
@@ -772,119 +603,23 @@ pub async fn propose_allocation(
         .clone()
         .unwrap_or_else(|| "allocation_proposal".to_string());
 
-    let portfolio: Portfolio = sqlx::query_as("SELECT * FROM portfolios WHERE id = $1")
-        .bind(req.portfolio_id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| {
-            crate::error::AppError::NotFound(format!("portfolio {}", req.portfolio_id))
-        })?;
-    let allocations: Vec<Allocation> = sqlx::query_as(
-        "SELECT * FROM allocations WHERE portfolio_id = $1 ORDER BY current_weight DESC",
-    )
-    .bind(req.portfolio_id)
-    .fetch_all(&state.db)
-    .await?;
-
-    let mut user_profile = fetch_user_profile(state, portfolio.user_id).await?;
-    // The Gate-1 risk dial re-proposes at a different risk level without
-    // mutating the stored goal/profile.
-    if let Some(r) = req.risk_override.as_deref() {
-        let r = r.trim().to_lowercase();
-        if matches!(r.as_str(), "conservative" | "moderate" | "aggressive") {
-            user_profile.risk_tolerance = r;
-        }
-    }
-
-    let snapshot =
-        crate::modules::market_data::service::fetch_snapshot(state.prices.as_ref()).await?;
-    let ai = OpenRouterClient::new(&state.http, &state.config);
-
-    let regime =
-        risk_engine::classify(&ai, &snapshot, state.prompts.as_ref(), Some(&state.db)).await?;
-    let _ = state.sse.send(SseEvent::RegimeFlip(RegimeFlip {
-        from: previous_regime(state, req.portfolio_id).await,
-        to: regime.regime.as_str().to_string(),
-        confidence: regime.confidence,
-        signals: SseRegimeSignals {
-            btc_vol_30d: regime.signals.btc_vol_30d,
-            corr_90d: regime.signals.corr_90d,
-            max_drawdown: regime.signals.max_drawdown,
-        },
-        classified_at: chrono::Utc::now(),
-    }));
-
-    let risk = risk_engine::evaluate(&allocations, &snapshot.assets);
-    let memory_block = memory::build_memory_block(&state.db, req.portfolio_id).await?;
-    let usyc_rate = treasury::service::rate(&state.http, &state.config)
-        .await
-        .map(|r| r.annualized_yield)
-        .unwrap_or(0.0510);
-    let eurc_basis = fx::service::usdc_eurc_basis(state.prices.as_ref(), &state.config)
-        .await
-        .map(|b| b.mid_rate)
-        .unwrap_or(0.92);
-
-    let mut ctx = build_strategist_context(
-        &portfolio,
-        &allocations,
-        &user_profile,
-        &snapshot,
-        &regime,
-        &risk,
-    );
-    ctx.insert("memory", memory_block);
-    ctx.insert("usyc_rate", format!("{:.4}", usyc_rate));
-    ctx.insert("usdc_eurc_basis", format!("{:.4}", eurc_basis));
-    ctx.insert("goal_block", format_goal_block(&portfolio.goal));
+    // Shared scaffolding: load + classify + assemble context. The Gate-1 risk
+    // dial re-proposes at a different risk level via `risk_override` without
+    // mutating the stored profile. The allocator-specific `objective` key is
+    // added below — the strategist path never carries it.
+    let DecisionContext {
+        portfolio,
+        allocations,
+        user_profile,
+        snapshot,
+        regime,
+        strategist_ctx: mut ctx,
+        ..
+    } = build_decision_context(state, req.portfolio_id, req.risk_override.as_deref(), false)
+        .await?;
     ctx.insert("objective", goal_objective(&portfolio.goal));
-    let gateway_block = match crate::modules::gateway::service::fetch_balance_for_user(
-        &state.db,
-        &state.http,
-        &state.config,
-        portfolio.user_id,
-    )
-    .await
-    {
-        Ok(b) => format_gateway_block(&b),
-        Err(_) => "Wallet balance: unavailable (Gateway lookup failed).".to_string(),
-    };
-    ctx.insert("wallet_block", gateway_block);
-    ctx.insert(
-        "route_capabilities",
-        format_route_capabilities(&state.config),
-    );
-    // Tax-loss harvesting (RFB #4): make the allocator aware of positions
-    // sitting at an unrealized loss so it can prefer trimming them when moving
-    // toward the new target. The realized harvest is surfaced for approval via
-    // the existing rebalance plan (Gate 2) — nothing executes unapproved.
-    let harvestable = crate::modules::tax::service::harvestable_losses(
-        state,
-        portfolio.user_id,
-        req.portfolio_id,
-    )
-    .await
-    .unwrap_or_default();
-    let threshold = state.config.harvest_threshold_usd;
-    for loss in &harvestable {
-        if loss.unrealized_loss_usd >= threshold {
-            let _ = state.sse.send(SseEvent::TaxHarvestProposed(
-                crate::modules::sse::TaxHarvestPayload {
-                    user_id: portfolio.user_id,
-                    portfolio_id: req.portfolio_id,
-                    allocation_id: loss.allocation_id,
-                    symbol: loss.symbol.clone(),
-                    unrealized_loss_usd: loss.unrealized_loss_usd,
-                    proposed_at: chrono::Utc::now(),
-                },
-            ));
-        }
-    }
-    ctx.insert(
-        "harvestable_losses",
-        format_harvestable_losses(&harvestable),
-    );
 
+    let ai = OpenRouterClient::new(&state.http, &state.config);
     let prompt = state.prompts.render(PromptKey::Allocator, &ctx);
     let resp = ai
         .chat(
@@ -1237,106 +972,6 @@ pub async fn apply_allocation(
 
 // ── Context builders ───────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, sqlx::FromRow)]
-struct UserProfile {
-    risk_tolerance: String,
-    investment_horizon_months: i32,
-}
-
-async fn fetch_user_profile(state: &AppState, user_id: Uuid) -> crate::error::Result<UserProfile> {
-    let profile = sqlx::query_as::<_, UserProfile>(
-        "SELECT risk_tolerance, investment_horizon_months FROM users WHERE id = $1",
-    )
-    .bind(user_id)
-    .fetch_optional(&state.db)
-    .await?
-    .unwrap_or(UserProfile {
-        risk_tolerance: "moderate".into(),
-        investment_horizon_months: 12,
-    });
-    Ok(profile)
-}
-
-async fn previous_regime(state: &AppState, portfolio_id: Uuid) -> Option<String> {
-    match sqlx::query_scalar::<_, Option<String>>(
-        "SELECT regime FROM agent_decisions
-         WHERE portfolio_id = $1 AND regime IS NOT NULL
-         ORDER BY created_at DESC LIMIT 1",
-    )
-    .bind(portfolio_id)
-    .fetch_optional(&state.db)
-    .await
-    {
-        Ok(row) => row.flatten(),
-        Err(e) => {
-            // Don't fail the whole analysis if the lookahead query stumbles;
-            // log so the omission is visible and continue with `from: None`.
-            warn!("previous_regime query failed: {e}");
-            None
-        }
-    }
-}
-
-/// Render the route-execution capability block for the strategist prompt:
-/// which tokens can actually be traded vs. which are price-tracked only.
-fn format_route_capabilities(cfg: &crate::config::Config) -> String {
-    use crate::modules::rebalance::registry::{
-        capabilities::RuntimeCapabilities, executable_token_symbols, tokens::TOKEN_REGISTRY,
-    };
-    let caps = RuntimeCapabilities::from_config(cfg);
-    let executable = executable_token_symbols(&caps, cfg);
-    let tracked: Vec<&str> = TOKEN_REGISTRY
-        .iter()
-        .map(|s| s.symbol)
-        .filter(|s| !executable.contains(s))
-        .collect();
-    format!(
-        "- **Executable now** (you MAY propose buying/parking/selling these): {}\n\
-         - **Track-only** (price-tracked but NOT executable — do NOT propose trades into these; mention as context only): {}",
-        executable.join(", "),
-        if tracked.is_empty() { "none".to_string() } else { tracked.join(", ") },
-    )
-}
-
-fn build_strategist_context(
-    portfolio: &Portfolio,
-    allocations: &[Allocation],
-    user: &UserProfile,
-    snapshot: &MarketSnapshot,
-    regime: &RegimeClassification,
-    risk: &crate::modules::risk_engine::RiskReport,
-) -> HashMap<&'static str, String> {
-    let mut ctx = HashMap::new();
-    ctx.insert("portfolio_name", portfolio.name.clone());
-    ctx.insert(
-        "total_value_usd",
-        format!("{:.2}", portfolio.total_value_usd),
-    );
-    ctx.insert("pnl_usd", format!("{:.2}", portfolio.total_pnl_usd));
-    ctx.insert("pnl_pct", format!("{:.2}", portfolio.total_pnl_pct));
-    ctx.insert("risk_tolerance", user.risk_tolerance.clone());
-    ctx.insert("horizon_months", user.investment_horizon_months.to_string());
-    ctx.insert("allocations_table", format_allocations(allocations));
-
-    ctx.insert("regime", regime.regime.as_str().into());
-    ctx.insert("regime_confidence", format!("{:.2}", regime.confidence));
-    ctx.insert("btc_vol_30d", format!("{:.4}", regime.signals.btc_vol_30d));
-    ctx.insert("corr_90d", format!("{:.4}", regime.signals.corr_90d));
-    ctx.insert(
-        "max_drawdown",
-        format!("{:.4}", regime.signals.max_drawdown),
-    );
-    ctx.insert("fear_greed", snapshot.fear_greed_index.to_string());
-    ctx.insert("btc_dominance", format!("{:.2}", snapshot.btc_dominance));
-    ctx.insert(
-        "concentration_risk",
-        format!("{:.3}", risk.concentration_risk),
-    );
-    ctx.insert("volatility_score", format!("{:.3}", risk.volatility_score));
-    ctx.insert("drift_score", format!("{:.3}", risk.drift_score));
-    ctx
-}
-
 fn build_critic_context(
     proposal: &StrategistProposal,
     allocations: &[Allocation],
@@ -1361,128 +996,6 @@ fn build_critic_context(
     ctx.insert("risk_tolerance", user.risk_tolerance.clone());
     ctx.insert("horizon_months", user.investment_horizon_months.to_string());
     ctx
-}
-
-/// Render a snapshot of the user's Circle Gateway balance for the strategist.
-/// When the user has deployable cash but zero invested, the closing line
-/// explicitly tells the strategist to propose a first-deploy plan rather than
-/// repeat "deposit funds" indefinitely.
-fn format_gateway_block(b: &crate::modules::gateway::service::GatewayBalance) -> String {
-    let mut lines = vec![format!(
-        "Wallet balance (Circle Gateway, undeployed):\n  Total USDC: {:.2}\n  Total EURC: {:.2}",
-        b.unified_usdc, b.unified_eurc
-    )];
-    for (chain, amt) in &b.per_chain {
-        if *amt > 0.0 {
-            lines.push(format!("  - {} USDC: {:.2}", chain.to_uppercase(), amt));
-        }
-    }
-    for (chain, amt) in &b.per_chain_eurc {
-        if *amt > 0.0 {
-            lines.push(format!("  - {} EURC: {:.2}", chain.to_uppercase(), amt));
-        }
-    }
-    let cash_total = b.unified_usdc + b.unified_eurc;
-    if cash_total > 5.0 {
-        lines.push(
-            "Note: deployable capital is already in Gateway. Do not recommend 'deposit funds' — propose how to ALLOCATE this cash into the target weights (a first-deploy plan).".into(),
-        );
-    }
-    lines.join("\n")
-}
-
-/// Render the user's goal block for the strategist prompt. Empty goals
-/// (legacy portfolios) get a "(no goal set)" line — the strategist still
-/// has the rest of the context.
-fn format_goal_block(goal: &serde_json::Value) -> String {
-    if goal.is_null() || goal == &serde_json::json!({}) {
-        return "(no goal set yet — strategist should suggest a starter allocation)".into();
-    }
-    let name = goal
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("(unnamed)");
-    let horizon = goal.get("horizon").and_then(|v| v.as_str()).unwrap_or("?");
-    let risk = goal
-        .get("riskTolerance")
-        .and_then(|v| v.as_str())
-        .unwrap_or("?");
-    let monthly = goal
-        .get("monthlyContributionUsd")
-        .and_then(|v| v.as_f64())
-        .map(|v| format!(" · monthly +${:.0}", v))
-        .unwrap_or_default();
-    let usyc = goal
-        .get("includeUsyc")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let eurc = goal
-        .get("includeEurc")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let allocations = goal
-        .get("targetAllocation")
-        .and_then(|v| v.as_object())
-        .map(|m| {
-            let mut pairs: Vec<String> = m
-                .iter()
-                .map(|(k, v)| format!("{k} {:.0}%", v.as_f64().unwrap_or(0.0)))
-                .collect();
-            pairs.sort();
-            pairs.join(", ")
-        })
-        .unwrap_or_default();
-    let route_preferences = goal
-        .get("routePreferences")
-        .map(format_route_preferences)
-        .unwrap_or_default();
-    format!(
-        "{name} · horizon {horizon} · risk {risk}{monthly} · USYC opt-in: {usyc} · EURC opt-in: {eurc} · targets: {allocations}{route_preferences}"
-    )
-}
-
-fn format_route_preferences(route_preferences: &serde_json::Value) -> String {
-    let networks = json_string_list(route_preferences, "networks");
-    let future_networks = json_string_list(route_preferences, "networkWatchlist");
-    let tokens = json_string_list(route_preferences, "tokens");
-    let watchlist = json_string_list(route_preferences, "watchlist");
-    let networks = if networks.is_empty() {
-        "(none)".into()
-    } else {
-        networks.join(", ")
-    };
-    let future_networks = if future_networks.is_empty() {
-        "(none)".into()
-    } else {
-        future_networks.join(", ")
-    };
-    let tokens = if tokens.is_empty() {
-        "(none)".into()
-    } else {
-        tokens.join(", ")
-    };
-    let watchlist = if watchlist.is_empty() {
-        "(none)".into()
-    } else {
-        watchlist.join(", ")
-    };
-    format!(
-        " · route scope: wallet-ready networks {networks}; rebalance execution rails ARC-TESTNET, BASE-SEPOLIA; wallet-sync queue {future_networks}; target tokens {tokens}; watch {watchlist}"
-    )
-}
-
-fn json_string_list(value: &serde_json::Value, key: &str) -> Vec<String> {
-    value
-        .get(key)
-        .and_then(|v| v.as_array())
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|v| v.as_str())
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 /// Tool-aware strategist call. Runs up to `MAX_TOOL_ITERATIONS - 1` rounds
@@ -1614,67 +1127,6 @@ fn truncate_preview(s: &str, max: usize) -> String {
         out.push('…');
         out
     }
-}
-
-/// Snapshot the portfolio's holdings + per-asset prices at the moment of the
-/// decision. Persisted on `agent_decisions.snapshot` so the outcome compressor
-/// can compute *real* 24h deltas (vs. cumulative PnL) and the diary can render
-/// a counterfactual ("what if we'd done what we proposed?") instead of the
-/// Sprint 3 `realized + 0.5` placeholder.
-fn build_decision_snapshot(
-    portfolio: &Portfolio,
-    allocations: &[Allocation],
-    market: &MarketSnapshot,
-) -> serde_json::Value {
-    let mut price_by_symbol: HashMap<String, f64> = HashMap::with_capacity(market.assets.len());
-    for a in &market.assets {
-        price_by_symbol.insert(a.symbol.clone(), a.price_usd);
-    }
-
-    let holdings: Vec<serde_json::Value> = allocations
-        .iter()
-        .map(|a| {
-            // Prefer the market snapshot price; fall back to value/qty for
-            // assets the market data feed doesn't cover (e.g., USDC, USYC).
-            let price = price_by_symbol
-                .get(&a.asset_symbol)
-                .copied()
-                .unwrap_or_else(|| {
-                    if a.quantity.abs() > f64::EPSILON {
-                        a.value_usd / a.quantity
-                    } else {
-                        0.0
-                    }
-                });
-            json!({
-                "symbol": a.asset_symbol,
-                "quantity": a.quantity,
-                "priceUsd": price,
-                "valueUsd": a.value_usd,
-            })
-        })
-        .collect();
-
-    json!({
-        "capturedAt": market.captured_at,
-        "totalValueUsd": portfolio.total_value_usd,
-        "holdings": holdings,
-    })
-}
-
-fn format_allocations(allocations: &[Allocation]) -> String {
-    if allocations.is_empty() {
-        return "(empty portfolio)".into();
-    }
-    let mut rows = vec!["| Symbol | Qty | Target % | Current % | Value USD |".to_string()];
-    rows.push("|---|---|---|---|---|".into());
-    for a in allocations {
-        rows.push(format!(
-            "| {} | {:.4} | {:.2} | {:.2} | {:.2} |",
-            a.asset_symbol, a.quantity, a.target_weight, a.current_weight, a.value_usd
-        ));
-    }
-    rows.join("\n")
 }
 
 // ── Strategist response shape ──────────────────────────────────────────────
@@ -1857,28 +1309,13 @@ fn json_string<T: serde::Serialize>(value: &T) -> crate::error::Result<String> {
         .map_err(|e| crate::error::AppError::Internal(anyhow::anyhow!("serialize: {e}")))
 }
 
-/// Render harvestable losses as a human-readable block the strategist can
-/// reason over. Empty list collapses to "(none)" so the placeholder still
-/// resolves.
-fn format_harvestable_losses(losses: &[crate::modules::tax::HarvestableLoss]) -> String {
-    if losses.is_empty() {
-        return "(none)".to_string();
-    }
-    let mut out = String::new();
-    for l in losses {
-        out.push_str(&format!(
-            "- {symbol}: ${loss:.2} unrealized loss across {n} open lot(s)\n",
-            symbol = l.symbol,
-            loss = l.unrealized_loss_usd,
-            n = l.lots.len()
-        ));
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
+    use super::super::decision_context::{
+        build_strategist_context, format_goal_block, format_route_capabilities,
+    };
     use super::*;
+    use crate::modules::market_data::MarketSnapshot;
 
     #[test]
     fn pick_models_free_skips_critic_and_uses_regime_slug() {
@@ -2189,86 +1626,6 @@ mod tests {
         assert!(
             !rendered.contains("{{"),
             "allocator prompt has unresolved placeholder(s):\n{rendered}"
-        );
-    }
-
-    #[test]
-    fn clamp_allocation_enforces_cap_floor_executable_and_sum() {
-        let raw = json!({ "USDC": 10.0, "cbBTC": 90.0, "SOL": 50.0 })
-            .as_object()
-            .unwrap()
-            .clone();
-        let executable = ["USDC", "cbBTC", "WETH"];
-        let g = derive_guardrails("moderate", "neutral", 0.0); // cap 45, floor 20
-        let out = clamp_allocation(&raw, &executable, g);
-
-        // SOL is not executable → dropped.
-        assert!(!out.contains_key("SOL"));
-        // cbBTC respects the cap even after normalization.
-        assert!(out.get("cbBTC").copied().unwrap_or(0.0) <= g.single_asset_cap + 0.05);
-        // Sums to ~100.
-        let sum: f64 = out.values().sum();
-        assert!((sum - 100.0).abs() < 0.05, "sum={sum}");
-        // Stable/yield floor is met.
-        let stable: f64 = out
-            .iter()
-            .filter(|(k, _)| is_stable_symbol(k))
-            .map(|(_, w)| *w)
-            .sum();
-        assert!(stable >= g.stable_floor - 0.05, "stable={stable}");
-    }
-
-    #[test]
-    fn clamp_allocation_empty_or_garbage_falls_back_to_usdc() {
-        let empty = serde_json::Map::new();
-        let out = clamp_allocation(
-            &empty,
-            &["USDC"],
-            derive_guardrails("conservative", "neutral", 0.0),
-        );
-        assert_eq!(out.get("USDC").copied(), Some(100.0));
-
-        // All non-executable → still a valid USDC-only target.
-        let garbage = json!({ "DOGE": 100.0 }).as_object().unwrap().clone();
-        let out = clamp_allocation(
-            &garbage,
-            &["USDC", "cbBTC"],
-            derive_guardrails("aggressive", "neutral", 0.0),
-        );
-        assert_eq!(out.get("USDC").copied(), Some(100.0));
-    }
-
-    #[test]
-    fn derive_guardrails_tightens_in_risk_off_and_high_vol() {
-        let base = derive_guardrails("aggressive", "neutral", 0.0);
-        let off = derive_guardrails("aggressive", "risk_off", 0.0);
-        assert!(off.stable_floor > base.stable_floor);
-        assert!(off.volatile_cluster_cap < base.volatile_cluster_cap);
-        let high_vol = derive_guardrails("aggressive", "neutral", 1.2);
-        assert!(high_vol.volatile_cluster_cap < base.volatile_cluster_cap);
-        // RISK-2 hard ceiling always holds.
-        assert!(base.single_asset_cap <= 60.0);
-    }
-
-    #[test]
-    fn clamp_allocation_caps_volatile_cluster() {
-        // conservative + risk_off → a low cluster cap; an all-crypto raw is
-        // heavily trimmed back into the stable reserve.
-        let raw = json!({ "cbBTC": 50.0, "WETH": 50.0 })
-            .as_object()
-            .unwrap()
-            .clone();
-        let g = derive_guardrails("conservative", "risk_off", 0.0);
-        let out = clamp_allocation(&raw, &["USDC", "cbBTC", "WETH"], g);
-        let cluster: f64 = out
-            .iter()
-            .filter(|(k, _)| !is_stable_symbol(k))
-            .map(|(_, w)| *w)
-            .sum();
-        assert!(
-            cluster <= g.volatile_cluster_cap + 0.1,
-            "cluster={cluster} cap={}",
-            g.volatile_cluster_cap
         );
     }
 
