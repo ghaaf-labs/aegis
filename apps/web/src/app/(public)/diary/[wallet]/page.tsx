@@ -278,7 +278,10 @@ function DiaryCard({ entry, index }: { entry: DiaryEntry; index: number }) {
             </div>
           ) : (
             <p className="mt-4 border-t border-border-default pt-3 font-mono text-[11px] text-text-mut">
-              Outcome pending.
+              24h outcome pending · records{" "}
+              <time dateTime={outcomeDueAt(entry.createdAt).toISOString()}>
+                {relativeFuture(outcomeDueAt(entry.createdAt))}
+              </time>
             </p>
           )}
         </BrutalCardBody>
@@ -313,4 +316,18 @@ function OutcomeMetric({
 function signedPct(value: number) {
   const rounded = Math.round(value * 100) / 100;
   return `${rounded >= 0 ? "+" : ""}${rounded.toFixed(2)}%`;
+}
+
+function outcomeDueAt(createdAt: string) {
+  return new Date(new Date(createdAt).getTime() + 24 * 60 * 60 * 1000);
+}
+
+function relativeFuture(value: Date) {
+  const seconds = Math.ceil((value.getTime() - Date.now()) / 1000);
+  if (seconds <= 0) return "soon";
+  const minutes = Math.ceil(seconds / 60);
+  if (minutes < 60) return `in ${minutes}m`;
+  const hours = Math.ceil(minutes / 60);
+  if (hours < 48) return `in ${hours}h`;
+  return `in ${Math.ceil(hours / 24)}d`;
 }

@@ -579,7 +579,7 @@ export interface DigestSubscription {
 export interface DiaryEntry {
   decisionId: string;
   portfolioId: PortfolioId;
-  walletAddress: string;
+  publicHandle: string;
   regime: MarketRegime;
   modelSlug: string;
   confidence: number;
