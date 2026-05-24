@@ -34,6 +34,25 @@ pub struct GatewayBalance {
 /// per blockchain, so we list every wallet for the user and aggregate USDC
 /// and EURC across chains. Unfunded chains contribute zero rather than
 /// raising — fresh signups should see $0 across the board, not a 500.
+/// USDC total for one wallet's token list. On Arc, Circle lists the SAME USDC
+/// pot twice — a native entry and the ERC-20 at the canonical Arc USDC address
+/// (0x3600…), with identical amounts — so summing double-counts (verified live:
+/// 2 × 38.84 → 77.68 while the real balance is 38.84). That inflated figure
+/// over-sizes a CCTP burn and Circle then rejects it with INSUFFICIENT_TOKEN.
+/// Count the single pot (max) on Arc; sum elsewhere (one USDC entry per chain).
+fn wallet_usdc_total(tokens: &[TokenBalance], is_arc: bool) -> f64 {
+    let amounts = tokens.iter().filter_map(|tb| {
+        (normalize_balance_symbol(&tb.token.symbol).as_deref() == Some("USDC"))
+            .then(|| tb.amount.parse::<f64>().ok())
+            .flatten()
+    });
+    if is_arc {
+        amounts.fold(0.0_f64, f64::max)
+    } else {
+        amounts.sum()
+    }
+}
+
 pub async fn fetch_balance(
     http: &reqwest::Client,
     config: &Config,
@@ -63,16 +82,21 @@ pub async fn fetch_balance(
         let chain_key = blockchain_to_key(&w.blockchain);
 
         let tokens = fetch_wallet_tokens(http, config, &w.id).await?;
-        for tb in tokens {
+        // USDC is deduped per wallet (Arc lists the same pot twice); EURC and
+        // other tokens accumulate per entry below.
+        let is_arc = matches!(w.blockchain.as_str(), "ARC-TESTNET" | "ARC");
+        let usdc = wallet_usdc_total(&tokens, is_arc);
+        if usdc > 0.0 {
+            *balance.per_chain.entry(chain_key.clone()).or_insert(0.0) += usdc;
+            balance.unified_usdc += usdc;
+        }
+        for tb in &tokens {
             let amount: f64 = tb.amount.parse().unwrap_or(0.0);
             let Some(symbol) = normalize_balance_symbol(&tb.token.symbol) else {
                 continue;
             };
             match symbol.as_str() {
-                "USDC" => {
-                    *balance.per_chain.entry(chain_key.clone()).or_insert(0.0) += amount;
-                    balance.unified_usdc += amount;
-                }
+                "USDC" => {} // deduped above (Arc native == ERC-20, same pot)
                 "EURC" => {
                     *balance
                         .per_chain_eurc
@@ -120,12 +144,9 @@ pub async fn fetch_chain_usdc(
         return Ok(0.0);
     };
     let tokens = fetch_wallet_tokens(http, config, &wallet_id).await?;
-    let total = tokens
-        .iter()
-        .filter(|tb| tb.token.symbol.eq_ignore_ascii_case("USDC"))
-        .filter_map(|tb| tb.amount.parse::<f64>().ok())
-        .sum();
-    Ok(total)
+    // Dedupe Arc's native==ERC-20 USDC double-count (see `wallet_usdc_total`),
+    // so the executor's clamp sizes against the real spendable balance.
+    Ok(wallet_usdc_total(&tokens, chain == ChainKey::Arc))
 }
 
 pub async fn fetch_balance_for_user(
@@ -471,6 +492,24 @@ mod tests {
         assert_eq!(a.unified_usdc, b.unified_usdc);
         assert!(a.unified_usdc > 99.0);
         assert!((a.unified_eurc - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn arc_usdc_double_count_is_deduped() {
+        // Circle lists the same Arc USDC pot twice (native + ERC-20 at 0x3600…)
+        // with identical amounts. Summing would double-count and over-size a
+        // CCTP burn → INSUFFICIENT_TOKEN; on Arc we must count the pot once.
+        let usdc = |a: &str| TokenBalance {
+            amount: a.into(),
+            token: TokenMeta {
+                symbol: "USDC".into(),
+            },
+        };
+        let arc = [usdc("38.839682"), usdc("38.839682")];
+        assert!((wallet_usdc_total(&arc, true) - 38.839682).abs() < 1e-6);
+        // Non-Arc chains return a single USDC entry → sum == that entry.
+        let base = [usdc("52.22")];
+        assert!((wallet_usdc_total(&base, false) - 52.22).abs() < 1e-6);
     }
 
     #[test]

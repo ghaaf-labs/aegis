@@ -794,14 +794,17 @@ export interface LeaderboardEntry {
   userId: string;
   handle: string;
   decisionsExecuted: number;
+  eligibleOutcomes: number;
+  decisionsPerWeek: number;
   distinctModels: number;
   avg7dReturn: number;
   trustabilityDelta: number;
   lastDecisionAt: string | null;
+  aumUsd: number;
   label: "excellent" | "strong" | "stable" | "shaky" | "underperforming";
   recentModelSlug?: string;
   recentCriticVerdict?: {
-    verdict?: "approved" | "revised" | "abstained";
+    verdict?: "approved" | "revised" | "abstained" | "veto";
     demandsRevision?: boolean;
   };
 }

@@ -28,6 +28,7 @@ import { PlanUsage } from "@/components/settings/plan-usage";
 import { ReferralShare } from "@/components/settings/referral-share";
 import { accountApi, portfolioApi, walletApi } from "@/lib/api";
 import { friendlyAccountError } from "@/lib/account-error-copy";
+import { handleForUserId } from "@/lib/md5";
 import { useApiQuery } from "@/lib/use-api-query";
 import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
 
@@ -581,6 +582,9 @@ export default function SettingsIndex() {
           <DiaryVisibilityToggle
             key={`diary-${portfolioId}-${diaryPublic}`}
             initialPublic={diaryPublic}
+            publicHandle={
+              portfolio ? handleForUserId(portfolio.userId) : undefined
+            }
             walletAddress={wallet?.arcAddress}
             onChange={async (next) => {
               const res = await portfolioApi.setDiaryPublic(portfolioId, next);

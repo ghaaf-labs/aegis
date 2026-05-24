@@ -17,7 +17,7 @@ interface RouteParams {
 async function fetchDecision(id: string): Promise<DiaryEntry | null> {
   try {
     const res = await fetch(`${API_BASE}/diary/decision/${id}`, {
-      next: { revalidate: 60 },
+      cache: "no-store",
     });
     if (!res.ok) return null;
     return (await res.json()) as DiaryEntry;
@@ -29,7 +29,7 @@ async function fetchDecision(id: string): Promise<DiaryEntry | null> {
 async function fetchDecisionFull(id: string): Promise<DecisionFull | null> {
   try {
     const res = await fetch(`${API_BASE}/diary/decision/${id}/full`, {
-      next: { revalidate: 60 },
+      cache: "no-store",
     });
     if (!res.ok) return null;
     return (await res.json()) as DecisionFull;

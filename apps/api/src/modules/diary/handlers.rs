@@ -18,7 +18,7 @@ use crate::router::AppState;
 pub struct DiaryEntry {
     pub decision_id: Uuid,
     pub portfolio_id: Uuid,
-    pub wallet_address: String,
+    pub public_handle: String,
     pub regime: Option<String>,
     pub model_slug: Option<String>,
     pub confidence: f64,
@@ -73,7 +73,7 @@ fn parse_outcome(
 struct Row {
     decision_id: Uuid,
     portfolio_id: Uuid,
-    wallet_address: String,
+    public_handle: String,
     regime: Option<String>,
     model_slug: Option<String>,
     confidence: f64,
@@ -86,7 +86,7 @@ struct Row {
 
 const ROW_SELECT: &str = "SELECT d.id              AS decision_id,
                                 d.portfolio_id    AS portfolio_id,
-                                COALESCE(arc_route.address, base_route.address, '') AS wallet_address,
+                                SUBSTRING(md5(u.id::text), 1, 8) AS public_handle,
                                 d.regime          AS regime,
                                 d.model_slug      AS model_slug,
                                 d.confidence      AS confidence,
@@ -98,20 +98,14 @@ const ROW_SELECT: &str = "SELECT d.id              AS decision_id,
                          FROM agent_decisions d
                          JOIN portfolios p ON p.id = d.portfolio_id AND p.diary_public = TRUE
                          JOIN users u      ON u.id = p.user_id
-                         LEFT JOIN user_wallet_networks arc_route
-                           ON arc_route.user_id = p.user_id
-                          AND arc_route.blockchain = 'ARC-TESTNET'
-                         LEFT JOIN user_wallet_networks base_route
-                           ON base_route.user_id = p.user_id
-                          AND base_route.blockchain = 'BASE-SEPOLIA'
                          LEFT JOIN agent_memory m ON m.decision_id = d.id";
 
 pub async fn by_wallet(
     State(state): State<AppState>,
-    Path(wallet): Path<String>,
+    Path(identifier): Path<String>,
 ) -> Result<Json<Vec<DiaryEntry>>> {
-    let wallet = wallet.to_lowercase();
-    let Some(user_id) = wallet_routes::user_id_for_address(&state.db, &wallet).await? else {
+    let identifier = identifier.trim().to_lowercase();
+    let Some(user_id) = public_diary_user_id(&state.db, &identifier).await? else {
         return Ok(Json(vec![]));
     };
     let sql = format!(
@@ -124,6 +118,40 @@ pub async fn by_wallet(
         .fetch_all(&state.db)
         .await?;
     Ok(Json(rows.into_iter().map(row_to_entry).collect()))
+}
+
+async fn public_diary_user_id(db: &sqlx::PgPool, identifier: &str) -> Result<Option<Uuid>> {
+    if is_wallet_address(identifier) {
+        return wallet_routes::user_id_for_address(db, identifier).await;
+    }
+
+    if !is_public_handle(identifier) {
+        return Ok(None);
+    }
+
+    Ok(sqlx::query_scalar(
+        "SELECT u.id
+         FROM users u
+         JOIN portfolios p ON p.user_id = u.id AND p.diary_public = TRUE
+         WHERE SUBSTRING(md5(u.id::text), 1, 8) = $1
+            OR md5(u.id::text) = $1
+         GROUP BY u.id
+         LIMIT 1",
+    )
+    .bind(identifier)
+    .fetch_optional(db)
+    .await?)
+}
+
+fn is_wallet_address(value: &str) -> bool {
+    let Some(rest) = value.strip_prefix("0x") else {
+        return false;
+    };
+    rest.len() == 40 && rest.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn is_public_handle(value: &str) -> bool {
+    matches!(value.len(), 8 | 32) && value.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 pub async fn by_decision(
@@ -288,7 +316,7 @@ fn row_to_entry(row: Row) -> DiaryEntry {
     DiaryEntry {
         decision_id: row.decision_id,
         portfolio_id: row.portfolio_id,
-        wallet_address: row.wallet_address,
+        public_handle: row.public_handle,
         regime: row.regime,
         model_slug: row.model_slug,
         confidence: row.confidence,
@@ -296,5 +324,21 @@ fn row_to_entry(row: Row) -> DiaryEntry {
         created_at: row.created_at,
         outcome,
         critic_verdict: row.critic_verdict,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_public_handle, is_wallet_address};
+
+    #[test]
+    fn public_diary_identifier_validation_accepts_wallets_and_handles() {
+        assert!(is_wallet_address(
+            "0x1111111111111111111111111111111111111111"
+        ));
+        assert!(is_public_handle("94b9b064"));
+        assert!(is_public_handle("94b9b0640133a45667a0a60638961ea4"));
+        assert!(!is_wallet_address("94b9b064"));
+        assert!(!is_public_handle("not-public"));
     }
 }
