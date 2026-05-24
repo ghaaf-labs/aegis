@@ -272,9 +272,9 @@ pub(super) async fn previous_regime(state: &AppState, portfolio_id: Uuid) -> Opt
 // ── Context builders ───────────────────────────────────────────────────────
 
 /// Render the route-capability block shared by the strategist and allocator
-/// prompts. It separates allocation targets from track-only context. In real
-/// mode, allocation targets are executable-only so a Gate-1 approval can build
-/// a Gate-2 execution review without asking the user to resolve hidden rails.
+/// prompts. It separates designable allocation targets from routes that can
+/// execute right now, so Gate-1 does not silently collapse a target to USDC
+/// just because a rail is temporarily not ready.
 pub(super) fn format_route_capabilities(cfg: &crate::config::Config) -> String {
     use crate::modules::rebalance::registry::{
         allocation_target_symbols, capabilities::RuntimeCapabilities,
@@ -291,17 +291,17 @@ pub(super) fn format_route_capabilities(cfg: &crate::config::Config) -> String {
     let pending: Vec<&str> = designable
         .iter()
         .copied()
-        .filter(|s| !targets.iter().any(|e| e.eq_ignore_ascii_case(s)))
+        .filter(|s| !executable.iter().any(|e| e.eq_ignore_ascii_case(s)))
         .collect();
     let target_mode = if caps.real_mode {
-        "real-mode executable sleeves"
+        "designable sleeves; approval gate verifies execution readiness"
     } else {
         "mock/demo designable sleeves"
     };
     format!(
         "- **Allocation targets** ({target_mode}; allocator may assign target weight only here): {}\n\
          - **Executable now** (rails accepted by the planner and approval gate today): {}\n\
-         - **Track-only today** (supported/visible, but do not target until the route is configured): {}",
+         - **Needs route before execution** (may be targeted, but auto-pilot must leave it as a review until ready): {}",
         targets.join(", "),
         executable.join(", "),
         if pending.is_empty() { "none".to_string() } else { pending.join(", ") },

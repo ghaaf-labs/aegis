@@ -6,7 +6,7 @@ use crate::domain::token::native_chain;
 use crate::error::AppError;
 use crate::error::Result;
 use crate::modules::rebalance::models::{ChainKey, PlanInput};
-use crate::modules::rebalance::registry::{executable_token_symbols, RuntimeCapabilities};
+use crate::modules::rebalance::registry::RuntimeCapabilities;
 use crate::modules::wallet_routes;
 use crate::router::AppState;
 
@@ -45,7 +45,6 @@ pub(super) async fn build_plan_input(state: &AppState, portfolio_id: Uuid) -> Re
         }
     }
     apply_route_preferences_to_targets(&goal, &mut target_weights);
-    apply_execution_capabilities_to_targets(&state.config, &mut target_weights);
     let wallet_cash_only = real_wallet_cash_only_planning(&state.config);
 
     let relevant_symbols: Vec<String> = allocations
@@ -151,38 +150,6 @@ fn reserve_real_execution_usdc_buffer(
         if *amount > 0.0 {
             *amount = (*amount - REAL_EXECUTION_CHAIN_USDC_BUFFER).max(0.0);
         }
-    }
-}
-
-pub(super) fn apply_execution_capabilities_to_targets(
-    cfg: &crate::config::Config,
-    target_weights: &mut HashMap<String, f64>,
-) {
-    if target_weights.is_empty() {
-        return;
-    }
-    let caps = RuntimeCapabilities::from_config(cfg);
-    if !caps.real_mode {
-        return;
-    }
-    let executable = executable_token_symbols(&caps, cfg);
-    retain_executable_targets(target_weights, &executable);
-}
-
-fn retain_executable_targets(target_weights: &mut HashMap<String, f64>, executable: &[&str]) {
-    let mut dropped_weight = 0.0;
-    target_weights.retain(|symbol, weight| {
-        let keep = executable.iter().any(|e| e.eq_ignore_ascii_case(symbol));
-        if !keep && weight.is_finite() && *weight > 0.0 {
-            dropped_weight += *weight;
-        }
-        keep
-    });
-    if dropped_weight > 0.0 {
-        *target_weights.entry("USDC".to_string()).or_insert(0.0) += dropped_weight;
-    }
-    if target_weights.is_empty() {
-        target_weights.insert("USDC".to_string(), 1.0);
     }
 }
 
@@ -436,31 +403,6 @@ mod tests {
 
         assert!(targets.contains_key("EURC"));
         assert!(!targets.contains_key("USYC"));
-    }
-
-    #[test]
-    fn executable_filter_moves_unavailable_target_weight_to_usdc() {
-        let mut targets = HashMap::from([
-            ("LINK".to_string(), 0.25),
-            ("UNI".to_string(), 0.15),
-            ("USDC".to_string(), 0.60),
-        ]);
-
-        retain_executable_targets(&mut targets, &["USDC", "LINK"]);
-
-        assert_eq!(targets.get("LINK").copied(), Some(0.25));
-        let usdc = targets.get("USDC").copied().unwrap_or_default();
-        assert!((usdc - 0.75).abs() < 1e-9);
-        assert!(!targets.contains_key("UNI"));
-    }
-
-    #[test]
-    fn executable_filter_falls_back_to_usdc_when_all_targets_are_unavailable() {
-        let mut targets = HashMap::from([("UNI".to_string(), 1.0)]);
-
-        retain_executable_targets(&mut targets, &["USDC"]);
-
-        assert_eq!(targets, HashMap::from([("USDC".to_string(), 1.0)]));
     }
 
     #[test]
