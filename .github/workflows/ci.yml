@@ -326,6 +326,7 @@ jobs:
           set -e
           git config --global --add safe.directory /opt/aegis
           cd /opt/aegis
+          sudo chown -R "$(whoami)" .
           git checkout -- .env 2>/dev/null || true
           git pull origin main
           bash scripts/fetch-secrets.sh
