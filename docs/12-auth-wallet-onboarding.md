@@ -497,7 +497,11 @@ for older rows until a final column-drop migration.
 - `auth_sessions` — `id` (jti), `user_id`, `expires_at`, `revoked_at`,
   `created_at`, `last_seen_at`. Drives revocation + session rotation.
 
-### 9.4 Migration SQL (`0025_unified_auth.sql`)
+### 9.4 Migration SQL (originally `0025_unified_auth.sql`)
+
+> The 0001–0039 migration history has since been squashed into a single
+> `0001_baseline.sql`; the DDL below is kept as the design record for the auth
+> schema and now lives in that baseline.
 
 ```sql
 ALTER TABLE users
@@ -520,7 +524,8 @@ CREATE INDEX users_deletion_pending_idx ON users (deletion_requested_at)
 
 `0026_drop_auth_code_intent.sql` (post-cutover): `ALTER TABLE wallet_auth_codes DROP COLUMN intent;`
 
-**Shipped migration set (as built, reconciled with code):** `0025_unified_auth`
+**Shipped migration set (as built, reconciled with code; all squashed into
+`0001_baseline.sql`):** `0025_unified_auth`
 (columns above + an `account_status='pending_wallet'` backfill),
 `0026_drop_auth_code_intent`, `0027_auth_rate_limits` (per-IP throttle table,
 hashed bucket ids — §10.4), `0028_clear_legacy_wallet_rows` (null pre-cutover
