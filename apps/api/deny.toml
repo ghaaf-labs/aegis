@@ -15,7 +15,14 @@ yanked = "deny"
 # so the Marvin private-key timing sidechannel is not reachable in this use.
 # Re-evaluate when the rsa crate ships a fixed release or Circle documents a
 # non-RSA envelope for entity-secret ciphertext.
-ignore = ["RUSTSEC-2023-0071"]
+ignore = [
+    "RUSTSEC-2023-0071",
+    # RUSTSEC-2024-0436 (paste unmaintained). `paste` is a compile-time
+    # proc-macro pulled in transitively by alloy (alloy-primitives); it has no
+    # runtime or security surface and there is no maintained drop-in wired
+    # through alloy yet. Re-evaluate when alloy drops the dependency.
+    "RUSTSEC-2024-0436",
+]
 
 [bans]
 multiple-versions = "warn"

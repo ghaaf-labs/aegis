@@ -417,7 +417,7 @@ pub const TOKEN_REGISTRY: &[TokenSpec] = &[
     },
     // sUSDS — DEX-executable on Base, but stays non-designable until its class is
     // corrected (Volatile today; it is a savings-yield token — proposing it as a
-    // volatile would mis-risk it).
+    // volatile would overstate its risk).
     TokenSpec {
         symbol: SUSDS,
         label: "Savings USDS",

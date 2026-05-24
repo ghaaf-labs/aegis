@@ -549,7 +549,7 @@ mod tests {
     fn designable_excludes_price_only_and_unroutable_tokens() {
         let designable = designable_allocation_symbols(&crate::config::test_config());
         // Price-only `BTC` (cbBTC is the sleeve), wrong-chain `WBTC`, the
-        // mis-classified `sUSDS`, and the un-routable other-L1-natives (no
+        // misclassified `sUSDS`, and the un-routable other-L1-natives (no
         // Arc/Base venue) must not be offered — the agent can only design what we
         // can route. (LINK/UNI/AERO are now designable; see the other test.)
         for sym in [
