@@ -8,7 +8,6 @@ export const metadata: Metadata = {
     description: "Create your Aegis account or sign in to get started.",
     path: "/signup",
   }),
-  robots: "noindex, nofollow",
 };
 
 export default function SignupPage({

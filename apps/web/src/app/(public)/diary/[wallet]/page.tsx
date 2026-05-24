@@ -35,7 +35,7 @@ export async function generateMetadata({
 }: PageProps): Promise<Metadata> {
   const { wallet } = await params;
   if (!DIARY_IDENTIFIER_RE.test(wallet)) {
-    return { title: "Diary link invalid — Aegis", robots: { index: false } };
+    return { title: "Diary link invalid — Aegis" };
   }
   const isWallet = WALLET_RE.test(wallet);
   const title = `Aegis agent diary · ${isWallet ? wallet.slice(0, 10) : `0x${wallet.slice(0, 8)}`}…`;
