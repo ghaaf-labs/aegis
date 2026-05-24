@@ -38,17 +38,10 @@ use crate::modules::sse::{RebalancePlanPayload, SseEvent};
 use crate::modules::wallet_routes;
 use crate::router::AppState;
 
-use ledger::{
-    record_acquisition_for_leg, record_allocation_disposal_for_leg, record_tax_disposal_for_leg,
-    recompute_portfolio_values,
-};
 use leg_status::{
     bump_attempt_count, mark_leg_confirmed, mark_leg_failed, mark_leg_stranded, mark_leg_submitted,
 };
-use legs::{
-    blockchain_for_chain, is_buy_leg, is_sell_leg, parse_kind, quote_filled_qty, LegRow,
-    MAX_LEG_ATTEMPTS,
-};
+use legs::{blockchain_for_chain, parse_kind, quote_filled_qty, LegRow, MAX_LEG_ATTEMPTS};
 use stranding::{idempotency_key_for_leg, leg_strands_funds_on_failure, pending_funding_dependency, protocol_fee_notional_from_legs};
 
 /// Persist a planned set of legs as a new `rebalances` + `rebalance_legs`
@@ -374,50 +367,10 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
         .await?;
         confirmed_so_far.push(leg.clone());
 
-        let mut holdings_changed = false;
-
-        // Sell-side holdings writeback: a successful non-USDC → USDC leg must
-        // reduce the sold allocation before the dashboard reloads. Tax lot
-        // disposal is separate bookkeeping and cannot be the holdings source
-        // of truth.
-        if is_sell_leg(kind, leg) {
-            if let Err(e) =
-                record_allocation_disposal_for_leg(state, portfolio_id, leg, filled_qty).await
-            {
-                tracing::warn!(leg_id=?leg.id, error=%e, "allocations: disposal writeback failed");
-            } else {
-                holdings_changed = true;
-            }
-
-            // Tax lot disposal: a successful sell leg that produced USDC
-            // closes the oldest matching open lots FIFO. Best-effort —
-            // failures here log + continue rather than rolling back the
-            // already-confirmed leg.
-            if let Err(e) = record_tax_disposal_for_leg(state, portfolio_id, leg).await {
-                tracing::warn!(leg_id=?leg.id, error=%e, "tax: lot disposal failed");
-            }
-        }
-
-        // Buy-side holdings writeback: USDC → asset legs increment the
-        // corresponding allocations row. Without this Portfolio Value
-        // stays $0 even after real on-chain swaps confirm, which makes
-        // the entire dashboard look broken to the user. Recompute the
-        // portfolio total after every buy so a *partial* plan (e.g.
-        // USYC leg reverts on Arc but BTC/ETH/SOL already settled) still
-        // surfaces the holdings the user actually owns.
-        if is_buy_leg(kind, leg) {
-            if let Err(e) = record_acquisition_for_leg(state, portfolio_id, leg, filled_qty).await {
-                tracing::warn!(leg_id=?leg.id, error=%e, "allocations: acquisition writeback failed");
-            } else {
-                holdings_changed = true;
-            }
-        }
-
-        if holdings_changed {
-            if let Err(e) = recompute_portfolio_values(state, portfolio_id).await {
-                tracing::warn!(?portfolio_id, error=%e, "portfolios: value recompute failed");
-            }
-        }
+        // Mirror the confirmed leg into the holdings ledger (sell reduces /
+        // buy increments the allocation, recompute totals once). Without this
+        // Portfolio Value stays $0 after real swaps confirm.
+        ledger::apply_leg_writeback(state, portfolio_id, kind, leg, filled_qty).await;
 
         sqlx::query(
             "UPDATE rebalances
@@ -443,50 +396,8 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
     // a second user-initiated movement. Billing them would double-charge bridge
     // plans and disagree with the review UI/history totals.
     let plan_total = protocol_fee_notional_from_legs(&legs);
-
     crate::modules::observability::counters::record_rebalance_succeeded(plan_total);
-
-    if plan_total > 0.0 {
-        let payer_address = wallet_routes::arc_address_for_portfolio(
-            &state.db,
-            portfolio_id,
-            &state.config.circle_wallet_set_id,
-        )
-        .await?
-        .unwrap_or_default();
-
-        if payer_address.is_empty() && !(state.config.execution_mock || state.config.circle_mock) {
-            return Err(AppError::Internal(anyhow::anyhow!(
-                "cannot settle protocol fee: Arc wallet route missing for portfolio {portfolio_id}"
-            )));
-        }
-
-        let payer_address = if payer_address.is_empty() {
-            "0x0000000000000000000000000000000000000000"
-        } else {
-            payer_address.as_str()
-        };
-
-        let settlement_tx = crate::modules::billing::service::settle_protocol_fee_via_nanopayments(
-            &state.config,
-            payer_address,
-            plan_total,
-        )
-        .await
-        .ok()
-        .flatten();
-
-        if let Err(e) = crate::modules::billing::service::record_protocol_fee(
-            &state.db,
-            rebalance_id,
-            plan_total,
-            settlement_tx.as_deref(),
-        )
-        .await
-        {
-            tracing::warn!(rebalance_id=?rebalance_id, error=%e, "billing: protocol fee record failed");
-        }
-    }
+    ledger::settle_protocol_fee(state, rebalance_id, portfolio_id, plan_total).await?;
 
     Ok(())
 }

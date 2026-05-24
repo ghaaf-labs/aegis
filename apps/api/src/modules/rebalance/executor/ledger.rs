@@ -2,9 +2,11 @@ use rust_decimal::prelude::ToPrimitive;
 use uuid::Uuid;
 
 use crate::error::{AppError, Result};
+use crate::modules::rebalance::models::LegKind;
+use crate::modules::wallet_routes;
 use crate::router::AppState;
 
-use super::legs::{settled_quantity, LegRow};
+use super::legs::{is_buy_leg, is_sell_leg, settled_quantity, LegRow};
 
 /// Most recent USD price from `price_history` for the given symbol. Returns
 /// `None` when the symbol isn't tracked (USYC, etc.). `price_history.price_usd`
@@ -201,4 +203,106 @@ pub(super) async fn record_tax_disposal_for_leg(
     }
     let qty = leg.amount_usdc.to_f64().unwrap_or(0.0) / price;
     crate::modules::tax::service::record_disposal(state, allocation_id, qty).await
+}
+
+/// Mirror a just-confirmed leg into the holdings ledger: a sell reduces the
+/// sold allocation (and closes FIFO tax lots), a buy increments the acquired
+/// allocation, and the portfolio totals are recomputed once if either side
+/// moved — so a *partial* plan (e.g. the USYC leg reverts on Arc but BTC/ETH
+/// already settled) still surfaces the holdings the user actually owns.
+///
+/// Best-effort throughout: the on-chain leg is already settled, so a bookkeeping
+/// miss logs and continues rather than unwinding a confirmed trade. Tax-lot
+/// disposal is separate bookkeeping and can never be the holdings source of
+/// truth, so its failure doesn't block the allocation writeback.
+pub(super) async fn apply_leg_writeback(
+    state: &AppState,
+    portfolio_id: Uuid,
+    kind: LegKind,
+    leg: &LegRow,
+    filled_qty: Option<f64>,
+) {
+    let mut holdings_changed = false;
+
+    if is_sell_leg(kind, leg) {
+        if let Err(e) = record_allocation_disposal_for_leg(state, portfolio_id, leg, filled_qty).await
+        {
+            tracing::warn!(leg_id=?leg.id, error=%e, "allocations: disposal writeback failed");
+        } else {
+            holdings_changed = true;
+        }
+        if let Err(e) = record_tax_disposal_for_leg(state, portfolio_id, leg).await {
+            tracing::warn!(leg_id=?leg.id, error=%e, "tax: lot disposal failed");
+        }
+    }
+
+    if is_buy_leg(kind, leg) {
+        if let Err(e) = record_acquisition_for_leg(state, portfolio_id, leg, filled_qty).await {
+            tracing::warn!(leg_id=?leg.id, error=%e, "allocations: acquisition writeback failed");
+        } else {
+            holdings_changed = true;
+        }
+    }
+
+    if holdings_changed {
+        if let Err(e) = recompute_portfolio_values(state, portfolio_id).await {
+            tracing::warn!(?portfolio_id, error=%e, "portfolios: value recompute failed");
+        }
+    }
+}
+
+/// Settle the 25 bps protocol fee for an executed plan via Nanopayments and
+/// record it. `notional` is the billed economic notional (CCTP mint legs are
+/// excluded upstream — they're the receive-side of a burn, not a second move).
+/// No-op when the notional rounds to zero.
+pub(super) async fn settle_protocol_fee(
+    state: &AppState,
+    rebalance_id: Uuid,
+    portfolio_id: Uuid,
+    notional: f64,
+) -> Result<()> {
+    if notional <= 0.0 {
+        return Ok(());
+    }
+
+    let payer_address = wallet_routes::arc_address_for_portfolio(
+        &state.db,
+        portfolio_id,
+        &state.config.circle_wallet_set_id,
+    )
+    .await?
+    .unwrap_or_default();
+
+    if payer_address.is_empty() && !(state.config.execution_mock || state.config.circle_mock) {
+        return Err(AppError::Internal(anyhow::anyhow!(
+            "cannot settle protocol fee: Arc wallet route missing for portfolio {portfolio_id}"
+        )));
+    }
+
+    let payer_address = if payer_address.is_empty() {
+        "0x0000000000000000000000000000000000000000"
+    } else {
+        payer_address.as_str()
+    };
+
+    let settlement_tx = crate::modules::billing::service::settle_protocol_fee_via_nanopayments(
+        &state.config,
+        payer_address,
+        notional,
+    )
+    .await
+    .ok()
+    .flatten();
+
+    if let Err(e) = crate::modules::billing::service::record_protocol_fee(
+        &state.db,
+        rebalance_id,
+        notional,
+        settlement_tx.as_deref(),
+    )
+    .await
+    {
+        tracing::warn!(rebalance_id=?rebalance_id, error=%e, "billing: protocol fee record failed");
+    }
+    Ok(())
 }
