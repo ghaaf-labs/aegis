@@ -201,11 +201,14 @@ async fn wallet_reconciler_heals_pending_wallet_without_user_polling() {
     let provider = MockProvider;
     let service = WalletService::new(&ctx.pool, &provider, &ctx.config, &sse);
 
-    let healed = service
+    // The reconcile pass must succeed. Its return value is a *global* count of
+    // healed wallets; under parallel integration tests a concurrent reconcile
+    // may heal this user first, so the count can legitimately be 0 here. Assert
+    // on THIS user's outcome below instead of the shared count.
+    service
         .reconcile_pending_wallets(5000)
         .await
         .expect("reconcile pending wallets");
-    assert!(healed >= 1);
 
     let status: String = sqlx::query_scalar("SELECT account_status FROM users WHERE id = $1")
         .bind(user_id)

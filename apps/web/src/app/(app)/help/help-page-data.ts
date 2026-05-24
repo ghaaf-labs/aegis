@@ -85,7 +85,7 @@ export const STATUS_ROWS: StatusRowItem[] = [
 export const SUPPORT_ROWS = [
   [
     "Never paste secrets",
-    "Aegis support should not need private keys, seed phrases, or OTPs.",
+    "Aegis support should not need private keys, seed phrases, or one-time codes.",
   ],
   ["Use IDs", "Share a rebalance ID, decision ID, wallet route, or trace row."],
   [
