@@ -71,6 +71,7 @@ describe("<Sidebar />", () => {
     expect(exploreLink).not.toBeNull();
     expect(container.textContent).toContain("Explore demos");
     expect(container.textContent).toContain("Leaderboard");
+    expect(container.textContent).toContain("Regime model");
     expect(container.textContent).toContain("Help");
 
     act(() => root.unmount());

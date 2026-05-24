@@ -4,6 +4,7 @@ import { useEffect, useState, type ComponentType } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Activity,
   BarChart3,
   Bot,
   CreditCard,
@@ -162,6 +163,12 @@ const BASE_NAV_SECTIONS: NavSection[] = [
         label: "Leaderboard",
         description: "public results",
       },
+      {
+        href: "/about/regime",
+        icon: Activity,
+        label: "Regime model",
+        description: "classifier evidence",
+      },
     ],
   },
 ];
@@ -186,7 +193,13 @@ const NAV_SECTIONS = PRICING_UI_ENABLED
     )
   : BASE_NAV_SECTIONS;
 
-const PUBLIC_NAV_HREFS = new Set(["/explore", "/leaderboard", "/help"]);
+const PUBLIC_NAV_HREFS = new Set([
+  "/about",
+  "/about/regime",
+  "/explore",
+  "/leaderboard",
+  "/help",
+]);
 
 const SIGNED_OUT_NAV: NavItem[] = [
   {
@@ -213,6 +226,12 @@ const SIGNED_OUT_NAV: NavItem[] = [
     icon: Info,
     label: "About",
     description: "how Aegis works",
+  },
+  {
+    href: "/about/regime",
+    icon: Activity,
+    label: "Regime model",
+    description: "classifier evidence",
   },
   {
     href: "/help",
