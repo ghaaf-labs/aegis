@@ -9,7 +9,6 @@ export const metadata = {
     description: "Sign in to Aegis with your email. No password required.",
     path: "/login",
   }),
-  robots: "noindex, nofollow",
 };
 
 function WalletCardSkeleton() {

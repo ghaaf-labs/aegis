@@ -18,9 +18,7 @@ const jetbrainsMono = JetBrains_Mono({
   display: "swap",
 });
 
-const isIndexable =
-  process.env.VERCEL_ENV === "production" ||
-  process.env.NEXT_PUBLIC_SITE_INDEXABLE === "true";
+const isIndexable = process.env.NEXT_PUBLIC_SITE_INDEXABLE === "true";
 
 export const metadata: Metadata = {
   metadataBase: new URL(
