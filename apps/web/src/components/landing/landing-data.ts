@@ -18,8 +18,9 @@ import type { LeaderboardEntry, Traction } from "@/lib/api";
 export const LEADERBOARD_PREVIEW_COUNT = 3;
 
 /** Compact USD formatting for the trust-stats bar: $0 → "$0", 1_240 →
- *  "$1.2k", 142_000 → "$142k", 3_200_000 → "$3.2M". */
-export function formatCompactUsd(value: number): string {
+ *  "$1.2k", 142_000 → "$142k", 3_200_000 → "$3.2M". Internal — exposed only
+ *  through `tractionStats` below. */
+function formatCompactUsd(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return "$0";
   if (value < 1_000) return `$${Math.round(value)}`;
   if (value < 1_000_000) {
