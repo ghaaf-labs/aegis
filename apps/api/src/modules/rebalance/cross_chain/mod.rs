@@ -12,11 +12,19 @@
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "real-cctp")]
 use sha2::{Digest, Sha256};
 
 use crate::config::Config;
 use crate::error::{AppError, Result};
 use crate::modules::rebalance::models::ChainKey;
+
+#[cfg(feature = "real-cctp")]
+use fees::{BurnFeeChoice, CctpFeeEntry, max_fee_for, select_burn_fee};
+use mock::{mock_attestation, mock_burn_receipt, mock_tx_hash};
+
+mod fees;
+mod mock;
 
 #[cfg(feature = "real-cctp")]
 use alloy::{
@@ -141,71 +149,6 @@ struct IrisV2Message {
 pub struct Attestation {
     pub message: String,
     pub attestation: String,
-}
-
-/// CCTP V2 finality thresholds. 2000 = standard finality (~13min on Base, free).
-/// 1000 = Fast Transfer (sub-30s) but requires a non-zero `maxFee`.
-#[cfg_attr(not(any(feature = "real-cctp", test)), allow(dead_code))]
-const MIN_FINALITY_STANDARD: u32 = 2000;
-#[cfg_attr(not(any(feature = "real-cctp", test)), allow(dead_code))]
-const MIN_FINALITY_FAST: u32 = 1000;
-
-/// One row of Circle's `/v2/burn/USDC/fees/{src}/{dest}` response: the
-/// `minimumFee` (bps) charged for a burn at the given `finalityThreshold`.
-#[cfg_attr(not(any(feature = "real-cctp", test)), allow(dead_code))]
-#[derive(Debug, Clone, Deserialize, PartialEq)]
-struct CctpFeeEntry {
-    #[serde(rename = "finalityThreshold")]
-    finality_threshold: u32,
-    /// bps — may be fractional (e.g. Arb→Base returns `1.3`), so it must
-    /// deserialize as a float, not a u32 (a u32 silently fails the whole
-    /// response decode and drops the burn to slow standard finality).
-    #[serde(rename = "minimumFee")]
-    minimum_fee: f64,
-}
-
-/// The chosen burn parameters: a finality threshold plus the fee (in bps) Circle
-/// charges at it. `fee_bps == 0` is the standard, free path.
-#[cfg_attr(not(any(feature = "real-cctp", test)), allow(dead_code))]
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct BurnFeeChoice {
-    finality_threshold: u32,
-    fee_bps: f64,
-}
-
-impl BurnFeeChoice {
-    #[cfg_attr(not(any(feature = "real-cctp", test)), allow(dead_code))]
-    const STANDARD: Self = Self {
-        finality_threshold: MIN_FINALITY_STANDARD,
-        fee_bps: 0.0,
-    };
-}
-
-/// Select the Fast Transfer threshold + its quoted fee from Circle's fee table.
-/// Falls back to the free standard path when no fast entry exists (so the
-/// working path is never broken on a fee-table change). Never hardcodes a fee.
-#[cfg_attr(not(any(feature = "real-cctp", test)), allow(dead_code))]
-fn select_burn_fee(entries: &[CctpFeeEntry]) -> BurnFeeChoice {
-    entries
-        .iter()
-        .find(|e| e.finality_threshold == MIN_FINALITY_FAST)
-        .map(|e| BurnFeeChoice {
-            finality_threshold: MIN_FINALITY_FAST,
-            fee_bps: e.minimum_fee,
-        })
-        .unwrap_or(BurnFeeChoice::STANDARD)
-}
-
-/// Compute the absolute on-chain `maxFee` (USDC, 6 decimals) from a burn
-/// `amount` and a fee in bps, rounding up so the burn never under-quotes.
-#[cfg_attr(not(any(feature = "real-cctp", test)), allow(dead_code))]
-fn max_fee_for(amount: u128, fee_bps: f64) -> u128 {
-    if fee_bps <= 0.0 {
-        return 0;
-    }
-    // amount * fee_bps / 10_000, rounded up so the burn never under-quotes.
-    let fee = (amount as f64) * fee_bps / 10_000.0;
-    (fee.ceil() as u128).max(1)
 }
 
 pub struct CctpClient<'a> {
@@ -881,136 +824,9 @@ pub fn build_hook_payload(
     }
 }
 
-fn mock_tx_hash(kind: &str, chain: &str, salt: &str) -> String {
-    let mut h = Sha256::new();
-    h.update(kind.as_bytes());
-    h.update(b":");
-    h.update(chain.as_bytes());
-    h.update(b":");
-    h.update(salt.as_bytes());
-    format!("0x{}", hex::encode(h.finalize()))
-}
-
-fn mock_burn_receipt(
-    src: ChainKey,
-    dest: ChainKey,
-    amount: f64,
-    hook: &HookPayload,
-) -> BurnReceipt {
-    let salt = format!(
-        "{}->{}:{}:{}",
-        src.as_str(),
-        dest.as_str(),
-        amount,
-        hook.recipient
-    );
-    let mut h = Sha256::new();
-    h.update(b"msg:");
-    h.update(salt.as_bytes());
-    let message_hash = format!("0x{}", hex::encode(h.finalize()));
-    BurnReceipt {
-        tx_hash: mock_tx_hash("burn", src.as_str(), &salt),
-        message_hash,
-    }
-}
-
-fn mock_attestation(message_hash: &str) -> Attestation {
-    Attestation {
-        message: format!("0x{}", hex::encode(message_hash.as_bytes())),
-        attestation: format!(
-            "0x{}",
-            hex::encode(format!("att:{message_hash}").as_bytes())
-        ),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
-
-    fn cfg() -> Config {
-        crate::config::test_config()
-    }
-
-    #[tokio::test]
-    async fn mock_burn_is_deterministic() {
-        let http = reqwest::Client::new();
-        let cfg = cfg();
-        let client = CctpClient::new(&http, &cfg);
-        let hook = build_hook_payload("0xabc", "0xdef", 3000, 1_000_000, 1_700_000_000);
-
-        let r1 = client
-            .deposit_for_burn(ChainKey::Arc, ChainKey::Base, 100.0, &hook)
-            .await
-            .unwrap();
-        let r2 = client
-            .deposit_for_burn(ChainKey::Arc, ChainKey::Base, 100.0, &hook)
-            .await
-            .unwrap();
-        assert_eq!(r1, r2, "mock burn must be deterministic");
-        assert!(r1.tx_hash.starts_with("0x"));
-        assert!(r1.message_hash.starts_with("0x"));
-    }
-
-    #[tokio::test]
-    async fn mock_attestation_roundtrips() {
-        let http = reqwest::Client::new();
-        let cfg = cfg();
-        let client = CctpClient::new(&http, &cfg);
-        let hook = build_hook_payload("0xabc", "0xdef", 3000, 1, 1);
-        let burn = client
-            .deposit_for_burn(ChainKey::Arc, ChainKey::Base, 50.0, &hook)
-            .await
-            .unwrap();
-        let att = client
-            .wait_for_attestation(ChainKey::Arc.domain_id(), &burn.tx_hash)
-            .await
-            .unwrap();
-        assert!(!att.message.is_empty());
-        assert!(!att.attestation.is_empty());
-        let mint = client.receive_message(ChainKey::Base, &att).await.unwrap();
-        assert!(mint.tx_hash.starts_with("0x"));
-    }
-
-    #[test]
-    fn fee_table_selects_fast_threshold_and_uses_parsed_fee() {
-        // Sample shape of Circle's GET /v2/burn/USDC/fees/{src}/{dest} body:
-        // one row per finality threshold, fee in bps under `minimumFee`. The fast
-        // fee can be FRACTIONAL (Arb→Base really returns 1.3) — a u32 here would
-        // fail the whole decode and silently drop to slow standard finality.
-        let body = r#"[
-            {"finalityThreshold": 2000, "minimumFee": 0},
-            {"finalityThreshold": 1000, "minimumFee": 1.3}
-        ]"#;
-        let entries: Vec<CctpFeeEntry> = serde_json::from_str(body).expect("fee body parses");
-        let choice = select_burn_fee(&entries);
-        assert_eq!(
-            choice.finality_threshold, MIN_FINALITY_FAST,
-            "fast threshold must be selected when present"
-        );
-        assert_eq!(
-            choice.fee_bps, 1.3,
-            "parsed (fractional) minimumFee must drive the maxFee"
-        );
-
-        // 100 USDC (6dp) at 1.3bps = 0.013 USDC = 13_000 base units (rounded up).
-        let amount = 100_000_000u128;
-        assert_eq!(max_fee_for(amount, choice.fee_bps), 13_000);
-    }
-
-    #[test]
-    fn fee_table_falls_back_to_standard_when_no_fast_row() {
-        let body = r#"[{"finalityThreshold": 2000, "minimumFee": 0}]"#;
-        let entries: Vec<CctpFeeEntry> = serde_json::from_str(body).expect("fee body parses");
-        let choice = select_burn_fee(&entries);
-        assert_eq!(choice, BurnFeeChoice::STANDARD);
-        assert_eq!(
-            max_fee_for(100_000_000, choice.fee_bps),
-            0,
-            "standard path is free (maxFee 0)"
-        );
-    }
 
     #[test]
     fn build_hook_payload_sets_fields() {
