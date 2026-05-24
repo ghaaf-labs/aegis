@@ -1,5 +1,9 @@
 # Aegis — Adaptive Portfolio Harness for Stablecoin-Native Finance
 
+[![CI](https://github.com/ghaaf-labs/aegis/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ghaaf-labs/aegis/actions/workflows/ci.yml)
+[![Agora Agents Hackathon](https://img.shields.io/badge/Agora%20Agents%20Hackathon-2026-cyan?style=flat&logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iI2ZmZiIgZD0iTTEyIDJMMyA3djEwbDkgNSA5LTVWN3oiLz48L3N2Zz4=)](https://agora.thecanteenapp.com/)
+[![Powered by Circle](https://img.shields.io/badge/Powered%20by-Circle-00A060?style=flat&logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iMTAiIGZpbGw9IiNmZmYiLz48L3N2Zz4=)](https://www.circle.com/)
+
 > **The user steers, the agent executes.** A goal-based crypto portfolio manager that reads market regime, proposes rebalances, and settles them across **Arc + Base** in **USDC** through Circle's stack. Every decision is approved by a human in one screen.
 
 > **Hackathon:** RFB 04 — Adaptive Portfolio Manager · [Canteen × Circle Agora Agents](https://agora.thecanteenapp.com/) · May 11–25, 2026.
