@@ -142,31 +142,13 @@ impl<'a> OpenRouterClient<'a> {
         };
 
         let start = Instant::now();
-        let mut builder = self
+        let builder = self
             .http
             .post(&url)
             .bearer_auth(&self.config.openrouter_api_key)
             .header("X-Title", &self.config.openrouter_app_name)
             .json(&req);
-
-        if let Some(referer) = &self.config.openrouter_app_url {
-            builder = builder.header("HTTP-Referer", referer);
-        }
-
-        let resp = builder.send().await?;
-        let status = resp.status();
-        let body = resp.text().await?;
-        let latency_ms = start.elapsed().as_millis() as u64;
-
-        if !status.is_success() {
-            anyhow::bail!(
-                "OpenRouter {} for {}: {}",
-                status.as_u16(),
-                requested_slug,
-                openrouter_error_message(&body)
-                    .unwrap_or_else(|| body.chars().take(500).collect::<String>())
-            );
-        }
+        let (body, latency_ms) = self.send_chat_request(builder, requested_slug, start).await?;
 
         let raw: RawChatResponse = serde_json::from_str(&body).map_err(|e| {
             anyhow::anyhow!(
@@ -206,6 +188,37 @@ impl<'a> OpenRouterClient<'a> {
         })
     }
 
+    /// Apply the optional `HTTP-Referer`, send the prepared request, and read
+    /// the response — bailing with the OpenRouter error message on a non-success
+    /// status. Returns the raw body and elapsed latency so each caller can
+    /// deserialize into its own response shape.
+    async fn send_chat_request(
+        &self,
+        mut builder: reqwest::RequestBuilder,
+        requested_slug: &str,
+        start: Instant,
+    ) -> anyhow::Result<(String, u64)> {
+        if let Some(referer) = &self.config.openrouter_app_url {
+            builder = builder.header("HTTP-Referer", referer);
+        }
+
+        let resp = builder.send().await?;
+        let status = resp.status();
+        let body = resp.text().await?;
+        let latency_ms = start.elapsed().as_millis() as u64;
+
+        if !status.is_success() {
+            anyhow::bail!(
+                "OpenRouter {} for {}: {}",
+                status.as_u16(),
+                requested_slug,
+                openrouter_error_message(&body)
+                    .unwrap_or_else(|| body.chars().take(500).collect::<String>())
+            );
+        }
+        Ok((body, latency_ms))
+    }
+
     /// Tool-aware variant for the agentic loop. Caller passes the message
     /// trail as `serde_json::Value` dicts (richer than `Message` because
     /// assistant turns can carry `tool_calls` and tool turns have a
@@ -241,30 +254,13 @@ impl<'a> OpenRouterClient<'a> {
         }
 
         let start = Instant::now();
-        let mut builder = self
+        let builder = self
             .http
             .post(&url)
             .bearer_auth(&self.config.openrouter_api_key)
             .header("X-Title", &self.config.openrouter_app_name)
             .json(&body);
-        if let Some(referer) = &self.config.openrouter_app_url {
-            builder = builder.header("HTTP-Referer", referer);
-        }
-
-        let resp = builder.send().await?;
-        let status = resp.status();
-        let body = resp.text().await?;
-        let latency_ms = start.elapsed().as_millis() as u64;
-
-        if !status.is_success() {
-            anyhow::bail!(
-                "OpenRouter {} for {}: {}",
-                status.as_u16(),
-                requested_slug,
-                openrouter_error_message(&body)
-                    .unwrap_or_else(|| body.chars().take(500).collect::<String>())
-            );
-        }
+        let (body, latency_ms) = self.send_chat_request(builder, requested_slug, start).await?;
 
         let raw: Value = serde_json::from_str(&body).map_err(|e| {
             anyhow::anyhow!(
