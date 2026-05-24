@@ -21,6 +21,18 @@ use crate::modules::wallet_routes;
 /// Default referral reward in USDC. Override via `REFERRAL_REWARD_USDC` env.
 pub const DEFAULT_REWARD_USDC: f64 = 0.5;
 
+/// Protocol fee rate charged on an executed rebalance's economic notional
+/// (25 bps).
+pub const PROTOCOL_FEE_RATE: f64 = 0.0025;
+
+/// The protocol fee (USDC) for a given executed notional. Single source of
+/// truth for the rate so the on-chain Nanopayment settle and the recorded
+/// `rebalance_fees` row are always the same amount.
+#[must_use]
+pub fn protocol_fee(notional_usdc: f64) -> f64 {
+    notional_usdc * PROTOCOL_FEE_RATE
+}
+
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ReferralCreditedPayload {
@@ -114,24 +126,24 @@ pub async fn record_referral(
     Ok(Some(payload))
 }
 
-/// Records the 25 bps protocol fee for a completed rebalance. Idempotent
-/// via the (rebalance_id, fee_type) UNIQUE constraint in migration 0007 —
-/// retries of the post-plan billing block are safe.
+/// Records the protocol fee for a completed rebalance. `fee_usdc` is the
+/// already-computed fee (see [`protocol_fee`]) — the caller must settle the
+/// same amount on-chain so the row and the Nanopayment never disagree.
+/// Idempotent via the (rebalance_id, fee_type) UNIQUE constraint in
+/// migration 0007 — retries of the post-plan billing block are safe.
 pub async fn record_protocol_fee(
     db: &Db,
     rebalance_id: Uuid,
-    amount_usdc: f64,
+    fee_usdc: f64,
     settlement_tx_hash: Option<&str>,
 ) -> anyhow::Result<()> {
-    let fee = amount_usdc * 0.0025;
-
     sqlx::query(
         "INSERT INTO rebalance_fees (rebalance_id, fee_type, amount_usdc, settlement_tx_hash, created_at)
          VALUES ($1, 'protocol', $2, $3, NOW())
          ON CONFLICT (rebalance_id, fee_type) DO NOTHING",
     )
     .bind(rebalance_id)
-    .bind(fee)
+    .bind(fee_usdc)
     .bind(settlement_tx_hash)
     .execute(db)
     .await?;
@@ -511,6 +523,15 @@ mod tests {
     #[test]
     fn default_reward_is_in_clamp_range() {
         assert!((0.01..=5.0).contains(&DEFAULT_REWARD_USDC));
+    }
+
+    #[test]
+    fn protocol_fee_is_25_bps_of_notional() {
+        assert!((protocol_fee(1_000.0) - 2.5).abs() < 1e-9);
+        assert_eq!(protocol_fee(0.0), 0.0);
+        // Regression guard: the fee is a sliver of the notional, never the
+        // whole notional (the bug this replaced settled 100% of the trade).
+        assert!(protocol_fee(1_000.0) < 1_000.0 * 0.01);
     }
 
     #[test]
