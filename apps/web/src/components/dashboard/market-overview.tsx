@@ -142,7 +142,7 @@ export function MarketOverview() {
         </span>
       </CardHeader>
       <CardContent className="flex flex-1 flex-col p-0 font-mono">
-        <div className="relative grid lg:min-h-[258px] lg:grid-cols-[minmax(300px,0.38fr)_minmax(0,0.62fr)]">
+        <div className="relative grid lg:min-h-[258px] lg:grid-cols-[minmax(300px,3fr)_minmax(0,5fr)]">
           <div
             aria-hidden
             className="pointer-events-none absolute bottom-5 left-[38%] top-6 hidden w-px bg-border-default lg:block"
@@ -171,7 +171,7 @@ export function MarketOverview() {
                 {source}
               </span>
             </div>
-            <div className="mt-1.5 divide-y divide-border-default border border-border-default bg-bg/45">
+            <div className="mt-1.5 overflow-hidden divide-y divide-border-default border border-border-default bg-bg/45">
               {movers.map((asset) => (
                 <MoverRow
                   key={asset.symbol}
@@ -338,7 +338,7 @@ function MoverRow({
     : "bg-risk/10 text-risk";
 
   return (
-    <div className="grid min-h-11 grid-cols-[minmax(74px,1fr)_minmax(62px,0.75fr)_minmax(78px,0.8fr)] items-center gap-2 px-3 py-1.5 sm:grid-cols-[minmax(84px,1fr)_minmax(68px,0.75fr)_minmax(86px,0.72fr)_minmax(76px,0.8fr)] sm:gap-3 sm:px-4">
+    <div className="grid min-h-11 min-w-0 grid-cols-[minmax(64px,1fr)_minmax(54px,0.82fr)_minmax(70px,0.9fr)] items-center gap-2 overflow-hidden px-3 py-1.5 sm:grid-cols-[minmax(72px,1.05fr)_minmax(58px,0.82fr)_minmax(72px,0.9fr)_minmax(42px,0.65fr)]">
       <div className="flex min-w-0 items-center gap-2.5">
         <CoinBadge symbol={asset.symbol} />
         <span className="truncate text-xs font-semibold text-text-hi">
@@ -352,7 +352,7 @@ function MoverRow({
       </span>
       <span className="flex min-w-0 justify-end">
         <span
-          className={`inline-flex min-h-6 min-w-[74px] items-center justify-center gap-1 px-2 text-xs font-semibold tabular-nums ${changeTone}`}
+          className={`inline-flex min-h-6 min-w-0 items-center justify-center gap-1 px-1.5 text-xs font-semibold tabular-nums ${changeTone}`}
         >
           {positive ? (
             <TrendingUp className="h-3 w-3" />
@@ -424,7 +424,7 @@ function Sparkline({ symbol, change }: { symbol: string; change: number }) {
 
   return (
     <svg
-      className="hidden h-5 w-full min-w-[72px] sm:block"
+      className="hidden h-5 min-w-0 w-full sm:block"
       viewBox="0 0 96 24"
       aria-hidden="true"
     >
