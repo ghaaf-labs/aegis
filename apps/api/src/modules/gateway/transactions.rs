@@ -167,11 +167,10 @@ fn normalize(cfg: &Config, wallets: &[(String, String)], tx: CircleTx) -> Ledger
             .map(|(bc, _)| bc.clone())
     });
     let chain_key = blockchain.as_deref().and_then(blockchain_to_chain);
-    let chain = blockchain
-        .as_deref()
-        .map(explorer_chain_key)
-        .unwrap_or("base")
-        .to_string();
+    // Explorer slug + base URL come from one table; unknown chains fall back to Base.
+    let (explorer_slug, explorer_base) =
+        chain_key.map_or(("base", "https://sepolia.basescan.org"), explorer_for);
+    let chain = explorer_slug.to_string();
 
     let kind = classify(
         tx.operation.as_deref(),
@@ -193,7 +192,10 @@ fn normalize(cfg: &Config, wallets: &[(String, String)], tx: CircleTx) -> Ledger
         .find(|a| !a.trim().is_empty())
         .or(tx.amount);
 
-    let explorer_url = tx.tx_hash.as_deref().map(|h| explorer_tx_url(&chain, h));
+    let explorer_url = tx
+        .tx_hash
+        .as_deref()
+        .map(|h| format!("{explorer_base}/tx/{h}"));
 
     LedgerEntry {
         id: tx.id,
@@ -275,19 +277,8 @@ fn token_from_contract(
         .map(|spec| spec.symbol.to_string())
 }
 
-/// Circle blockchain slug → the explorer chain key the FE/`lib/explorers.ts` use.
-fn explorer_chain_key(blockchain: &str) -> &'static str {
-    match blockchain {
-        "ARC-TESTNET" | "ARC" => "arc",
-        "BASE-SEPOLIA" | "BASE" => "base",
-        "ETH-SEPOLIA" => "eth-sepolia",
-        "ARB-SEPOLIA" => "arb-sepolia",
-        "AVAX-FUJI" => "avax-fuji",
-        "OP-SEPOLIA" => "op-sepolia",
-        _ => "base",
-    }
-}
-
+/// Circle blockchain slug → `ChainKey`. The single boundary that parses Circle's
+/// wallet-network slugs (including the bare `ARC`/`BASE` aliases some payloads use).
 fn blockchain_to_chain(blockchain: &str) -> Option<ChainKey> {
     match blockchain {
         "ARC-TESTNET" | "ARC" => Some(ChainKey::Arc),
@@ -300,17 +291,19 @@ fn blockchain_to_chain(blockchain: &str) -> Option<ChainKey> {
     }
 }
 
-fn explorer_tx_url(chain: &str, tx_hash: &str) -> String {
-    let base = match chain {
-        "arc" => "https://testnet.arcscan.app",
-        "base" => "https://sepolia.basescan.org",
-        "eth-sepolia" => "https://sepolia.etherscan.io",
-        "arb-sepolia" => "https://sepolia.arbiscan.io",
-        "avax-fuji" => "https://testnet.snowtrace.io",
-        "op-sepolia" => "https://sepolia-optimism.etherscan.io",
-        _ => "https://sepolia.basescan.org",
-    };
-    format!("{base}/tx/{tx_hash}")
+/// Explorer identity for a chain: the FE explorer key (matches `lib/explorers.ts`)
+/// and the testnet block-explorer base URL. One table keyed by `ChainKey` so the
+/// slug and URL can never drift across separate matches. Unknown chains fall back
+/// to Base at the call site.
+fn explorer_for(chain: ChainKey) -> (&'static str, &'static str) {
+    match chain {
+        ChainKey::Arc => ("arc", "https://testnet.arcscan.app"),
+        ChainKey::Base => ("base", "https://sepolia.basescan.org"),
+        ChainKey::EthSepolia => ("eth-sepolia", "https://sepolia.etherscan.io"),
+        ChainKey::ArbSepolia => ("arb-sepolia", "https://sepolia.arbiscan.io"),
+        ChainKey::AvaxFuji => ("avax-fuji", "https://testnet.snowtrace.io"),
+        ChainKey::OpSepolia => ("op-sepolia", "https://sepolia-optimism.etherscan.io"),
+    }
 }
 
 #[cfg(test)]
@@ -401,12 +394,39 @@ mod tests {
     }
 
     #[test]
-    fn explorer_chain_key_maps_every_supported_chain() {
-        assert_eq!(explorer_chain_key("ARC-TESTNET"), "arc");
-        assert_eq!(explorer_chain_key("BASE-SEPOLIA"), "base");
-        assert_eq!(explorer_chain_key("ETH-SEPOLIA"), "eth-sepolia");
-        assert_eq!(explorer_chain_key("ARB-SEPOLIA"), "arb-sepolia");
-        assert_eq!(explorer_chain_key("AVAX-FUJI"), "avax-fuji");
+    fn explorer_table_covers_every_chain() {
+        // Enumerate every ChainKey so a new variant can't silently miss the
+        // explorer table (the compiler forces all six arms in `explorer_for`).
+        for chain in [
+            ChainKey::Arc,
+            ChainKey::Base,
+            ChainKey::EthSepolia,
+            ChainKey::ArbSepolia,
+            ChainKey::AvaxFuji,
+            ChainKey::OpSepolia,
+        ] {
+            let (slug, base_url) = explorer_for(chain);
+            assert!(!slug.is_empty());
+            assert!(base_url.starts_with("https://"));
+        }
+        // Circle slugs (incl. the bare aliases) map to the right chain + slug.
+        assert_eq!(
+            blockchain_to_chain("ARC-TESTNET").map(|c| explorer_for(c).0),
+            Some("arc")
+        );
+        assert_eq!(
+            blockchain_to_chain("ARC").map(|c| explorer_for(c).0),
+            Some("arc")
+        );
+        assert_eq!(
+            blockchain_to_chain("ETH-SEPOLIA").map(|c| explorer_for(c).0),
+            Some("eth-sepolia")
+        );
+        assert_eq!(
+            blockchain_to_chain("OP-SEPOLIA").map(|c| explorer_for(c).0),
+            Some("op-sepolia")
+        );
+        assert_eq!(blockchain_to_chain("SOLANA"), None);
     }
 
     #[test]
