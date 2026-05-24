@@ -186,10 +186,13 @@ pub struct Config {
     /// unset. Empty when the flag is off.
     #[allow(dead_code)]
     pub nanopayments_treasury_address: String,
-    /// Master feature flag for the post-hackathon real-revenue path:
-    /// real Nanopayments settlement, refunds, real referral payouts, AUM
-    /// streaming, subscriptions, tier gating. Defaults `false` so `main`
-    /// stays trunk-shippable.
+    /// Master feature flag for the real-revenue path: real Nanopayments
+    /// settlement, refunds, real referral payouts, AUM streaming,
+    /// subscriptions, and per-decision tier gating (un-subscribed users
+    /// resolve to `Tier::Free`, capped at 5 decisions/mo + 1 portfolio).
+    /// Defaults `true`; set `BILLING_V2_ENABLED=false` to opt out. Boot
+    /// fails when on but the Nanopayments seller/treasury addresses are unset
+    /// (validated below).
     #[allow(dead_code)]
     pub billing_v2_enabled: bool,
 
@@ -401,7 +404,7 @@ impl Config {
             nanopayments_treasury_address: std::env::var("NANOPAYMENTS_TREASURY_ADDRESS")
                 .unwrap_or_default(),
 
-            billing_v2_enabled: parse_or("BILLING_V2_ENABLED", false)?,
+            billing_v2_enabled: parse_or("BILLING_V2_ENABLED", true)?,
             admin_user_ids: parse_admin_user_ids(
                 &std::env::var("ADMIN_USER_IDS").unwrap_or_default(),
             ),
