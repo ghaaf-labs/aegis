@@ -271,6 +271,11 @@ pub(super) async fn settle_protocol_fee(
         return Ok(());
     }
 
+    // 25 bps of the executed notional — NOT the notional itself. Compute once
+    // so the on-chain Nanopayment and the `rebalance_fees` row settle the same
+    // amount.
+    let fee = crate::modules::billing::service::protocol_fee(notional);
+
     let payer_address = wallet_routes::arc_address_for_portfolio(
         &state.db,
         portfolio_id,
@@ -294,7 +299,7 @@ pub(super) async fn settle_protocol_fee(
     let settlement_tx = crate::modules::billing::service::settle_protocol_fee_via_nanopayments(
         &state.config,
         payer_address,
-        notional,
+        fee,
     )
     .await
     .ok()
@@ -303,7 +308,7 @@ pub(super) async fn settle_protocol_fee(
     if let Err(e) = crate::modules::billing::service::record_protocol_fee(
         &state.db,
         rebalance_id,
-        notional,
+        fee,
         settlement_tx.as_deref(),
     )
     .await
