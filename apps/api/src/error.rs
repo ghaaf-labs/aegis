@@ -288,6 +288,22 @@ fn too_many_requests_detail(message: &str) -> ErrorDetail {
 }
 
 fn service_unavailable_detail(message: &str) -> ErrorDetail {
+    if message == "gateway_rate_limited" {
+        return ErrorDetail {
+            code: "gateway_rate_limited",
+            message: "Circle Gateway is rate-limiting balance checks. Try again shortly.",
+            retry_after: Some(30),
+        };
+    }
+
+    if message == "gateway_unavailable" {
+        return ErrorDetail {
+            code: "gateway_unavailable",
+            message: "Circle Gateway is temporarily unavailable. Try again shortly.",
+            retry_after: Some(30),
+        };
+    }
+
     if message.contains("verification email could not be sent")
         || message.contains("wallet auth email is disabled")
     {
@@ -409,6 +425,15 @@ mod tests {
         assert_eq!(detail.code, "faucet_daily_limit");
         assert!(detail.message.contains("test USDC"));
         assert_eq!(detail.retry_after, Some(60 * 60 * 24));
+    }
+
+    #[test]
+    fn gateway_rate_limit_is_actionable_service_unavailable() {
+        let detail =
+            ErrorDetail::from(&AppError::ServiceUnavailable("gateway_rate_limited".into()));
+        assert_eq!(detail.code, "gateway_rate_limited");
+        assert!(detail.message.contains("Circle Gateway"));
+        assert_eq!(detail.retry_after, Some(30));
     }
 
     #[test]

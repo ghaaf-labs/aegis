@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use chrono::Utc;
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -339,16 +340,18 @@ async fn list_user_wallets(
 
     let url = format!("{}/v1/w3s/wallets", config.circle_base_url);
     let query = developer_wallet_query(config, user_id);
-    let envelope: Envelope = http
+    let resp = http
         .get(&url)
         .query(&query)
         .header("Authorization", format!("Bearer {}", config.circle_api_key))
         .header("X-Request-Id", Uuid::new_v4().to_string())
         .send()
         .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("gateway net: {e}")))?
-        .error_for_status()
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("gateway list_wallets: {e}")))?
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("gateway net: {e}")))?;
+    if let Some(error) = gateway_status_error(resp.status(), "list_wallets") {
+        return Err(error);
+    }
+    let envelope: Envelope = resp
         .json()
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("gateway list_wallets decode: {e}")))?;
@@ -398,13 +401,29 @@ async fn fetch_wallet_tokens(
     if resp.status() == reqwest::StatusCode::NOT_FOUND {
         return Ok(vec![]);
     }
+    if let Some(error) = gateway_status_error(resp.status(), "balances") {
+        return Err(error);
+    }
     let envelope: Envelope = resp
-        .error_for_status()
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("gateway balances: {e}")))?
         .json()
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("gateway balances decode: {e}")))?;
     Ok(envelope.data.token_balances)
+}
+
+fn gateway_status_error(status: StatusCode, scope: &str) -> Option<AppError> {
+    if status.is_success() || status == StatusCode::NOT_FOUND {
+        return None;
+    }
+    if status == StatusCode::TOO_MANY_REQUESTS {
+        return Some(AppError::ServiceUnavailable("gateway_rate_limited".into()));
+    }
+    if status.is_server_error() {
+        return Some(AppError::ServiceUnavailable("gateway_unavailable".into()));
+    }
+    Some(AppError::Internal(anyhow::anyhow!(
+        "gateway {scope}: HTTP status {status}"
+    )))
 }
 
 fn mock_balance(user_id: Uuid) -> GatewayBalance {
@@ -606,6 +625,17 @@ mod tests {
                 ("refId", user_id.to_string())
             ]
         );
+    }
+
+    #[test]
+    fn gateway_rate_limit_is_not_internal_error() {
+        let error = gateway_status_error(StatusCode::TOO_MANY_REQUESTS, "balances")
+            .expect("429 should map to an application error");
+
+        match error {
+            AppError::ServiceUnavailable(message) => assert_eq!(message, "gateway_rate_limited"),
+            other => panic!("expected service unavailable, got {other:?}"),
+        }
     }
 
     fn route(blockchain: &str, wallet_id: &str, address: &str) -> WalletRoute {

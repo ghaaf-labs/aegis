@@ -154,7 +154,7 @@ async fn run_autopilot(
         state,
         ProposeAllocationRequest {
             portfolio_id,
-            triggered_by: Some(format!("autopilot:{triggered_by}")),
+            triggered_by: Some(triggered_by.to_owned()),
             risk_override: None,
         },
     )
