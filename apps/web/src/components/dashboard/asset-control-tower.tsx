@@ -35,6 +35,7 @@ interface AssetControlTowerProps {
   onReviewPlan: () => void;
   reviewPlanLoading: boolean;
   onDesignAllocation: () => void;
+  onOpenProposal: () => void;
   designLoading: boolean;
   designError: boolean;
   deployError: string | null;
@@ -56,6 +57,7 @@ export function AssetControlTower({
   onReviewPlan,
   reviewPlanLoading,
   onDesignAllocation,
+  onOpenProposal,
   designLoading,
   designError,
   deployError,
@@ -88,6 +90,7 @@ export function AssetControlTower({
             onReviewPlan={onReviewPlan}
             reviewPlanLoading={reviewPlanLoading}
             onDesignAllocation={onDesignAllocation}
+            onOpenProposal={onOpenProposal}
             designLoading={designLoading}
             designError={designError}
             deployError={deployError}
@@ -324,6 +327,7 @@ function ActionPanel({
   onReviewPlan,
   reviewPlanLoading,
   onDesignAllocation,
+  onOpenProposal,
   designLoading,
   designError,
   deployError,
@@ -401,6 +405,18 @@ function ActionPanel({
                   Design allocation
                 </>
               )}
+            </BrutalButton>
+          )}
+          {action.kind === "proposal" && (
+            <BrutalButton
+              type="button"
+              variant="agent"
+              onClick={onOpenProposal}
+              className="w-full"
+            >
+              <Sparkles className="h-4 w-4" />
+              Open Gate 1
+              <ArrowRight className="h-4 w-4" />
             </BrutalButton>
           )}
           {action.kind === "fund" && <FaucetButton />}
@@ -541,7 +557,14 @@ function ActionIcon({ tone }: { tone: ActionTone }) {
 type ActionTone = "pnl" | "agent" | "warn" | "risk" | "muted";
 
 interface TowerAction {
-  kind: "review" | "design" | "fund" | "wallet" | "execution" | "none";
+  kind:
+    | "review"
+    | "design"
+    | "proposal"
+    | "fund"
+    | "wallet"
+    | "execution"
+    | "none";
   title: string;
   body: string;
   tone: ActionTone;
@@ -583,9 +606,9 @@ function actionState(
   }
   if (!model.hasAgentTarget && proposalPending) {
     return {
-      kind: "none",
+      kind: "proposal",
       title: "Allocation waiting for approval",
-      body: "Gate 1 is open or queued; approve the target before funds move.",
+      body: "Open Gate 1 and approve the target allocation before funds move.",
       tone: "agent",
     };
   }

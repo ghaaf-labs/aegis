@@ -190,6 +190,41 @@ describe("<PortfolioDashboardPage /> ?designing=1 handoff", () => {
 
     act(() => root.unmount());
   });
+
+  it("clears a stale designing handoff on browser refresh", async () => {
+    const navigationSpy = vi
+      .spyOn(performance, "getEntriesByType")
+      .mockImplementation((type) =>
+        type === "navigation"
+          ? ([{ type: "reload" }] as unknown as PerformanceEntryList)
+          : [],
+      );
+    vi.mocked(userAgentApi.autoPilot).mockResolvedValue({
+      pausedAt: null,
+      autoPilotEnabled: false,
+    });
+    vi.mocked(agentApi.proposeAllocation).mockRejectedValue(
+      new Error("should not run"),
+    );
+
+    usePortfolioStore.getState().setPortfolios([portfolio("p1")]);
+    usePortfolioStore.getState().setActivePortfolio("p1");
+    usePortfolioStore.getState().setActivePortfolioDetailStatus("p1", "ready");
+    usePortfolioStore.getState().setDecisionsStatus("p1", "ready");
+    usePortfolioStore.getState().setMarketSnapshotStatus("ready");
+    usePortfolioStore.getState().setGatewayBalanceStatus("ready");
+
+    const { container, root } = render(<PortfolioDashboardPage />);
+    await flushEffects();
+
+    expect(agentApi.proposeAllocation).not.toHaveBeenCalled();
+    expect(replace).toHaveBeenCalledWith("/dashboard/p1", { scroll: false });
+    expect(container.textContent).not.toContain("designing your allocation");
+    expect(container.textContent).not.toContain("could not finish designing");
+
+    act(() => root.unmount());
+    navigationSpy.mockRestore();
+  });
 });
 
 function render(element: React.ReactElement): {

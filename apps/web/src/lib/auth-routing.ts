@@ -13,7 +13,6 @@ const PROTECTED_APP_PREFIXES = [
   "/tax",
   "/tax-center",
   "/rebalance",
-  "/onboarding",
 ];
 
 export function isProtectedAppPath(pathname: string) {

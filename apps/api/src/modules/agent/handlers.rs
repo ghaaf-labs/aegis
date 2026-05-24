@@ -12,6 +12,7 @@ use crate::modules::portfolio::models::Portfolio;
 use crate::modules::rebalance::registry::{
     capabilities::RuntimeCapabilities, route::route_state_for_token,
 };
+use crate::modules::scheduler::tick::adopt_and_execute_autopilot_proposal;
 use crate::{config::Config, middleware::auth::Claims, router::AppState};
 
 /// Annotate a decision with the live per-symbol execution-readiness of its
@@ -132,32 +133,53 @@ pub async fn propose_allocation(
     Extension(claims): Extension<Claims>,
     Json(body): Json<ProposeAllocationRequest>,
 ) -> crate::error::Result<Json<AgentDecision>> {
-    let owned: Option<(Uuid,)> =
-        sqlx::query_as("SELECT id FROM portfolios WHERE id = $1 AND user_id = $2")
-            .bind(body.portfolio_id)
-            .bind(claims.sub)
-            .fetch_optional(&state.db)
-            .await?;
-    if owned.is_none() {
+    let Some((_, auto_pilot)) = sqlx::query_as::<_, (Uuid, bool)>(
+        "SELECT p.id, u.auto_pilot_enabled
+         FROM portfolios p
+         JOIN users u ON u.id = p.user_id
+         WHERE p.id = $1 AND p.user_id = $2",
+    )
+    .bind(body.portfolio_id)
+    .bind(claims.sub)
+    .fetch_optional(&state.db)
+    .await?
+    else {
         return Err(crate::error::AppError::NotFound(format!(
             "portfolio {}",
             body.portfolio_id
         )));
-    }
+    };
 
     // Async: enqueue a `queued` decision and return it immediately so the request
     // never blocks on the 38–240s pipeline (nginx caps the API at 60s). The slow
     // work runs in a spawned, semaphore-bounded job that flips the row to
     // `ready`/`failed`; the client opens Gate-1 on the SSE `agent.decision` event
-    // or by polling the decision id. A double-submit dedupes via the in-flight
-    // unique index, so we only spawn when a *new* job was enqueued.
+    // or by polling the decision id. When auto-pilot is on, the same background
+    // task adopts and executes the ready proposal through the autonomous guardrail
+    // path, so the user-triggered onboarding flow matches scheduler auto-pilot.
     let (queued, is_new) = service::enqueue_allocation(&state, &body).await?;
-    if is_new {
+    let user_id = claims.sub;
+    if is_new || auto_pilot {
         let st = state.clone();
         let decision_id = queued.id;
         tokio::spawn(async move {
-            if let Err(e) = service::run_allocation_job(&st, decision_id, &body).await {
-                tracing::warn!(error = %e, decision_id = %decision_id, "spawned allocation job failed");
+            let outcome = if is_new {
+                service::run_allocation_job(&st, decision_id, &body).await
+            } else {
+                service::await_decision_ready(&st, decision_id).await
+            };
+            match outcome {
+                Ok(decision) if auto_pilot => {
+                    if let Err(e) =
+                        adopt_and_execute_autopilot_proposal(&st, decision, user_id).await
+                    {
+                        tracing::warn!(error = %e, decision_id = %decision_id, "auto-pilot adoption after allocation failed");
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!(error = %e, decision_id = %decision_id, "spawned allocation job failed");
+                }
             }
         });
     }
