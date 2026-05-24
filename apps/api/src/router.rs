@@ -30,7 +30,34 @@ pub struct AppStateInner {
 }
 
 pub async fn build(db: Db, config: Config) -> Router {
-    let http = reqwest::Client::builder()
+    let http = build_http_client();
+    let sse_tx = sse::new_channel();
+    let prompts = Arc::new(ai::PromptRegistry::load().await);
+    let price_provider = prices::build_from_config(http.clone(), &config);
+
+    let state = Arc::new(AppStateInner {
+        db: db.clone(),
+        config: config.clone(),
+        http: http.clone(),
+        sse: sse_tx.clone(),
+        prompts,
+        prices: price_provider,
+    });
+
+    spawn_background_tasks(&state, db, http, sse_tx);
+
+    public_routes()
+        .merge(authed_routes(&state))
+        .layer(axum::middleware::from_fn(require_request_header))
+        .layer(axum::middleware::from_fn(normalize_error_response))
+        .layer(build_cors(&config))
+        .layer(TraceLayer::new_for_http())
+        .layer(CompressionLayer::new())
+        .with_state(state)
+}
+
+fn build_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
         // CoinGecko's free tier 403s anonymous / generic User-Agent strings
         // with the message "please add a descriptive User-Agent". Identify
         // ourselves explicitly — both for CoinGecko's heuristic and for
@@ -51,29 +78,21 @@ pub async fn build(db: Db, config: Config) -> Router {
         // the full kernel TCP timeout (~60-120 s).
         .connect_timeout(std::time::Duration::from_secs(8))
         .build()
-        .expect("failed to build HTTP client");
+        .expect("failed to build HTTP client")
+}
 
-    let sse_tx = sse::new_channel();
-    let prompts = Arc::new(ai::PromptRegistry::load().await);
-    let price_provider = prices::build_from_config(http.clone(), &config);
-
-    let state = Arc::new(AppStateInner {
-        db: db.clone(),
-        config: config.clone(),
-        http: http.clone(),
-        sse: sse_tx.clone(),
-        prompts,
-        prices: price_provider,
-    });
-
+/// Fire the realtime tickers and long-running schedulers. Each task owns its
+/// own state/cancel clone, so the returned handles are intentionally dropped —
+/// the spawned tasks run until the process-wide cancel token fires on shutdown.
+fn spawn_background_tasks(state: &AppState, db: Db, http: reqwest::Client, sse_tx: SseSender) {
     // Realtime background tasks
     sse::spawn_price_ticker(
         state.prices.clone(),
-        Arc::new(config.clone()),
+        Arc::new(state.config.clone()),
         sse_tx.clone(),
         db.clone(),
     );
-    gateway::spawn_balance_ticker(db, http, Arc::new(config.clone()), sse_tx);
+    gateway::spawn_balance_ticker(db, http, Arc::new(state.config.clone()), sse_tx);
 
     // Long-running schedulers (cancelled when the process shuts down).
     let cancel = tokio_util::sync::CancellationToken::new();
@@ -84,12 +103,13 @@ pub async fn build(db: Db, config: Config) -> Router {
     wallet::reconciler::spawn_provisioning_reconciler(state.clone(), cancel.clone());
     let _peg_monitor = risk_engine::spawn_peg_monitor(state.clone(), cancel.clone());
     agent::calibration_train::spawn(state.clone(), cancel);
+}
 
-    // CORS — must list specific origin(s) when sending credentials. The
-    // wildcard isn't legal alongside `Access-Control-Allow-Credentials: true`.
-    let cors = build_cors(&config);
-
-    let authed = Router::new()
+/// Routes that require an authenticated session (auth middleware applied via
+/// `route_layer`). Some are further gated by feature flags inside their
+/// handlers. Merged with [`public_routes`] in [`build`].
+fn authed_routes(state: &AppState) -> Router<AppState> {
+    Router::new()
         .route("/auth/session", get(wallet::handlers::session))
         .route("/account/export", post(account::handlers::export))
         .route("/account/delete", post(account::handlers::delete))
@@ -239,8 +259,14 @@ pub async fn build(db: Db, config: Config) -> Router {
             "/admin/billing/accruals/run-once",
             post(billing::handlers::run_accruals_once),
         )
-        .route_layer(from_fn_with_state(state.clone(), require_auth));
+        .route_layer(from_fn_with_state(state.clone(), require_auth))
+}
 
+/// Public routes (no session required). Some are further gated by feature
+/// flags inside their handlers; the token in path-auth routes (export
+/// download, tax share) is itself the credential. Merged with
+/// [`authed_routes`] and wrapped in the shared middleware stack in [`build`].
+fn public_routes() -> Router<AppState> {
     Router::new()
         .route("/health", get(health))
         .route("/metrics", get(observability::handlers::metrics))
@@ -303,13 +329,6 @@ pub async fn build(db: Db, config: Config) -> Router {
             "/tax/share/:token/export.csv",
             get(tax::handlers::export_via_share),
         )
-        .merge(authed)
-        .layer(axum::middleware::from_fn(require_request_header))
-        .layer(axum::middleware::from_fn(normalize_error_response))
-        .layer(cors)
-        .layer(TraceLayer::new_for_http())
-        .layer(CompressionLayer::new())
-        .with_state(state)
 }
 
 fn build_cors(config: &Config) -> CorsLayer {
