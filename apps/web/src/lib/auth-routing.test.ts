@@ -20,6 +20,7 @@ describe("auth route protection", () => {
     expect(isProtectedAppPath("/help")).toBe(false);
     expect(isProtectedAppPath("/explore")).toBe(false);
     expect(isProtectedAppPath("/login")).toBe(false);
+    expect(isProtectedAppPath("/onboarding")).toBe(false);
   });
 
   it("does not treat login as protected app path", () => {
@@ -30,6 +31,7 @@ describe("auth route protection", () => {
     expect(safeNextPath("https://evil.example")).toBeNull();
     expect(safeNextPath("//evil.example/path")).toBeNull();
     expect(safeNextPath("/login?next=/dashboard")).toBeNull();
+    expect(safeNextPath("/onboarding")).toBe("/onboarding");
     expect(safeNextPath("/dashboard?tab=agent")).toBe("/dashboard?tab=agent");
   });
 

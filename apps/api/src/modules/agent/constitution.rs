@@ -128,8 +128,18 @@ pub fn load() -> anyhow::Result<&'static Constitution> {
         return Ok(c);
     }
     let path = config_path();
-    let raw = std::fs::read_to_string(&path)
-        .map_err(|e| anyhow::anyhow!("read constitution at {}: {e}", path.display()))?;
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(_) if std::env::var_os("CONSTITUTION_PATH").is_none() => {
+            include_str!("../../../config/constitution.yaml").to_string()
+        }
+        Err(e) => {
+            return Err(anyhow::anyhow!(
+                "read constitution at {}: {e}",
+                path.display()
+            ));
+        }
+    };
     let parsed: Constitution = serde_yaml::from_str(&raw)
         .map_err(|e| anyhow::anyhow!("parse constitution at {}: {e}", path.display()))?;
     let _ = CACHE.set(parsed);

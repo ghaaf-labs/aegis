@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  ArrowRight,
   CheckCircle2,
   CircleAlert,
   Loader2,
@@ -138,7 +139,11 @@ export default function OnboardingPage() {
         )}
         {authState.kind === "signed_out" && (
           <div className="mx-auto w-full max-w-lg">
-            <OnboardingSignedOut />
+            <OnboardingSignedOut
+              onContinue={() =>
+                router.push("/login?next=%2Fonboarding&entry=signup")
+              }
+            />
           </div>
         )}
         {authState.kind === "wallet_pending" && (
@@ -245,7 +250,7 @@ function OnboardingChecking() {
   );
 }
 
-function OnboardingSignedOut() {
+function OnboardingSignedOut({ onContinue }: { onContinue: () => void }) {
   return (
     <div className="border-brutal border-warn/40 bg-surface p-5">
       <div className="mb-4 flex items-center gap-2">
@@ -258,12 +263,15 @@ function OnboardingSignedOut() {
         Enter your email and verify a one-time code to continue.
       </p>
       <div className="mt-4 grid gap-2">
-        <Link
-          href="/login?next=%2Fonboarding"
-          className="inline-flex min-h-11 items-center justify-center rounded-sharp border-brutal border-black bg-accent-agent px-4 font-mono text-sm font-semibold text-black shadow-brutal-sm hover:shadow-brutal"
+        <BrutalButton
+          type="button"
+          variant="agent"
+          className="min-h-11 w-full"
+          onClick={onContinue}
         >
           Continue
-        </Link>
+          <ArrowRight className="h-4 w-4" />
+        </BrutalButton>
       </div>
     </div>
   );
