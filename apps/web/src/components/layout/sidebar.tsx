@@ -9,8 +9,8 @@ import {
   CreditCard,
   CircleHelp,
   Compass,
+  Info,
   LayoutDashboard,
-  LayoutGrid,
   ListChecks,
   LockKeyhole,
   LogOut,
@@ -70,12 +70,6 @@ const BASE_NAV_SECTIONS: NavSection[] = [
         icon: PieChart,
         label: "Portfolio",
         description: "positions and targets",
-      },
-      {
-        href: "/strategies",
-        icon: LayoutGrid,
-        label: "Strategies",
-        description: "choose an approach",
       },
       {
         href: "/transactions",
@@ -184,12 +178,34 @@ const NAV_SECTIONS = PRICING_UI_ENABLED
     )
   : BASE_NAV_SECTIONS;
 
-const PUBLIC_NAV_HREFS = new Set([
-  "/explore",
-  "/leaderboard",
-  "/strategies",
-  "/help",
-]);
+const PUBLIC_NAV_HREFS = new Set(["/explore", "/leaderboard", "/help"]);
+
+const SIGNED_OUT_NAV: NavItem[] = [
+  {
+    href: "/explore",
+    icon: Compass,
+    label: "Explore demos",
+    description: "example portfolios",
+  },
+  {
+    href: "/leaderboard",
+    icon: Trophy,
+    label: "Leaderboard",
+    description: "public results",
+  },
+  {
+    href: "/about",
+    icon: Info,
+    label: "About",
+    description: "how Aegis works",
+  },
+  {
+    href: "/help",
+    icon: CircleHelp,
+    label: "Help",
+    description: "plain-English answers",
+  },
+];
 
 function isActivePath(pathname: string, item: NavItem) {
   const paths = [item.href, ...(item.match ?? [])];
@@ -212,6 +228,9 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
   const agentPaused = agentPausedAt !== null;
   const walletPending = sessionActive && !wallet;
   const [logoutError, setLogoutError] = useState<string | null>(null);
+  // Once session is confirmed absent, hide the full protected rail from the
+  // DOM entirely — signed-out users only see public destinations.
+  const signedOut = sessionResolved && !sessionActive;
   const navSections = NAV_SECTIONS;
   const showLogoutInSidebar = Boolean(onClose);
 
@@ -262,7 +281,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
             type="button"
             onClick={onClose}
             aria-label="Close navigation"
-            className="ml-auto p-2 rounded-sharp text-text-lo hover:text-text-hi hover:bg-raised transition-colors"
+            className="touch-target ml-auto p-2 rounded-sharp text-text-lo hover:text-text-hi hover:bg-raised transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
@@ -271,85 +290,44 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-3">
-        {navSections.map((section) => (
-          <div key={section.label}>
+        {signedOut ? (
+          // Signed-out: render only public destinations — protected links must
+          // not appear in the DOM or accessibility tree at all.
+          <div>
             <div className="px-3 pb-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-[10px] font-mono uppercase tracking-widest text-text-mut">
-                  {section.label}
-                </p>
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    "h-1.5 w-8 border border-black",
-                    section.tone === "pnl"
-                      ? "bg-accent-pnl"
-                      : section.tone === "agent"
-                        ? "bg-accent-agent"
-                        : "bg-text-lo",
-                  )}
-                />
-              </div>
-              <p className="mt-0.5 truncate text-[10px] font-mono text-text-mut">
-                {section.description}
+              <p className="text-[10px] font-mono uppercase tracking-widest text-text-mut">
+                Public
               </p>
             </div>
             <div className="space-y-0.5">
-              {section.items.map((item) => {
+              {SIGNED_OUT_NAV.map((item) => {
                 const Icon = item.icon;
                 const active = isActivePath(pathname, item);
-                const publicNav = isPublicNavItem(item);
-                const recoveryNav = isWalletRecoveryNavItem(item);
-                const locked =
-                  sessionResolved &&
-                  !publicNav &&
-                  (!sessionActive || (!wallet && !recoveryNav));
-                const href = locked
-                  ? walletPending
-                    ? "/wallets"
-                    : authHref("/login", item.href)
-                  : item.href;
-                const itemDescription = locked
-                  ? lockedDescription(walletPending)
-                  : item.description;
                 return (
                   <Link
                     key={item.href}
-                    href={href}
-                    aria-label={`${item.label}: ${itemDescription}`}
+                    href={item.href}
+                    aria-label={`${item.label}: ${item.description}`}
                     aria-current={active ? "page" : undefined}
-                    title={
-                      locked
-                        ? walletPending
-                          ? `${item.label} will open after account setup finishes`
-                          : `${item.label} requires sign in`
-                        : item.label
-                    }
+                    title={item.label}
                     className={cn(
                       "group relative grid min-h-[46px] grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-2 rounded-sharp border px-2.5 py-2 font-mono transition-colors",
                       active
-                        ? activeNavClasses(section.tone)
+                        ? activeNavClasses("agent")
                         : "border-transparent text-text-lo hover:border-border-default hover:bg-raised hover:text-text-hi",
                     )}
                   >
                     {active && (
                       <span
                         aria-hidden="true"
-                        className={cn(
-                          "absolute left-0 top-1/2 h-7 w-1 -translate-y-1/2 border-y border-r border-black",
-                          section.tone === "pnl"
-                            ? "bg-accent-pnl"
-                            : section.tone === "agent"
-                              ? "bg-accent-agent"
-                              : "bg-text-hi",
-                        )}
+                        className="absolute left-0 top-1/2 h-7 w-1 -translate-y-1/2 border-y border-r border-black bg-accent-agent"
                       />
                     )}
                     <Icon
                       className={cn(
                         "h-4 w-4 justify-self-center",
                         active
-                          ? iconActiveClass(section.tone)
+                          ? "text-accent-agent"
                           : "text-text-mut group-hover:text-text-hi",
                       )}
                       aria-hidden="true"
@@ -360,29 +338,13 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
                       </span>
                       <span className="mt-0.5 block truncate text-[10px] text-text-mut">
                         {" "}
-                        {itemDescription}
+                        {item.description}
                       </span>
                     </span>
-                    {locked && (
-                      <LockKeyhole
-                        className={cn(
-                          "h-3.5 w-3.5 shrink-0",
-                          "text-text-mut group-hover:text-accent-agent",
-                        )}
-                        aria-hidden="true"
-                      />
-                    )}
-                    {!locked && active && (
+                    {active && (
                       <span
                         aria-hidden="true"
-                        className={cn(
-                          "h-1.5 w-1.5 shrink-0",
-                          section.tone === "pnl"
-                            ? "bg-accent-pnl"
-                            : section.tone === "agent"
-                              ? "bg-accent-agent"
-                              : "bg-text-hi",
-                        )}
+                        className="h-1.5 w-1.5 shrink-0 bg-accent-agent"
                       />
                     )}
                   </Link>
@@ -390,7 +352,128 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
               })}
             </div>
           </div>
-        ))}
+        ) : (
+          navSections.map((section) => (
+            <div key={section.label}>
+              <div className="px-3 pb-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[10px] font-mono uppercase tracking-widest text-text-mut">
+                    {section.label}
+                  </p>
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "h-1.5 w-8 border border-black",
+                      section.tone === "pnl"
+                        ? "bg-accent-pnl"
+                        : section.tone === "agent"
+                          ? "bg-accent-agent"
+                          : "bg-text-lo",
+                    )}
+                  />
+                </div>
+                <p className="mt-0.5 truncate text-[10px] font-mono text-text-mut">
+                  {section.description}
+                </p>
+              </div>
+              <div className="space-y-0.5">
+                {section.items.map((item) => {
+                  const Icon = item.icon;
+                  const active = isActivePath(pathname, item);
+                  const publicNav = isPublicNavItem(item);
+                  const recoveryNav = isWalletRecoveryNavItem(item);
+                  const locked =
+                    sessionResolved &&
+                    !publicNav &&
+                    (!sessionActive || (!wallet && !recoveryNav));
+                  const href = locked
+                    ? walletPending
+                      ? "/wallets"
+                      : authHref("/login", item.href)
+                    : item.href;
+                  const itemDescription = locked
+                    ? lockedDescription(walletPending)
+                    : item.description;
+                  return (
+                    <Link
+                      key={item.href}
+                      href={href}
+                      aria-label={`${item.label}: ${itemDescription}`}
+                      aria-current={active ? "page" : undefined}
+                      title={
+                        locked
+                          ? walletPending
+                            ? `${item.label} will open after account setup finishes`
+                            : `${item.label} requires sign in`
+                          : item.label
+                      }
+                      className={cn(
+                        "group relative grid min-h-[46px] grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-2 rounded-sharp border px-2.5 py-2 font-mono transition-colors",
+                        active
+                          ? activeNavClasses(section.tone)
+                          : "border-transparent text-text-lo hover:border-border-default hover:bg-raised hover:text-text-hi",
+                      )}
+                    >
+                      {active && (
+                        <span
+                          aria-hidden="true"
+                          className={cn(
+                            "absolute left-0 top-1/2 h-7 w-1 -translate-y-1/2 border-y border-r border-black",
+                            section.tone === "pnl"
+                              ? "bg-accent-pnl"
+                              : section.tone === "agent"
+                                ? "bg-accent-agent"
+                                : "bg-text-hi",
+                          )}
+                        />
+                      )}
+                      <Icon
+                        className={cn(
+                          "h-4 w-4 justify-self-center",
+                          active
+                            ? iconActiveClass(section.tone)
+                            : "text-text-mut group-hover:text-text-hi",
+                        )}
+                        aria-hidden="true"
+                      />
+                      <span className="min-w-0">
+                        <span className="block truncate text-xs font-semibold">
+                          {item.label}
+                        </span>
+                        <span className="mt-0.5 block truncate text-[10px] text-text-mut">
+                          {" "}
+                          {itemDescription}
+                        </span>
+                      </span>
+                      {locked && (
+                        <LockKeyhole
+                          className={cn(
+                            "h-3.5 w-3.5 shrink-0",
+                            "text-text-mut group-hover:text-accent-agent",
+                          )}
+                          aria-hidden="true"
+                        />
+                      )}
+                      {!locked && active && (
+                        <span
+                          aria-hidden="true"
+                          className={cn(
+                            "h-1.5 w-1.5 shrink-0",
+                            section.tone === "pnl"
+                              ? "bg-accent-pnl"
+                              : section.tone === "agent"
+                                ? "bg-accent-agent"
+                                : "bg-text-hi",
+                          )}
+                        />
+                      )}
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          ))
+        )}
       </nav>
 
       {/* Agent status indicator */}
@@ -415,7 +498,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
             <div className="grid gap-2">
               <Link
                 href={authHref("/login", pathname)}
-                className="inline-flex min-h-[36px] items-center justify-center rounded-sharp border border-black bg-accent-agent px-2 text-center text-[11px] font-mono font-semibold text-black shadow-brutal-sm hover:shadow-brutal"
+                className="touch-target inline-flex min-h-[36px] items-center justify-center rounded-sharp border border-black bg-accent-agent px-2 text-center text-[11px] font-mono font-semibold text-black shadow-brutal-sm hover:shadow-brutal"
               >
                 Sign in
               </Link>
@@ -465,7 +548,7 @@ export function Sidebar({ onClose }: { onClose?: () => void }) {
               onClick={() => void handleLogout()}
               title="Log out"
               aria-label="Log out"
-              className="w-full min-h-[36px] inline-flex items-center justify-center gap-2 rounded-sharp border border-border-default bg-bg px-3 text-xs font-mono text-text-lo hover:border-risk/50 hover:bg-risk/5 hover:text-risk transition-colors"
+              className="touch-target w-full min-h-[36px] inline-flex items-center justify-center gap-2 rounded-sharp border border-border-default bg-bg px-3 text-xs font-mono text-text-lo hover:border-risk/50 hover:bg-risk/5 hover:text-risk transition-colors"
             >
               <LogOut className="w-3.5 h-3.5" aria-hidden="true" />
               Log out

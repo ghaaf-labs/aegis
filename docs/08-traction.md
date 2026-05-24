@@ -191,9 +191,9 @@ code task.
 > with a real CCTP-funded testnet wallet (HS-4 / HS-5 scaffolding above).
 
 1. **Boot**: `cargo run --features "real-cctp real-usyc"` from `apps/api/`, then `pnpm dev` from `apps/web/`. Visit `http://localhost:3000`.
-2. **Landing → Strategies CTA**: confirm the "Browse strategies" button (SM-4) routes to `/strategies` and the 3 curated cards render.
+2. **Landing → primary CTA**: confirm the "Set a goal" CTA routes into auth/onboarding (the Strategies marketplace was removed; `/strategies` now permanently redirects to `/dashboard`).
 3. **Sign up**: walk the email-OTP flow (HS-3 path audit gates this). A `users` row should land with both `arc_address` + `base_address` non-NULL.
-4. **Adopt a strategy**: click Adopt on `Conservative Treasury`. New portfolio appears; dashboard renders empty-state (no mock leakage per FE-MOCK-1).
+4. **Onboard a goal**: complete the goal wizard (risk + target allocation). The single portfolio appears; the agent proposes an allocation (Gate-1) and the dashboard renders empty-state (no mock leakage per FE-MOCK-1).
 5. **Analyze**: click "Run analysis" on the dashboard. Approval modal renders with model slug, confidence bar (cyan per FE-COLOR-1), USDC fee preview, both legs with ChainBadges, EURC caveat banner (HS-6) if EURC is in the plan.
 6. **Approve a small rebalance**: confirm two `rebalance_legs.tx_hash` values land + verify on explorers (basescan-sepolia, testnet.arcscan).
 7. **Audit trail**: visit `/decision/<id>`. Verify the 5 sections (Inputs, Strategist, Critic, Plan, Execution) all render, model slug + tokens + latency are visible, constitution clauses (if cited) link to `/about/constitution#<id>`.
@@ -214,8 +214,8 @@ tables above once the walkthrough is captured.
 > one on a trust signal, one suggested improvement.
 
 1. Open `/` → "we let a multi-model agent route real (testnet) USDC across Arc + Base, but every move waits for your tap." (Marketing nav.)
-2. Click **Browse strategies** → "three pre-baked portfolios. The agent doesn't pick for you; you pick. The agent does the rebalancing."
-3. Adopt **Conservative Treasury** → "now this is yours. Notice: zero USDC moved yet — the agent only sets the target."
+2. Click **Set a goal** → "you set the risk and target; the agent designs and rebalances the allocation. No marketplace to browse — the agent proposes, you approve."
+3. **Goal wizard** → "now this is yours. Notice: zero USDC moved yet — the agent only sets the target."
 4. **Goal wizard** (if not skipped): "this is the only friction. Four steps. We won't ask again."
 5. **Analyze** → approval modal. **Pause and let them read the entire modal cold.** "model slug, confidence, USDC fee, both legs, constitution clauses — every trust signal is supposed to be visible without scrolling."
 6. **Approve** → execution-trace pane. Capture their reaction to the tx hashes filling in.

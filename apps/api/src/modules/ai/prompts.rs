@@ -12,6 +12,9 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PromptKey {
     Strategist,
+    /// Allocator — the agent designs a full target allocation from the user's
+    /// objective/horizon/risk + regime/vol/yield/correlation (not trades).
+    Allocator,
     Critic,
     Regime,
     Revision,
@@ -24,6 +27,7 @@ impl PromptKey {
     pub fn filename(self) -> &'static str {
         match self {
             Self::Strategist => "strategist.md",
+            Self::Allocator => "allocator.md",
             Self::Critic => "critic.md",
             Self::Regime => "regime.md",
             Self::Revision => "revision.md",
@@ -37,6 +41,7 @@ impl PromptKey {
     pub fn embedded(self) -> &'static str {
         match self {
             Self::Strategist => include_str!("../../../prompts/strategist.md"),
+            Self::Allocator => include_str!("../../../prompts/allocator.md"),
             Self::Critic => include_str!("../../../prompts/critic.md"),
             Self::Regime => include_str!("../../../prompts/regime.md"),
             Self::Revision => include_str!("../../../prompts/revision.md"),
@@ -48,6 +53,7 @@ impl PromptKey {
     pub fn all() -> &'static [Self] {
         &[
             Self::Strategist,
+            Self::Allocator,
             Self::Critic,
             Self::Regime,
             Self::Revision,

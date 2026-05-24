@@ -33,17 +33,17 @@ export const DEFAULT_PRICING_TIERS: PricingTier[] = [
     name: "Pro",
     monthlyUsd: 19,
     aumCapUsd: null,
-    portfolioCap: 5,
-    portfoliosCap: 5,
+    portfolioCap: 1,
+    portfoliosCap: 1,
     decisionsPerMonth: 240,
     decisionsCapMonthly: 240,
     models: "Haiku + Opus 4.7 strategist + GPT-5.5 critic",
     perRebalanceBps: 15,
     aumAnnualBps: 25,
     features: [
-      "Up to 5 portfolios",
       "240 decisions / month",
       "Critic-audited proposals",
+      "Auto-execute + peg defense",
       "Counterfactual + calibrated confidence",
     ],
     recommended: true,
@@ -54,18 +54,18 @@ export const DEFAULT_PRICING_TIERS: PricingTier[] = [
     name: "Business",
     monthlyUsd: 199,
     aumCapUsd: null,
-    portfolioCap: null,
-    portfoliosCap: null,
+    portfolioCap: 1,
+    portfoliosCap: 1,
     decisionsCapMonthly: null,
     decisionsPerMonth: null,
     models: "Pro models + Constitution + counterfactual",
     perRebalanceBps: 10,
     aumAnnualBps: 15,
     features: [
-      "Unlimited portfolios",
       "Unlimited decisions",
       "Constitution-bound critic",
       "1099-DA tax export + accountant share link",
+      "Priority support + SLA",
     ],
   },
 ];
@@ -149,10 +149,6 @@ export function PricingTable({
 
             <dl className="space-y-1.5 text-xs font-mono text-text-default mb-5">
               <Row label="AUM cap" value={formatAumCap(t.aumCapUsd)} />
-              <Row
-                label="Portfolios"
-                value={formatLimit(t.portfolioCap ?? t.portfoliosCap, "")}
-              />
               <Row
                 label="Decisions / mo"
                 value={formatLimit(

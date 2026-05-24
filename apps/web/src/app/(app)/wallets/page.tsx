@@ -16,7 +16,10 @@ import Link from "next/link";
 import { BrutalCard, BrutalCardBody, BrutalCardHeader } from "@aegis/ui";
 import { FaucetButton } from "@/components/wallet/faucet-button";
 import { usePortfolioStore } from "@/stores/portfolio";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, timeAgo } from "@/lib/utils";
+import { deriveCashSplit } from "@/lib/cash-model";
+import { derivePortfolioPositionMetrics } from "@/lib/portfolio-values";
+import { targetAllocationsForPortfolio } from "@/components/dashboard/target-allocations";
 import { gatewayApi, portfolioApi, walletApi } from "@/lib/api";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { explorerAddressUrl, type ExplorerChain } from "@/lib/explorers";
@@ -47,6 +50,9 @@ export default function WalletPage() {
   const perChainEurc = usePortfolioStore((s) => s.perChainEurc);
   const gatewayBalanceStatus = usePortfolioStore((s) => s.gatewayBalanceStatus);
   const gatewayBalanceError = usePortfolioStore((s) => s.gatewayBalanceError);
+  const gatewayBalanceUpdatedAt = usePortfolioStore(
+    (s) => s.gatewayBalanceUpdatedAt,
+  );
   const snapshot = usePortfolioStore((s) => s.marketSnapshot);
   const sessionActive = usePortfolioStore((s) => s.sessionActive);
   const setWallet = usePortfolioStore((s) => s.setWallet);
@@ -73,9 +79,22 @@ export default function WalletPage() {
     setSavedEmail(window.localStorage.getItem("aegis_email") ?? "");
   }, []);
 
-  const eurcUsd =
-    snapshot?.assets.find((a) => a.symbol === "EURC")?.priceUsd ?? 1.085;
-  const totalUsdEquivalent = unifiedUsdc + unifiedEurc * eurcUsd;
+  const investedUsd = derivePortfolioPositionMetrics(
+    activePortfolio,
+    snapshot,
+  ).investedUsd;
+  const cashSplit = deriveCashSplit({
+    unifiedUsdc,
+    unifiedEurc,
+    targetAllocations: targetAllocationsForPortfolio(activePortfolio),
+    investedUsd,
+    snapshot,
+  });
+  const eurcUsd = cashSplit.eurcUsd;
+  const totalUsdEquivalent = cashSplit.totalWalletUsd;
+  const balanceFreshness = gatewayBalanceUpdatedAt
+    ? `refreshed ${timeAgo(new Date(gatewayBalanceUpdatedAt).toISOString())}`
+    : "live";
   const balanceLoading =
     gatewayBalanceStatus === "idle" || gatewayBalanceStatus === "loading";
   const balanceUnavailable = gatewayBalanceStatus === "error";
@@ -296,8 +315,9 @@ export default function WalletPage() {
             Wallet
           </h1>
           <p className="text-sm text-text-lo mt-1">
-            Your address, available cash, and funding tools in one place. Cash
-            shown here is not invested until you approve a plan.
+            Your address, wallet balance, and funding tools in one place. USDC
+            is a first-class allocation — only the surplus above the
+            agent&apos;s reserve is deployable.
           </p>
         </div>
         {isEmpty && <FaucetButton />}
@@ -360,9 +380,12 @@ export default function WalletPage() {
 
       <BrutalCard>
         <BrutalCardHeader>
-          <span className="text-sm font-mono text-text-hi">
-            Idle wallet cash
-          </span>
+          <span className="text-sm font-mono text-text-hi">Wallet balance</span>
+          {!balanceUnavailable && !balanceLoading && (
+            <span className="text-[10px] font-mono uppercase tracking-widest text-text-mut">
+              as reported by Circle · {balanceFreshness}
+            </span>
+          )}
         </BrutalCardHeader>
         <BrutalCardBody>
           <p
@@ -393,6 +416,31 @@ export default function WalletPage() {
               </span>
             )}
           </p>
+
+          {!balanceUnavailable &&
+            !balanceLoading &&
+            cashSplit.hasUsdcReserveTarget && (
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <div className="border border-border-default bg-bg/70 px-3 py-2">
+                  <p className="font-mono text-[10px] uppercase tracking-wider text-text-mut">
+                    USDC reserve · target{" "}
+                    {cashSplit.usdcTargetWeight.toFixed(0)}%
+                  </p>
+                  <p className="mt-0.5 font-mono text-base font-semibold tabular-nums text-text-hi">
+                    {formatCurrency(cashSplit.reserveUsd)}
+                  </p>
+                </div>
+                <div className="border border-accent-pnl/30 bg-accent-pnl/5 px-3 py-2">
+                  <p className="font-mono text-[10px] uppercase tracking-wider text-accent-pnl">
+                    Deployable surplus
+                  </p>
+                  <p className="mt-0.5 font-mono text-base font-semibold tabular-nums text-accent-pnl">
+                    {formatCurrency(cashSplit.deployableUsd)}
+                  </p>
+                </div>
+              </div>
+            )}
+
           <p className="text-[11px] font-mono text-text-mut mt-3">
             {balanceUnavailable
               ? "Wallet cash is unknown because the balance check did not finish. Retry before using this balance."
@@ -400,7 +448,11 @@ export default function WalletPage() {
                 ? "Aegis is checking balances before showing available cash."
                 : isEmpty
                   ? "This can be $0 even when you own investments. Deployed positions are counted on Dashboard and Portfolio; newly funded USDC appears here first."
-                  : "This is spendable cash that has not been invested yet. Review any deployment or rebalance plan before real execution."}
+                  : cashSplit.hasUsdcReserveTarget
+                    ? cashSplit.deployableUsd > 5
+                      ? "The deployable surplus is what the agent can move into the target mix. The USDC reserve stays put — it is the cash sleeve the agent targets."
+                      : "Your wallet is at the agent's target — the USDC is held as the reserve sleeve, so there is no surplus to deploy right now."
+                    : "Balances as reported by Circle. The agent moves funds only after a plan is approved (or autonomously under auto-pilot, within the guardrails)."}
           </p>
         </BrutalCardBody>
       </BrutalCard>

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import Link from "next/link";
 
 import { BrutalCard, BrutalCardBody, BrutalPill, ModelBadge } from "@aegis/ui";
@@ -8,6 +9,7 @@ interface PageProps {
   params: Promise<{ wallet: string }>;
 }
 
+const WALLET_RE = /^0x[0-9a-fA-F]{40}$/;
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
 async function fetchDiary(wallet: string): Promise<DiaryEntry[]> {
@@ -29,6 +31,9 @@ export async function generateMetadata({
   params,
 }: PageProps): Promise<Metadata> {
   const { wallet } = await params;
+  if (!WALLET_RE.test(wallet)) {
+    return { title: "Diary link invalid — Aegis", robots: { index: false } };
+  }
   const title = `Aegis agent diary · ${wallet.slice(0, 10)}…`;
   const description =
     "Public, append-only log of every decision the Aegis agent made for this wallet. Model, regime, confidence, and 24h outcome — all on the record.";
@@ -42,6 +47,11 @@ export async function generateMetadata({
 
 export default async function DiaryPage({ params }: PageProps) {
   const { wallet } = await params;
+
+  if (!WALLET_RE.test(wallet)) {
+    notFound();
+  }
+
   const entries = await fetchDiary(wallet);
 
   return (
@@ -51,9 +61,10 @@ export default async function DiaryPage({ params }: PageProps) {
           <p className="font-mono text-[11px] tracking-wider text-accent-agent uppercase">
             Agent diary
           </p>
-          <h1 className="text-3xl font-bold mt-1">
-            <span className="font-mono text-base text-text-lo">{wallet}</span>
-          </h1>
+          <h1 className="text-3xl font-bold mt-1">Public agent diary</h1>
+          <p className="font-mono text-sm text-text-lo mt-1 break-all">
+            {wallet}
+          </p>
           <p className="text-sm text-text-lo mt-3 max-w-prose">
             Every recommendation Aegis emitted for this wallet, the model that
             produced it, the regime read at the time, and what actually happened
@@ -163,6 +174,30 @@ function DiaryCard({ entry }: { entry: DiaryEntry }) {
                   {entry.outcome.counterfactualPctChange.toFixed(2)}%
                 </div>
               </div>
+              {entry.outcome.btcReturn !== undefined && (
+                <div>
+                  <div className="text-text-mut">BTC 24h</div>
+                  <div className="text-text-default">
+                    {entry.outcome.btcReturn >= 0 ? "+" : ""}
+                    {entry.outcome.btcReturn.toFixed(2)}%
+                  </div>
+                </div>
+              )}
+              {entry.outcome.outperformanceVsBtc !== undefined && (
+                <div>
+                  <div className="text-text-mut">vs BTC</div>
+                  <div
+                    className={
+                      entry.outcome.outperformanceVsBtc >= 0
+                        ? "text-accent-pnl"
+                        : "text-risk"
+                    }
+                  >
+                    {entry.outcome.outperformanceVsBtc >= 0 ? "+" : ""}
+                    {entry.outcome.outperformanceVsBtc.toFixed(2)} pts
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <p className="mt-4 text-[11px] text-text-mut">

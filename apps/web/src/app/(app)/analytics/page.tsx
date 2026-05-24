@@ -15,10 +15,8 @@ import {
 } from "@aegis/ui";
 import { formatCurrency, formatPercent, timeAgo } from "@/lib/utils";
 import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
-import {
-  deriveIdleCashUsd,
-  derivePortfolioPositionMetrics,
-} from "@/lib/portfolio-values";
+import { derivePortfolioPositionMetrics } from "@/lib/portfolio-values";
+import { totalWalletCashUsd } from "@/lib/cash-model";
 
 export default function AnalyticsPage() {
   const portfolio = useActivePortfolio();
@@ -35,7 +33,7 @@ export default function AnalyticsPage() {
   const hasBtcDominance = (snapshot?.btcDominance ?? 0) > 0;
   const positionMetrics = derivePortfolioPositionMetrics(portfolio, snapshot);
   const investedUsd = positionMetrics.investedUsd;
-  const idleCashUsd = deriveIdleCashUsd(unifiedUsdc, unifiedEurc, snapshot);
+  const idleCashUsd = totalWalletCashUsd(unifiedUsdc, unifiedEurc, snapshot);
   const netWorth = investedUsd + idleCashUsd;
   const hasConfirmedCapital = netWorth > 0.5;
   const targetAllocation = portfolio?.goal?.targetAllocation ?? {};

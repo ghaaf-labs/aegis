@@ -160,11 +160,11 @@ describe("<NetworkTokenPanel />", () => {
       ],
       [
         "USYC",
-        "Yield target · Yield parking is turned off — the USYC Teller on Arc is allowlist-gated, so USYC is tracked only for now",
+        "Yield target · Not available in this build; USYC stays visible as a coming-soon route",
       ],
       [
         "EURC",
-        "FX target · FX tracking is ready; Arc StableFX execution is KYB-gated",
+        "FX target · FX tracking is ready; EURC executes on the Base USDC/EURC pool when the swap rail is live",
       ],
     ];
 
@@ -174,7 +174,9 @@ describe("<NetworkTokenPanel />", () => {
     expect(text).toContain("Current selection");
     expect(text).toContain("Arc testnet, Base Sepolia");
     expect(text).toContain("Can rebalance now");
-    expect(text).toContain("BTC, ETH, SOL, USYC, EURC");
+    expect(text).toContain("BTC, ETH, SOL, EURC");
+    expect(text).toContain("Coming soon");
+    expect(text).toContain("USYC");
     expect(text).toContain(
       "Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji",
     );
@@ -193,7 +195,11 @@ describe("<NetworkTokenPanel />", () => {
       expect(text).toContain(tokenCopy);
     }
 
-    expect(container.querySelectorAll("button:disabled")).toHaveLength(0);
+    const disabledButtons = Array.from(
+      container.querySelectorAll<HTMLButtonElement>("button:disabled"),
+    );
+    expect(disabledButtons).toHaveLength(1);
+    expect(disabledButtons[0]?.textContent).toContain("Coming soon");
 
     await act(async () => {
       findButton(container, "Agent suggestion").click();
@@ -202,7 +208,7 @@ describe("<NetworkTokenPanel />", () => {
 
     const suggestedText = container.textContent ?? "";
     expect(suggestedText).toContain("USDC");
-    expect(suggestedText).toContain("BTC, ETH, SOL, USYC, EURC");
+    expect(suggestedText).toContain("BTC, ETH, SOL, EURC");
     expect(suggestedText).toContain(
       "Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji",
     );
@@ -210,7 +216,7 @@ describe("<NetworkTokenPanel />", () => {
       networks: ["ARC-TESTNET", "BASE-SEPOLIA"],
       networkWatchlist: ["ETH-SEPOLIA", "ARB-SEPOLIA", "AVAX-FUJI"],
       tokens: ["USDC"],
-      watchlist: ["BTC", "ETH", "SOL", "USYC", "EURC"],
+      watchlist: ["BTC", "ETH", "SOL", "EURC"],
     });
     expect(
       window.localStorage.getItem("aegis.wallet.route-preferences.v2"),
@@ -299,7 +305,9 @@ describe("<NetworkTokenPanel />", () => {
       "Arc testnet, Base Sepolia, Ethereum Sepolia, Arbitrum Sepolia, Avalanche Fuji",
     );
     expect(text).toContain("USDC");
-    expect(text).toContain("BTC, ETH, SOL, USYC, EURC");
+    expect(text).toContain("BTC, ETH, SOL, EURC");
+    expect(text).toContain("Coming soon");
+    expect(text).toContain("USYC");
     expect(text).toContain("All supported routes ready");
 
     act(() => root.unmount());

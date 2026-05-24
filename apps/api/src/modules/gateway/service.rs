@@ -7,6 +7,7 @@ use uuid::Uuid;
 use crate::config::Config;
 use crate::db::Db;
 use crate::error::AppError;
+use crate::modules::rebalance::models::ChainKey;
 use crate::modules::sse::{GatewayBalance as SseGatewayBalance, SseEvent, SseSender};
 use crate::modules::wallet_routes::SUPPORTED_WALLET_BLOCKCHAINS;
 
@@ -77,6 +78,39 @@ pub async fn fetch_balance(
     }
 
     Ok(balance)
+}
+
+/// USDC balance on a single chain for a user's Circle wallet — a focused read
+/// (one wallet, one balances call) used by the executor's post-funding
+/// confirmation (B1) so a dependent swap waits for bridged/minted USDC to
+/// actually credit before it spends it. Returns `Ok(0.0)` when the user has no
+/// live Circle wallet on `chain`. Reuses the same `fetch_wallet_tokens` read as
+/// the unified-balance path.
+pub async fn fetch_chain_usdc(
+    http: &reqwest::Client,
+    config: &Config,
+    db: &Db,
+    user_id: Uuid,
+    chain: ChainKey,
+) -> crate::error::Result<f64> {
+    let blockchain = crate::modules::wallet_routes::blockchain_for_chain(chain);
+    let Some(wallet_id) = crate::modules::wallet_routes::wallet_id_for_user(
+        db,
+        user_id,
+        blockchain,
+        &config.circle_wallet_set_id,
+    )
+    .await?
+    else {
+        return Ok(0.0);
+    };
+    let tokens = fetch_wallet_tokens(http, config, &wallet_id).await?;
+    let total = tokens
+        .iter()
+        .filter(|tb| tb.token.symbol.eq_ignore_ascii_case("USDC"))
+        .filter_map(|tb| tb.amount.parse::<f64>().ok())
+        .sum();
+    Ok(total)
 }
 
 pub async fn fetch_balance_for_user(

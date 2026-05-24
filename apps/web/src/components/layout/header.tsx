@@ -2,15 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import {
   Bell,
-  Check,
-  ChevronDown,
-  Layers,
   LogIn,
   LogOut,
-  Plus,
   Wifi,
   WifiOff,
   Wallet as WalletIcon,
@@ -23,11 +19,8 @@ import { safeNextPath } from "@/lib/auth-routing";
 import { logoutFailureMessage, logoutRedirect } from "./logout-copy";
 
 export function Header() {
-  const router = useRouter();
   const pathname = usePathname();
   const portfolio = useActivePortfolio();
-  const portfolios = usePortfolioStore((s) => s.portfolios);
-  const setActivePortfolio = usePortfolioStore((s) => s.setActivePortfolio);
   const sseConnected = usePortfolioStore((s) => s.sseConnected);
   const unifiedUsdc = usePortfolioStore((s) => s.unifiedUsdc);
   const unifiedEurc = usePortfolioStore((s) => s.unifiedEurc);
@@ -44,9 +37,7 @@ export function Header() {
 
   const [notifOpen, setNotifOpen] = useState(false);
   const [userOpen, setUserOpen] = useState(false);
-  const [portfolioOpen, setPortfolioOpen] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
-  const portfolioRef = useRef<HTMLDivElement>(null);
   const notifRef = useRef<HTMLDivElement>(null);
   const userRef = useRef<HTMLDivElement>(null);
   const pegAlerts = usePortfolioStore((s) => s.pegAlerts);
@@ -66,11 +57,6 @@ export function Header() {
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (
-        portfolioRef.current &&
-        !portfolioRef.current.contains(e.target as Node)
-      )
-        setPortfolioOpen(false);
       if (notifRef.current && !notifRef.current.contains(e.target as Node))
         setNotifOpen(false);
       if (userRef.current && !userRef.current.contains(e.target as Node))
@@ -79,12 +65,6 @@ export function Header() {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, []);
-
-  const switchPortfolio = (id: string) => {
-    setActivePortfolio(id);
-    setPortfolioOpen(false);
-    router.push(`/dashboard/${id}`);
-  };
   const activePortfolioName = portfolio ? displayPortfolioName(portfolio) : "";
 
   // Fetch unified balance on first render — Gateway SSE keeps it fresh after.
@@ -123,99 +103,7 @@ export function Header() {
   return (
     <header className="flex items-center justify-between px-6 h-16 border-b-brutal border-border-default bg-surface shrink-0">
       <div className="flex items-center gap-4">
-        {portfolio && portfolios.length > 1 ? (
-          <div ref={portfolioRef} className="relative">
-            <button
-              type="button"
-              onClick={() => setPortfolioOpen((v) => !v)}
-              aria-expanded={portfolioOpen}
-              aria-haspopup="menu"
-              className="flex min-h-[38px] max-w-[360px] items-center gap-2 border-brutal border-border-default bg-bg px-3 py-1.5 text-left hover:border-border-hi"
-            >
-              <Layers className="h-4 w-4 shrink-0 text-accent-agent" />
-              <span className="min-w-0">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-text-mut">
-                  Portfolio
-                </span>
-                <span className="block truncate text-sm font-semibold text-text-hi">
-                  {activePortfolioName}
-                </span>
-              </span>
-              <span className="ml-1 shrink-0 border border-border-default px-1.5 py-0.5 text-[10px] font-mono text-text-lo">
-                {portfolios.length}
-              </span>
-              <ChevronDown className="h-3.5 w-3.5 shrink-0 text-text-mut" />
-            </button>
-            {portfolioOpen && (
-              <div
-                role="menu"
-                aria-label="Switch portfolio"
-                className="absolute left-0 top-full z-50 mt-2 w-[360px] border-brutal border-border-default bg-surface shadow-brutal"
-              >
-                <div className="border-b border-border-default px-3 py-2">
-                  <p className="text-[10px] font-mono uppercase tracking-widest text-text-mut">
-                    Switch portfolio
-                  </p>
-                  <p className="mt-1 text-[11px] font-mono text-text-lo">
-                    Each portfolio has its own target, decisions, and approval
-                    history. Wallet cash stays shared.
-                  </p>
-                </div>
-                <div className="max-h-72 overflow-y-auto">
-                  {portfolios.map((p) => {
-                    const active = p.id === portfolio.id;
-                    return (
-                      <button
-                        key={p.id}
-                        type="button"
-                        role="menuitem"
-                        onClick={() => switchPortfolio(p.id)}
-                        className="grid w-full grid-cols-[20px_1fr_auto] items-center gap-2 border-b border-border-default px-3 py-2 text-left last:border-b-0 hover:bg-raised"
-                      >
-                        <span className="flex h-5 w-5 items-center justify-center">
-                          {active ? (
-                            <Check className="h-3.5 w-3.5 text-accent-agent" />
-                          ) : (
-                            <span className="h-1.5 w-1.5 bg-border-hi" />
-                          )}
-                        </span>
-                        <span className="min-w-0">
-                          <span className="block truncate text-xs font-mono font-semibold text-text-hi">
-                            {displayPortfolioName(p)}
-                          </span>
-                          <span className="block truncate text-[10px] font-mono text-text-mut">
-                            {portfolioSubtitle(p)}
-                          </span>
-                        </span>
-                        <span className="text-right text-[10px] font-mono text-text-lo tabular-nums">
-                          {formatCompactUsd(p.totalValueUsd)}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="grid grid-cols-2 border-t border-border-default">
-                  <Link
-                    href="/strategies"
-                    onClick={() => setPortfolioOpen(false)}
-                    className="inline-flex items-center justify-center gap-1 border-r border-border-default px-3 py-2 text-[11px] font-mono text-accent-agent hover:bg-raised"
-                  >
-                    <Layers className="h-3 w-3" />
-                    Adopt strategy
-                  </Link>
-                  <Link
-                    href="/onboarding"
-                    onClick={() => setPortfolioOpen(false)}
-                    className="inline-flex items-center justify-center gap-1 px-3 py-2 text-[11px] font-mono text-accent-pnl hover:bg-raised"
-                  >
-                    <Plus className="h-3 w-3" />
-                    Custom target
-                  </Link>
-                </div>
-              </div>
-            )}
-          </div>
-        ) : portfolio ? (
+        {portfolio ? (
           <div className="flex items-center gap-2 px-3 py-1.5 border-brutal border-border-default rounded-sharp bg-bg">
             <span className="text-xs text-text-lo font-mono">Portfolio</span>
             <span className="text-sm font-semibold text-text-hi">
@@ -244,7 +132,7 @@ export function Header() {
         ) : walletPending ? (
           <Link
             href="/wallets"
-            className="inline-flex min-h-[36px] items-center justify-center gap-2 rounded-sharp border border-warn/40 bg-warn/5 px-3 text-[10px] font-mono uppercase tracking-widest text-warn transition-colors hover:bg-warn/10"
+            className="touch-target inline-flex min-h-[36px] items-center justify-center gap-2 rounded-sharp border border-warn/40 bg-warn/5 px-3 text-[10px] font-mono uppercase tracking-widest text-warn transition-colors hover:bg-warn/10"
           >
             <WalletIcon className="h-3.5 w-3.5" />
             Account setup
@@ -307,7 +195,7 @@ export function Header() {
           <div className="hidden items-center gap-2 sm:flex">
             <Link
               href={authHref("/login", pathname)}
-              className="inline-flex min-h-[36px] items-center justify-center gap-2 rounded-sharp border border-black bg-accent-agent px-3 text-xs font-mono font-semibold text-black shadow-brutal-sm transition-shadow hover:shadow-brutal"
+              className="touch-target inline-flex min-h-[36px] items-center justify-center gap-2 rounded-sharp border border-black bg-accent-agent px-3 text-xs font-mono font-semibold text-black shadow-brutal-sm transition-shadow hover:shadow-brutal"
             >
               <LogIn className="h-3.5 w-3.5" />
               Sign in
@@ -320,7 +208,7 @@ export function Header() {
             data-testid="header-logout-direct"
             onClick={() => void handleLogout()}
             aria-label="Log out"
-            className="min-h-[36px] inline-flex items-center justify-center gap-2 rounded-sharp border border-border-default bg-bg px-2.5 text-xs font-mono text-text-lo hover:border-risk/50 hover:bg-risk/5 hover:text-risk transition-colors"
+            className="touch-target min-h-[36px] inline-flex items-center justify-center gap-2 rounded-sharp border border-border-default bg-bg px-2.5 text-xs font-mono text-text-lo hover:border-risk/50 hover:bg-risk/5 hover:text-risk transition-colors"
           >
             <LogOut className="w-3.5 h-3.5" aria-hidden="true" />
             <span className="hidden sm:inline">Log out</span>
@@ -330,7 +218,7 @@ export function Header() {
           <div ref={userRef} className="relative">
             <button
               onClick={() => setUserOpen((v) => !v)}
-              className="w-7 h-7 rounded-sharp bg-accent-agent flex items-center justify-center border-brutal border-black hover:opacity-90"
+              className="touch-target w-7 h-7 rounded-sharp bg-accent-agent flex items-center justify-center border-brutal border-black hover:opacity-90"
               title="Account menu"
               aria-label="Account menu"
               aria-haspopup="menu"
@@ -398,29 +286,6 @@ function authHref(path: "/login", next: string) {
   return query ? `${path}?${query}` : path;
 }
 
-function portfolioSubtitle(
-  portfolio: Pick<Portfolio, "goal"> & Partial<Pick<Portfolio, "allocations">>,
-) {
-  const goal = portfolio.goal;
-  const risk = goal?.riskTolerance ?? "target";
-  const horizon = goal?.horizon ?? "draft";
-  const hydratedAssets = portfolio.allocations?.length ?? 0;
-  const targetAssets = goal?.targetAllocation
-    ? Object.values(goal.targetAllocation).filter((v) => (v ?? 0) > 0).length
-    : 0;
-  const assets = hydratedAssets || targetAssets;
-  return `${risk} · ${horizon} · ${assets} assets`;
-}
-
 function displayPortfolioName(portfolio: Pick<Portfolio, "name">) {
   return portfolio.name;
-}
-
-function formatCompactUsd(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    notation: "compact",
-    maximumFractionDigits: 1,
-  }).format(value);
 }

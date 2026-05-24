@@ -102,6 +102,7 @@ function emptyPortfolio(): Portfolio {
     ],
     goal: {
       name: "Growth",
+      objective: "grow",
       horizon: "5y",
       riskTolerance: "moderate",
       targetAllocation: { BTC: 50 },

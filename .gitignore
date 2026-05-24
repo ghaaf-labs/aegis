@@ -64,8 +64,8 @@ infra/contracts/broadcast/
 *.bak
 apps/web/e2e/.auth/
 
-# Dev runtime state (scripts/dev.sh): tmux logs, locks, status
-.dev/
-
 # Local agent worktrees (never commit)
 .claude/worktrees/
+
+# Dev runtime state (scripts/dev.sh): tmux logs, locks, status
+.dev/

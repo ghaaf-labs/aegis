@@ -2,12 +2,14 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { BrutalPill } from "@aegis/ui";
 import { LandingShell } from "@/components/layout/landing-shell";
+import { pageMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
-  title: "Aegis · Terms & Privacy",
+export const metadata: Metadata = pageMetadata({
+  title: "Terms & Privacy — Aegis",
   description:
     "Plain-English terms, privacy, account control, and refund policy for Aegis.",
-};
+  path: "/policy",
+});
 
 export default function PolicyPage() {
   return (
@@ -21,8 +23,8 @@ export default function PolicyPage() {
         </h1>
         <p className="mt-4 text-sm text-text-lo font-mono leading-relaxed max-w-2xl">
           The short version: verify your email, approve plans before anything
-          moves, keep control of your account, and export or close it from
-          Settings.
+          moves, and keep control of your account. Data export, email change,
+          and account closure are coming to Settings.
         </p>
       </header>
 
@@ -50,8 +52,8 @@ export default function PolicyPage() {
           </h2>
           <p className="text-sm font-mono leading-relaxed text-text-lo">
             Aegis uses your email for sign-in, security notices, export links,
-            and account recovery. You can export your data, change your email,
-            or close the account from Settings.
+            and account recovery. Data export, email change, and account closure
+            are planned for Settings — coming soon.
           </p>
         </section>
 
@@ -61,8 +63,15 @@ export default function PolicyPage() {
           className="scroll-mt-24 border-brutal border-border-default bg-raised p-6"
         >
           <h2 className="text-base font-bold text-text-hi uppercase tracking-wider mb-4">
-            What we refund
+            Refund policy
+            <span className="ml-3 text-[10px] font-mono normal-case tracking-normal border border-accent-agent/40 text-accent-agent px-1.5 py-0.5 align-middle">
+              billing coming soon
+            </span>
           </h2>
+          <p className="text-xs font-mono text-text-mut mb-4">
+            Paid billing (Circle Nanopayments) is not yet live. The commitments
+            below describe the intended refund policy once billing ships.
+          </p>
           <ul className="space-y-3 text-sm font-mono">
             <li className="flex gap-3">
               <span className="text-accent-pnl font-bold shrink-0">✓</span>
@@ -70,7 +79,7 @@ export default function PolicyPage() {
                 <span className="text-accent-pnl font-semibold">
                   Full fee refund
                 </span>{" "}
-                if a rebalance failed mid-execution (CCTP attestation timeout,
+                if a rebalance fails mid-execution (CCTP attestation timeout,
                 RPC outage, on-chain revert) — no service was delivered.
               </span>
             </li>
@@ -127,14 +136,15 @@ export default function PolicyPage() {
                 <span className="text-text-hi font-semibold">
                   Pause the agent
                 </span>{" "}
-                — one toggle in{" "}
+                — a pause toggle in{" "}
                 <Link
                   href="/settings"
                   className="text-accent-agent hover:underline underline-offset-4"
                 >
                   Settings
                 </Link>{" "}
-                stops every scheduled trigger immediately.
+                will stop every scheduled trigger immediately.{" "}
+                <span className="text-accent-agent/70">(coming soon)</span>
               </span>
             </li>
             <li className="flex gap-3">
@@ -153,8 +163,8 @@ export default function PolicyPage() {
                 <span className="text-text-hi font-semibold">
                   Move funds out before closing
                 </span>{" "}
-                — approved plans can execute for you from your Aegis account.
-                Closing the account requires moving funds out first.
+                — approved plans can execute from your Aegis account. Closing
+                the account requires moving funds out first.
               </span>
             </li>
             <li className="flex gap-3">
@@ -163,9 +173,10 @@ export default function PolicyPage() {
                 <span className="text-text-hi font-semibold">
                   Close the account
                 </span>{" "}
-                — Settings → <em>Close account</em> signs you out and starts
-                erasure. PII is anonymized where legally allowed; required tax,
-                compliance, and on-chain records may be retained.
+                — account closure via Settings is coming soon. When available,
+                it will sign you out and start erasure. PII is anonymized where
+                legally allowed; required tax, compliance, and on-chain records
+                may be retained.
               </span>
             </li>
           </ul>

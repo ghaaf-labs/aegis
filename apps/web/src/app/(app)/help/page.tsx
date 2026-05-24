@@ -14,12 +14,14 @@ import {
   BrutalPill,
 } from "@aegis/ui";
 import { HelpItemGrid } from "./help-item-grid";
+import { pageMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
-  title: "Aegis · Help",
+export const metadata: Metadata = pageMetadata({
+  title: "Help — Aegis",
   description:
     "Plain-English help for wallet cash, approvals, agent decisions, tax exports, and support.",
-};
+  path: "/help",
+});
 
 export default function HelpPage() {
   return (
@@ -45,6 +47,8 @@ export default function HelpPage() {
           <HeroFact icon={History} label="History" value="Transactions" />
         </div>
       </section>
+
+      <HelpItemGrid />
 
       <BrutalCard>
         <BrutalCardBody className="grid gap-5 lg:grid-cols-[1fr_420px] lg:items-center">
@@ -84,8 +88,6 @@ export default function HelpPage() {
           <HelpFlowSvg />
         </BrutalCardBody>
       </BrutalCard>
-
-      <HelpItemGrid />
 
       <BrutalCard>
         <BrutalCardHeader className="gap-3">

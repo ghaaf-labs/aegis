@@ -2,12 +2,14 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ProvenanceLine } from "@aegis/ui";
 import { BacktestChart, type Sample } from "@/components/regime/backtest-chart";
+import { pageMetadata } from "@/lib/seo";
 
-export const metadata: Metadata = {
-  title: "Aegis · Regime classifier — 5y backtest",
+export const metadata: Metadata = pageMetadata({
+  title: "Regime Classifier Backtest Evidence — Aegis",
   description:
-    "Replay of the Aegis regime classifier across the last several years of price history. Trust signal, not marketing.",
-};
+    "Backtest evidence for the Aegis market-regime classifier. Out-of-sample predictions replayed across historical price data.",
+  path: "/about/regime/backtest",
+});
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -44,7 +46,7 @@ export default async function RegimeBacktestPage() {
             Regime classifier · backtest
           </p>
           <h1 className="text-3xl font-mono font-semibold text-text-hi tracking-tight">
-            How the classifier called the last few years
+            Regime classifier — backtest evidence
           </h1>
           <p className="text-sm text-text-lo max-w-2xl">
             Each tick is one out-of-sample prediction the regime classifier made
@@ -63,12 +65,15 @@ export default async function RegimeBacktestPage() {
             />
           </section>
         ) : (
-          <section className="border-2 border-white/10 bg-[#141414] p-6 text-sm text-text-lo">
-            No backtest has been persisted yet. Run{" "}
-            <code className="text-accent-agent">
-              POST /admin/regime/backtest
-            </code>{" "}
-            (auth required) to populate; this page re-fetches once samples land.
+          <section className="border-2 border-white/10 bg-[#141414] p-8 text-center space-y-3">
+            <p className="text-sm font-mono font-semibold text-text-hi">
+              Backtest evidence isn&apos;t published yet.
+            </p>
+            <p className="text-xs text-text-lo max-w-md mx-auto">
+              Evaluation samples will appear here once the first backtest run is
+              complete. Check back after the classifier has processed enough
+              live decisions.
+            </p>
           </section>
         )}
 
@@ -80,8 +85,7 @@ export default async function RegimeBacktestPage() {
           >
             model card
           </Link>
-          . Source data lives in `model_evaluation_samples`; queries are in
-          `apps/api/src/modules/risk_engine/regime_backtest.rs`.
+          .
         </footer>
       </div>
     </main>

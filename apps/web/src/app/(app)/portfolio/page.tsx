@@ -1,7 +1,6 @@
 "use client";
 import { useState } from "react";
-import { CircleAlert, Plus, RefreshCw, ShieldCheck } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { CircleAlert, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { BrutalButton } from "@aegis/ui";
 import { AssetTable } from "@/components/dashboard/asset-table";
@@ -9,15 +8,32 @@ import { RebalanceModal } from "@/components/portfolio/rebalance-modal";
 import { RiskScoreCard } from "@/components/portfolio/risk-score-card";
 import { AllocationChart } from "@/components/dashboard/allocation-chart";
 import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
+import { agentApi } from "@/lib/api";
 
 export default function PortfolioPage() {
-  const router = useRouter();
   const [rebalanceOpen, setRebalanceOpen] = useState(false);
+  const [reproposing, setReproposing] = useState(false);
   const portfolio = useActivePortfolio();
+  const decisions = usePortfolioStore((s) => s.decisions);
   const wallet = usePortfolioStore((s) => s.wallet);
   const gatewayBalanceStatus = usePortfolioStore((s) => s.gatewayBalanceStatus);
   const gatewayBalanceError = usePortfolioStore((s) => s.gatewayBalanceError);
   const reviewReady = !!wallet && gatewayBalanceStatus === "ready";
+  const latestProposal = decisions.find(
+    (d) => d.portfolioId === portfolio?.id && d.kind === "allocation_proposal",
+  );
+
+  const handleRepropose = async () => {
+    if (!portfolio) return;
+    setReproposing(true);
+    try {
+      await agentApi.proposeAllocation(portfolio.id);
+    } catch {
+      /* the dashboard surfaces the resulting proposal via the store/SSE */
+    } finally {
+      setReproposing(false);
+    }
+  };
   const readiness = rebalanceReadinessCopy(
     !!wallet,
     gatewayBalanceStatus,
@@ -29,17 +45,13 @@ export default function PortfolioPage() {
       <div className="flex flex-col items-center justify-center min-h-[40vh] text-center space-y-3">
         <p className="text-sm font-mono text-text-lo">No portfolio selected.</p>
         <p className="text-xs font-mono text-text-mut">
-          <Link href="/onboarding" className="text-accent-pnl hover:underline">
-            Create a portfolio
-          </Link>{" "}
-          or{" "}
           <Link
-            href="/strategies"
+            href="/onboarding"
             className="text-accent-agent hover:underline"
           >
-            adopt a strategy
+            Set your goal
           </Link>{" "}
-          to get started.
+          and the agent designs the allocation.
         </p>
       </div>
     );
@@ -50,20 +62,28 @@ export default function PortfolioPage() {
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <h1 className="text-2xl font-mono font-semibold text-text-hi tracking-tight">
-            My Portfolio
+            Agent-managed portfolio
           </h1>
           <p className="text-sm text-text-lo mt-1">
             Review positions, targets, and wallet cash before approving a move.
+          </p>
+          <p className="mt-2 font-mono text-[11px] text-text-mut">
+            Agent decided this allocation
+            {latestProposal?.modelSlug
+              ? ` · via ${latestProposal.modelSlug}`
+              : ""}
+            {latestProposal?.regime ? ` · ${latestProposal.regime}` : ""}
           </p>
         </div>
         <div className="grid gap-2 sm:grid-cols-2 lg:min-w-[360px]">
           <BrutalButton
             variant="ghost"
-            onClick={() => router.push("/onboarding")}
+            onClick={() => void handleRepropose()}
+            disabled={reproposing}
             className="w-full"
           >
-            <Plus className="w-4 h-4 mr-2" />
-            Change target
+            <Sparkles className="w-4 h-4 mr-2" />
+            {reproposing ? "Re-proposing…" : "Re-propose"}
           </BrutalButton>
           <BrutalButton
             variant={reviewReady ? "agent" : "ghost"}

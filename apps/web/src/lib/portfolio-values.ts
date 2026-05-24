@@ -21,18 +21,6 @@ interface PortfolioPositionMetrics {
   maxDriftPct: number;
 }
 
-export function deriveIdleCashUsd(
-  unifiedUsdc: number,
-  unifiedEurc: number,
-  snapshot: MarketSnapshot | null | undefined,
-): number {
-  return unifiedUsdc + unifiedEurc * eurcUsdPrice(snapshot);
-}
-
-function eurcUsdPrice(snapshot: MarketSnapshot | null | undefined): number {
-  return priceUsdForSymbol(snapshot, "EURC") ?? 1.085;
-}
-
 export function derivePortfolioPositionMetrics(
   portfolio: Portfolio | null | undefined,
   snapshot: MarketSnapshot | null | undefined,

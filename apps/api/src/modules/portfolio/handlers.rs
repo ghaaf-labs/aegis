@@ -13,7 +13,10 @@ pub async fn list(
     Extension(claims): Extension<Claims>,
 ) -> crate::error::Result<Json<Vec<Portfolio>>> {
     let portfolios = sqlx::query_as::<_, Portfolio>(
-        "SELECT * FROM portfolios WHERE user_id = $1 ORDER BY created_at DESC",
+        "SELECT * FROM portfolios
+         WHERE user_id = $1
+         ORDER BY updated_at DESC, created_at DESC
+         LIMIT 1",
     )
     .bind(claims.sub)
     .fetch_all(&state.db)
@@ -47,10 +50,10 @@ pub async fn get(
     }))
 }
 
-/// Create a portfolio owned by the authenticated user. Users can keep multiple
-/// portfolios side-by-side: one custom goal, plus strategy-adopted targets for
-/// comparison. The agent still requires per-portfolio human approval before
-/// any deployment or rebalance executes.
+/// Create or replace the authenticated user's single portfolio target. Aegis
+/// keeps one portfolio per user; calling this endpoint again updates that
+/// portfolio's name, goal, and target allocations instead of creating a second
+/// portfolio.
 pub async fn create(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
@@ -59,17 +62,54 @@ pub async fn create(
     let goal_value = body.goal.clone().unwrap_or(serde_json::json!({}));
 
     let mut tx = state.db.begin().await?;
-    let created = sqlx::query_as::<_, Portfolio>(
-        "INSERT INTO portfolios (id, user_id, name, goal) VALUES ($1, $2, $3, $4)
-         RETURNING *",
+    let existing_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM portfolios
+         WHERE user_id = $1
+         ORDER BY updated_at DESC, created_at DESC
+         LIMIT 1
+         FOR UPDATE",
     )
-    .bind(Uuid::new_v4())
     .bind(claims.sub)
-    .bind(&body.name)
-    .bind(&goal_value)
-    .fetch_one(&mut *tx)
+    .fetch_optional(&mut *tx)
     .await?;
-    let portfolio_id = created.id;
+    let (portfolio_id, status_code) = if let Some(id) = existing_id {
+        sqlx::query(
+            "UPDATE portfolios
+             SET name = $1,
+                 goal = $2,
+                 updated_at = NOW()
+             WHERE id = $3",
+        )
+        .bind(&body.name)
+        .bind(&goal_value)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+        (id, StatusCode::OK)
+    } else {
+        let id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO portfolios (id, user_id, name, goal)
+             VALUES ($1, $2, $3, $4)",
+        )
+        .bind(id)
+        .bind(claims.sub)
+        .bind(&body.name)
+        .bind(&goal_value)
+        .execute(&mut *tx)
+        .await?;
+        (id, StatusCode::CREATED)
+    };
+
+    sqlx::query(
+        "DELETE FROM portfolios
+         WHERE user_id = $1
+           AND id <> $2",
+    )
+    .bind(claims.sub)
+    .bind(portfolio_id)
+    .execute(&mut *tx)
+    .await?;
 
     let target_symbols = body
         .allocations
@@ -157,7 +197,7 @@ pub async fn create(
     .await?;
 
     tx.commit().await?;
-    Ok((StatusCode::CREATED, Json(portfolio)))
+    Ok((status_code, Json(portfolio)))
 }
 
 pub async fn update(

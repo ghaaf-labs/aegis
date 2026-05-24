@@ -99,42 +99,46 @@ export function HelpItemGrid() {
           const toneClass = itemToneClass(item.tone);
 
           return (
-            <Link key={item.href} href={href} className="group">
-              <BrutalCard className="h-full transition-transform group-hover:-translate-x-0.5 group-hover:-translate-y-0.5 group-hover:border-accent-agent/50 group-hover:shadow-brutal">
-                <BrutalCardHeader className="gap-3">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span
-                      className={`flex h-8 w-8 shrink-0 items-center justify-center border ${toneClass}`}
-                    >
-                      <item.icon className="h-4 w-4" />
-                    </span>
-                    <span className="min-w-0 text-sm font-mono text-text-hi">
-                      {item.title}
-                    </span>
-                  </div>
-                  <span className="shrink-0 border border-border-default bg-bg px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-text-mut">
-                    {item.label}
+            <BrutalCard key={item.href} className="h-full">
+              <BrutalCardHeader className="gap-3">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span
+                    className={`flex h-8 w-8 shrink-0 items-center justify-center border ${toneClass}`}
+                  >
+                    <item.icon className="h-4 w-4" aria-hidden="true" />
                   </span>
-                </BrutalCardHeader>
-                <BrutalCardBody className="space-y-3">
-                  <p className="text-sm font-mono leading-relaxed text-text-lo">
-                    {item.body}
-                  </p>
-                  <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-                    <span className="inline-flex min-h-8 items-center gap-1.5 border border-border-default bg-bg px-2 font-mono text-[10px] uppercase tracking-widest text-text-mut">
-                      {sessionResolved && sessionActive && (
-                        <CheckCircle2 className="h-3 w-3 text-accent-pnl" />
-                      )}
-                      {accessLabel}
-                    </span>
-                    <span className="inline-flex min-h-8 items-center justify-center gap-1 border border-accent-agent/35 bg-accent-agent/5 px-2 font-mono text-[10px] uppercase tracking-widest text-accent-agent group-hover:border-accent-agent">
-                      {cta}
-                      <ArrowRight className="h-3 w-3" aria-hidden="true" />
-                    </span>
-                  </div>
-                </BrutalCardBody>
-              </BrutalCard>
-            </Link>
+                  <span className="min-w-0 text-sm font-mono font-semibold text-text-hi">
+                    {item.title}
+                  </span>
+                </div>
+                <span className="shrink-0 border border-border-default bg-bg px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-text-mut">
+                  {item.label}
+                </span>
+              </BrutalCardHeader>
+              <BrutalCardBody className="space-y-3">
+                <p className="text-sm font-mono leading-relaxed text-text-lo">
+                  {item.body}
+                </p>
+                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                  <span className="inline-flex min-h-8 items-center gap-1.5 border border-border-default bg-bg px-2 font-mono text-[10px] uppercase tracking-widest text-text-mut">
+                    {sessionResolved && sessionActive && (
+                      <CheckCircle2 className="h-3 w-3 text-accent-pnl" />
+                    )}
+                    {accessLabel}
+                  </span>
+                  <Link
+                    href={href}
+                    className="inline-flex min-h-8 items-center justify-center gap-1 border border-accent-agent/35 bg-accent-agent/5 px-2 font-mono text-[10px] uppercase tracking-widest text-accent-agent hover:border-accent-agent"
+                    aria-label={
+                      cta === "Sign in" ? `Sign in to open ${item.label}` : cta
+                    }
+                  >
+                    {cta}
+                    <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                  </Link>
+                </div>
+              </BrutalCardBody>
+            </BrutalCard>
           );
         })}
       </div>

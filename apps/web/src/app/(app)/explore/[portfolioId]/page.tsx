@@ -11,6 +11,7 @@ import {
   ProvenanceLine,
 } from "@aegis/ui";
 import { DEMO_BUNDLES, DEMO_SLUGS } from "@/lib/explore-data";
+import { pageMetadata } from "@/lib/seo";
 
 interface PageProps {
   params: Promise<{ portfolioId: string }>;
@@ -25,11 +26,12 @@ export async function generateMetadata({
 }: PageProps): Promise<Metadata> {
   const { portfolioId } = await params;
   const bundle = DEMO_BUNDLES[portfolioId];
-  if (!bundle) return { title: "Aegis · Explore" };
-  return {
-    title: `Aegis · ${bundle.portfolio.name} (demo)`,
+  if (!bundle) return { title: "Explore — Aegis" };
+  return pageMetadata({
+    title: `${bundle.portfolio.name} (demo) — Aegis`,
     description: `Demo portfolio: ${bundle.portfolio.name}. See how the Aegis agent reasons about regime, allocation, and risk.`,
-  };
+    path: `/explore/${portfolioId}`,
+  });
 }
 
 export default async function ExploreDemoPage({ params }: PageProps) {
@@ -37,7 +39,7 @@ export default async function ExploreDemoPage({ params }: PageProps) {
   const bundle = DEMO_BUNDLES[portfolioId];
   if (!bundle) notFound();
 
-  const { portfolio, decisions } = bundle;
+  const { portfolio, decisions, unsupportedSleeves = [] } = bundle;
   const goal = portfolio.goal;
 
   return (
@@ -57,7 +59,7 @@ export default async function ExploreDemoPage({ params }: PageProps) {
           href="/login?next=%2Fdashboard"
           className="inline-flex min-h-9 items-center gap-1 rounded-sharp text-xs font-mono font-semibold text-accent-pnl hover:underline"
         >
-          Continue
+          Open dashboard
           <ExternalLink className="w-3 h-3" />
         </Link>
       </div>
@@ -101,13 +103,31 @@ export default async function ExploreDemoPage({ params }: PageProps) {
               <Stat label="Risk tolerance" value={goal.riskTolerance} />
               <Stat
                 label="USYC sleeve"
-                value={goal.includeUsyc ? "on" : "off"}
-                highlight={goal.includeUsyc}
+                value={
+                  unsupportedSleeves.includes("USYC")
+                    ? "coming soon"
+                    : goal.includeUsyc
+                      ? "on"
+                      : "off"
+                }
+                highlight={
+                  goal.includeUsyc && !unsupportedSleeves.includes("USYC")
+                }
+                comingSoon={unsupportedSleeves.includes("USYC")}
               />
               <Stat
                 label="EURC sleeve"
-                value={goal.includeEurc ? "on" : "off"}
-                highlight={goal.includeEurc}
+                value={
+                  unsupportedSleeves.includes("EURC")
+                    ? "coming soon"
+                    : goal.includeEurc
+                      ? "on"
+                      : "off"
+                }
+                highlight={
+                  goal.includeEurc && !unsupportedSleeves.includes("EURC")
+                }
+                comingSoon={unsupportedSleeves.includes("EURC")}
               />
             </div>
             <div className="mt-4">
@@ -179,18 +199,27 @@ export default async function ExploreDemoPage({ params }: PageProps) {
         </BrutalCardBody>
       </BrutalCard>
 
-      <div className="pt-2 text-center">
-        <p className="text-xs text-text-mut font-mono mb-3">
-          This is a curated demo. Real portfolios use live wallets, unified
-          balances, yield sleeves, and approved execution.
+      <div className="pt-2 text-center space-y-3">
+        <p className="text-xs text-text-mut font-mono">
+          This is a curated demo with simulated data. Real portfolios use live
+          wallets, unified USDC balances, and approved execution. Yield and FX
+          sleeves (USYC, EURC) are coming soon.
         </p>
-        <Link
-          href="/login"
-          className="inline-flex items-center gap-2 px-4 py-2 bg-accent-pnl text-black font-mono font-semibold rounded-sharp border-brutal border-black shadow-brutal-sm hover:shadow-brutal"
-        >
-          Build your own portfolio
-          <ExternalLink className="w-3 h-3" />
-        </Link>
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+          <Link
+            href="/explore"
+            className="inline-flex items-center gap-2 px-4 py-2 border border-border-default bg-bg text-text-lo font-mono text-xs hover:text-text-hi hover:border-accent-agent"
+          >
+            Continue this demo
+          </Link>
+          <Link
+            href="/login?next=%2Fdashboard"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-accent-pnl text-black font-mono font-semibold rounded-sharp border-brutal border-black shadow-brutal-sm hover:shadow-brutal"
+          >
+            Create my portfolio
+            <ExternalLink className="w-3 h-3" />
+          </Link>
+        </div>
       </div>
     </div>
   );
@@ -200,16 +229,24 @@ function Stat({
   label,
   value,
   highlight,
+  comingSoon,
 }: {
   label: string;
   value: string;
   highlight?: boolean;
+  comingSoon?: boolean;
 }) {
   return (
     <div>
       <p className="text-[10px] text-text-mut">{label.toUpperCase()}</p>
       <p
-        className={`mt-0.5 ${highlight ? "text-accent-pnl" : "text-text-hi"} font-semibold`}
+        className={`mt-0.5 font-semibold ${
+          comingSoon
+            ? "text-warn/80"
+            : highlight
+              ? "text-accent-pnl"
+              : "text-text-hi"
+        }`}
       >
         {value}
       </p>

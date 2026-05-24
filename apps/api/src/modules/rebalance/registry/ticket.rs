@@ -86,11 +86,22 @@ impl ExecutionTicket {
         let src_symbol = leg.src_symbol.clone().unwrap_or_else(|| "USDC".into());
         let dest_symbol = leg.dest_symbol.clone().unwrap_or_else(|| "USDC".into());
 
+        // A CCTP burn/mint quote is the 1:1 USDC bridge. A *hooked* burn carries
+        // its swap target (ETH/cbBTC/…) in `dest_symbol` for the destination
+        // RebalanceExecutor, but the bridge quote itself is always USDC→USDC —
+        // the USDC→token swap is the hook, validated by its own `min_out`. So
+        // validate CCTP legs against the bridged unit; local swaps against the
+        // real token pair. (`dest_symbol` is still stored below for the hook.)
+        let (expect_src, expect_dest) = match leg.kind {
+            LegKind::CrossChainBurn | LegKind::CrossChainMint => ("USDC", "USDC"),
+            _ => (src_symbol.as_str(), dest_symbol.as_str()),
+        };
+
         quote::validate(
             &quote,
             QuoteExpectation {
-                src_token: &src_symbol,
-                dest_token: &dest_symbol,
+                src_token: expect_src,
+                dest_token: expect_dest,
                 src_chain,
                 dest_chain,
             },
@@ -145,10 +156,12 @@ mod tests {
         let mut cfg = crate::config::test_config();
         cfg.execution_mock = false;
         cfg.circle_mock = false;
-        cfg.chain_private_key_arc = "0xaa".into();
-        cfg.chain_private_key_base = "0xbb".into();
-        cfg.usdc_arc = "0x00000000000000000000000000000000000000a1".into();
-        cfg.usdc_base = "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
+        cfg.chains[ChainKey::Arc.index()].private_key = "0xaa".into();
+        cfg.chains[ChainKey::Base.index()].private_key = "0xbb".into();
+        cfg.chains[ChainKey::Arc.index()].usdc =
+            "0x00000000000000000000000000000000000000a1".into();
+        cfg.chains[ChainKey::Base.index()].usdc =
+            "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
         cfg
     }
 
@@ -196,5 +209,29 @@ mod tests {
         );
         let err = ExecutionTicket::mint(&caps, &cfg, Uuid::new_v4(), &leg, stale, now).unwrap_err();
         assert!(matches!(err, MintError::Quote(QuoteError::Expired)));
+    }
+
+    #[test]
+    fn mint_accepts_hooked_burn_against_usdc_bridge_quote() {
+        // A hooked CrossChainBurn carries its swap target (ETH) in dest_symbol,
+        // but the CCTP bridge quote is USDC->USDC. Minting must validate the
+        // quote against the bridged unit, not ETH (regression for the real-exec
+        // failure "quote token does not match the leg"). dest_symbol is still
+        // preserved on the ticket for the destination hook.
+        let cfg = crate::config::test_config();
+        let caps = RuntimeCapabilities::from_config(&cfg);
+        let leg = RouteLeg {
+            kind: LegKind::CrossChainBurn,
+            src_chain: Some("arc".into()),
+            dest_chain: Some("base".into()),
+            src_symbol: Some("USDC".into()),
+            dest_symbol: Some("ETH".into()),
+            amount_usdc: 4.0,
+        };
+        let now = Utc::now();
+        let q = ValidatedQuote::cctp_one_to_one(ChainKey::Arc, ChainKey::Base, 4_000_000, now);
+        let ticket =
+            ExecutionTicket::mint(&caps, &cfg, Uuid::new_v4(), &leg, q, now).expect("hooked burn");
+        assert_eq!(ticket.dest_symbol, "ETH");
     }
 }

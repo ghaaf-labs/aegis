@@ -64,12 +64,24 @@ async fn main() -> anyhow::Result<()> {
         "smoke must run with MOCK_CIRCLE=false; got true"
     );
     let public_vars = [
-        ("CCTP_TOKEN_MESSENGER_BASE", &cfg.cctp_token_messenger_base),
-        ("CCTP_TOKEN_MESSENGER_ARC", &cfg.cctp_token_messenger_arc),
-        ("USDC_BASE", &cfg.usdc_base),
-        ("USDC_ARC", &cfg.usdc_arc),
-        ("REBALANCE_EXECUTOR_BASE", &cfg.rebalance_executor_base),
-        ("REBALANCE_EXECUTOR_ARC", &cfg.rebalance_executor_arc),
+        (
+            "CCTP_TOKEN_MESSENGER_BASE",
+            &cfg.chain(ChainKey::Base).cctp_token_messenger,
+        ),
+        (
+            "CCTP_TOKEN_MESSENGER_ARC",
+            &cfg.chain(ChainKey::Arc).cctp_token_messenger,
+        ),
+        ("USDC_BASE", &cfg.chain(ChainKey::Base).usdc),
+        ("USDC_ARC", &cfg.chain(ChainKey::Arc).usdc),
+        (
+            "REBALANCE_EXECUTOR_BASE",
+            &cfg.chain(ChainKey::Base).rebalance_executor,
+        ),
+        (
+            "REBALANCE_EXECUTOR_ARC",
+            &cfg.chain(ChainKey::Arc).rebalance_executor,
+        ),
     ];
     println!("--- runtime config ---");
     for (name, val) in public_vars {
@@ -82,11 +94,11 @@ async fn main() -> anyhow::Result<()> {
     }
     println!(
         "  CHAIN_PRIVATE_KEY_BASE    = {} chars",
-        cfg.chain_private_key_base.len()
+        cfg.chain(ChainKey::Base).private_key.len()
     );
     println!(
         "  CHAIN_PRIVATE_KEY_ARC     = {} chars",
-        cfg.chain_private_key_arc.len()
+        cfg.chain(ChainKey::Arc).private_key.len()
     );
     println!("---");
 
@@ -144,9 +156,17 @@ async fn main() -> anyhow::Result<()> {
         anyhow::bail!("goal.targetAllocation empty; seed shape wrong");
     }
 
+    // Chain holding the seeded USDC. Defaults to Base (a same-chain swap test);
+    // set SMOKE_USDC_CHAIN=arc to force a cross-chain CCTP burn+mint (+hook swap).
+    let src_chain = std::env::var("SMOKE_USDC_CHAIN")
+        .ok()
+        .and_then(|s| ChainKey::parse(&s))
+        .unwrap_or(ChainKey::Base);
     let mut usdc_per_chain: HashMap<ChainKey, f64> = HashMap::new();
     usdc_per_chain.insert(ChainKey::Arc, 0.0);
-    usdc_per_chain.insert(ChainKey::Base, total_value_usd);
+    usdc_per_chain.insert(ChainKey::Base, 0.0);
+    usdc_per_chain.insert(src_chain, total_value_usd);
+    info!(?src_chain, "seeded USDC source chain");
 
     let input = PlanInput {
         portfolio_value_usd: total_value_usd,
@@ -156,6 +176,7 @@ async fn main() -> anyhow::Result<()> {
         drift_threshold: 0.05,
         dust_threshold_usd: 1.0,
         prices: HashMap::new(),
+        regime: None,
     };
     let legs = plan_legs(&input);
     info!(legs_count = legs.len(), "planner emitted legs");

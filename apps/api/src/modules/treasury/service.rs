@@ -8,6 +8,7 @@ use crate::config::Config;
 use crate::db::Db;
 use crate::error::{AppError, Result};
 use crate::modules::analytics;
+use crate::modules::rebalance::models::ChainKey;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,7 +36,10 @@ pub struct ParkResult {
 const HASHNOTE_PUBLISHED_YIELD: f64 = 0.0510;
 
 pub async fn rate(http: &reqwest::Client, config: &Config) -> Result<UsycRate> {
-    if config.execution_mock || config.usyc_oracle_arc.is_empty() || config.arc_rpc_url.is_empty() {
+    if config.execution_mock
+        || config.usyc_oracle_arc.is_empty()
+        || config.chain(ChainKey::Arc).rpc_url.is_empty()
+    {
         return Ok(UsycRate {
             annualized_yield: HASHNOTE_PUBLISHED_YIELD,
             price_usd: 1.00,
@@ -44,7 +48,13 @@ pub async fn rate(http: &reqwest::Client, config: &Config) -> Result<UsycRate> {
         });
     }
 
-    match oracle_latest_price(http, &config.arc_rpc_url, &config.usyc_oracle_arc).await {
+    match oracle_latest_price(
+        http,
+        &config.chain(ChainKey::Arc).rpc_url,
+        &config.usyc_oracle_arc,
+    )
+    .await
+    {
         Ok(price_usd) => Ok(UsycRate {
             annualized_yield: HASHNOTE_PUBLISHED_YIELD,
             price_usd,
@@ -120,7 +130,10 @@ pub async fn park_in_usyc(
     )
     .await;
 
-    if config.execution_mock || config.usyc_teller_arc.is_empty() || config.usdc_arc.is_empty() {
+    if config.execution_mock
+        || config.usyc_teller_arc.is_empty()
+        || config.chain(ChainKey::Arc).usdc.is_empty()
+    {
         return Ok(ParkResult {
             intent: "park_usyc",
             amount_usdc,
@@ -213,6 +226,7 @@ mod usyc_chain {
 
     use crate::config::Config;
     use crate::error::{AppError, Result};
+    use crate::modules::rebalance::models::ChainKey;
 
     sol! {
         #[sol(rpc)]
@@ -280,13 +294,15 @@ mod usyc_chain {
         config: &Config,
     ) -> Result<(impl alloy::providers::Provider, Address, Address, Address)> {
         let signer: PrivateKeySigner = config
-            .chain_private_key_arc
+            .chain(ChainKey::Arc)
+            .private_key
             .parse()
             .map_err(|e| AppError::Internal(anyhow::anyhow!("CHAIN_PRIVATE_KEY_ARC: {e}")))?;
         let signer_addr = signer.address();
         let wallet = EthereumWallet::from(signer);
         let rpc_url: reqwest::Url = config
-            .arc_rpc_url
+            .chain(ChainKey::Arc)
+            .rpc_url
             .parse()
             .map_err(|e| AppError::Internal(anyhow::anyhow!("bad arc rpc url: {e}")))?;
         let provider = ProviderBuilder::new().wallet(wallet).connect_http(rpc_url);
@@ -295,7 +311,8 @@ mod usyc_chain {
             .parse()
             .map_err(|_| AppError::Internal(anyhow::anyhow!("bad USYC_TELLER_ARC")))?;
         let usdc: Address = config
-            .usdc_arc
+            .chain(ChainKey::Arc)
+            .usdc
             .parse()
             .map_err(|_| AppError::Internal(anyhow::anyhow!("bad USDC_ARC")))?;
         Ok((provider, signer_addr, teller, usdc))

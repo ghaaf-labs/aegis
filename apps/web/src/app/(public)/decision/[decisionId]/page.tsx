@@ -43,8 +43,16 @@ export async function generateMetadata({
 }: RouteParams): Promise<Metadata> {
   const { decisionId } = await params;
   const decision = await fetchDecision(decisionId);
-  const summary = decision?.recommendationSummary ?? "An Aegis agent decision";
-  const realized = decision?.outcome?.realizedPctChange;
+
+  if (!decision) {
+    return {
+      title: "Decision not found — Aegis",
+      robots: { index: false },
+    };
+  }
+
+  const summary = decision.recommendationSummary;
+  const realized = decision.outcome?.realizedPctChange;
   const description =
     realized != null
       ? `${realized >= 0 ? "+" : ""}${realized.toFixed(2)}% realized · ${summary}`
@@ -80,17 +88,27 @@ export default async function DecisionPage({ params }: RouteParams) {
     return (
       <main className="min-h-screen bg-bg text-text-default flex items-center justify-center px-6">
         <div className="max-w-md text-center">
-          <p className="text-sm text-text-default mb-2">Decision not found.</p>
+          <p className="font-mono text-[11px] uppercase tracking-widest text-accent-agent mb-2">
+            Error 404
+          </p>
+          <h1 className="font-mono text-2xl font-bold text-text-hi mb-3">
+            Decision not found
+          </h1>
           <p className="text-xs text-text-lo mb-6">
             It may be private — the portfolio owner hasn&apos;t enabled the
             public diary.
           </p>
-          <Link
-            href="/leaderboard"
-            className="text-accent-agent hover:underline"
-          >
-            See the leaderboard →
-          </Link>
+          <div className="flex gap-4 justify-center text-sm font-mono">
+            <Link
+              href="/leaderboard"
+              className="text-accent-agent hover:underline"
+            >
+              Leaderboard →
+            </Link>
+            <Link href="/explore" className="text-text-lo hover:underline">
+              Explore demos →
+            </Link>
+          </div>
         </div>
       </main>
     );

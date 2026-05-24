@@ -50,21 +50,47 @@ afterEach(() => {
 });
 
 describe("<Sidebar />", () => {
-  it("separates nav labels from route state for assistive tech", async () => {
+  it("hides protected destinations from the DOM when session is confirmed absent", async () => {
     act(() => {
       usePortfolioStore.getState().setSessionResolved(true);
+      usePortfolioStore.getState().setSessionActive(false);
     });
 
     const { root, container } = render(<Sidebar />);
     await flushEffects();
 
+    // Protected links must not be in the DOM at all for signed-out users.
     const dashboardLink = container.querySelector<HTMLAnchorElement>(
-      'a[aria-label="Dashboard: sign in required"]',
+      'a[href="/dashboard"]',
     );
-    expect(dashboardLink?.getAttribute("aria-label")).toBe(
-      "Dashboard: sign in required",
+    expect(dashboardLink).toBeNull();
+
+    // Public destinations must be present.
+    const exploreLink =
+      container.querySelector<HTMLAnchorElement>('a[href="/explore"]');
+    expect(exploreLink).not.toBeNull();
+    expect(container.textContent).toContain("Explore demos");
+    expect(container.textContent).toContain("Leaderboard");
+    expect(container.textContent).toContain("Help");
+
+    act(() => root.unmount());
+  });
+
+  it("shows full nav rail with auth-aware locked state while session is resolving", async () => {
+    act(() => {
+      usePortfolioStore.getState().setSessionResolved(true);
+      usePortfolioStore.getState().setSessionActive(true);
+      usePortfolioStore.getState().setWallet(null);
+    });
+
+    const { root, container } = render(<Sidebar />);
+    await flushEffects();
+
+    // Authenticated but wallet-pending: full rail visible, wallet-recovery items unlocked.
+    const dashboardLink = container.querySelector<HTMLAnchorElement>(
+      'a[aria-label="Dashboard: account setup pending"]',
     );
-    expect(dashboardLink?.textContent).toContain("Dashboard sign in required");
+    expect(dashboardLink).not.toBeNull();
 
     act(() => root.unmount());
   });

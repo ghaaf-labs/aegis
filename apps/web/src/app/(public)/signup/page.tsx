@@ -1,8 +1,13 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { pageMetadata } from "@/lib/seo";
 
 export const metadata: Metadata = {
-  title: "Aegis · Continue",
+  ...pageMetadata({
+    title: "Continue — Aegis",
+    description: "Create your Aegis account or sign in to get started.",
+    path: "/signup",
+  }),
   robots: "noindex, nofollow",
 };
 
@@ -31,6 +36,10 @@ async function redirectToLogin(
         forwardSearch.set(key, value);
       }
     }
+  }
+
+  if (!forwardSearch.has("entry")) {
+    forwardSearch.set("entry", "signup");
   }
 
   const query = forwardSearch.toString();

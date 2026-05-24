@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import {
   ArrowRight,
@@ -13,12 +14,14 @@ import {
   BrutalPill,
 } from "@aegis/ui";
 import { DEMO_BUNDLES } from "@/lib/explore-data";
+import { pageMetadata } from "@/lib/seo";
 
-export const metadata = {
-  title: "Aegis · Explore demo portfolios",
+export const metadata: Metadata = pageMetadata({
+  title: "Explore Demo Portfolios — Aegis",
   description:
     "Three curated Aegis portfolios across different risk profiles and regimes — see how the agent reasons before signing up.",
-};
+  path: "/explore",
+});
 
 export default function ExploreIndex() {
   const bundles = Object.values(DEMO_BUNDLES);
@@ -70,7 +73,7 @@ export default function ExploreIndex() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {bundles.map(({ portfolio, decisions }) => (
+        {bundles.map(({ portfolio, decisions, unsupportedSleeves }) => (
           <Link
             key={portfolio.id}
             href={`/explore/${portfolio.id}`}
@@ -108,6 +111,19 @@ export default function ExploreIndex() {
                     {portfolio.goal?.riskTolerance}
                   </span>
                 </div>
+
+                {unsupportedSleeves && unsupportedSleeves.length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-1">
+                    {unsupportedSleeves.map((sleeve) => (
+                      <span
+                        key={sleeve}
+                        className="border border-warn/40 bg-warn/5 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-warn"
+                      >
+                        {sleeve} · coming soon
+                      </span>
+                    ))}
+                  </div>
+                )}
 
                 <p className="mt-4 min-h-10 text-xs leading-relaxed text-text-lo">
                   {portfolioThesis(portfolio.goal?.riskTolerance)}
@@ -157,7 +173,7 @@ export default function ExploreIndex() {
           href="/login?next=%2Fdashboard"
           className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 px-4 py-2 bg-accent-pnl text-black font-mono font-semibold rounded-sharp border-brutal border-black shadow-brutal-sm hover:shadow-brutal"
         >
-          Continue
+          Create my portfolio
           <ArrowRight className="h-4 w-4" />
         </Link>
       </div>

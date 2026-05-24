@@ -5,9 +5,10 @@ use axum::{
 use uuid::Uuid;
 
 use super::{
-    models::{AgentDecision, AnalyzeRequest},
+    models::{AgentDecision, AnalyzeRequest, ProposeAllocationRequest},
     service,
 };
+use crate::modules::portfolio::models::Portfolio;
 use crate::{middleware::auth::Claims, router::AppState};
 
 pub async fn decisions(
@@ -74,4 +75,39 @@ pub async fn analyze(
 
     let decision = service::analyze_portfolio(&state, body).await?;
     Ok(Json(decision))
+}
+
+/// Run the allocator — the agent designs a target allocation for the user's
+/// portfolio (Gate-1 proposal). Ownership-checked before the AI pipeline runs.
+pub async fn propose_allocation(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Json(body): Json<ProposeAllocationRequest>,
+) -> crate::error::Result<Json<AgentDecision>> {
+    let owned: Option<(Uuid,)> =
+        sqlx::query_as("SELECT id FROM portfolios WHERE id = $1 AND user_id = $2")
+            .bind(body.portfolio_id)
+            .bind(claims.sub)
+            .fetch_optional(&state.db)
+            .await?;
+    if owned.is_none() {
+        return Err(crate::error::AppError::NotFound(format!(
+            "portfolio {}",
+            body.portfolio_id
+        )));
+    }
+
+    let decision = service::propose_allocation(&state, body).await?;
+    Ok(Json(decision))
+}
+
+/// Approve an allocation proposal — write the agent's target into the
+/// portfolio (Gate-1 approval). Ownership is enforced inside the service.
+pub async fn approve_allocation(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+    Path(decision_id): Path<Uuid>,
+) -> crate::error::Result<Json<Portfolio>> {
+    let portfolio = service::apply_allocation(&state, decision_id, claims.sub).await?;
+    Ok(Json(portfolio))
 }

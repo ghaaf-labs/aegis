@@ -3,6 +3,17 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Bot, Cpu, LockKeyhole, ShieldCheck } from "lucide-react";
 import { BrutalCard, BrutalCardBody, BrutalCardHeader } from "@aegis/ui";
+import {
+  COMING_SOON_TOKEN_IDS,
+  EXECUTABLE_TOKEN_IDS,
+  NETWORK_ROUTE_OPTIONS,
+  TARGET_TOKEN_IDS,
+  TOKEN_ROUTE_OPTIONS,
+  TRACK_ONLY_TOKEN_IDS,
+  executionReady,
+  tokenExecutable,
+  tokenTargetable,
+} from "@/lib/route-capabilities";
 import type { RoutePreferences } from "@/types";
 
 interface WalletNetworkRoute {
@@ -17,97 +28,8 @@ interface NetworkTokenPanelProps {
   onPreferencesChange?: (preferences: RoutePreferences) => void;
 }
 
-const NETWORKS = [
-  {
-    blockchain: "ARC-TESTNET",
-    label: "Arc testnet",
-    detail: "Wallet address and rebalance rail are ready",
-  },
-  {
-    blockchain: "BASE-SEPOLIA",
-    label: "Base Sepolia",
-    detail: "Wallet address and rebalance rail are ready",
-  },
-  {
-    blockchain: "ETH-SEPOLIA",
-    label: "Ethereum Sepolia",
-    detail: "Wallet address can be synced; rebalance rail comes later",
-  },
-  {
-    blockchain: "ARB-SEPOLIA",
-    label: "Arbitrum Sepolia",
-    detail: "Wallet address can be synced; rebalance rail comes later",
-  },
-  {
-    blockchain: "AVAX-FUJI",
-    label: "Avalanche Fuji",
-    detail: "Wallet address can be synced; rebalance rail comes later",
-  },
-] as const;
-
-// Plain-language route states match the backend registry vocabulary:
-// Ready, Track only, Needs route, Needs quote, Needs address. A token is only
-// `executable` when its route is Ready.
-const TOKENS = [
-  {
-    id: "USDC",
-    symbol: "USDC",
-    label: "Cash",
-    state: "Ready",
-    detail: "Reserve, funding, and transfer route is ready",
-    executable: true,
-  },
-  {
-    id: "BTC",
-    symbol: "BTC",
-    label: "Market target",
-    state: "Track only",
-    detail: "Price tracking is ready; swap execution is not connected yet",
-    executable: false,
-  },
-  {
-    id: "ETH",
-    symbol: "ETH",
-    label: "Market target",
-    state: "Track only",
-    detail: "Price tracking is ready; swap execution is not connected yet",
-    executable: false,
-  },
-  {
-    id: "SOL",
-    symbol: "SOL",
-    label: "Market target",
-    state: "Track only",
-    detail: "Price tracking is ready; swap execution is not connected yet",
-    executable: false,
-  },
-  {
-    id: "USYC",
-    symbol: "USYC",
-    label: "Yield target",
-    state: "Track only",
-    detail:
-      "Yield parking is turned off — the USYC Teller on Arc is allowlist-gated, so USYC is tracked only for now",
-    executable: false,
-  },
-  {
-    id: "EURC",
-    symbol: "EURC",
-    label: "FX target",
-    state: "Track only",
-    detail: "FX tracking is ready; Arc StableFX execution is KYB-gated",
-    executable: false,
-  },
-] as const;
-
-const TARGET_TOKEN_IDS = TOKENS.map((token) => token.id);
-const EXECUTABLE_TOKEN_IDS = TOKENS.filter((token) => token.executable).map(
-  (token) => token.id,
-);
-const TRACK_ONLY_TOKEN_IDS = TOKENS.filter((token) => !token.executable).map(
-  (token) => token.id,
-);
-const EXECUTION_NETWORK_IDS = ["ARC-TESTNET", "BASE-SEPOLIA"];
+const NETWORKS = NETWORK_ROUTE_OPTIONS;
+const TOKENS = TOKEN_ROUTE_OPTIONS;
 
 const PREF_KEY = "aegis.wallet.route-preferences.v2";
 
@@ -159,6 +81,12 @@ export function NetworkTokenPanel({
     (token) => token.id,
     (token) => token.symbol,
   );
+  const comingSoonTokenLabels = selectedLabels(
+    TOKENS,
+    COMING_SOON_TOKEN_IDS,
+    (token) => token.id,
+    (token) => token.symbol,
+  );
   const watchedNetworkLabels = selectedLabels(
     NETWORKS,
     preferences.networkWatchlist ?? [],
@@ -173,7 +101,7 @@ export function NetworkTokenPanel({
   );
   const executionNetworkLabels = selectedLabels(
     NETWORKS,
-    liveNetworkIds.filter((id) => EXECUTION_NETWORK_IDS.includes(id)),
+    liveNetworkIds.filter((id) => executionReady(id)),
     (network) => network.blockchain,
     (network) => network.label,
   );
@@ -221,6 +149,9 @@ export function NetworkTokenPanel({
   }
 
   function toggleToken(tokenId: string) {
+    if (!tokenTargetable(tokenId)) {
+      return;
+    }
     const targetTokens = new Set(preferences.tokens);
     const watchlist = new Set(preferences.watchlist);
     if (targetTokens.has(tokenId) && targetTokens.size === 1) {
@@ -272,7 +203,8 @@ export function NetworkTokenPanel({
             <p className="max-w-3xl text-xs leading-relaxed text-text-lo">
               Choose what the agent is allowed to use. Green items can be used
               in real review plans now. Cyan items stay visible as tracked
-              targets, but cannot execute until their route is connected.
+              targets. Coming-soon items are shown for context but cannot be
+              selected.
             </p>
             <div className="flex flex-wrap gap-2">
               <button
@@ -331,6 +263,14 @@ export function NetworkTokenPanel({
                 </dt>
                 <dd className="text-text-lo">
                   {watchedTokenLabels || "No extra token watchlist"}
+                </dd>
+              </div>
+              <div className="grid gap-1">
+                <dt className="font-mono uppercase tracking-wider text-text-mut">
+                  Coming soon
+                </dt>
+                <dd className="text-text-lo">
+                  {comingSoonTokenLabels || "No disabled tokens"}
                 </dd>
               </div>
               <div className="grid gap-1">
@@ -460,15 +400,18 @@ export function NetworkTokenPanel({
                       type="button"
                       onClick={() => toggleToken(token.id)}
                       aria-pressed={preferences.tokens.includes(token.id)}
+                      disabled={!token.targetable}
                       className="rounded-sharp border border-border-default bg-bg px-2 py-1 text-[10px] font-mono uppercase tracking-wider text-text-lo transition-colors hover:border-accent-pnl hover:text-accent-pnl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-border-hi"
                     >
-                      {preferences.tokens.includes(token.id)
-                        ? token.executable
-                          ? "Remove"
-                          : "Track only"
-                        : token.executable
-                          ? "Use target"
-                          : "Track target"}
+                      {!token.targetable
+                        ? "Coming soon"
+                        : preferences.tokens.includes(token.id)
+                          ? token.executable
+                            ? "Remove"
+                            : "Track only"
+                          : token.executable
+                            ? "Use target"
+                            : "Track target"}
                     </button>
                   </div>
                 </div>
@@ -482,9 +425,10 @@ export function NetworkTokenPanel({
           <p className="min-w-0">
             Selection is an instruction, not a shortcut around execution safety.
             Today Aegis can prepare real reviews on Arc testnet and Base
-            Sepolia, with USDC reserve as the active execution target. USYC
-            yield, market, and FX tokens are tracked for planning, but reviews
-            that need a disabled or unconnected route cannot be approved yet.{" "}
+            Sepolia, with USDC reserve as the active execution target. Market
+            and FX tokens are tracked for planning; USYC is coming soon and
+            cannot be selected yet. Reviews that need a disabled or unconnected
+            route cannot be approved yet.{" "}
             <span className="font-mono uppercase tracking-wider text-text-mut">
               {persistenceLabel}
             </span>
@@ -529,10 +473,12 @@ function sanitizePreferences(
 ): RoutePreferences {
   const fallback = defaultPreferences(liveNetworkIds);
   const live = new Set(liveNetworkIds);
-  const knownTokens = new Set<string>(TOKENS.map((token) => token.id));
+  const targetableTokens = new Set<string>(
+    TOKENS.filter((token) => token.targetable).map((token) => token.id),
+  );
   const requestedTokens = normalizeTokenIds(preferences.tokens);
   const tokens = orderByKnown(
-    requestedTokens.filter((id) => knownTokens.has(id)),
+    requestedTokens.filter((id) => targetableTokens.has(id)),
     TARGET_TOKEN_IDS,
   );
   const futureNetworks = futureNetworkIds(liveNetworkIds);
@@ -555,7 +501,7 @@ function sanitizePreferences(
     tokens: tokens.length > 0 ? tokens : fallback.tokens,
     watchlist: orderByKnown(
       normalizeTokenIds(preferences.watchlist).filter(
-        (id) => knownTokens.has(id) && !tokens.includes(id),
+        (id) => targetableTokens.has(id) && !tokens.includes(id),
       ),
       TARGET_TOKEN_IDS,
     ),
@@ -598,20 +544,15 @@ function futureNetworkIds(liveNetworkIds: string[]): string[] {
   );
 }
 
-function executionReady(blockchain: string): boolean {
-  return EXECUTION_NETWORK_IDS.includes(blockchain);
-}
-
-function tokenExecutable(tokenId: string): boolean {
-  return TOKENS.some((token) => token.id === tokenId && token.executable);
-}
-
 function tokenStatus(
   token: (typeof TOKENS)[number],
   preferences: RoutePreferences,
 ): string {
   if (preferences.tokens.includes(token.id)) {
     return token.executable ? "Ready" : "Track only";
+  }
+  if (!token.targetable) {
+    return "Coming soon";
   }
   if (preferences.watchlist.includes(token.id)) {
     return "Track only";
@@ -625,6 +566,9 @@ function tokenTone(
 ): "live" | "warn" | "muted" | "agent" {
   if (preferences.tokens.includes(token.id)) {
     return token.executable ? "live" : "warn";
+  }
+  if (!token.targetable) {
+    return "muted";
   }
   if (preferences.watchlist.includes(token.id)) {
     return "agent";

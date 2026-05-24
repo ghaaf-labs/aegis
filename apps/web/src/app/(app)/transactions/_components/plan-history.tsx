@@ -1,0 +1,419 @@
+import Link from "next/link";
+import { ArrowRight, Route } from "lucide-react";
+import { BrutalCard, BrutalCardBody, BrutalCardHeader } from "@aegis/ui";
+import { formatCurrency, timeAgo } from "@/lib/utils";
+import { useActivePortfolio } from "@/stores/portfolio";
+import {
+  approvalSafetySummary,
+  EmptyState,
+  executionModeLabel,
+  LoadingState,
+  MobileFact,
+  rowAction,
+  rowMeaning,
+  type RebalanceHistoryRow,
+} from "./shared";
+import { ApprovalStatePill, StatusPill, SummaryPill } from "./pills";
+
+export function PlanHistory({
+  portfolio,
+  rows,
+  loading,
+  error,
+}: {
+  portfolio: ReturnType<typeof useActivePortfolio>;
+  rows: RebalanceHistoryRow[];
+  loading: boolean;
+  error: string | null;
+}) {
+  return (
+    <>
+      {rows.length > 0 && (
+        <div className="flex flex-wrap gap-2 text-[10px] font-mono">
+          <SummaryPill
+            label="Completed"
+            value={rows.filter((r) => r.status === "completed").length}
+            tone="pnl"
+          />
+          <SummaryPill
+            label="Ready"
+            value={
+              rows.filter(
+                (r) =>
+                  r.approvalSafety?.approvable === true &&
+                  r.executionMode !== "mock",
+              ).length
+            }
+            tone="agent"
+          />
+          <SummaryPill
+            label="Needs changes"
+            value={
+              rows.filter((r) => r.approvalSafety?.approvable === false).length
+            }
+            tone="warn"
+          />
+          <SummaryPill
+            label="Failed"
+            value={rows.filter((r) => r.status === "failed").length}
+            tone="risk"
+          />
+        </div>
+      )}
+
+      <LedgerFlowSvg />
+
+      {!portfolio ? (
+        <EmptyState
+          title="No portfolio yet"
+          body="Create a portfolio target before Aegis can build rebalance-plan history."
+          href="/onboarding"
+          cta="Create portfolio"
+        />
+      ) : (
+        <BrutalCard>
+          <BrutalCardHeader>
+            <span className="text-sm font-mono text-text-hi">
+              {portfolio.name} plans
+            </span>
+            <span className="text-[11px] font-mono text-text-lo">
+              {loading ? "Loading..." : `${rows.length} rows`}
+            </span>
+          </BrutalCardHeader>
+          <BrutalCardBody>
+            {error && (
+              <p
+                aria-live="polite"
+                className="mb-3 border border-risk/40 bg-risk/5 px-3 py-2 text-xs font-mono text-risk"
+              >
+                {error}
+              </p>
+            )}
+            {loading ? (
+              <LoadingState />
+            ) : rows.length === 0 ? (
+              <EmptyState
+                title="No rebalance plans yet"
+                body="Build a review from Dashboard or Portfolio. After you approve it, the plan appears here."
+                href="/portfolio"
+                cta="Review portfolio"
+              />
+            ) : (
+              <>
+                <div className="space-y-3 md:hidden">
+                  {rows.map((row) => (
+                    <HistoryCard key={row.id} row={row} />
+                  ))}
+                </div>
+                <div className="hidden overflow-x-auto md:block">
+                  <table className="w-full text-left text-xs font-mono">
+                    <thead className="border-b border-border-default text-text-mut">
+                      <tr>
+                        <th className="px-3 py-2 font-medium">Plan</th>
+                        <th className="px-3 py-2 font-medium">Status</th>
+                        <th className="px-3 py-2 font-medium">Approval</th>
+                        <th className="px-3 py-2 font-medium">Meaning</th>
+                        <th className="px-3 py-2 font-medium text-right">
+                          Routed
+                        </th>
+                        <th className="px-3 py-2 font-medium text-right">
+                          Legs
+                        </th>
+                        <th className="px-3 py-2 font-medium">Created</th>
+                        <th className="px-3 py-2 font-medium text-right">
+                          Open
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((row) => (
+                        <HistoryRow key={row.id} row={row} />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </BrutalCardBody>
+        </BrutalCard>
+      )}
+    </>
+  );
+}
+
+function HistoryRow({ row }: { row: RebalanceHistoryRow }) {
+  const blocked = row.approvalSafety?.approvable === false;
+  const next = rowAction(row);
+  return (
+    <tr className="border-b border-white/5 last:border-b-0 align-top hover:bg-white/[0.02]">
+      <td className="px-3 py-3 text-text-hi">
+        <div className="flex flex-col gap-1">
+          <span>{row.id.slice(0, 8)}...</span>
+          <span className="text-[10px] uppercase tracking-widest text-text-mut">
+            {executionModeLabel(row.executionMode)}
+          </span>
+        </div>
+      </td>
+      <td className="px-3 py-3">
+        <StatusPill status={row.status} />
+        {row.completedAt && (
+          <p className="mt-1 text-[10px] text-text-mut">
+            completed {timeAgo(row.completedAt)}
+          </p>
+        )}
+        {row.failureReason && (
+          <p className="mt-1 max-w-[220px] text-[10px] leading-relaxed text-risk">
+            {row.failureReason}
+          </p>
+        )}
+      </td>
+      <td className="px-3 py-3">
+        <ApprovalStatePill row={row} />
+        {blocked && row.approvalSafety && (
+          <div className="mt-1 max-w-[280px] space-y-1 text-[10px] leading-relaxed text-warn">
+            <p>{approvalSafetySummary(row.approvalSafety)}</p>
+            {row.approvalSafety.missingCapabilities?.length ? (
+              <p className="text-text-mut">
+                Needed:{" "}
+                {row.approvalSafety.missingCapabilities
+                  .map((capability) => capability.label)
+                  .join(", ")}
+              </p>
+            ) : null}
+          </div>
+        )}
+      </td>
+      <td className="px-3 py-3">
+        <p className="max-w-[280px] text-[10px] leading-relaxed text-text-lo">
+          {rowMeaning(row)}
+        </p>
+        <p className="mt-1 text-[10px] uppercase tracking-widest text-text-mut">
+          updated {timeAgo(row.updatedAt ?? row.createdAt)}
+        </p>
+      </td>
+      <td className="px-3 py-3 text-right tabular-nums text-text-default">
+        {formatCurrency(row.totalAmountUsdc ?? 0)}
+        {row.totalGasUsdc != null && row.totalGasUsdc > 0 && (
+          <p className="mt-1 text-[10px] text-text-mut">
+            gas {formatCurrency(row.totalGasUsdc)}
+          </p>
+        )}
+      </td>
+      <td className="px-3 py-3 text-right tabular-nums text-text-default">
+        {row.completedLegs}/{row.totalLegs}
+      </td>
+      <td className="px-3 py-3 text-text-lo">{timeAgo(row.createdAt)}</td>
+      <td className="px-3 py-3 text-right">
+        <Link
+          href={next.href}
+          className={`inline-flex min-h-9 items-center gap-1 hover:underline ${
+            next.tone === "agent"
+              ? "text-accent-agent"
+              : next.tone === "pnl"
+                ? "text-accent-pnl"
+                : "text-warn"
+          }`}
+        >
+          {next.label}
+          <ArrowRight className="h-3 w-3" />
+        </Link>
+      </td>
+    </tr>
+  );
+}
+
+function HistoryCard({ row }: { row: RebalanceHistoryRow }) {
+  const blocked = row.approvalSafety?.approvable === false;
+  const next = rowAction(row);
+  return (
+    <article className="border border-border-default bg-bg p-3 font-mono text-xs">
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-text-hi">
+            {row.id.slice(0, 8)}...
+          </p>
+          <p className="mt-1 text-[10px] uppercase tracking-widest text-text-mut">
+            {executionModeLabel(row.executionMode)}
+          </p>
+        </div>
+        <StatusPill status={row.status} />
+      </div>
+
+      <p className="mt-3 text-[11px] leading-relaxed text-text-lo">
+        {rowMeaning(row)}
+      </p>
+
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <MobileFact
+          label="Routed"
+          value={formatCurrency(row.totalAmountUsdc ?? 0)}
+        />
+        <MobileFact
+          label="Legs"
+          value={`${row.completedLegs}/${row.totalLegs}`}
+        />
+        <MobileFact label="Created" value={timeAgo(row.createdAt)} />
+        <div className="border border-border-default bg-surface px-3 py-2">
+          <p className="text-[10px] uppercase tracking-widest text-text-mut">
+            Approval
+          </p>
+          <div className="mt-1">
+            <ApprovalStatePill row={row} />
+          </div>
+        </div>
+      </div>
+
+      {blocked && row.approvalSafety && (
+        <p className="mt-3 border border-warn/40 bg-warn/5 px-3 py-2 text-[11px] leading-relaxed text-warn">
+          {approvalSafetySummary(row.approvalSafety)}
+        </p>
+      )}
+
+      {row.failureReason && (
+        <p className="mt-3 border border-risk/40 bg-risk/5 px-3 py-2 text-[11px] leading-relaxed text-risk">
+          {row.failureReason}
+        </p>
+      )}
+
+      <Link
+        href={next.href}
+        className={`mt-3 inline-flex min-h-9 w-full items-center justify-center gap-2 border px-3 text-[11px] font-semibold ${
+          next.tone === "agent"
+            ? "border-accent-agent/40 bg-accent-agent/10 text-accent-agent"
+            : next.tone === "pnl"
+              ? "border-accent-pnl/40 bg-accent-pnl/10 text-accent-pnl"
+              : "border-warn/40 bg-warn/10 text-warn"
+        }`}
+      >
+        {next.label}
+        <ArrowRight className="h-3 w-3" />
+      </Link>
+    </article>
+  );
+}
+
+function LedgerFlowSvg() {
+  return (
+    <div className="border-brutal border-border-default bg-surface p-4 shadow-brutal-sm">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <p className="font-mono text-[10px] uppercase tracking-widest text-text-mut">
+            Money movement
+          </p>
+          <p className="mt-1 font-mono text-xs text-text-lo">
+            A review is only a proposal. A transaction is created after you
+            approve it.
+          </p>
+        </div>
+        <Route className="h-4 w-4 shrink-0 text-accent-agent" />
+      </div>
+      <svg
+        viewBox="0 0 760 180"
+        role="img"
+        aria-label="Transaction flow from review to approval to completed history"
+        className="h-auto w-full border border-border-default bg-bg"
+      >
+        <defs>
+          <pattern
+            id="ledger-grid"
+            width="22"
+            height="22"
+            patternUnits="userSpaceOnUse"
+          >
+            <path d="M22 0H0V22" fill="none" stroke="#242424" strokeWidth="1" />
+          </pattern>
+          <filter id="ledger-glow" x="-25%" y="-25%" width="150%" height="150%">
+            <feGaussianBlur stdDeviation="2.5" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+        <rect width="760" height="180" fill="url(#ledger-grid)" />
+        <path
+          d="M126 90H278H432H586"
+          fill="none"
+          stroke="#67e8f9"
+          strokeDasharray="9 7"
+          strokeWidth="4"
+          filter="url(#ledger-glow)"
+        >
+          <animate
+            attributeName="stroke-dashoffset"
+            dur="2.4s"
+            from="32"
+            repeatCount="indefinite"
+            to="0"
+          />
+        </path>
+        <LedgerNode x={58} title="Review" subtitle="proposal" tone="agent" />
+        <LedgerNode
+          x={254}
+          title="Approve"
+          subtitle="your choice"
+          tone="agent"
+        />
+        <LedgerNode
+          x={450}
+          title="Move funds"
+          subtitle="after approval"
+          tone="pnl"
+        />
+        <LedgerNode x={614} title="History" subtitle="result" tone="neutral" />
+      </svg>
+    </div>
+  );
+}
+
+function LedgerNode({
+  x,
+  title,
+  subtitle,
+  tone,
+}: {
+  x: number;
+  title: string;
+  subtitle: string;
+  tone: "agent" | "pnl" | "neutral";
+}) {
+  const stroke =
+    tone === "agent" ? "#67e8f9" : tone === "pnl" ? "#86efac" : "#737373";
+  const fill =
+    tone === "agent" ? "#082f49" : tone === "pnl" ? "#052e16" : "#111111";
+  return (
+    <g>
+      <rect
+        x={x}
+        y="52"
+        width="104"
+        height="76"
+        fill={fill}
+        stroke={stroke}
+        strokeWidth="3"
+      />
+      <rect x={x + 13} y="66" width="78" height="10" fill={stroke} />
+      <text
+        x={x + 52}
+        y="101"
+        fill="#f5f5f5"
+        fontFamily="monospace"
+        fontSize="13"
+        fontWeight="700"
+        textAnchor="middle"
+      >
+        {title}
+      </text>
+      <text
+        x={x + 52}
+        y="117"
+        fill="#a3a3a3"
+        fontFamily="monospace"
+        fontSize="9"
+        textAnchor="middle"
+      >
+        {subtitle}
+      </text>
+    </g>
+  );
+}

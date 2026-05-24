@@ -3,7 +3,8 @@
 //! These exercise the live Postgres schema introduced by migration 0010 +
 //! the runtime invariants the middleware/handlers depend on:
 //!   1. Free-tier decision cap (6 inserts on a fresh meter row exceeds 5).
-//!   2. Free→Pro upgrade unlocks past the Free portfolios_cap=1.
+//!   2. The single-portfolio invariant: a second portfolio INSERT for the same
+//!      user fails with a unique constraint violation regardless of tier.
 //!   3. /billing/subscription resolves the upgraded tier.
 //!   4. plan_tiers seed contains exactly the three tiers from §2.1.
 //!
@@ -124,7 +125,7 @@ async fn free_tier_decision_cap_blocks_at_sixth_insert() {
 }
 
 #[tokio::test]
-async fn upgrading_to_pro_unlocks_past_free_portfolios_cap() {
+async fn second_portfolio_is_rejected_for_single_portfolio_invariant() {
     let Some(pool) = pool_or_skip().await else {
         eprintln!("SKIP: set TEST_DATABASE_URL to run");
         return;
@@ -132,10 +133,9 @@ async fn upgrading_to_pro_unlocks_past_free_portfolios_cap() {
     let email = format!("upgrade-{}@aegis.test", Uuid::new_v4());
     let user = make_user(&pool, &email).await;
 
-    // Free portfolios_cap is 1 — first portfolio is allowed.
-    let p1 = Uuid::new_v4();
+    // Insert the one permitted portfolio.
     sqlx::query("INSERT INTO portfolios (id, user_id, name) VALUES ($1, $2, 'p1')")
-        .bind(p1)
+        .bind(Uuid::new_v4())
         .bind(user)
         .execute(&pool)
         .await
@@ -146,10 +146,9 @@ async fn upgrading_to_pro_unlocks_past_free_portfolios_cap() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    // Free tier would now 402 on a second insert.
     assert_eq!(count.0, 1);
 
-    // Upgrade to Pro.
+    // Upgrade to Pro — tier resolution still works.
     sqlx::query(
         "INSERT INTO subscriptions
             (user_id, tier, status, current_period_start, current_period_end, billing_anchor_day)
@@ -160,7 +159,6 @@ async fn upgrading_to_pro_unlocks_past_free_portfolios_cap() {
     .await
     .expect("upgrade to pro");
 
-    // Tier resolution: the live subscription wins.
     let tier: (String,) = sqlx::query_as(
         "SELECT tier FROM subscriptions
          WHERE user_id = $1 AND status IN ('trialing','active')
@@ -172,20 +170,29 @@ async fn upgrading_to_pro_unlocks_past_free_portfolios_cap() {
     .expect("read tier");
     assert_eq!(tier.0, "pro");
 
-    // Pro portfolios_cap is 5 — second portfolio inserts cleanly.
-    sqlx::query("INSERT INTO portfolios (id, user_id, name) VALUES ($1, $2, 'p2')")
+    // Even on Pro, a second portfolio for the same user must fail the unique
+    // constraint introduced by migrations 0034 / 0036 (portfolios_user_id_unique).
+    let result = sqlx::query("INSERT INTO portfolios (id, user_id, name) VALUES ($1, $2, 'p2')")
         .bind(Uuid::new_v4())
         .bind(user)
         .execute(&pool)
-        .await
-        .expect("second portfolio (pro tier)");
+        .await;
 
+    assert!(
+        result.is_err(),
+        "unique constraint portfolios_user_id_unique must reject a second portfolio even on Pro"
+    );
+
+    // Exactly one portfolio must remain.
     let count2: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM portfolios WHERE user_id = $1")
         .bind(user)
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(count2.0, 2, "Pro lets us hold > 1 portfolio");
+    assert_eq!(
+        count2.0, 1,
+        "one-portfolio invariant holds across tier upgrade"
+    );
 
     cleanup_user(&pool, user).await;
 }

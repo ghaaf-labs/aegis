@@ -2,8 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { useParams, useRouter } from "next/navigation";
-import { CircleAlert, Loader2, LockKeyhole, Rocket } from "lucide-react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import {
+  CircleAlert,
+  Loader2,
+  LockKeyhole,
+  Rocket,
+  Sparkles,
+} from "lucide-react";
 import { PortfolioSummaryCard } from "@/components/dashboard/portfolio-summary-card";
 import { AllocationChart } from "@/components/dashboard/allocation-chart";
 import { AssetTable } from "@/components/dashboard/asset-table";
@@ -15,17 +21,21 @@ import { IdleCashCard } from "@/components/dashboard/idle-cash-card";
 import { targetAllocationsForPortfolio } from "@/components/dashboard/target-allocations";
 import { FaucetButton } from "@/components/wallet/faucet-button";
 import { ApprovalModal } from "@/components/rebalance/approval-modal";
+import { AllocationProposalModal } from "@/components/agent/allocation-proposal-modal";
 import { BrutalButton } from "@aegis/ui";
 import {
   agentApi,
   rebalanceApi,
+  userAgentApi,
   type RebalanceApprovalSafety,
   type RebalancePlanResponse,
 } from "@/lib/api";
+import { dismissProposal, isProposalDismissed } from "@/lib/proposal-dismissal";
 import type { AgentDecision } from "@/types";
 import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
 import { formatCurrency } from "@/lib/utils";
 import { derivePortfolioPositionMetrics } from "@/lib/portfolio-values";
+import { deriveCashSplit } from "@/lib/cash-model";
 
 const stagger = { visible: { transition: { staggerChildren: 0.08 } } };
 const fadeUp = {
@@ -33,8 +43,11 @@ const fadeUp = {
   visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: "easeOut" } },
 };
 
+const AGENT_PORTFOLIO_NAME = "Agent-managed portfolio";
+
 export default function PortfolioDashboardPage() {
   const params = useParams<{ portfolioId: string }>();
+  const searchParams = useSearchParams();
   const setActive = usePortfolioStore((s) => s.setActivePortfolio);
 
   useEffect(() => {
@@ -65,6 +78,77 @@ export default function PortfolioDashboardPage() {
   const [estimatedFeeUsdc, setEstimatedFeeUsdc] = useState(0);
   const [feeFetchedAt, setFeeFetchedAt] = useState<Date | null>(null);
   const [reviewMessage, setReviewMessage] = useState<string | null>(null);
+  const decisions = usePortfolioStore((s) => s.decisions);
+  const [proposalDecision, setProposalDecision] =
+    useState<AgentDecision | null>(null);
+  const [proposalOpen, setProposalOpen] = useState(false);
+  const [reproposing, setReproposing] = useState(false);
+  // Auto-pilot ON suppresses the Gate-1 modal entirely — proposals auto-apply
+  // and the result shows in the activity feed + Transactions, no modal.
+  const [autoPilotEnabled, setAutoPilotEnabled] = useState(false);
+  const proposalParam = searchParams?.get("proposal") ?? null;
+
+  useEffect(() => {
+    let cancelled = false;
+    userAgentApi
+      .autoPilot()
+      .then((s) => {
+        if (!cancelled) setAutoPilotEnabled(s.autoPilotEnabled);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Latest agent allocation proposal for this portfolio that has not been
+  // applied yet. Gate 1 opens on this ahead of the deploy flow.
+  const pendingProposal =
+    decisions.find(
+      (d) =>
+        d.portfolioId === params?.portfolioId &&
+        d.kind === "allocation_proposal" &&
+        !d.allocationAppliedAt,
+    ) ?? null;
+
+  // Resolve a `?proposal=` deep-link (from onboarding) into a decision, since
+  // the freshly created proposal may not be in the store yet. A deep-link is an
+  // explicit intent to view, so it bypasses the dismissal memory (but not
+  // auto-pilot, which never shows the modal).
+  useEffect(() => {
+    if (!proposalParam || autoPilotEnabled) return;
+    if (proposalDecision?.id === proposalParam) return;
+    const fromStore = decisions.find((d) => d.id === proposalParam);
+    if (fromStore) {
+      setProposalDecision(fromStore);
+      setProposalOpen(true);
+      return;
+    }
+    let cancelled = false;
+    agentApi
+      .decisionById(proposalParam)
+      .then((d) => {
+        if (cancelled) return;
+        setProposalDecision(d);
+        setProposalOpen(true);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [proposalParam, proposalDecision?.id, autoPilotEnabled, decisions]);
+
+  // Fall back to the store's latest unapplied proposal when there is no
+  // explicit deep-link. A proposal the user already dismissed (persisted by
+  // decision id) does NOT re-open on refetch / SSE / remount, and with
+  // auto-pilot ON no Gate-1 modal opens at all.
+  useEffect(() => {
+    if (proposalParam || proposalOpen || autoPilotEnabled) return;
+    if (pendingProposal && !isProposalDismissed(pendingProposal.id)) {
+      setProposalDecision(pendingProposal);
+      setProposalOpen(true);
+    }
+  }, [proposalParam, proposalOpen, autoPilotEnabled, pendingProposal]);
 
   useEffect(() => {
     if (!portfoliosLoaded || activePortfolio) return;
@@ -72,7 +156,6 @@ export default function PortfolioDashboardPage() {
     router.replace(fallback ? `/dashboard/${fallback}` : "/onboarding");
   }, [activePortfolio, portfolios, portfoliosLoaded, router]);
 
-  const deployableUsdc = unifiedUsdc;
   const gatewayBalanceReady = gatewayBalanceStatus === "ready";
   const gatewayBalanceUnavailable = gatewayBalanceStatus === "error";
   const positionMetrics = derivePortfolioPositionMetrics(
@@ -81,6 +164,19 @@ export default function PortfolioDashboardPage() {
   );
   const investedUsd = positionMetrics.investedUsd;
   const hasInvestedPositions = investedUsd > 0.5;
+  const targetAllocations = targetAllocationsForPortfolio(activePortfolio);
+  // Only the idle USDC ABOVE the intended USDC reserve is actually deployable;
+  // the rest is the target cash reserve. The shared cash-model helper is the
+  // single source of this split across the whole platform.
+  const cashSplit = deriveCashSplit({
+    unifiedUsdc,
+    unifiedEurc,
+    targetAllocations,
+    investedUsd,
+    snapshot,
+  });
+  const usdcTargetWeight = cashSplit.usdcTargetWeight;
+  const deployableUsdc = cashSplit.deployableUsd;
   const hasIdleCash =
     gatewayBalanceReady && (unifiedUsdc > 0.5 || unifiedEurc > 0.5);
   const showFaucet =
@@ -96,10 +192,24 @@ export default function PortfolioDashboardPage() {
   const maxTargetDriftPct = positionMetrics.maxDriftPct;
   const hasReviewableDrift = maxTargetDriftPct >= 5;
   const isFirstDeploy = investedUsd <= 5;
-  const targetAllocations = targetAllocationsForPortfolio(activePortfolio);
-  const usdcTargetWeight =
-    targetAllocations.find((a) => a.symbol === "USDC")?.targetWeight ?? 0;
-  const portfolioTitle = activePortfolio?.name ?? "Portfolio overview";
+  const portfolioTitle = AGENT_PORTFOLIO_NAME;
+  const agentModelSlug = proposalDecision?.modelSlug;
+  const agentRegime = proposalDecision?.regime;
+  const hasAgentTarget = targetAllocations.length > 0;
+
+  const handleRepropose = async () => {
+    if (!activePortfolio) return;
+    setReproposing(true);
+    try {
+      const decision = await agentApi.proposeAllocation(activePortfolio.id);
+      setProposalDecision(decision);
+      setProposalOpen(true);
+    } catch {
+      /* surfaced via the modal/feed; keep the dashboard responsive */
+    } finally {
+      setReproposing(false);
+    }
+  };
 
   if (!portfoliosLoaded || !activePortfolio) {
     return (
@@ -170,6 +280,34 @@ export default function PortfolioDashboardPage() {
       variants={stagger}
       className="max-w-[1400px] mx-auto space-y-6"
     >
+      {autoPilotEnabled && (
+        <motion.div
+          variants={fadeUp}
+          role="status"
+          className="border-brutal border-accent-agent/40 bg-accent-agent/5 p-3 md:p-4 rounded-sharp flex flex-wrap items-center justify-between gap-3"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <span
+              className="inline-block h-2 w-2 shrink-0 rounded-full bg-accent-agent animate-pulse"
+              aria-hidden
+            />
+            <p className="text-xs font-mono text-text-hi">
+              <span className="font-semibold text-accent-agent">
+                Auto-pilot is on.
+              </span>{" "}
+              The agent proposes, adopts, and executes within your guardrails —
+              moves run without a manual approval step.
+            </p>
+          </div>
+          <a
+            href="/settings/agent"
+            className="inline-flex min-h-9 shrink-0 items-center rounded-sharp border border-accent-agent/40 px-3 font-mono text-xs font-semibold text-accent-agent hover:bg-accent-agent/10"
+          >
+            Manage
+          </a>
+        </motion.div>
+      )}
+
       <motion.div
         variants={fadeUp}
         className="rounded-sharp border-brutal border-border-default bg-surface p-4 md:p-5"
@@ -180,11 +318,8 @@ export default function PortfolioDashboardPage() {
               <span className="border border-accent-agent/50 bg-accent-agent/10 px-2 py-1 text-[10px] font-mono uppercase text-accent-agent">
                 Dashboard
               </span>
-              <span className="max-w-full truncate border border-border-default bg-bg px-2 py-1 text-[10px] font-mono uppercase tracking-widest text-text-mut">
-                Active portfolio:{" "}
-                <span className="normal-case tracking-normal text-text-hi">
-                  {portfolioTitle}
-                </span>
+              <span className="max-w-full truncate border border-accent-agent/40 bg-accent-agent/5 px-2 py-1 text-[10px] font-mono uppercase tracking-widest text-accent-agent">
+                {AGENT_PORTFOLIO_NAME}
               </span>
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -192,6 +327,24 @@ export default function PortfolioDashboardPage() {
                 {portfolioTitle}
               </h1>
             </div>
+            {hasAgentTarget && (
+              <div className="mt-2 flex flex-wrap items-center gap-2 font-mono text-[11px]">
+                <span className="text-text-mut">
+                  Agent decided this allocation
+                  {agentModelSlug ? ` · via ${agentModelSlug}` : ""}
+                  {agentRegime ? ` · ${agentRegime}` : ""}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void handleRepropose()}
+                  disabled={reproposing}
+                  className="inline-flex min-h-7 items-center gap-1 rounded-sharp border border-accent-agent/40 bg-accent-agent/5 px-2 py-0.5 text-accent-agent hover:bg-accent-agent/10 disabled:opacity-50"
+                >
+                  <Sparkles className="h-3 w-3" />
+                  {reproposing ? "Re-proposing…" : "Re-propose"}
+                </button>
+              </div>
+            )}
             <p className="mt-2 max-w-2xl text-xs font-mono leading-relaxed text-text-lo">
               {dashboardGuidance({
                 gatewayBalanceUnavailable,
@@ -427,6 +580,21 @@ export default function PortfolioDashboardPage() {
         <AssetTable />
         <AgentReasoningFeed />
       </motion.div>
+
+      <AllocationProposalModal
+        open={proposalOpen && !autoPilotEnabled}
+        portfolioId={activePortfolio.id}
+        decision={proposalDecision}
+        onClose={() => {
+          setProposalOpen(false);
+          dismissProposal(proposalDecision?.id);
+        }}
+        onApproved={() => {
+          setProposalOpen(false);
+          dismissProposal(proposalDecision?.id);
+          void handleDeploy();
+        }}
+      />
 
       <ApprovalModal
         open={reviewOpen}

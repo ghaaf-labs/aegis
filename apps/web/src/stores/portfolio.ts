@@ -23,7 +23,7 @@ export interface RegimeState {
 }
 
 interface PortfolioState {
-  /** All portfolios for the logged-in user. */
+  /** The single portfolio target for the logged-in user. */
   portfolios: Portfolio[];
   /** True once portfolioApi.list() has resolved at least once this session. */
   portfoliosLoaded: boolean;
@@ -50,6 +50,9 @@ interface PortfolioState {
   /** Whether the latest wallet cash balance fetch is known-good. */
   gatewayBalanceStatus: "idle" | "loading" | "ready" | "error";
   gatewayBalanceError: string | null;
+  /** Epoch ms of the last successful balance update (SSE or fetch). Powers the
+   * "balances as reported by Circle · refreshed Ns ago" provenance line. */
+  gatewayBalanceUpdatedAt: number | null;
   /** Most-recent strategist tool invocations (capped at 20). */
   toolInvocations: AgentToolInvoked[];
   /** Most-recent abstain events (capped at 10). */
@@ -84,6 +87,9 @@ interface PortfolioState {
   setPerChain: (
     usdc: Record<string, number>,
     eurc: Record<string, number>,
+    /** Epoch ms the balance was *observed* server-side (Circle call time).
+     * Defaults to now for callers without a server timestamp (REST loader). */
+    updatedAt?: number,
   ) => void;
   setGatewayBalanceStatus: (
     status: "idle" | "loading" | "ready" | "error",
@@ -134,6 +140,7 @@ export const usePortfolioStore = create<PortfolioState>()(
       perChainEurc: {},
       gatewayBalanceStatus: "idle",
       gatewayBalanceError: null,
+      gatewayBalanceUpdatedAt: null,
       toolInvocations: [],
       abstains: [],
       rebalanceStatuses: {},
@@ -145,7 +152,7 @@ export const usePortfolioStore = create<PortfolioState>()(
       setPortfolios: (portfolios) =>
         set((state) => {
           const existingById = new Map(state.portfolios.map((p) => [p.id, p]));
-          const mergedPortfolios = portfolios.map((portfolio) => {
+          const mergedPortfolios = portfolios.slice(0, 1).map((portfolio) => {
             const existing = existingById.get(portfolio.id);
             const existingAllocations = existing?.allocations;
             if (
@@ -180,13 +187,10 @@ export const usePortfolioStore = create<PortfolioState>()(
           ),
         })),
       addPortfolio: (portfolio) =>
-        set((state) => {
+        set(() => {
           saveStoredActivePortfolioId(portfolio.id);
           return {
-            portfolios: [
-              ...state.portfolios.filter((p) => p.id !== portfolio.id),
-              portfolio,
-            ],
+            portfolios: [portfolio],
             portfoliosLoaded: true,
             portfoliosError: false,
             activePortfolioId: portfolio.id,
@@ -213,8 +217,12 @@ export const usePortfolioStore = create<PortfolioState>()(
         })),
       setUnifiedUsdc: (unifiedUsdc) => set({ unifiedUsdc }),
       setUnifiedEurc: (unifiedEurc) => set({ unifiedEurc }),
-      setPerChain: (perChainUsdc, perChainEurc) =>
-        set({ perChainUsdc, perChainEurc }),
+      setPerChain: (perChainUsdc, perChainEurc, updatedAt) =>
+        set({
+          perChainUsdc,
+          perChainEurc,
+          gatewayBalanceUpdatedAt: updatedAt ?? Date.now(),
+        }),
       setGatewayBalanceStatus: (gatewayBalanceStatus, gatewayBalanceError) =>
         set({
           gatewayBalanceStatus,
@@ -264,6 +272,7 @@ export const usePortfolioStore = create<PortfolioState>()(
           perChainEurc: {},
           gatewayBalanceStatus: "idle",
           gatewayBalanceError: null,
+          gatewayBalanceUpdatedAt: null,
           isRebalancing: false,
           selectedDecisionId: null,
           sseConnected: false,

@@ -2,13 +2,19 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use crate::db::Db;
+use crate::modules::rebalance::models::ChainKey;
 
 pub const ARC_TESTNET: &str = "ARC-TESTNET";
 pub const BASE_SEPOLIA: &str = "BASE-SEPOLIA";
 pub const ETH_SEPOLIA: &str = "ETH-SEPOLIA";
 pub const ARB_SEPOLIA: &str = "ARB-SEPOLIA";
 pub const AVAX_FUJI: &str = "AVAX-FUJI";
+pub const OP_SEPOLIA: &str = "OP-SEPOLIA";
 
+/// The chains where Aegis provisions a Circle wallet. This is the single source
+/// of truth for which chains funds can land on, and therefore exactly the set
+/// `ChainKey::is_execution()` treats as executable. OP-Sepolia is intentionally
+/// excluded — there is no provisioned wallet route for it.
 pub const SUPPORTED_WALLET_BLOCKCHAINS: [&str; 5] = [
     ARC_TESTNET,
     BASE_SEPOLIA,
@@ -17,7 +23,33 @@ pub const SUPPORTED_WALLET_BLOCKCHAINS: [&str; 5] = [
     AVAX_FUJI,
 ];
 
-pub const EXECUTION_BLOCKCHAINS: [&str; 2] = [ARC_TESTNET, BASE_SEPOLIA];
+/// Canonical mapping from a `ChainKey` to its Circle wallet `blockchain` slug.
+/// Single source of truth for the executor + the non-custodial `circle_exec`
+/// sender, so a new chain only needs one entry rather than a match per call
+/// site.
+pub fn blockchain_for_chain(chain: ChainKey) -> &'static str {
+    match chain {
+        ChainKey::Arc => ARC_TESTNET,
+        ChainKey::Base => BASE_SEPOLIA,
+        ChainKey::EthSepolia => ETH_SEPOLIA,
+        ChainKey::ArbSepolia => ARB_SEPOLIA,
+        ChainKey::AvaxFuji => AVAX_FUJI,
+        ChainKey::OpSepolia => OP_SEPOLIA,
+    }
+}
+
+/// The user's SCA address on `chain`, resolved via the chain's Circle wallet
+/// `blockchain` slug. Generic counterpart to `arc_address_for_user` /
+/// `base_address_for_user`.
+#[allow(dead_code)]
+pub async fn address_for_chain(
+    db: &Db,
+    user_id: Uuid,
+    chain: ChainKey,
+    wallet_set_id: &str,
+) -> crate::error::Result<Option<String>> {
+    address_for_user(db, user_id, blockchain_for_chain(chain), wallet_set_id).await
+}
 
 pub async fn address_for_user(
     db: &Db,
@@ -170,6 +202,38 @@ pub async fn user_has_arc_and_base(
     }
 
     Ok(has_arc && has_base)
+}
+
+/// Resolve the user's Circle developer-controlled wallet id for `blockchain`.
+/// Used by the non-custodial execution path (`circle_exec`) to address the
+/// user's own wallet as the contract-execution sender. Returns the live SCA
+/// route's `circle_wallet_id`, skipping mock placeholders.
+pub async fn wallet_id_for_user(
+    db: &Db,
+    user_id: Uuid,
+    blockchain: &str,
+    wallet_set_id: &str,
+) -> crate::error::Result<Option<String>> {
+    let wallet_id: Option<String> = sqlx::query_scalar(
+        "SELECT circle_wallet_id
+         FROM user_wallet_networks
+         WHERE user_id = $1
+           AND blockchain = $2
+           AND account_type = 'SCA'
+           AND state = 'LIVE'
+           AND ($3 = '' OR wallet_set_id = $3)
+         LIMIT 1",
+    )
+    .bind(user_id)
+    .bind(blockchain)
+    .bind(wallet_set_id.trim())
+    .fetch_optional(db)
+    .await?;
+
+    Ok(wallet_id.filter(|id| {
+        let id = id.trim();
+        !id.is_empty() && !id.starts_with("mock_wallet_")
+    }))
 }
 
 pub async fn user_id_for_address(db: &Db, address: &str) -> crate::error::Result<Option<Uuid>> {

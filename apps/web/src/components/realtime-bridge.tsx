@@ -70,7 +70,15 @@ export function RealtimeBridge() {
     (data: GatewayBalance) => {
       setUnifiedUsdc(data.unifiedUsdc);
       setUnifiedEurc(data.unifiedEurc);
-      setPerChain(data.perChain ?? {}, data.perChainEurc ?? {});
+      // Provenance uses the server's `observedAt` (when Circle was actually
+      // queried), not the client receive time, so "refreshed Ns ago" reflects
+      // data freshness rather than network/render latency.
+      const observedAt = Date.parse(data.observedAt);
+      setPerChain(
+        data.perChain ?? {},
+        data.perChainEurc ?? {},
+        Number.isFinite(observedAt) ? observedAt : undefined,
+      );
     },
     [setUnifiedUsdc, setUnifiedEurc, setPerChain],
   );

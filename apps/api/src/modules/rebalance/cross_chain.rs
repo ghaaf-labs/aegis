@@ -24,7 +24,7 @@ use alloy::{
     providers::{ProviderBuilder, WalletProvider},
     signers::local::PrivateKeySigner,
     sol,
-    sol_types::SolValue,
+    sol_types::{SolCall, SolValue},
 };
 
 #[cfg(feature = "real-cctp")]
@@ -143,14 +143,129 @@ pub struct Attestation {
     pub attestation: String,
 }
 
+/// CCTP V2 finality thresholds. 2000 = standard finality (~13min on Base, free).
+/// 1000 = Fast Transfer (sub-30s) but requires a non-zero `maxFee`.
+#[cfg_attr(not(any(feature = "real-cctp", test)), allow(dead_code))]
+const MIN_FINALITY_STANDARD: u32 = 2000;
+#[cfg_attr(not(any(feature = "real-cctp", test)), allow(dead_code))]
+const MIN_FINALITY_FAST: u32 = 1000;
+
+/// One row of Circle's `/v2/burn/USDC/fees/{src}/{dest}` response: the
+/// `minimumFee` (bps) charged for a burn at the given `finalityThreshold`.
+#[cfg_attr(not(any(feature = "real-cctp", test)), allow(dead_code))]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+struct CctpFeeEntry {
+    #[serde(rename = "finalityThreshold")]
+    finality_threshold: u32,
+    /// bps — may be fractional (e.g. Arb→Base returns `1.3`), so it must
+    /// deserialize as a float, not a u32 (a u32 silently fails the whole
+    /// response decode and drops the burn to slow standard finality).
+    #[serde(rename = "minimumFee")]
+    minimum_fee: f64,
+}
+
+/// The chosen burn parameters: a finality threshold plus the fee (in bps) Circle
+/// charges at it. `fee_bps == 0` is the standard, free path.
+#[cfg_attr(not(any(feature = "real-cctp", test)), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct BurnFeeChoice {
+    finality_threshold: u32,
+    fee_bps: f64,
+}
+
+impl BurnFeeChoice {
+    #[cfg_attr(not(any(feature = "real-cctp", test)), allow(dead_code))]
+    const STANDARD: Self = Self {
+        finality_threshold: MIN_FINALITY_STANDARD,
+        fee_bps: 0.0,
+    };
+}
+
+/// Select the Fast Transfer threshold + its quoted fee from Circle's fee table.
+/// Falls back to the free standard path when no fast entry exists (so the
+/// working path is never broken on a fee-table change). Never hardcodes a fee.
+#[cfg_attr(not(any(feature = "real-cctp", test)), allow(dead_code))]
+fn select_burn_fee(entries: &[CctpFeeEntry]) -> BurnFeeChoice {
+    entries
+        .iter()
+        .find(|e| e.finality_threshold == MIN_FINALITY_FAST)
+        .map(|e| BurnFeeChoice {
+            finality_threshold: MIN_FINALITY_FAST,
+            fee_bps: e.minimum_fee,
+        })
+        .unwrap_or(BurnFeeChoice::STANDARD)
+}
+
+/// Compute the absolute on-chain `maxFee` (USDC, 6 decimals) from a burn
+/// `amount` and a fee in bps, rounding up so the burn never under-quotes.
+#[cfg_attr(not(any(feature = "real-cctp", test)), allow(dead_code))]
+fn max_fee_for(amount: u128, fee_bps: f64) -> u128 {
+    if fee_bps <= 0.0 {
+        return 0;
+    }
+    // amount * fee_bps / 10_000, rounded up so the burn never under-quotes.
+    let fee = (amount as f64) * fee_bps / 10_000.0;
+    (fee.ceil() as u128).max(1)
+}
+
 pub struct CctpClient<'a> {
     http: &'a reqwest::Client,
     config: &'a Config,
+    /// Execution context for the non-custodial path (Part B0). When set and
+    /// `config.circle_wallet_exec` is true, burn/mint/approve are submitted from
+    /// the user's Circle developer-controlled wallet instead of the backend EOA.
+    /// Optional so the offline/mock tests construct a client without a DB.
+    user: Option<UserExecContext<'a>>,
+    /// The executing leg's stable id, used to derive deterministic Circle
+    /// idempotency keys (`<leg_id>:<step>`) so a resumed/retried non-custodial
+    /// submit dedupes instead of double-broadcasting. `None` outside the
+    /// per-leg executor path (only the mock/EOA paths run then).
+    leg_id: Option<uuid::Uuid>,
+}
+
+#[derive(Clone, Copy)]
+struct UserExecContext<'a> {
+    // Read only by the real-cctp non-custodial path; the default build attaches
+    // the context but never dereferences it.
+    #[cfg_attr(not(feature = "real-cctp"), allow(dead_code))]
+    db: &'a crate::db::Db,
+    #[cfg_attr(not(feature = "real-cctp"), allow(dead_code))]
+    user_id: uuid::Uuid,
 }
 
 impl<'a> CctpClient<'a> {
     pub fn new(http: &'a reqwest::Client, config: &'a Config) -> Self {
-        Self { http, config }
+        Self {
+            http,
+            config,
+            user: None,
+            leg_id: None,
+        }
+    }
+
+    /// Attach the owning user + DB so the non-custodial (`circle_wallet_exec`)
+    /// path can resolve the user's Circle wallet as the tx sender.
+    pub fn with_user(mut self, db: &'a crate::db::Db, user_id: uuid::Uuid) -> Self {
+        self.user = Some(UserExecContext { db, user_id });
+        self
+    }
+
+    /// Attach the executing leg's id so the non-custodial path can derive
+    /// deterministic Circle idempotency keys (dedup on resume/retry).
+    pub fn with_leg(mut self, leg_id: uuid::Uuid) -> Self {
+        self.leg_id = Some(leg_id);
+        self
+    }
+
+    /// Idempotency seed for one non-custodial step of this leg
+    /// (`<leg_id>:<step>`), falling back to a per-process random base when no
+    /// leg is attached (only the mock/EOA paths, which never reach Circle).
+    #[cfg(feature = "real-cctp")]
+    fn idem_seed(&self, step: &str) -> String {
+        match self.leg_id {
+            Some(id) => format!("{id}:{step}"),
+            None => format!("{}:{step}", uuid::Uuid::new_v4()),
+        }
     }
 
     /// Burn `amount_usdc` USDC on `src` and mint the same amount on `dest`
@@ -199,10 +314,17 @@ impl<'a> CctpClient<'a> {
 
         let amount = (amount_usdc * 1_000_000.0) as u128;
 
-        let private_key = match src {
-            ChainKey::Arc => &self.config.chain_private_key_arc,
-            ChainKey::Base => &self.config.chain_private_key_base,
-        };
+        // Part B0 — non-custodial: submit the approve + burn from the user's
+        // Circle developer-controlled wallet (entity-secret signed) instead of
+        // the backend EOA. The user's wallet is the tx sender and holds the
+        // funds. Falls through to the EOA path when the flag is off.
+        if self.config.circle_wallet_exec {
+            return self
+                .circle_wallet_deposit_for_burn(src, dest, amount, hook)
+                .await;
+        }
+
+        let private_key = &self.config.chain(src).private_key;
 
         let key_bytes = hex::decode(private_key.trim_start_matches("0x")).map_err(|_| {
             AppError::Internal(anyhow::anyhow!("invalid hex private key for {:?}", src))
@@ -213,10 +335,7 @@ impl<'a> CctpClient<'a> {
 
         let wallet = EthereumWallet::from(signer);
 
-        let rpc_url = match src {
-            ChainKey::Arc => &self.config.arc_rpc_url,
-            ChainKey::Base => &self.config.base_rpc_url,
-        };
+        let rpc_url = &self.config.chain(src).rpc_url;
 
         let provider = ProviderBuilder::new().wallet(wallet).connect_http(
             rpc_url
@@ -224,45 +343,22 @@ impl<'a> CctpClient<'a> {
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
         );
 
-        // Choose addresses based on source chain
-        let (token_messenger, usdc, executor_on_dest) = match src {
-            ChainKey::Arc => (
-                self.config
-                    .cctp_token_messenger_arc
-                    .parse::<Address>()
-                    .map_err(|_| {
-                        AppError::Internal(anyhow::anyhow!("bad CCTP TokenMessenger on Arc"))
-                    })?,
-                self.config
-                    .usdc_arc
-                    .parse::<Address>()
-                    .map_err(|_| AppError::Internal(anyhow::anyhow!("bad USDC on Arc")))?,
-                self.config
-                    .rebalance_executor_base
-                    .parse::<Address>()
-                    .map_err(|_| {
-                        AppError::Internal(anyhow::anyhow!("bad RebalanceExecutor on Base"))
-                    })?,
-            ),
-            ChainKey::Base => (
-                self.config
-                    .cctp_token_messenger_base
-                    .parse::<Address>()
-                    .map_err(|_| {
-                        AppError::Internal(anyhow::anyhow!("bad CCTP TokenMessenger on Base"))
-                    })?,
-                self.config
-                    .usdc_base
-                    .parse::<Address>()
-                    .map_err(|_| AppError::Internal(anyhow::anyhow!("bad USDC on Base")))?,
-                self.config
-                    .rebalance_executor_arc
-                    .parse::<Address>()
-                    .map_err(|_| {
-                        AppError::Internal(anyhow::anyhow!("bad RebalanceExecutor on Arc"))
-                    })?,
-            ),
-        };
+        // Source-chain TokenMessenger + USDC, and the destination-chain
+        // RebalanceExecutor that becomes the CCTP mintRecipient.
+        let token_messenger = self
+            .config
+            .chain(src)
+            .cctp_token_messenger
+            .parse::<Address>()
+            .map_err(|_| {
+                AppError::Internal(anyhow::anyhow!("bad CCTP TokenMessenger on {:?}", src))
+            })?;
+        let usdc = self
+            .config
+            .chain(src)
+            .usdc
+            .parse::<Address>()
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("bad USDC on {:?}", src)))?;
 
         // depositForBurn calls `USDC.transferFrom(msg.sender, tokenMessenger,
         // amount + fee)` internally — even with maxFee=0 the contract may
@@ -300,13 +396,12 @@ impl<'a> CctpClient<'a> {
         // decodes it and performs the atomic USDC -> tokenOut swap.
         let hook_data = encode_hook_payload(hook);
 
-        // CCTP V2 finality threshold: 2000 = standard finality (~13min on
-        // Base). 1000 (Fast Transfer) is sub-30s but requires a non-zero
-        // maxFee — Circle sandbox returns delayReason="insufficient_fee"
-        // when maxFee=0. Standard is free and adequate for the rebalance
-        // cadence we run.
-        const MIN_FINALITY_STANDARD: u32 = 2000;
-        let max_fee = U256::ZERO;
+        // Fast Transfer (threshold 1000) needs a non-zero maxFee fetched from
+        // Circle's fee API — a zero fee on the fast path is rejected with
+        // delayReason="insufficient_fee". Fall back to the free standard path
+        // (threshold 2000, maxFee 0) when the fee API is unavailable.
+        let fee_choice = self.resolve_burn_fee(src, dest).await;
+        let max_fee = U256::from(max_fee_for(amount, fee_choice.fee_bps));
 
         // destinationCaller = bytes32(0) means any address can call
         // MessageTransmitter.receiveMessage on the destination chain.
@@ -319,23 +414,66 @@ impl<'a> CctpClient<'a> {
         // the message out of any path to mint. See F-CCTP-5.
         let destination_caller = alloy::primitives::FixedBytes::<32>::ZERO;
 
-        let receipt = contract
-            .depositForBurnWithHook(
-                U256::from(amount),
-                dest.domain_id(),
-                executor_on_dest.into_word(),
-                usdc,
-                destination_caller,
-                max_fee,
-                MIN_FINALITY_STANDARD,
-                hook_data,
-            )
-            .send()
-            .await
-            .map_err(|e| anyhow::anyhow!("alloy send error: {e}"))?
-            .get_receipt()
-            .await
-            .map_err(|e| anyhow::anyhow!("get_receipt error: {e}"))?;
+        // Plain USDC bridge (hook tokenOut == destination USDC): mint directly to
+        // the recipient EOA via `depositForBurn` — no hook, no executor hop, so
+        // funds cannot strand at the executor waiting on a `relay()` the CCTP
+        // core never calls. The destination swap (if any) is a separate
+        // `LocalSwap` leg (the two-leg baseline). A hooked burn (tokenOut !=
+        // USDC) still routes to the executor for the atomic path.
+        let plain_bridge = hook
+            .token_out
+            .eq_ignore_ascii_case(&self.config.chain(dest).usdc);
+
+        let receipt = if plain_bridge {
+            let recipient = hook.recipient.parse::<Address>().map_err(|_| {
+                AppError::Internal(anyhow::anyhow!("bad mint recipient for plain bridge"))
+            })?;
+            contract
+                .depositForBurn(
+                    U256::from(amount),
+                    dest.domain_id(),
+                    recipient.into_word(),
+                    usdc,
+                    destination_caller,
+                    max_fee,
+                    fee_choice.finality_threshold,
+                )
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("alloy send error: {e}"))?
+                .get_receipt()
+                .await
+                .map_err(|e| anyhow::anyhow!("get_receipt error: {e}"))?
+        } else {
+            // Hooked burn: the mint must land at the destination RebalanceExecutor
+            // (parsed lazily here so a plain bridge to a chain without a deployed
+            // executor isn't blocked by an unparsable address).
+            let executor_on_dest = self
+                .config
+                .chain(dest)
+                .rebalance_executor
+                .parse::<Address>()
+                .map_err(|_| {
+                    AppError::Internal(anyhow::anyhow!("bad RebalanceExecutor on {:?}", dest))
+                })?;
+            contract
+                .depositForBurnWithHook(
+                    U256::from(amount),
+                    dest.domain_id(),
+                    executor_on_dest.into_word(),
+                    usdc,
+                    destination_caller,
+                    max_fee,
+                    fee_choice.finality_threshold,
+                    hook_data,
+                )
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("alloy send error: {e}"))?
+                .get_receipt()
+                .await
+                .map_err(|e| anyhow::anyhow!("get_receipt error: {e}"))?
+        };
 
         // Robust MessageSent extraction (works across Alloy Log type differences)
         let message_sent_topic: alloy::primitives::B256 =
@@ -378,10 +516,14 @@ impl<'a> CctpClient<'a> {
     ) -> Result<String> {
         use alloy::network::EthereumWallet;
 
-        let private_key = match dest {
-            ChainKey::Arc => &self.config.chain_private_key_arc,
-            ChainKey::Base => &self.config.chain_private_key_base,
-        };
+        // Part B0 — non-custodial: mint via the user's Circle wallet.
+        if self.config.circle_wallet_exec {
+            return self
+                .circle_wallet_receive_message(dest, message, attestation)
+                .await;
+        }
+
+        let private_key = &self.config.chain(dest).private_key;
 
         let signer = PrivateKeySigner::from_slice(
             &hex::decode(private_key.trim_start_matches("0x"))
@@ -391,10 +533,7 @@ impl<'a> CctpClient<'a> {
 
         let wallet = EthereumWallet::from(signer);
 
-        let rpc_url = match dest {
-            ChainKey::Arc => &self.config.arc_rpc_url,
-            ChainKey::Base => &self.config.base_rpc_url,
-        };
+        let rpc_url = &self.config.chain(dest).rpc_url;
 
         let provider = ProviderBuilder::new().wallet(wallet).connect_http(
             rpc_url
@@ -402,22 +541,14 @@ impl<'a> CctpClient<'a> {
                 .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
         );
 
-        let transmitter: Address = match dest {
-            ChainKey::Arc => self
-                .config
-                .cctp_message_transmitter_arc
-                .parse()
-                .map_err(|_| {
-                    AppError::Internal(anyhow::anyhow!("bad MessageTransmitter on Arc"))
-                })?,
-            ChainKey::Base => self
-                .config
-                .cctp_message_transmitter_base
-                .parse()
-                .map_err(|_| {
-                    AppError::Internal(anyhow::anyhow!("bad MessageTransmitter on Base"))
-                })?,
-        };
+        let transmitter: Address = self
+            .config
+            .chain(dest)
+            .cctp_message_transmitter
+            .parse()
+            .map_err(|_| {
+                AppError::Internal(anyhow::anyhow!("bad MessageTransmitter on {:?}", dest))
+            })?;
 
         let contract = IMessageTransmitter::new(transmitter, &provider);
 
@@ -438,6 +569,213 @@ impl<'a> CctpClient<'a> {
             .map_err(|e| AppError::Internal(anyhow::anyhow!("get_receipt error: {e}")))?;
 
         Ok(receipt.transaction_hash.to_string())
+    }
+
+    /// Non-custodial burn (Part B0): ABI-encode the USDC `approve` and
+    /// `depositForBurnWithHook` calls and submit each from the user's Circle
+    /// developer-controlled wallet. The user's wallet is the tx sender (and, in
+    /// this model, the USDC holder), so the bridge is non-custodial.
+    ///
+    /// Unlike the EOA path we cannot read the burn receipt's `MessageSent` log
+    /// directly (Circle returns a tx hash, not decoded logs). That is fine: the
+    /// attestation lookup is keyed by the burn `transactionHash`, not by this
+    /// `message_hash`, which is only persisted as an identifier. We derive a
+    /// deterministic identifier from the tx hash so the receipt shape matches
+    /// the EOA path.
+    #[cfg(feature = "real-cctp")]
+    async fn circle_wallet_deposit_for_burn(
+        &self,
+        src: ChainKey,
+        dest: ChainKey,
+        amount: u128,
+        hook: &HookPayload,
+    ) -> Result<BurnReceipt> {
+        let user = self.user.ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "circle_wallet_exec set but no user context attached to CctpClient"
+            ))
+        })?;
+
+        let token_messenger_str = &self.config.chain(src).cctp_token_messenger;
+        let usdc_str = &self.config.chain(src).usdc;
+        let token_messenger: Address = token_messenger_str
+            .parse()
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("bad CCTP TokenMessenger")))?;
+        let usdc: Address = usdc_str
+            .parse()
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("bad USDC address")))?;
+
+        // 1) approve(tokenMessenger, amount*2) — same headroom as the EOA path.
+        let approve_amount = U256::from(amount).saturating_mul(U256::from(2u64));
+        let approve_calldata = IERC20::approveCall {
+            spender: token_messenger,
+            amount: approve_amount,
+        }
+        .abi_encode();
+        crate::modules::wallet::circle_exec::submit_contract_execution(
+            self.http,
+            self.config,
+            user.db,
+            user.user_id,
+            src,
+            usdc_str,
+            &hex::encode(approve_calldata),
+            None,
+            &self.idem_seed("cctp-approve"),
+        )
+        .await?;
+
+        // 2) Burn. Mirror the EOA path's plain-vs-hooked branch: a plain USDC
+        // bridge (tokenOut == destination USDC) mints directly to the recipient
+        // via `depositForBurn` — no hook, no executor hop (so a bridge to a chain
+        // without a deployed executor isn't blocked, and funds can't strand at
+        // the executor). A hooked burn (tokenOut != USDC) routes to the
+        // destination RebalanceExecutor via `depositForBurnWithHook`.
+        let fee_choice = self.resolve_burn_fee(src, dest).await;
+        let destination_caller = alloy::primitives::FixedBytes::<32>::ZERO;
+        let max_fee = U256::from(max_fee_for(amount, fee_choice.fee_bps));
+        let plain_bridge = hook
+            .token_out
+            .eq_ignore_ascii_case(&self.config.chain(dest).usdc);
+        let burn_calldata = if plain_bridge {
+            let recipient = hook.recipient.parse::<Address>().map_err(|_| {
+                AppError::Internal(anyhow::anyhow!("bad mint recipient for plain bridge"))
+            })?;
+            ICCTPV2TokenMessenger::depositForBurnCall {
+                amount: U256::from(amount),
+                destinationDomain: dest.domain_id(),
+                mintRecipient: recipient.into_word(),
+                burnToken: usdc,
+                destinationCaller: destination_caller,
+                maxFee: max_fee,
+                minFinalityThreshold: fee_choice.finality_threshold,
+            }
+            .abi_encode()
+        } else {
+            let executor_on_dest = self
+                .config
+                .chain(dest)
+                .rebalance_executor
+                .parse::<Address>()
+                .map_err(|_| {
+                    AppError::Internal(anyhow::anyhow!("bad RebalanceExecutor on {:?}", dest))
+                })?;
+            ICCTPV2TokenMessenger::depositForBurnWithHookCall {
+                amount: U256::from(amount),
+                destinationDomain: dest.domain_id(),
+                mintRecipient: executor_on_dest.into_word(),
+                burnToken: usdc,
+                destinationCaller: destination_caller,
+                maxFee: max_fee,
+                minFinalityThreshold: fee_choice.finality_threshold,
+                hookData: encode_hook_payload(hook),
+            }
+            .abi_encode()
+        };
+        let tx_hash = crate::modules::wallet::circle_exec::submit_contract_execution(
+            self.http,
+            self.config,
+            user.db,
+            user.user_id,
+            src,
+            token_messenger_str,
+            &hex::encode(burn_calldata),
+            None,
+            &self.idem_seed("cctp-burn"),
+        )
+        .await?;
+
+        // Synthetic local identifier only — NOT the real on-chain CCTP message
+        // hash (Circle returns a tx hash, not decoded `MessageSent` logs). The
+        // attestation lookup keys off the burn `tx_hash`, so this value is never
+        // matched against Circle's message hashes; it just fills the receipt
+        // shape. Marked so any downstream reconciliation treats it as opaque.
+        let message_hash = format!(
+            "synthetic:0x{}",
+            hex::encode(Sha256::digest(tx_hash.as_bytes()))
+        );
+        Ok(BurnReceipt {
+            tx_hash,
+            message_hash,
+        })
+    }
+
+    /// Non-custodial mint (Part B0): ABI-encode `receiveMessage(message,
+    /// attestation)` and submit it from the user's Circle wallet on `dest`.
+    #[cfg(feature = "real-cctp")]
+    async fn circle_wallet_receive_message(
+        &self,
+        dest: ChainKey,
+        message: &str,
+        attestation: &str,
+    ) -> Result<String> {
+        let user = self.user.ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!(
+                "circle_wallet_exec set but no user context attached to CctpClient"
+            ))
+        })?;
+
+        let transmitter_str = &self.config.chain(dest).cctp_message_transmitter;
+        let transmitter = transmitter_str.parse::<Address>().map_err(|_| {
+            AppError::Internal(anyhow::anyhow!("bad MessageTransmitter on {:?}", dest))
+        })?;
+        let _ = transmitter;
+
+        let message_bytes: Bytes = message
+            .parse()
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid message hex")))?;
+        let attestation_bytes: Bytes = attestation
+            .parse()
+            .map_err(|_| AppError::Internal(anyhow::anyhow!("invalid attestation hex")))?;
+
+        let calldata = IMessageTransmitter::receiveMessageCall {
+            message: message_bytes,
+            attestation: attestation_bytes,
+        }
+        .abi_encode();
+
+        crate::modules::wallet::circle_exec::submit_contract_execution(
+            self.http,
+            self.config,
+            user.db,
+            user.user_id,
+            dest,
+            transmitter_str,
+            &hex::encode(calldata),
+            None,
+            &self.idem_seed("cctp-mint"),
+        )
+        .await
+    }
+
+    /// Resolve the Fast Transfer burn parameters for `src` → `dest` by querying
+    /// Circle's fee API. Returns the standard (free, slow) path on any error so
+    /// the working burn is never broken by an unreachable/changed fee endpoint.
+    #[cfg(feature = "real-cctp")]
+    async fn resolve_burn_fee(&self, src: ChainKey, dest: ChainKey) -> BurnFeeChoice {
+        let url = format!(
+            "{}/v2/burn/USDC/fees/{}/{}",
+            self.config.cctp_attestation_url,
+            src.domain_id(),
+            dest.domain_id()
+        );
+        match self.http.get(&url).send().await {
+            Ok(r) if r.status().is_success() => match r.json::<Vec<CctpFeeEntry>>().await {
+                Ok(entries) => select_burn_fee(&entries),
+                Err(e) => {
+                    tracing::warn!(error = %e, "cctp fee parse failed; using standard finality");
+                    BurnFeeChoice::STANDARD
+                }
+            },
+            Ok(r) => {
+                tracing::warn!(status = %r.status(), "cctp fee api non-200; using standard finality");
+                BurnFeeChoice::STANDARD
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "cctp fee api unreachable; using standard finality");
+                BurnFeeChoice::STANDARD
+            }
+        }
     }
 
     pub async fn wait_for_attestation(
@@ -633,6 +971,45 @@ mod tests {
         assert!(!att.attestation.is_empty());
         let mint = client.receive_message(ChainKey::Base, &att).await.unwrap();
         assert!(mint.tx_hash.starts_with("0x"));
+    }
+
+    #[test]
+    fn fee_table_selects_fast_threshold_and_uses_parsed_fee() {
+        // Sample shape of Circle's GET /v2/burn/USDC/fees/{src}/{dest} body:
+        // one row per finality threshold, fee in bps under `minimumFee`. The fast
+        // fee can be FRACTIONAL (Arb→Base really returns 1.3) — a u32 here would
+        // fail the whole decode and silently drop to slow standard finality.
+        let body = r#"[
+            {"finalityThreshold": 2000, "minimumFee": 0},
+            {"finalityThreshold": 1000, "minimumFee": 1.3}
+        ]"#;
+        let entries: Vec<CctpFeeEntry> = serde_json::from_str(body).expect("fee body parses");
+        let choice = select_burn_fee(&entries);
+        assert_eq!(
+            choice.finality_threshold, MIN_FINALITY_FAST,
+            "fast threshold must be selected when present"
+        );
+        assert_eq!(
+            choice.fee_bps, 1.3,
+            "parsed (fractional) minimumFee must drive the maxFee"
+        );
+
+        // 100 USDC (6dp) at 1.3bps = 0.013 USDC = 13_000 base units (rounded up).
+        let amount = 100_000_000u128;
+        assert_eq!(max_fee_for(amount, choice.fee_bps), 13_000);
+    }
+
+    #[test]
+    fn fee_table_falls_back_to_standard_when_no_fast_row() {
+        let body = r#"[{"finalityThreshold": 2000, "minimumFee": 0}]"#;
+        let entries: Vec<CctpFeeEntry> = serde_json::from_str(body).expect("fee body parses");
+        let choice = select_burn_fee(&entries);
+        assert_eq!(choice, BurnFeeChoice::STANDARD);
+        assert_eq!(
+            max_fee_for(100_000_000, choice.fee_bps),
+            0,
+            "standard path is free (maxFee 0)"
+        );
     }
 
     #[test]

@@ -10,10 +10,11 @@
 //!      completed executions. Skipped when `TEST_DATABASE_URL` is unset so
 //!      `cargo test --all-targets` stays hermetic.
 
-use aegis_api::config::Config;
+use aegis_api::config::{ChainConfig, Config};
 use aegis_api::modules::rebalance::registry::{
     route::RouteLeg, validate_legs, BlockerCode, RuntimeCapabilities,
 };
+use aegis_api::modules::rebalance::ChainKey;
 
 /// A real-mode config (neither execution nor Circle mocked) with signers set so
 /// `RuntimeCapabilities::real_mode` is true and only feature/adapter gaps remain.
@@ -21,12 +22,12 @@ fn real_config() -> Config {
     let mut cfg = base_config();
     cfg.execution_mock = false;
     cfg.circle_mock = false;
-    cfg.chain_private_key_arc =
+    cfg.chains[ChainKey::Arc.index()].private_key =
         "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into();
-    cfg.chain_private_key_base =
+    cfg.chains[ChainKey::Base.index()].private_key =
         "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into();
-    cfg.usdc_arc = "0x00000000000000000000000000000000000000a1".into();
-    cfg.usdc_base = "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
+    cfg.chains[ChainKey::Arc.index()].usdc = "0x00000000000000000000000000000000000000a1".into();
+    cfg.chains[ChainKey::Base.index()].usdc = "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
     cfg
 }
 
@@ -75,6 +76,32 @@ fn stablefx_fails_closed_in_real_mode() {
 
 #[test]
 fn non_execution_chain_is_blocked() {
+    // A chain with no provisioned wallet route / non-EVM chain fails closed with
+    // a NonExecutionChain blocker. (ETH/Arb/Avax are now execution chains for
+    // the CCTP consolidation baseline — see `unconfigured_cctp_source_chain_is_blocked`
+    // for how an unwired-but-executable chain still fails closed per-leg.)
+    let cfg = real_config();
+    let caps = RuntimeCapabilities::from_config(&cfg);
+    for chain in ["solana", "op-sepolia"] {
+        let blockers = validate_legs(
+            &caps,
+            &cfg,
+            &[leg("cross_chain_burn", chain, "base", "USDC", "USDC")],
+        );
+        assert!(
+            has(&blockers, BlockerCode::NonExecutionChain),
+            "{chain} must be blocked as a non-execution chain"
+        );
+    }
+}
+
+#[cfg(feature = "real-cctp")]
+#[test]
+fn unconfigured_cctp_source_chain_is_blocked() {
+    // ETH-Sepolia is an execution chain, but `real_config()` only wires Arc/Base
+    // USDC + signers. A burn sourced from ETH-Sepolia must still fail closed —
+    // per-leg CCTP validation sees the missing ETH USDC/messenger and blocks it
+    // at approval rather than after the source burn has left the wallet.
     let cfg = real_config();
     let caps = RuntimeCapabilities::from_config(&cfg);
     let blockers = validate_legs(
@@ -88,7 +115,10 @@ fn non_execution_chain_is_blocked() {
             "USDC",
         )],
     );
-    assert!(has(&blockers, BlockerCode::NonExecutionChain));
+    assert!(
+        has(&blockers, BlockerCode::UsdcAddress),
+        "an unconfigured CCTP source chain must fail closed, got {blockers:?}"
+    );
 }
 
 #[cfg(not(feature = "real-cctp"))]
@@ -115,6 +145,64 @@ fn local_swap_needs_real_swap_feature() {
         &[leg("local_swap", "base", "base", "USDC", "ETH")],
     );
     assert!(has(&blockers, BlockerCode::RealSwapFeature));
+}
+
+#[cfg(not(feature = "real-swap"))]
+#[test]
+fn eurc_routes_as_base_local_swap_not_stablefx() {
+    // The EUR sleeve now executes through the Base USDC/EURC DEX pool, so a
+    // USDC→EURC buy is a local_swap on Base — it must clear the swap rail (here
+    // just the feature gate), never the gated StableFX blocker.
+    let cfg = real_config();
+    let caps = RuntimeCapabilities::from_config(&cfg);
+    let blockers = validate_legs(
+        &caps,
+        &cfg,
+        &[leg("local_swap", "base", "base", "USDC", "EURC")],
+    );
+    assert!(has(&blockers, BlockerCode::RealSwapFeature));
+    assert!(!has(&blockers, BlockerCode::StablefxUnavailable));
+}
+
+#[cfg(feature = "real-swap")]
+#[test]
+fn eurc_base_swap_is_executable_when_configured() {
+    // With the swap venue + EURC's Base ERC-20 configured (and the real-swap
+    // feature compiled in), a USDC→EURC local_swap on Base has no blockers.
+    let mut cfg = real_config();
+    cfg.chains[ChainKey::Base.index()].swap_quoter =
+        "0xC5290058841028F1614F3A6F0F5816cAd0df5E27".into();
+    cfg.chains[ChainKey::Base.index()].swap_router =
+        "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4".into();
+    cfg.eurc_base = "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42".into();
+    let caps = RuntimeCapabilities::from_config(&cfg);
+    let blockers = validate_legs(
+        &caps,
+        &cfg,
+        &[leg("local_swap", "base", "base", "USDC", "EURC")],
+    );
+    assert!(
+        blockers.is_empty(),
+        "configured EURC Base swap must be executable, got {blockers:?}"
+    );
+}
+
+#[cfg(feature = "real-swap")]
+#[test]
+fn eurc_base_swap_fails_closed_without_address() {
+    // Swap venue live but EURC's Base ERC-20 unset → fail closed on the address.
+    let mut cfg = real_config();
+    cfg.chains[ChainKey::Base.index()].swap_quoter =
+        "0xC5290058841028F1614F3A6F0F5816cAd0df5E27".into();
+    cfg.chains[ChainKey::Base.index()].swap_router =
+        "0x94cC0AaC535CCDB3C01d6787D6413C739ae12bc4".into();
+    let caps = RuntimeCapabilities::from_config(&cfg);
+    let blockers = validate_legs(
+        &caps,
+        &cfg,
+        &[leg("local_swap", "base", "base", "USDC", "EURC")],
+    );
+    assert!(has(&blockers, BlockerCode::SwapTokenAddress));
 }
 
 #[test]
@@ -258,8 +346,20 @@ fn base_config() -> Config {
         circle_entity_secret: "0000000000000000000000000000000000000000000000000000000000000000"
             .into(),
         circle_mock: true,
-        arc_rpc_url: "https://testnet.arc.network".into(),
-        base_rpc_url: "https://sepolia.base.org".into(),
+        chains: [
+            ChainConfig {
+                rpc_url: "https://testnet.arc.network".into(),
+                ..ChainConfig::default()
+            },
+            ChainConfig {
+                rpc_url: "https://sepolia.base.org".into(),
+                ..ChainConfig::default()
+            },
+            ChainConfig::default(),
+            ChainConfig::default(),
+            ChainConfig::default(),
+            ChainConfig::default(),
+        ],
         gateway_poll_secs: 3600,
         faucet_max_usdc_per_day: 100.0,
         cors_allow_origin: "http://localhost:3000".into(),
@@ -267,29 +367,27 @@ fn base_config() -> Config {
         session_cookie_secure: false,
         cctp_attestation_url: "https://iris-api-sandbox.circle.com".into(),
         cctp_attestation_timeout_secs: 180,
-        chain_private_key_arc: String::new(),
-        chain_private_key_base: String::new(),
-        cctp_token_messenger_arc: String::new(),
-        cctp_token_messenger_base: String::new(),
-        cctp_message_transmitter_arc: String::new(),
-        cctp_message_transmitter_base: String::new(),
-        rebalance_executor_arc: String::new(),
-        rebalance_executor_base: String::new(),
-        usdc_arc: String::new(),
-        usdc_base: String::new(),
         usyc_token_arc: String::new(),
         usyc_teller_arc: String::new(),
         usyc_oracle_arc: String::new(),
         usyc_enabled: false,
-        uniswap_v3_quoter_base: String::new(),
-        uniswap_v3_router_base: String::new(),
         weth_base: String::new(),
+        cbbtc_base: String::new(),
+        cbeth_base: String::new(),
+        susds_base: String::new(),
+        eurc_base: String::new(),
+        weth_eth: String::new(),
+        weth_arb: String::new(),
+        weth_op: String::new(),
+        wbtc_eth: String::new(),
+        wbtc_arb: String::new(),
         nanopayments_facilitator_url: "https://gateway-api-testnet.circle.com".into(),
         nanopayments_seller_address: String::new(),
         nanopayments_treasury_address: String::new(),
         billing_v2_enabled: false,
         admin_user_ids: vec![],
         execution_mock: true,
+        circle_wallet_exec: false,
         scheduler_tick_secs: 3600,
         scheduler_cooldown_secs: 1800,
         harvest_threshold_usd: 50.0,

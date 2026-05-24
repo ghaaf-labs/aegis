@@ -8,6 +8,7 @@
 
 use crate::config::Config;
 
+use super::super::models::ChainKey;
 use super::super::registry::capabilities::AdapterCapability;
 use super::super::registry::tokens;
 
@@ -20,7 +21,7 @@ pub fn capability(cfg: &Config) -> AdapterCapability {
         || !tokens::is_real_addr(&cfg.usyc_teller_arc)
     {
         AdapterCapability::NeedsAddress
-    } else if cfg.chain_private_key_arc.trim().is_empty() {
+    } else if cfg.chain(ChainKey::Arc).private_key.trim().is_empty() {
         AdapterCapability::NeedsSigner
     } else {
         AdapterCapability::Live

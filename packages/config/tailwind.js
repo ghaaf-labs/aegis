@@ -31,10 +31,12 @@ const config = {
         // Text scale.
         "text-hi": "#FFFFFF",
         "text-default": "#E5E5E5",
-        "text-lo": "#8A8A8A",
-        // #7C7C7C clears WCAG AA (~4.6:1) on the #0A0A0A app background;
-        // the prior #5A5A5A was only ~2.9:1 and failed on small microcopy.
-        "text-mut": "#7C7C7C",
+        // #969696 → 5.76:1 on raised (#1C1C1C), 6.20:1 on bg — clears WCAG AA on all surfaces.
+        // Prior #8A8A8A was only 4.94:1 on raised, failing AA for small labels on cards.
+        "text-lo": "#969696",
+        // #909090 → 5.34:1 on raised (#1C1C1C), 6.20:1 on bg — clears WCAG AA on all surfaces.
+        // Prior #7C7C7C was 4.08:1 on raised and 4.41:1 on surface, both below AA threshold.
+        "text-mut": "#909090",
 
         // Shadcn legacy tokens (kept while components migrate).
         border: "hsl(var(--border))",

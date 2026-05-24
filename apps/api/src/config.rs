@@ -1,5 +1,7 @@
 use anyhow::Context;
 
+use crate::modules::rebalance::models::ChainKey;
+
 /// Per-task model resolution: every AI call site declares its `ModelRoute`,
 /// and `Config::model_for(route)` returns the slug. Slugs are env-driven so
 /// switching providers requires zero code changes.
@@ -15,6 +17,21 @@ pub enum ModelRoute {
     #[allow(dead_code)]
     MarketCommentary,
     CritiqueAgent,
+}
+
+/// Per-chain settlement infrastructure. One instance per [`ChainKey`], reached
+/// through [`Config::chain`]. Every address default-empty ⇒ the route registry
+/// fails that leg closed (it never executes against a blank address).
+#[derive(Debug, Clone, Default)]
+pub struct ChainConfig {
+    pub rpc_url: String,
+    pub private_key: String,
+    pub cctp_token_messenger: String,
+    pub cctp_message_transmitter: String,
+    pub usdc: String,
+    pub rebalance_executor: String, // "" for chains without a deployed executor
+    pub swap_router: String,        // "" for chains with no AMM venue
+    pub swap_quoter: String,
 }
 
 #[derive(Debug, Clone)]
@@ -76,10 +93,13 @@ pub struct Config {
     /// `MOCK_CIRCLE=true` in `.env.local` for offline dev or hermetic CI.
     pub circle_mock: bool,
 
+    /// Per-chain settlement infrastructure (RPC, signer, CCTP V2 contracts,
+    /// USDC, executor, swap venue), one entry per [`ChainKey`] indexed by
+    /// [`ChainKey::index`]. Accessed via [`Config::chain`]. Per-(token×chain)
+    /// ERC-20s (`weth_*`, `wbtc_*`, …) stay flat below — they are not chain
+    /// infra and are out of this collection.
     #[allow(dead_code)]
-    pub arc_rpc_url: String,
-    #[allow(dead_code)]
-    pub base_rpc_url: String,
+    pub chains: [ChainConfig; 6],
 
     /// Cadence for the Gateway unified-balance ticker. Read by S2.6.
     #[allow(dead_code)]
@@ -108,31 +128,6 @@ pub struct Config {
     /// Max wall-clock seconds we'll wait for a CCTP attestation. Default 180.
     #[allow(dead_code)]
     pub cctp_attestation_timeout_secs: u64,
-    /// EOA private key (hex, 0x-prefixed) used to submit transactions on Arc.
-    /// Empty in mock mode.
-    #[allow(dead_code)]
-    pub chain_private_key_arc: String,
-    /// EOA private key for Base Sepolia transactions.
-    #[allow(dead_code)]
-    pub chain_private_key_base: String,
-
-    // Real CCTP + Hook execution addresses (loaded only when real-cctp feature + !mock)
-    #[allow(dead_code)]
-    pub cctp_token_messenger_arc: String,
-    #[allow(dead_code)]
-    pub cctp_token_messenger_base: String,
-    #[allow(dead_code)]
-    pub cctp_message_transmitter_arc: String,
-    #[allow(dead_code)]
-    pub cctp_message_transmitter_base: String,
-    #[allow(dead_code)]
-    pub rebalance_executor_arc: String,
-    #[allow(dead_code)]
-    pub rebalance_executor_base: String,
-    #[allow(dead_code)]
-    pub usdc_arc: String,
-    #[allow(dead_code)]
-    pub usdc_base: String,
     #[allow(dead_code)]
     pub usyc_token_arc: String,
     #[allow(dead_code)]
@@ -147,19 +142,40 @@ pub struct Config {
     /// EOA is allowlisted and the real Teller path is wired.
     pub usyc_enabled: bool,
 
-    // ── Per-chain swap venue (Uniswap V3, Base Sepolia) ────────────────────
-    /// Uniswap V3 QuoterV2 used to price USDC↔token swaps and derive `min_out`.
-    /// Empty ⇒ the swap adapter reports `NeedsAddress` and swaps fail closed.
-    #[allow(dead_code)]
-    pub uniswap_v3_quoter_base: String,
-    /// Uniswap V3 SwapRouter02 used to execute USDC↔token swaps on Base.
-    #[allow(dead_code)]
-    pub uniswap_v3_router_base: String,
+    // ── Per-token ERC-20s on Base ──────────────────────────────────────────
     /// Wrapped-ETH ERC-20 on Base Sepolia — the concrete token behind the
     /// "ETH" symbol for swap routing. Other volatiles have no canonical Base
     /// Sepolia ERC-20 + pool, so they fail closed (`NeedsAddress`).
     #[allow(dead_code)]
     pub weth_base: String,
+    /// Coinbase Wrapped BTC ERC-20 on Base (BTC sleeve). Empty ⇒ track-only.
+    #[allow(dead_code)]
+    pub cbbtc_base: String,
+    /// Coinbase Wrapped Staked ETH ERC-20 on Base (staked-ETH yield sleeve).
+    #[allow(dead_code)]
+    pub cbeth_base: String,
+    /// Sky sUSDS ERC-20 on Base (permissionless savings-yield sleeve).
+    #[allow(dead_code)]
+    pub susds_base: String,
+    /// EURC ERC-20 on Base (the EUR sleeve). EURC is a freely-transferable
+    /// Circle stablecoin with a real USDC/EURC pool on Base (Aerodrome /
+    /// Uniswap V3), so the EUR sleeve now executes via the permissionless DEX
+    /// swap rather than KYB-gated Arc StableFX. Empty ⇒ track-only (fail closed).
+    #[allow(dead_code)]
+    pub eurc_base: String,
+
+    /// Canonical volatile ERC-20s on the additional execution chains. Empty ⇒
+    /// the symbol is track-only on that chain (the registry fails closed).
+    #[allow(dead_code)]
+    pub weth_eth: String,
+    #[allow(dead_code)]
+    pub weth_arb: String,
+    #[allow(dead_code)]
+    pub weth_op: String,
+    #[allow(dead_code)]
+    pub wbtc_eth: String,
+    #[allow(dead_code)]
+    pub wbtc_arb: String,
 
     // ── Nanopayments (x402) for 25bps protocol fee + referrals ────────────
     #[allow(dead_code)]
@@ -187,6 +203,16 @@ pub struct Config {
     /// use mock adapters. Defaults to `false` (real-by-default); set
     /// `EXECUTION_MOCK=true` (the opt-in test/CI/offline path) to mock execution.
     pub execution_mock: bool,
+
+    /// Part B0 — non-custodial execution. When true, real on-chain legs
+    /// (CCTP burn/mint, USDC approve, per-chain swap) are submitted from the
+    /// *user's* Circle developer-controlled wallet via Circle's
+    /// Create-Contract-Execution-Transaction API (entity-secret signed) rather
+    /// than from a backend EOA. Default `false`: the EOA path (`CHAIN_PRIVATE_KEY_*`)
+    /// stays the verified default so nothing regresses. Flip to `true` only with
+    /// live Circle developer creds + a funded user wallet — the round-trip is
+    /// untestable offline (same caveat as the existing real CCTP/swap paths).
+    pub circle_wallet_exec: bool,
 
     // ── Sprint 3: scheduler ───────────────────────────────────────────────
     /// Tick cadence (seconds) for the per-portfolio drift watcher.
@@ -339,10 +365,7 @@ impl Config {
             circle_entity_secret: std::env::var("CIRCLE_ENTITY_SECRET").unwrap_or_default(),
             circle_mock: parse_or("MOCK_CIRCLE", false)?,
 
-            arc_rpc_url: std::env::var("ARC_RPC_URL")
-                .unwrap_or_else(|_| "https://testnet.arc.network".into()),
-            base_rpc_url: std::env::var("BASE_RPC_URL")
-                .unwrap_or_else(|_| "https://sepolia.base.org".into()),
+            chains: chain_configs_from_env(),
 
             gateway_poll_secs: parse_or("GATEWAY_POLL_SECS", 10)?,
             faucet_max_usdc_per_day: parse_or("FAUCET_MAX_USDC_PER_DAY", 100.0)?,
@@ -355,29 +378,22 @@ impl Config {
             cctp_attestation_url: std::env::var("CCTP_ATTESTATION_URL")
                 .unwrap_or_else(|_| "https://iris-api-sandbox.circle.com".into()),
             cctp_attestation_timeout_secs: parse_or("CCTP_ATTESTATION_TIMEOUT_SECS", 180)?,
-            chain_private_key_arc: std::env::var("CHAIN_PRIVATE_KEY_ARC").unwrap_or_default(),
-            chain_private_key_base: std::env::var("CHAIN_PRIVATE_KEY_BASE").unwrap_or_default(),
-
-            // Real execution addresses (only used when EXECUTION_MOCK=false and real-cctp feature)
-            cctp_token_messenger_arc: std::env::var("CCTP_TOKEN_MESSENGER_ARC").unwrap_or_default(),
-            cctp_token_messenger_base: std::env::var("CCTP_TOKEN_MESSENGER_BASE")
-                .unwrap_or_default(),
-            cctp_message_transmitter_arc: std::env::var("CCTP_MESSAGE_TRANSMITTER_ARC")
-                .unwrap_or_default(),
-            cctp_message_transmitter_base: std::env::var("CCTP_MESSAGE_TRANSMITTER_BASE")
-                .unwrap_or_default(),
-            rebalance_executor_arc: std::env::var("REBALANCE_EXECUTOR_ARC").unwrap_or_default(),
-            rebalance_executor_base: std::env::var("REBALANCE_EXECUTOR_BASE").unwrap_or_default(),
-            usdc_arc: std::env::var("USDC_ARC").unwrap_or_default(),
-            usdc_base: std::env::var("USDC_BASE").unwrap_or_default(),
             usyc_token_arc: std::env::var("USYC_TOKEN_ARC").unwrap_or_default(),
             usyc_teller_arc: std::env::var("USYC_TELLER_ARC").unwrap_or_default(),
             usyc_oracle_arc: std::env::var("USYC_ORACLE_ARC").unwrap_or_default(),
             usyc_enabled: parse_or("USYC_ENABLED", false)?,
 
-            uniswap_v3_quoter_base: std::env::var("UNISWAP_V3_QUOTER_BASE").unwrap_or_default(),
-            uniswap_v3_router_base: std::env::var("UNISWAP_V3_ROUTER_BASE").unwrap_or_default(),
             weth_base: std::env::var("WETH_BASE").unwrap_or_default(),
+            cbbtc_base: std::env::var("CBBTC_BASE").unwrap_or_default(),
+            cbeth_base: std::env::var("CBETH_BASE").unwrap_or_default(),
+            susds_base: std::env::var("SUSDS_BASE").unwrap_or_default(),
+            eurc_base: std::env::var("EURC_BASE").unwrap_or_default(),
+
+            weth_eth: std::env::var("WETH_ETH").unwrap_or_default(),
+            weth_arb: std::env::var("WETH_ARB").unwrap_or_default(),
+            weth_op: std::env::var("WETH_OP").unwrap_or_default(),
+            wbtc_eth: std::env::var("WBTC_ETH").unwrap_or_default(),
+            wbtc_arb: std::env::var("WBTC_ARB").unwrap_or_default(),
 
             // Nanopayments (x402) for protocol fee (25bps) and referral payouts.
             nanopayments_facilitator_url: std::env::var("NANOPAYMENTS_FACILITATOR_URL")
@@ -388,14 +404,12 @@ impl Config {
                 .unwrap_or_default(),
 
             billing_v2_enabled: parse_or("BILLING_V2_ENABLED", false)?,
-            admin_user_ids: std::env::var("ADMIN_USER_IDS")
-                .unwrap_or_default()
-                .split(',')
-                .filter(|s| !s.trim().is_empty())
-                .filter_map(|s| s.trim().parse::<uuid::Uuid>().ok())
-                .collect(),
+            admin_user_ids: parse_admin_user_ids(
+                &std::env::var("ADMIN_USER_IDS").unwrap_or_default(),
+            ),
 
             execution_mock: parse_or("EXECUTION_MOCK", false)?,
+            circle_wallet_exec: parse_or("CIRCLE_WALLET_EXEC", false)?,
 
             scheduler_tick_secs: parse_or("SCHEDULER_TICK_SECS", 300)?,
             scheduler_cooldown_secs: parse_or("SCHEDULER_COOLDOWN_SECS", 1800)?,
@@ -412,7 +426,7 @@ impl Config {
             public_base_url,
             api_base_url,
 
-            regime_backtest_enabled: parse_or("REGIME_BACKTEST_ENABLED", true)?,
+            regime_backtest_enabled: parse_or("REGIME_BACKTEST_ENABLED", false)?,
             peg_defense_enabled: parse_or("PEG_DEFENSE_ENABLED", true)?,
             peg_monitor_tick_secs: parse_or("PEG_MONITOR_TICK_SECS", 10)?,
             peg_fire_cooldown_secs: parse_or("PEG_FIRE_COOLDOWN_SECS", 1800)?,
@@ -432,15 +446,28 @@ impl Config {
     /// while preventing a deploy from silently running with placeholder keys.
     pub fn validate(&self) -> anyhow::Result<()> {
         if !self.execution_mock {
-            if self.chain_private_key_arc.trim().is_empty() {
-                anyhow::bail!(
-                    "EXECUTION_MOCK=false but CHAIN_PRIVATE_KEY_ARC is empty; set it or flip EXECUTION_MOCK=true"
-                );
-            }
-            if self.chain_private_key_base.trim().is_empty() {
-                anyhow::bail!(
-                    "EXECUTION_MOCK=false but CHAIN_PRIVATE_KEY_BASE is empty; set it or flip EXECUTION_MOCK=true"
-                );
+            if self.circle_wallet_exec {
+                // Non-custodial execution submits CCTP burns/mints/swaps from
+                // each user's Circle developer-controlled wallet, so it needs
+                // real Circle (validated below under !circle_mock) — not backend
+                // EOA signing keys. Requiring CHAIN_PRIVATE_KEY_* here would
+                // force operators to hold keys the non-custodial path never uses.
+                if self.circle_mock {
+                    anyhow::bail!(
+                        "CIRCLE_WALLET_EXEC=true with EXECUTION_MOCK=false requires MOCK_CIRCLE=false; it submits from the user's Circle wallet"
+                    );
+                }
+            } else {
+                if self.chain(ChainKey::Arc).private_key.trim().is_empty() {
+                    anyhow::bail!(
+                        "EXECUTION_MOCK=false but CHAIN_PRIVATE_KEY_ARC is empty; set it, enable CIRCLE_WALLET_EXEC, or flip EXECUTION_MOCK=true"
+                    );
+                }
+                if self.chain(ChainKey::Base).private_key.trim().is_empty() {
+                    anyhow::bail!(
+                        "EXECUTION_MOCK=false but CHAIN_PRIVATE_KEY_BASE is empty; set it, enable CIRCLE_WALLET_EXEC, or flip EXECUTION_MOCK=true"
+                    );
+                }
             }
         }
         if !self.circle_mock {
@@ -529,10 +556,119 @@ impl Config {
             ModelRoute::CritiqueAgent => &self.model_critic,
         }
     }
+
+    /// Per-chain settlement infrastructure for `chain` — RPC URL, EOA signing
+    /// key, CCTP V2 contracts, USDC, executor, and swap venue. The single
+    /// accessor over the `chains` collection. Addresses default empty until the
+    /// chain is wired (Arc has no AMM venue; only Arc/Base have a deployed
+    /// executor) so unconfigured legs fail closed.
+    #[allow(dead_code)]
+    pub fn chain(&self, chain: ChainKey) -> &ChainConfig {
+        &self.chains[chain.index()]
+    }
 }
 
 fn required(key: &str) -> anyhow::Result<String> {
     std::env::var(key).with_context(|| format!("missing required env var: {key}"))
+}
+
+/// Build the per-chain config array from env, indexed by [`ChainKey::index`].
+/// Env var names are unchanged (`{KNOB}_{CHAIN}`). The swap venue mapping
+/// mirrors the old `swap_router_for`/`swap_quoter_for`: Base = Aerodrome
+/// Slipstream, OP = Velodrome, Eth/Arb = Uniswap V3 (all share the V3-style
+/// router + QuoterV2 surface, so they read `UNISWAP_V3_{ROUTER,QUOTER}_*`); Avax
+/// = Trader Joe LB (its own bin-step `Path` ABI — `TRADER_JOE_LB_*`); Arc has no
+/// AMM venue, so its swap addresses stay empty and fail closed. Only Arc/Base
+/// have a deployed RebalanceExecutor; the rest leave it empty.
+fn chain_configs_from_env() -> [ChainConfig; 6] {
+    let env = |key: &str| std::env::var(key).unwrap_or_default();
+    [
+        // Arc
+        ChainConfig {
+            rpc_url: std::env::var("ARC_RPC_URL")
+                .unwrap_or_else(|_| "https://testnet.arc.network".into()),
+            private_key: env("CHAIN_PRIVATE_KEY_ARC"),
+            cctp_token_messenger: env("CCTP_TOKEN_MESSENGER_ARC"),
+            cctp_message_transmitter: env("CCTP_MESSAGE_TRANSMITTER_ARC"),
+            usdc: env("USDC_ARC"),
+            rebalance_executor: env("REBALANCE_EXECUTOR_ARC"),
+            // Arc settles stables / FX; no AMM venue.
+            swap_router: String::new(),
+            swap_quoter: String::new(),
+        },
+        // Base
+        ChainConfig {
+            rpc_url: std::env::var("BASE_RPC_URL")
+                .unwrap_or_else(|_| "https://sepolia.base.org".into()),
+            private_key: env("CHAIN_PRIVATE_KEY_BASE"),
+            cctp_token_messenger: env("CCTP_TOKEN_MESSENGER_BASE"),
+            cctp_message_transmitter: env("CCTP_MESSAGE_TRANSMITTER_BASE"),
+            usdc: env("USDC_BASE"),
+            rebalance_executor: env("REBALANCE_EXECUTOR_BASE"),
+            swap_router: env("UNISWAP_V3_ROUTER_BASE"),
+            swap_quoter: env("UNISWAP_V3_QUOTER_BASE"),
+        },
+        // EthSepolia
+        ChainConfig {
+            rpc_url: env("ETH_RPC_URL"),
+            private_key: env("CHAIN_PRIVATE_KEY_ETH"),
+            cctp_token_messenger: env("CCTP_TOKEN_MESSENGER_ETH"),
+            cctp_message_transmitter: env("CCTP_MESSAGE_TRANSMITTER_ETH"),
+            usdc: env("USDC_ETH"),
+            rebalance_executor: String::new(),
+            swap_router: env("UNISWAP_V3_ROUTER_ETH"),
+            swap_quoter: env("UNISWAP_V3_QUOTER_ETH"),
+        },
+        // ArbSepolia
+        ChainConfig {
+            rpc_url: env("ARB_RPC_URL"),
+            private_key: env("CHAIN_PRIVATE_KEY_ARB"),
+            cctp_token_messenger: env("CCTP_TOKEN_MESSENGER_ARB"),
+            cctp_message_transmitter: env("CCTP_MESSAGE_TRANSMITTER_ARB"),
+            usdc: env("USDC_ARB"),
+            rebalance_executor: String::new(),
+            swap_router: env("UNISWAP_V3_ROUTER_ARB"),
+            swap_quoter: env("UNISWAP_V3_QUOTER_ARB"),
+        },
+        // AvaxFuji — Trader Joe LB venue (distinct ABI; dispatched on SwapVenue).
+        ChainConfig {
+            rpc_url: env("AVAX_RPC_URL"),
+            private_key: env("CHAIN_PRIVATE_KEY_AVAX"),
+            cctp_token_messenger: env("CCTP_TOKEN_MESSENGER_AVAX"),
+            cctp_message_transmitter: env("CCTP_MESSAGE_TRANSMITTER_AVAX"),
+            usdc: env("USDC_AVAX"),
+            rebalance_executor: String::new(),
+            swap_router: env("TRADER_JOE_LB_ROUTER_AVAX"),
+            swap_quoter: env("TRADER_JOE_LB_QUOTER_AVAX"),
+        },
+        // OpSepolia
+        ChainConfig {
+            rpc_url: env("OP_RPC_URL"),
+            private_key: env("CHAIN_PRIVATE_KEY_OP"),
+            cctp_token_messenger: env("CCTP_TOKEN_MESSENGER_OP"),
+            cctp_message_transmitter: env("CCTP_MESSAGE_TRANSMITTER_OP"),
+            usdc: env("USDC_OP"),
+            rebalance_executor: String::new(),
+            swap_router: env("UNISWAP_V3_ROUTER_OP"),
+            swap_quoter: env("UNISWAP_V3_QUOTER_OP"),
+        },
+    ]
+}
+
+/// Parse a comma-separated `ADMIN_USER_IDS` list into UUIDs, warning loudly on
+/// any malformed entry instead of silently dropping it (a typo would otherwise
+/// quietly demote an operator out of the admin set).
+fn parse_admin_user_ids(raw: &str) -> Vec<uuid::Uuid> {
+    let mut ids = Vec::new();
+    for entry in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        match entry.parse::<uuid::Uuid>() {
+            Ok(id) => ids.push(id),
+            Err(e) => {
+                tracing::warn!(value = %entry, error = %e, "ADMIN_USER_IDS: ignoring invalid UUID");
+            }
+        }
+    }
+    ids
 }
 
 fn parse_or<T: std::str::FromStr>(key: &str, default: T) -> anyhow::Result<T>
@@ -607,8 +743,20 @@ pub(crate) fn test_config() -> Config {
         circle_entity_secret: "0000000000000000000000000000000000000000000000000000000000000000"
             .into(),
         circle_mock: true,
-        arc_rpc_url: "https://testnet.arc.network".into(),
-        base_rpc_url: "https://sepolia.base.org".into(),
+        chains: [
+            ChainConfig {
+                rpc_url: "https://testnet.arc.network".into(),
+                ..ChainConfig::default()
+            },
+            ChainConfig {
+                rpc_url: "https://sepolia.base.org".into(),
+                ..ChainConfig::default()
+            },
+            ChainConfig::default(),
+            ChainConfig::default(),
+            ChainConfig::default(),
+            ChainConfig::default(),
+        ],
         gateway_poll_secs: 10,
         faucet_max_usdc_per_day: 100.0,
         cors_allow_origin: "http://localhost:3000".into(),
@@ -616,29 +764,27 @@ pub(crate) fn test_config() -> Config {
         session_cookie_secure: false,
         cctp_attestation_url: "https://iris-api-sandbox.circle.com".into(),
         cctp_attestation_timeout_secs: 180,
-        chain_private_key_arc: String::new(),
-        chain_private_key_base: String::new(),
-        cctp_token_messenger_arc: String::new(),
-        cctp_token_messenger_base: String::new(),
-        cctp_message_transmitter_arc: String::new(),
-        cctp_message_transmitter_base: String::new(),
-        rebalance_executor_arc: String::new(),
-        rebalance_executor_base: String::new(),
-        usdc_arc: String::new(),
-        usdc_base: String::new(),
         usyc_token_arc: String::new(),
         usyc_teller_arc: String::new(),
         usyc_oracle_arc: String::new(),
         usyc_enabled: false,
-        uniswap_v3_quoter_base: String::new(),
-        uniswap_v3_router_base: String::new(),
         weth_base: String::new(),
+        cbbtc_base: String::new(),
+        cbeth_base: String::new(),
+        susds_base: String::new(),
+        eurc_base: String::new(),
+        weth_eth: String::new(),
+        weth_arb: String::new(),
+        weth_op: String::new(),
+        wbtc_eth: String::new(),
+        wbtc_arb: String::new(),
         nanopayments_facilitator_url: "https://gateway-api-testnet.circle.com".into(),
         nanopayments_seller_address: String::new(),
         nanopayments_treasury_address: String::new(),
         billing_v2_enabled: false,
         admin_user_ids: vec![],
         execution_mock: true,
+        circle_wallet_exec: false,
         scheduler_tick_secs: 300,
         scheduler_cooldown_secs: 1800,
         harvest_threshold_usd: 50.0,
@@ -762,5 +908,34 @@ mod tests {
         cfg.session_cookie_name = "__Host-aegis_session".into();
         let err = cfg.validate().unwrap_err().to_string();
         assert!(err.contains("SESSION_COOKIE_SECURE=true"));
+    }
+
+    #[test]
+    fn swap_venue_helpers_resolve_per_chain() {
+        let mut cfg = test_config();
+        cfg.chains[ChainKey::Base.index()].swap_router = "0xbase_router".into();
+        cfg.chains[ChainKey::Base.index()].swap_quoter = "0xbase_quoter".into();
+        cfg.chains[ChainKey::OpSepolia.index()].swap_router = "0xop_router".into();
+        cfg.chains[ChainKey::EthSepolia.index()].swap_quoter = "0xeth_quoter".into();
+        cfg.chains[ChainKey::AvaxFuji.index()].swap_router = "0xavax_lb_router".into();
+        cfg.chains[ChainKey::AvaxFuji.index()].swap_quoter = "0xavax_lb_quoter".into();
+
+        assert_eq!(cfg.chain(ChainKey::Base).swap_router, "0xbase_router");
+        assert_eq!(cfg.chain(ChainKey::Base).swap_quoter, "0xbase_quoter");
+        assert_eq!(cfg.chain(ChainKey::OpSepolia).swap_router, "0xop_router");
+        assert_eq!(cfg.chain(ChainKey::EthSepolia).swap_quoter, "0xeth_quoter");
+        // Avax resolves to the Trader Joe LB venue (its own ABI, dispatched in
+        // the swap adapter).
+        assert_eq!(
+            cfg.chain(ChainKey::AvaxFuji).swap_router,
+            "0xavax_lb_router"
+        );
+        assert_eq!(
+            cfg.chain(ChainKey::AvaxFuji).swap_quoter,
+            "0xavax_lb_quoter"
+        );
+        // Arc has no AMM venue → always empty.
+        assert_eq!(cfg.chain(ChainKey::Arc).swap_router, "");
+        assert_eq!(cfg.chain(ChainKey::Arc).swap_quoter, "");
     }
 }

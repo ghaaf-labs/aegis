@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  deriveIdleCashUsd,
-  derivePortfolioPositionMetrics,
-} from "./portfolio-values";
+import { derivePortfolioPositionMetrics } from "./portfolio-values";
 import type { MarketSnapshot, Portfolio } from "@/types";
 
 describe("derivePortfolioPositionMetrics", () => {
@@ -154,28 +151,5 @@ describe("derivePortfolioPositionMetrics", () => {
 
     expect(metrics.investedUsd).toBe(90);
     expect(metrics.usingLivePrices).toBe(true);
-  });
-
-  it("marks EURC wallet cash to USD before adding it to net worth", () => {
-    const snapshot = {
-      id: "s1",
-      capturedAt: new Date().toISOString(),
-      fearGreedIndex: 50,
-      totalMarketCapUsd: 0,
-      btcDominance: 0,
-      assets: [
-        {
-          symbol: "EURC",
-          priceUsd: 1.16,
-          change24h: 0,
-          change7d: 0,
-          marketCap: 0,
-          volume24h: 0,
-          updatedAt: new Date().toISOString(),
-        },
-      ],
-    } satisfies MarketSnapshot;
-
-    expect(deriveIdleCashUsd(25, 100, snapshot)).toBe(141);
   });
 });

@@ -8,7 +8,9 @@
 //! Decisions encoded here:
 //!
 //! - Symbols in `ARC_NATIVE_SYMBOLS` land on Arc; anything in
-//!   `BASE_NATIVE_SYMBOLS` lands on Base (Uniswap V3 venue).
+//!   `BASE_NATIVE_SYMBOLS` lands on Base (Uniswap V3 / Aerodrome venue). EURC is
+//!   Base-native here — the EUR sleeve trades on the permissionless USDC/EURC
+//!   pool, superseding the KYB-gated Arc StableFX rail.
 //! - A buy that needs USDC on Base while liquidity is on Arc emits a
 //!   `cross_chain_burn` + `cross_chain_mint` pair instead of two legs.
 //! - Sells route through `redeem_usyc` (USYC → USDC) or a local swap into USDC
@@ -51,9 +53,37 @@ pub fn plan_legs(input: &PlanInput) -> Vec<PlannedLeg> {
         symbol_deltas(input)
     };
 
+    // "Let winners run" — regime-aware asymmetric drift bands. A winner that
+    // grew above its target produces a SELL delta (weight_drift < 0); in
+    // `risk_on` we widen its band so we don't trim a rallying position too
+    // eagerly, and in `risk_off` we tighten it to de-risk sooner. Buys (adding
+    // to underweight sleeves, weight_drift > 0) always use the base threshold.
+    // First-deploy is exempt (every leg should fire).
+    let (sell_band, buy_band) = if first_deploy {
+        (0.0, 0.0)
+    } else {
+        match input.regime.as_deref() {
+            Some("risk_on") => (input.drift_threshold * 2.0, input.drift_threshold),
+            Some("risk_off") => (input.drift_threshold * 0.5, input.drift_threshold),
+            _ => (input.drift_threshold, input.drift_threshold),
+        }
+    };
     let mut deltas: Vec<SymbolDelta> = deltas_source
         .into_iter()
-        .filter(|d| d.weight_drift.abs() >= input.drift_threshold)
+        // USDC is the settlement unit, not a tradeable position. A USDC weight
+        // delta is absorbed by the other legs (buys consume USDC, sells produce
+        // it), never its own USDC->USDC swap. `first_deploy_deltas` already drops
+        // it; `symbol_deltas` does not, so an over-weight USDC sleeve would emit a
+        // bogus self-swap the adapter rejects ("USDC<->token swaps only").
+        .filter(|d| !d.symbol.eq_ignore_ascii_case("USDC"))
+        .filter(|d| {
+            let band = if d.weight_drift < 0.0 {
+                sell_band
+            } else {
+                buy_band
+            };
+            d.weight_drift.abs() >= band
+        })
         .filter(|d| d.value_delta_usd.abs() >= input.dust_threshold_usd)
         .collect();
 
@@ -62,10 +92,11 @@ pub fn plan_legs(input: &PlanInput) -> Vec<PlannedLeg> {
     }
 
     // Sells first (negative deltas) so they free up USDC for same-plan buys.
-    // Among buys: USYC and EURC are routed *last*. Their final leg calls an
-    // external integration (Hashnote Teller, Arc StableFX) — when those
-    // revert on testnet the executor halts the plan, so putting them at the
-    // tail keeps a Teller failure from blocking the BTC/ETH/SOL legs.
+    // Among buys: USYC is routed *last*. Its final leg calls an external
+    // integration (Hashnote Teller) — when that reverts on testnet the executor
+    // halts the plan, so putting it at the tail keeps a Teller failure from
+    // blocking the BTC/ETH/SOL/EURC legs. EURC now trades on the Base DEX like
+    // the volatiles, so it is no longer deferred.
     deltas.sort_by(|a, b| {
         use std::cmp::Ordering;
         let a_sell = a.value_delta_usd < 0.0;
@@ -78,8 +109,8 @@ pub fn plan_legs(input: &PlanInput) -> Vec<PlannedLeg> {
                 .partial_cmp(&b.value_delta_usd)
                 .unwrap_or(Ordering::Equal),
             (false, false) => {
-                let a_yield = matches!(a.symbol.as_str(), "USYC" | "EURC");
-                let b_yield = matches!(b.symbol.as_str(), "USYC" | "EURC");
+                let a_yield = matches!(a.symbol.as_str(), "USYC");
+                let b_yield = matches!(b.symbol.as_str(), "USYC");
                 match (a_yield, b_yield) {
                     (true, false) => Ordering::Greater,
                     (false, true) => Ordering::Less,
@@ -183,7 +214,7 @@ fn append_sell_legs(
     let chain = native_chain(&d.symbol);
     let kind = match d.symbol.as_str() {
         "USYC" => LegKind::RedeemUsyc,
-        "EURC" => LegKind::FxStablefx,
+        // EURC sells route through the Base USDC/EURC DEX pool, not Arc StableFX.
         _ => LegKind::LocalSwap,
     };
     legs.push(PlannedLeg {
@@ -218,26 +249,45 @@ fn append_buy_legs(
         to_acquire -= used_local;
     }
 
-    let is_volatile = !matches!(d.symbol.as_str(), "USYC" | "EURC" | "USDC");
+    // Tokens acquired via an AMM swap (volatiles + EURC, which now trades on the
+    // Base USDC/EURC pool). These get a same-chain swap for the local portion and
+    // a cross-chain hook swap for the bridged portion. Only USYC (Teller park)
+    // and USDC (no swap) take the special stable final-leg path below.
+    let is_swap_acquired = !matches!(d.symbol.as_str(), "USYC" | "USDC");
 
-    // Bridge any shortfall from the other chain.
-    let other_chain = if target_chain == ChainKey::Arc {
-        ChainKey::Base
+    // Bridge any shortfall from the chain holding the most idle USDC (greedy,
+    // single-source). With two chains this is just "the other chain"; with N it
+    // picks the richest non-target source so one burn+mint covers the shortfall
+    // when possible. Splitting a shortfall across multiple source chains is left
+    // to the durable saga (out of scope here). Ties break on `as_str()` so the
+    // plan stays deterministic.
+    let other_chain = if to_acquire > 0.0 {
+        usdc_pool
+            .iter()
+            .filter(|(chain, bal)| **chain != target_chain && **bal > 0.0)
+            .max_by(|(a_chain, a_bal), (b_chain, b_bal)| {
+                a_bal
+                    .partial_cmp(b_bal)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| b_chain.as_str().cmp(a_chain.as_str()))
+            })
+            .map(|(chain, _)| *chain)
     } else {
-        ChainKey::Arc
+        None
     };
-    let to_bridge = if to_acquire > 0.0 {
-        let available_other = usdc_pool.get(&other_chain).copied().unwrap_or(0.0);
-        available_other.min(to_acquire)
-    } else {
-        0.0
+    let to_bridge = match other_chain {
+        Some(chain) if to_acquire > 0.0 => {
+            let available_other = usdc_pool.get(&chain).copied().unwrap_or(0.0);
+            available_other.min(to_acquire)
+        }
+        _ => 0.0,
     };
 
-    // For volatile assets in a mixed buy (some USDC already local on target chain,
-    // some bridged from the other chain) the bridge+hook only swaps the bridged
-    // amount — the local portion still needs its own swap leg. Older code
+    // For swap-acquired assets in a mixed buy (some USDC already local on target
+    // chain, some bridged from the other chain) the bridge+hook only swaps the
+    // bridged amount — the local portion still needs its own swap leg. Older code
     // returned early after the hook and silently dropped the local portion.
-    if is_volatile && used_local > 0.0 {
+    if is_swap_acquired && used_local > 0.0 {
         let min_out = prices.get(&d.symbol).map(|&price| {
             if price > 0.0 {
                 (used_local / price) * 0.95
@@ -258,40 +308,16 @@ fn append_buy_legs(
         *next_idx += 1;
     }
 
-    if to_bridge > 0.0 {
-        // Volatile: attach hook params to the burn so the destination
-        // RebalanceExecutor swaps USDC→asset atomically with the mint.
-        // Stables (USYC, EURC): plain USDC bridge; a separate special leg
-        // below handles the final park/FX on the destination chain.
-        let (burn_dest_symbol, burn_min_out) = if is_volatile {
-            let min_out = prices.get(&d.symbol).map(|&price| {
-                if price > 0.0 {
-                    (to_bridge / price) * 0.95
-                } else {
-                    0.0
-                }
-            });
-            (Some(d.symbol.clone()), min_out)
-        } else {
-            (Some("USDC".into()), None)
-        };
-
+    if let (Some(source_chain), true) = (other_chain, to_bridge > 0.0) {
+        // Two-leg baseline: bridge USDC *plainly* to the destination chain
+        // (CCTP delivers it to the user's EOA), then acquire the asset there. The
+        // burn never carries a swap hook — a failed destination swap can't strand
+        // bridged USDC at the executor waiting on a relay() the CCTP core never
+        // calls. USYC's park leg below consumes the bridged USDC the same way.
         legs.push(PlannedLeg {
             leg_index: *next_idx,
             kind: LegKind::CrossChainBurn,
-            src_chain: Some(other_chain),
-            dest_chain: Some(target_chain),
-            src_symbol: Some("USDC".into()),
-            dest_symbol: burn_dest_symbol,
-            amount_usdc: to_bridge,
-            min_out: burn_min_out,
-        });
-        *next_idx += 1;
-
-        legs.push(PlannedLeg {
-            leg_index: *next_idx,
-            kind: LegKind::CrossChainMint,
-            src_chain: Some(other_chain),
+            src_chain: Some(source_chain),
             dest_chain: Some(target_chain),
             src_symbol: Some("USDC".into()),
             dest_symbol: Some("USDC".into()),
@@ -300,25 +326,59 @@ fn append_buy_legs(
         });
         *next_idx += 1;
 
-        *usdc_pool.entry(other_chain).or_insert(0.0) -= to_bridge;
+        legs.push(PlannedLeg {
+            leg_index: *next_idx,
+            kind: LegKind::CrossChainMint,
+            src_chain: Some(source_chain),
+            dest_chain: Some(target_chain),
+            src_symbol: Some("USDC".into()),
+            dest_symbol: Some("USDC".into()),
+            amount_usdc: to_bridge,
+            min_out: None,
+        });
+        *next_idx += 1;
+
+        *usdc_pool.entry(source_chain).or_insert(0.0) -= to_bridge;
+
+        // Swap-acquired (volatiles + EURC): the bridged USDC now sits on the
+        // destination chain — acquire the token with a same-chain swap leg.
+        if is_swap_acquired {
+            let min_out = prices.get(&d.symbol).map(|&price| {
+                if price > 0.0 {
+                    (to_bridge / price) * 0.95
+                } else {
+                    0.0
+                }
+            });
+            legs.push(PlannedLeg {
+                leg_index: *next_idx,
+                kind: LegKind::LocalSwap,
+                src_chain: Some(target_chain),
+                dest_chain: Some(target_chain),
+                src_symbol: Some("USDC".into()),
+                dest_symbol: Some(d.symbol.clone()),
+                amount_usdc: to_bridge,
+                min_out,
+            });
+            *next_idx += 1;
+        }
     }
 
-    if is_volatile {
-        // Volatile final leg(s) already emitted above (local_swap for the
-        // used_local portion + cross-chain hook for the bridged portion).
+    if is_swap_acquired {
+        // Swap-acquired final leg(s) already emitted above (local_swap for the
+        // used_local portion + bridge-then-swap for the bridged portion).
         return;
     }
 
-    // Stable final leg: park USDC → USYC, swap USDC → EURC, or local USDC swap.
-    // Amount = used_local + to_bridge; the bridged USDC has arrived on the
-    // target chain via the mint above.
+    // Stable final leg: park USDC → USYC, or a local USDC swap. Amount =
+    // used_local + to_bridge; the bridged USDC has arrived on the target chain
+    // via the mint above. (EURC no longer reaches here — it is swap-acquired.)
     let consumed = used_local + to_bridge;
     if consumed <= 0.0 {
         return;
     }
     let kind = match d.symbol.as_str() {
         "USYC" => LegKind::ParkUsyc,
-        "EURC" => LegKind::FxStablefx,
         _ => LegKind::LocalSwap,
     };
 
@@ -369,6 +429,7 @@ mod tests {
             drift_threshold: 0.05,
             dust_threshold_usd: 5.0,
             prices: HashMap::new(),
+            regime: None,
         }
     }
 
@@ -394,9 +455,31 @@ mod tests {
             drift_threshold: 0.01,
             dust_threshold_usd: 50.0,
             prices: HashMap::new(),
+            regime: None,
         };
         // Both deltas are $10 — below the $50 dust floor.
         assert!(plan_legs(&i).is_empty());
+    }
+
+    #[test]
+    fn risk_on_lets_winners_run() {
+        // BTC sits 8% above target (a winner). Neutral trims it; risk_on's
+        // widened sell band (2x = 10%) leaves it to run.
+        let mut i = input(
+            10_000.0,
+            &[("BTC", 0.58), ("USDC", 0.42)],
+            &[("BTC", 0.50), ("USDC", 0.50)],
+            0.0,
+            0.0,
+        );
+        let trims_btc =
+            |legs: &[PlannedLeg]| legs.iter().any(|l| l.src_symbol.as_deref() == Some("BTC"));
+        assert!(trims_btc(&plan_legs(&i)), "neutral should trim the winner");
+        i.regime = Some("risk_on".into());
+        assert!(
+            !trims_btc(&plan_legs(&i)),
+            "risk_on should let the winner run (no BTC trim)"
+        );
     }
 
     #[test]
@@ -415,6 +498,33 @@ mod tests {
         assert!(legs
             .iter()
             .all(|l| !matches!(l.kind, LegKind::CrossChainBurn | LegKind::CrossChainMint)));
+    }
+
+    #[test]
+    fn over_weight_usdc_never_self_swaps() {
+        // Current 100% USDC, target 60% USDC / 40% ETH: the only action is one
+        // USDC->ETH swap. The 40% USDC reduction is absorbed by that buy and
+        // must NOT emit a USDC->USDC leg. Regression for the real-exec failure
+        // "swap adapter handles USDC<->token swaps only" (a live Base run halted
+        // on a bogus self-swap leg the planner had emitted).
+        let i = input(
+            100.0,
+            &[("USDC", 1.0)],
+            &[("USDC", 0.60), ("ETH", 0.40)],
+            0.0,
+            100.0,
+        );
+        let legs = plan_legs(&i);
+        assert_eq!(legs.len(), 1, "expected exactly one leg, got {legs:?}");
+        assert_eq!(legs[0].kind, LegKind::LocalSwap);
+        assert_eq!(legs[0].src_symbol.as_deref(), Some("USDC"));
+        assert_eq!(legs[0].dest_symbol.as_deref(), Some("ETH"));
+        assert!(
+            legs.iter()
+                .all(|l| !(l.src_symbol.as_deref() == Some("USDC")
+                    && l.dest_symbol.as_deref() == Some("USDC"))),
+            "no USDC->USDC self-swap may be emitted, got {legs:?}"
+        );
     }
 
     #[test]
@@ -438,6 +548,40 @@ mod tests {
             .find(|l| l.kind == LegKind::CrossChainMint)
             .unwrap();
         assert_eq!(mint.dest_chain, Some(ChainKey::Base));
+    }
+
+    #[test]
+    fn cross_chain_buy_sources_from_richest_chain() {
+        // First-deploy of 100% ETH (Base-native) with idle USDC spread across
+        // three chains and none on Base. The bridge must greedily source from
+        // the chain holding the most idle USDC (EthSepolia: $3000 > Arc: $1000),
+        // not a hardcoded "other chain". No current holdings ⇒ no sell leg
+        // injects USDC and skews the comparison.
+        let mut usdc_per_chain = HashMap::new();
+        usdc_per_chain.insert(ChainKey::Arc, 1_000.0);
+        usdc_per_chain.insert(ChainKey::Base, 0.0);
+        usdc_per_chain.insert(ChainKey::EthSepolia, 3_000.0);
+        let i = PlanInput {
+            portfolio_value_usd: 0.0,
+            current_weights: weights(&[]),
+            target_weights: weights(&[("ETH", 1.0)]),
+            usdc_per_chain,
+            drift_threshold: 0.05,
+            dust_threshold_usd: 5.0,
+            prices: HashMap::new(),
+            regime: None,
+        };
+        let legs = plan_legs(&i);
+        let burn = legs
+            .iter()
+            .find(|l| l.kind == LegKind::CrossChainBurn)
+            .expect("expected a cross-chain burn for the ETH buy");
+        assert_eq!(
+            burn.src_chain,
+            Some(ChainKey::EthSepolia),
+            "burn must source from the richest non-target chain"
+        );
+        assert_eq!(burn.dest_chain, Some(ChainKey::Base));
     }
 
     #[test]
@@ -470,7 +614,10 @@ mod tests {
     }
 
     #[test]
-    fn fx_only_when_eurc_changes() {
+    fn eurc_buy_routes_through_base_dex_swap() {
+        // EURC is now Base-native and acquired via the permissionless USDC/EURC
+        // DEX pool, so a buy emits a LocalSwap (USDC→EURC) on Base — never the
+        // gated Arc StableFX leg. USDC liquidity on Arc bridges to Base first.
         let i = input(
             10_000.0,
             &[("USYC", 1.0)],
@@ -480,9 +627,42 @@ mod tests {
         );
         let legs = plan_legs(&i);
         let kinds: Vec<LegKind> = legs.iter().map(|l| l.kind).collect();
-        assert!(kinds.iter().any(|k| matches!(k, LegKind::FxStablefx)));
-        let fx = legs.iter().find(|l| l.kind == LegKind::FxStablefx).unwrap();
-        assert_eq!(fx.dest_chain, Some(ChainKey::Arc));
+        assert!(
+            !kinds.iter().any(|k| matches!(k, LegKind::FxStablefx)),
+            "EURC must not route via Arc StableFX, got {kinds:?}"
+        );
+        // The EURC acquisition is a swap. With idle USDC only on Arc it bridges
+        // to Base and swaps there (CrossChainBurn carries the hook to EURC), so
+        // assert the EURC destination lands on Base via a swap-bearing leg.
+        let eurc_leg = legs
+            .iter()
+            .find(|l| l.dest_symbol.as_deref() == Some("EURC"))
+            .expect("expected a leg acquiring EURC");
+        assert!(matches!(
+            eurc_leg.kind,
+            LegKind::LocalSwap | LegKind::CrossChainBurn
+        ));
+        assert_eq!(eurc_leg.dest_chain, Some(ChainKey::Base));
+    }
+
+    #[test]
+    fn eurc_buy_with_local_base_usdc_is_a_single_local_swap() {
+        // With USDC already on Base, the EURC buy is a same-chain LocalSwap.
+        let i = input(
+            10_000.0,
+            &[("USYC", 1.0)],
+            &[("USYC", 0.80), ("EURC", 0.20)],
+            0.0,
+            5_000.0,
+        );
+        let legs = plan_legs(&i);
+        let eurc = legs
+            .iter()
+            .find(|l| l.dest_symbol.as_deref() == Some("EURC"))
+            .expect("expected a EURC buy leg");
+        assert_eq!(eurc.kind, LegKind::LocalSwap);
+        assert_eq!(eurc.src_symbol.as_deref(), Some("USDC"));
+        assert_eq!(eurc.dest_chain, Some(ChainKey::Base));
     }
 
     #[test]
@@ -518,23 +698,23 @@ mod tests {
         );
         let legs = plan_legs(&i);
         assert!(!legs.is_empty(), "first-deploy must produce legs");
+        // Acquisition legs only: a cross-chain buy is now a plain USDC bridge
+        // (CrossChainBurn/Mint, a USDC move) plus a LocalSwap/ParkUsyc that
+        // actually acquires the token — count the latter so the bridged portion
+        // isn't double-counted.
         let total_buy_usdc: f64 = legs
             .iter()
-            .filter(|l| {
-                matches!(
-                    l.kind,
-                    LegKind::LocalSwap | LegKind::ParkUsyc | LegKind::CrossChainBurn
-                )
-            })
+            .filter(|l| matches!(l.kind, LegKind::LocalSwap | LegKind::ParkUsyc))
             .map(|l| l.amount_usdc)
             .sum();
         assert!(
             (total_buy_usdc - 200.0).abs() < 0.01,
             "buy legs must consume ~$200 of idle USDC, got {total_buy_usdc}"
         );
-        // USDC is not bought from USDC — skip.
+        // USDC is never bought from USDC; only the plain CCTP bridge legs carry a
+        // USDC destination (they move USDC, they don't acquire it).
         assert!(legs.iter().all(|l| l.dest_symbol.as_deref() != Some("USDC")
-            || matches!(l.kind, LegKind::CrossChainMint)));
+            || matches!(l.kind, LegKind::CrossChainMint | LegKind::CrossChainBurn)));
     }
 
     #[test]
@@ -566,7 +746,7 @@ mod tests {
         assert!(
             legs.iter()
                 .any(|l| l.dest_symbol.as_deref() == Some("EURC")),
-            "EURC target should still route through StableFX, got {legs:?}"
+            "EURC target should still produce a buy leg (via the Base DEX swap), got {legs:?}"
         );
         assert!(
             legs.iter()
@@ -599,9 +779,11 @@ mod tests {
                 .any(|l| l.dest_symbol.as_deref() == Some("USYC")),
             "idle USDC should produce a USYC park leg, got {legs:?}"
         );
+        // Exclude both CCTP bridge legs (plain USDC moves) so the bridged
+        // portion isn't counted twice alongside its destination swap.
         let routed: f64 = legs
             .iter()
-            .filter(|l| l.kind != LegKind::CrossChainMint)
+            .filter(|l| !matches!(l.kind, LegKind::CrossChainMint | LegKind::CrossChainBurn))
             .map(|l| l.amount_usdc)
             .sum();
         assert!(

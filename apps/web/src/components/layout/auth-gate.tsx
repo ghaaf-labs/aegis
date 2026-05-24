@@ -6,7 +6,7 @@ import { safeNextPath } from "@/lib/auth-routing";
 import { usePortfolioStore } from "@/stores/portfolio";
 
 // Paths that are publicly viewable without a wallet.
-const PUBLIC_PREFIXES = ["/leaderboard", "/explore", "/strategies", "/help"];
+const PUBLIC_PREFIXES = ["/leaderboard", "/explore", "/help"];
 const WALLET_RECOVERY_PATHS = new Set(["/wallet", "/wallets", "/settings"]);
 const PORTFOLIO_REQUIRED_PREFIXES = [
   "/dashboard",

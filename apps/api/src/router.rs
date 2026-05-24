@@ -14,7 +14,7 @@ use crate::modules::{
     account, agent, ai, analytics, backtest, billing, diary, digest, faucet, fx, gateway,
     market_data, observability, paymaster, portfolio, prices, rebalance, risk_engine, scheduler,
     sse::{self, SseSender},
-    strategies, tax, treasury, trustability, wallet,
+    tax, treasury, trustability, wallet,
 };
 use crate::{config::Config, db::Db};
 
@@ -103,6 +103,7 @@ pub async fn build(db: Db, config: Config) -> Router {
         )
         .route("/faucet/usdc", post(faucet::handlers::claim_usdc))
         .route("/gateway/balance", get(gateway::handlers::balance))
+        .route("/wallets/transactions", get(gateway::transactions::list))
         .route("/analytics/event", post(analytics::handlers::track))
         // SSE is authed — events are filtered server-side by audience_user_id.
         .route("/sse", get(sse::handler))
@@ -166,14 +167,25 @@ pub async fn build(db: Db, config: Config) -> Router {
             get(agent::handlers::decision_by_id),
         )
         .route("/agent/analyze", post(agent::handlers::analyze))
+        .route(
+            "/agent/propose-allocation",
+            post(agent::handlers::propose_allocation),
+        )
+        .route(
+            "/agent/decisions/:decision_id/approve-allocation",
+            post(agent::handlers::approve_allocation),
+        )
         .route("/users/me/agent", get(agent::pause_handlers::status))
         .route("/users/me/agent/pause", post(agent::pause_handlers::pause))
         .route(
             "/users/me/agent/resume",
             post(agent::pause_handlers::resume),
         )
-        // SM-2 — strategies marketplace adoption is authed (creates a portfolio).
-        .route("/strategies/:id/adopt", post(strategies::handlers::adopt))
+        .route(
+            "/users/me/agent/auto-pilot",
+            get(agent::pause_handlers::auto_pilot_status)
+                .post(agent::pause_handlers::set_auto_pilot),
+        )
         .route("/backtest/preview", post(backtest::handlers::preview))
         .route("/trustability/me", get(trustability::handlers::me))
         .route("/billing/referrals", get(billing::handlers::list_referrals))
@@ -254,11 +266,10 @@ pub async fn build(db: Db, config: Config) -> Router {
             "/about/constitution",
             get(agent::constitution_handlers::document),
         )
-        // SM-2 — strategies marketplace public listing.
-        .route("/strategies", get(strategies::handlers::list))
-        .route("/strategies/:id", get(strategies::handlers::get))
         // Public leaderboard — anonymous handles, no auth required.
         .route("/leaderboard", get(trustability::handlers::leaderboard))
+        // Live, DB-backed traction stats for the public landing page.
+        .route("/api/traction", get(observability::handlers::traction))
         // F-REG-4 — public read-only alias for the /about/regime model card.
         .route(
             "/about/regime/latest",

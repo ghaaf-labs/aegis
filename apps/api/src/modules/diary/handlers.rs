@@ -33,6 +33,38 @@ pub struct DiaryOutcome {
     pub counterfactual_pct_change: f64,
     pub compressed_summary: String,
     pub recorded_at: DateTime<Utc>,
+    /// BTC return over the same 24h window (real, from price_history). `None`
+    /// on early-bootstrap rows recorded before the benchmark landed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub btc_return: Option<f64>,
+    /// realized − btcReturn (percentage points). `None` when `btc_return` is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outperformance_vs_btc: Option<f64>,
+}
+
+/// Parse the shared 24h-outcome JSONB into a `DiaryOutcome`. Returns `None`
+/// when the realized/counterfactual core is absent (legacy/incomplete row).
+fn parse_outcome(
+    outcome_24h: &serde_json::Value,
+    recorded_at: Option<DateTime<Utc>>,
+) -> Option<DiaryOutcome> {
+    let realized = outcome_24h.get("realizedPctChange")?.as_f64()?;
+    let counterfactual = outcome_24h.get("counterfactualPctChange")?.as_f64()?;
+    let summary = outcome_24h
+        .get("compressedSummary")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    Some(DiaryOutcome {
+        realized_pct_change: realized,
+        counterfactual_pct_change: counterfactual,
+        compressed_summary: summary,
+        recorded_at: recorded_at.unwrap_or_else(Utc::now),
+        btc_return: outcome_24h.get("btcReturn").and_then(|v| v.as_f64()),
+        outperformance_vs_btc: outcome_24h
+            .get("outperformanceVsBtc")
+            .and_then(|v| v.as_f64()),
+    })
 }
 
 #[derive(sqlx::FromRow)]
@@ -212,21 +244,10 @@ pub async fn full_by_decision(
     .fetch_all(&state.db)
     .await?;
 
-    let outcome = row.outcome_24h.as_ref().and_then(|j| {
-        let realized = j.get("realizedPctChange")?.as_f64()?;
-        let counterfactual = j.get("counterfactualPctChange")?.as_f64()?;
-        let summary = j
-            .get("compressedSummary")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string();
-        Some(DiaryOutcome {
-            realized_pct_change: realized,
-            counterfactual_pct_change: counterfactual,
-            compressed_summary: summary,
-            recorded_at: row.memory_recorded_at.unwrap_or_else(Utc::now),
-        })
-    });
+    let outcome = row
+        .outcome_24h
+        .as_ref()
+        .and_then(|j| parse_outcome(j, row.memory_recorded_at));
 
     Ok(Json(DecisionFull {
         decision_id: row.decision_id,
@@ -257,21 +278,10 @@ fn row_to_entry(row: Row) -> DiaryEntry {
         .and_then(|v| v.as_str())
         .unwrap_or("(no summary)")
         .to_string();
-    let outcome = row.outcome_24h.as_ref().and_then(|j| {
-        let realized = j.get("realizedPctChange")?.as_f64()?;
-        let counterfactual = j.get("counterfactualPctChange")?.as_f64()?;
-        let summary = j
-            .get("compressedSummary")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string();
-        Some(DiaryOutcome {
-            realized_pct_change: realized,
-            counterfactual_pct_change: counterfactual,
-            compressed_summary: summary,
-            recorded_at: row.memory_recorded_at.unwrap_or_else(Utc::now),
-        })
-    });
+    let outcome = row
+        .outcome_24h
+        .as_ref()
+        .and_then(|j| parse_outcome(j, row.memory_recorded_at));
     DiaryEntry {
         decision_id: row.decision_id,
         portfolio_id: row.portfolio_id,

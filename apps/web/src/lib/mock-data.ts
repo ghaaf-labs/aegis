@@ -72,10 +72,11 @@ export const MOCK_PORTFOLIO: Portfolio = {
   riskScore: 42,
   goal: {
     name: "Main Portfolio",
+    objective: "grow",
     horizon: "5y",
     riskTolerance: "moderate",
-    targetAllocation: { BTC: 40, ETH: 30, SOL: 15, LINK: 10, USYC: 5, EURC: 0 },
-    includeUsyc: true,
+    targetAllocation: { BTC: 40, ETH: 30, SOL: 15, LINK: 10, USDC: 5, EURC: 0 },
+    includeUsyc: false,
     includeEurc: true,
     createdAt: "2024-01-15T00:00:00Z",
   },

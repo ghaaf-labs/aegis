@@ -18,7 +18,7 @@ describe("auth route protection", () => {
   it("leaves public and auth routes outside the app gate", () => {
     expect(isProtectedAppPath("/")).toBe(false);
     expect(isProtectedAppPath("/help")).toBe(false);
-    expect(isProtectedAppPath("/strategies")).toBe(false);
+    expect(isProtectedAppPath("/explore")).toBe(false);
     expect(isProtectedAppPath("/login")).toBe(false);
   });
 

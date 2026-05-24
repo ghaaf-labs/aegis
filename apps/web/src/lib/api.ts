@@ -10,6 +10,7 @@ import type {
   Portfolio,
   PortfolioGoal,
   PricingTier,
+  RiskTolerance,
   Subscription,
   Tier,
   WalletInfo,
@@ -208,6 +209,27 @@ export const gatewayApi = {
   balance: () => request<UnifiedBalance>("/gateway/balance", { authed: true }),
 };
 
+/** One normalized on-chain transaction across all the user's chain wallets. */
+export interface WalletLedgerEntry {
+  id: string;
+  date: string | null;
+  /** Explorer chain key: arc | base | eth-sepolia | arb-sepolia | avax-fuji. */
+  chain: string;
+  kind: "deposit" | "bridge" | "swap" | "approve" | "outbound" | "contract";
+  token: string | null;
+  amount: string | null;
+  status: string;
+  txHash: string | null;
+  explorerUrl: string | null;
+}
+
+export const walletsApi = {
+  /** Real multi-wallet on-chain ledger (deposits, bridges, swaps, approvals)
+   * pulled from Circle across every provisioned chain. Empty in mock mode. */
+  transactions: () =>
+    request<WalletLedgerEntry[]>("/wallets/transactions", { authed: true }),
+};
+
 // ── Account ────────────────────────────────────────────────────────────────
 
 export interface AccountExportResponse {
@@ -254,8 +276,12 @@ export const accountApi = {
 // ── Portfolio ──────────────────────────────────────────────────────────────
 
 export interface CreatePortfolioInput {
-  name: string;
-  allocations: Array<{
+  /** Optional — the server defaults the name; the agent owns the allocation,
+   * not a user-chosen label. */
+  name?: string;
+  /** Empty by default — onboarding no longer seeds target weights; the agent
+   * proposes them via `agentApi.proposeAllocation` after create. */
+  allocations?: Array<{
     symbol: string;
     quantity: number;
     targetWeight: number;
@@ -378,10 +404,39 @@ export const agentApi = {
       authed: true,
       timeoutMs,
     }),
+  /** Gate-1 (Part A): the agent designs the target allocation. Returns an
+   * `allocation_proposal` AgentDecision with `recommendedAllocation`. The
+   * optional risk override re-proposes at a different posture (the risk
+   * dial). */
+  proposeAllocation: (
+    portfolioId: string,
+    riskOverride?: RiskTolerance,
+    timeoutMs?: number,
+  ) =>
+    request<AgentDecision>("/agent/propose-allocation", {
+      method: "POST",
+      body: {
+        portfolioId,
+        triggeredBy: "user_request",
+        ...(riskOverride ? { riskOverride } : {}),
+      },
+      authed: true,
+      timeoutMs,
+    }),
+  /** Approve a proposal — writes the agent allocation to
+   * `goal.targetAllocation` and returns the updated Portfolio. */
+  approveAllocation: (decisionId: string) =>
+    request<Portfolio>(`/agent/decisions/${decisionId}/approve-allocation`, {
+      method: "POST",
+      authed: true,
+    }),
 };
 
 export interface AgentPauseStatus {
   pausedAt: string | null;
+  /** When true, the agent executes its rebalances on its own within the
+   * guardrails instead of only surfacing a per-move review. */
+  autoPilotEnabled: boolean;
 }
 
 export const userAgentApi = {
@@ -396,31 +451,14 @@ export const userAgentApi = {
       method: "POST",
       authed: true,
     }),
-};
-
-// ── Strategies marketplace (SM-2) ─────────────────────────────────────────
-
-export interface StrategyPublic {
-  id: string;
-  name: string;
-  description: string;
-  riskBand: "low" | "medium" | "high";
-  minHorizonMonths: number;
-  targetAllocation: Record<string, number>;
-  isCurated: boolean;
-  createdAt: string;
-}
-
-export interface AdoptResponse {
-  portfolioId: string;
-}
-
-export const strategiesApi = {
-  list: () => request<StrategyPublic[]>("/strategies"),
-  get: (id: string) => request<StrategyPublic>(`/strategies/${id}`),
-  adopt: (id: string) =>
-    request<AdoptResponse>(`/strategies/${id}/adopt`, {
+  /** Read the auto-pilot flag (the dashboard toggle polls this). */
+  autoPilot: () =>
+    request<AgentPauseStatus>("/users/me/agent/auto-pilot", { authed: true }),
+  /** Flip auto-pilot ON/OFF. ON → autonomous execution within guardrails. */
+  setAutoPilot: (enabled: boolean) =>
+    request<AgentPauseStatus>("/users/me/agent/auto-pilot", {
       method: "POST",
+      body: { enabled },
       authed: true,
     }),
 };
@@ -729,6 +767,47 @@ export const backtestApi = {
       body: proposed ? { portfolioId, proposed } : { portfolioId },
       authed: true,
     }),
+};
+
+// ── Traction (public landing stats) ─────────────────────────
+
+export interface Traction {
+  totalUsers: number;
+  usersWithRealRebalance: number;
+  portfolios: number;
+  totalAumUsd: number;
+  agentDecisions: number;
+  completedRealRebalances: number;
+  chains: number;
+}
+
+export const tractionApi = {
+  /** Public — landing page renders live DB-backed stats. No auth. */
+  get: () => request<Traction>("/api/traction"),
+};
+
+// ── Leaderboard (public) ────────────────────────────────────
+
+export interface LeaderboardEntry {
+  userId: string;
+  handle: string;
+  decisionsExecuted: number;
+  distinctModels: number;
+  avg7dReturn: number;
+  trustabilityDelta: number;
+  lastDecisionAt: string | null;
+  label: "excellent" | "strong" | "stable" | "shaky" | "underperforming";
+  recentModelSlug?: string;
+  recentCriticVerdict?: {
+    verdict?: "approved" | "revised" | "abstained";
+    demandsRevision?: boolean;
+  };
+}
+
+export const leaderboardApi = {
+  /** Public — top performers ranked by 7d realized return. No auth. */
+  list: (limit = 50) =>
+    request<LeaderboardEntry[]>(`/leaderboard?limit=${limit}`),
 };
 
 // ── Trustability ────────────────────────────────────────────

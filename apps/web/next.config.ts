@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const isDev = process.env.NODE_ENV !== "production";
+const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
@@ -18,7 +19,7 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
       "img-src 'self' data: https://assets.coingecko.com https://coin-images.coingecko.com",
-      `connect-src 'self'${isDev ? " http://localhost:* ws://localhost:*" : ""} https://openrouter.ai https://api.circle.com https://eu.infisical.com https://cloudflareinsights.com`,
+      `connect-src 'self' ${apiUrl}${isDev ? " http://localhost:* ws://localhost:*" : ""} https://openrouter.ai https://api.circle.com https://eu.infisical.com https://cloudflareinsights.com`,
       "frame-ancestors 'none'",
     ].join("; "),
   },
@@ -52,11 +53,24 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  async redirects() {
+    return [
+      { source: "/strategies", destination: "/dashboard", permanent: true },
+      { source: "/builder", destination: "/dashboard", permanent: true },
+      {
+        source: "/portfolio-builder",
+        destination: "/dashboard",
+        permanent: true,
+      },
+      { source: "/routes", destination: "/dashboard", permanent: true },
+      { source: "/support", destination: "/help", permanent: true },
+    ];
+  },
   async rewrites() {
     return [
       {
         source: "/api/backend/:path*",
-        destination: `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080"}/:path*`,
+        destination: `${apiUrl}/:path*`,
       },
     ];
   },

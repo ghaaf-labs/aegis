@@ -15,6 +15,15 @@ pub const USDC: &str = "USDC";
 pub const USYC: &str = "USYC";
 pub const EURC: &str = "EURC";
 pub const ETH: &str = "ETH";
+/// Coinbase Wrapped BTC — 1:1 BTC, the real executable BTC sleeve on Base.
+pub const CBBTC: &str = "cbBTC";
+/// Coinbase Wrapped Staked ETH — staked-ETH yield sleeve on Base.
+pub const CBETH: &str = "cbETH";
+/// Sky sUSDS — freely-transferable savings-yield token (DEX-swappable),
+/// the permissionless risk-off yield sleeve (vs. allowlist-gated USYC).
+pub const SUSDS: &str = "sUSDS";
+/// Wrapped BTC — the canonical BTC ERC-20 on Eth/Arb (8 decimals).
+pub const WBTC: &str = "WBTC";
 
 /// Static metadata for one token. `canonical_chain == None` means the token is
 /// multi-chain (USDC), so it stays wherever the user holds it.
@@ -33,12 +42,29 @@ impl TokenSpec {
     /// chain. Callers MUST treat `None` as non-executable.
     pub fn address_for<'a>(&self, cfg: &'a Config, chain: ChainKey) -> Option<&'a str> {
         let raw = match (self.symbol, chain) {
-            (USDC, ChainKey::Arc) => cfg.usdc_arc.as_str(),
-            (USDC, ChainKey::Base) => cfg.usdc_base.as_str(),
+            (USDC, ChainKey::Arc) => cfg.chain(ChainKey::Arc).usdc.as_str(),
+            (USDC, ChainKey::Base) => cfg.chain(ChainKey::Base).usdc.as_str(),
+            (USDC, ChainKey::EthSepolia) => cfg.chain(ChainKey::EthSepolia).usdc.as_str(),
+            (USDC, ChainKey::ArbSepolia) => cfg.chain(ChainKey::ArbSepolia).usdc.as_str(),
+            (USDC, ChainKey::AvaxFuji) => cfg.chain(ChainKey::AvaxFuji).usdc.as_str(),
+            (USDC, ChainKey::OpSepolia) => cfg.chain(ChainKey::OpSepolia).usdc.as_str(),
             (USYC, ChainKey::Arc) => cfg.usyc_token_arc.as_str(),
             (ETH, ChainKey::Base) => cfg.weth_base.as_str(),
-            // EURC (Arc StableFX) and the remaining volatiles have no canonical
-            // testnet ERC-20 configured, so they resolve to None and fail closed.
+            (ETH, ChainKey::EthSepolia) => cfg.weth_eth.as_str(),
+            (ETH, ChainKey::ArbSepolia) => cfg.weth_arb.as_str(),
+            (ETH, ChainKey::OpSepolia) => cfg.weth_op.as_str(),
+            (WBTC, ChainKey::EthSepolia) => cfg.wbtc_eth.as_str(),
+            (WBTC, ChainKey::ArbSepolia) => cfg.wbtc_arb.as_str(),
+            (CBBTC, ChainKey::Base) => cfg.cbbtc_base.as_str(),
+            (CBETH, ChainKey::Base) => cfg.cbeth_base.as_str(),
+            (SUSDS, ChainKey::Base) => cfg.susds_base.as_str(),
+            // EURC executes via the permissionless USDC/EURC pool on Base
+            // (Aerodrome / Uniswap V3), superseding the KYB-gated Arc StableFX
+            // path. Empty ⇒ track-only (fail closed).
+            (EURC, ChainKey::Base) => cfg.eurc_base.as_str(),
+            // The remaining price-reference symbols have no canonical ERC-20
+            // configured, so they resolve to None and fail closed (track-only).
+            // New-chain ERC-20s default empty until set.
             _ => return None,
         };
         normalize_addr(raw)
@@ -47,7 +73,25 @@ impl TokenSpec {
 
 const ARC: &[ChainKey] = &[ChainKey::Arc];
 const BASE: &[ChainKey] = &[ChainKey::Base];
-const ARC_BASE: &[ChainKey] = &[ChainKey::Arc, ChainKey::Base];
+/// USDC is multi-chain across every wallet-supported chain (custody is not the
+/// same as executability — the route engine still gates on `is_execution()`).
+const ALL_CHAINS: &[ChainKey] = &[
+    ChainKey::Arc,
+    ChainKey::Base,
+    ChainKey::EthSepolia,
+    ChainKey::ArbSepolia,
+    ChainKey::AvaxFuji,
+    ChainKey::OpSepolia,
+];
+/// WETH residency — every EVM execution chain that has a V3-compatible venue.
+const WETH_CHAINS: &[ChainKey] = &[
+    ChainKey::Base,
+    ChainKey::EthSepolia,
+    ChainKey::ArbSepolia,
+    ChainKey::OpSepolia,
+];
+/// WBTC residency — Eth + Arb (canonical WBTC ERC-20).
+const WBTC_CHAINS: &[ChainKey] = &[ChainKey::EthSepolia, ChainKey::ArbSepolia];
 
 /// Every token Aegis prices, tracks, or settles. Decimals match each token's
 /// on-chain ERC-20 (USDC/USYC/EURC = 6; ETH/most ERC-20s = 18; BTC = 8; SOL = 9).
@@ -57,7 +101,7 @@ pub const TOKEN_REGISTRY: &[TokenSpec] = &[
         decimals: 6,
         class: TokenClass::Stable,
         canonical_chain: None,
-        supported_chains: ARC_BASE,
+        supported_chains: ALL_CHAINS,
     },
     TokenSpec {
         symbol: USYC,
@@ -66,12 +110,16 @@ pub const TOKEN_REGISTRY: &[TokenSpec] = &[
         canonical_chain: Some(ChainKey::Arc),
         supported_chains: ARC,
     },
+    // EURC — the EUR sleeve. Economically an FX stablecoin, but it now settles
+    // through the permissionless USDC/EURC pool on Base (Aerodrome / Uniswap V3)
+    // instead of the KYB-gated Arc StableFX rail, so it resides on Base and the
+    // route registry routes it via the swap adapter.
     TokenSpec {
         symbol: EURC,
         decimals: 6,
         class: TokenClass::FxStable,
-        canonical_chain: Some(ChainKey::Arc),
-        supported_chains: ARC,
+        canonical_chain: Some(ChainKey::Base),
+        supported_chains: BASE,
     },
     TokenSpec {
         symbol: "BTC",
@@ -82,6 +130,42 @@ pub const TOKEN_REGISTRY: &[TokenSpec] = &[
     },
     TokenSpec {
         symbol: ETH,
+        decimals: 18,
+        class: TokenClass::Volatile,
+        // Canonically resides on Base (the live volatile venue) for cross-chain
+        // planning, but its WETH ERC-20 is resolvable on every V3-compatible
+        // chain so a same-chain swap on Eth/Arb/OP works once configured.
+        canonical_chain: Some(ChainKey::Base),
+        supported_chains: WETH_CHAINS,
+    },
+    // WBTC — canonical wrapped-BTC ERC-20 on Eth/Arb. Track-only until its
+    // per-chain address is configured (the registry fails closed on empty).
+    TokenSpec {
+        symbol: WBTC,
+        decimals: 8,
+        class: TokenClass::Volatile,
+        canonical_chain: Some(ChainKey::EthSepolia),
+        supported_chains: WBTC_CHAINS,
+    },
+    // Real, DEX-executable Base sleeves (Uniswap V3 / Aerodrome). These settle
+    // on-chain once their Base ERC-20 address is configured — cbBTC = BTC
+    // exposure, cbETH = staked-ETH yield, sUSDS = savings yield.
+    TokenSpec {
+        symbol: CBBTC,
+        decimals: 8,
+        class: TokenClass::Volatile,
+        canonical_chain: Some(ChainKey::Base),
+        supported_chains: BASE,
+    },
+    TokenSpec {
+        symbol: CBETH,
+        decimals: 18,
+        class: TokenClass::Volatile,
+        canonical_chain: Some(ChainKey::Base),
+        supported_chains: BASE,
+    },
+    TokenSpec {
+        symbol: SUSDS,
         decimals: 18,
         class: TokenClass::Volatile,
         canonical_chain: Some(ChainKey::Base),
@@ -188,7 +272,8 @@ mod tests {
         assert_eq!(token(USYC).unwrap().class, TokenClass::Yield);
         assert_eq!(token(USYC).unwrap().canonical_chain, Some(ChainKey::Arc));
         assert_eq!(token(EURC).unwrap().class, TokenClass::FxStable);
-        assert_eq!(token(EURC).unwrap().canonical_chain, Some(ChainKey::Arc));
+        // EURC now settles on Base via the permissionless USDC/EURC DEX pool.
+        assert_eq!(token(EURC).unwrap().canonical_chain, Some(ChainKey::Base));
         assert_eq!(token("BTC").unwrap().class, TokenClass::Volatile);
         assert_eq!(token(ETH).unwrap().canonical_chain, Some(ChainKey::Base));
     }
@@ -214,14 +299,16 @@ mod tests {
     #[test]
     fn address_for_reads_config_and_normalizes() {
         let mut cfg = crate::config::test_config();
-        cfg.usdc_base = "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
-        cfg.usdc_arc = "0x0000000000000000000000000000000000000000".into();
+        cfg.chains[ChainKey::Base.index()].usdc =
+            "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
+        cfg.chains[ChainKey::Arc.index()].usdc =
+            "0x0000000000000000000000000000000000000000".into();
         cfg.weth_base = "0x4200000000000000000000000000000000000006".into();
 
         let usdc = token(USDC).unwrap();
         assert_eq!(
             usdc.address_for(&cfg, ChainKey::Base),
-            Some(cfg.usdc_base.as_str())
+            Some(cfg.chain(ChainKey::Base).usdc.as_str())
         );
         // Zero placeholder on Arc resolves to None → fail closed.
         assert_eq!(usdc.address_for(&cfg, ChainKey::Arc), None);
@@ -236,5 +323,66 @@ mod tests {
             token("BTC").unwrap().address_for(&cfg, ChainKey::Base),
             None
         );
+        // EURC resolves on Base once its DEX-pool ERC-20 is configured.
+        cfg.eurc_base = "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42".into();
+        assert_eq!(
+            token(EURC).unwrap().address_for(&cfg, ChainKey::Base),
+            Some(cfg.eurc_base.as_str())
+        );
+        // Empty default ⇒ track-only (fail closed).
+        let bare = crate::config::test_config();
+        assert_eq!(
+            token(EURC).unwrap().address_for(&bare, ChainKey::Base),
+            None
+        );
+    }
+
+    #[test]
+    fn usdc_and_weth_resolve_per_chain_on_new_chains() {
+        let mut cfg = crate::config::test_config();
+        cfg.chains[ChainKey::OpSepolia.index()].usdc =
+            "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
+        cfg.weth_op = "0x4200000000000000000000000000000000000006".into();
+        cfg.wbtc_eth = "0x0000000000000000000000000000000000000abc".into();
+
+        let usdc = token(USDC).unwrap();
+        assert_eq!(
+            usdc.address_for(&cfg, ChainKey::OpSepolia),
+            Some(cfg.chain(ChainKey::OpSepolia).usdc.as_str())
+        );
+        // Unconfigured chains fail closed.
+        assert_eq!(usdc.address_for(&cfg, ChainKey::ArbSepolia), None);
+
+        let eth = token(ETH).unwrap();
+        assert_eq!(
+            eth.address_for(&cfg, ChainKey::OpSepolia),
+            Some(cfg.weth_op.as_str())
+        );
+        // ETH has no canonical ERC-20 on Avax (no V3 venue) → None.
+        assert_eq!(eth.address_for(&cfg, ChainKey::AvaxFuji), None);
+
+        let wbtc = token(WBTC).unwrap();
+        assert_eq!(
+            wbtc.address_for(&cfg, ChainKey::EthSepolia),
+            Some(cfg.wbtc_eth.as_str())
+        );
+        // WBTC does not live on OP → None.
+        assert_eq!(wbtc.address_for(&cfg, ChainKey::OpSepolia), None);
+    }
+
+    #[test]
+    fn new_chain_erc20s_default_track_only() {
+        // With the committed (empty) defaults, every new-chain ERC-20 resolves
+        // to None so the route registry fails closed.
+        let cfg = crate::config::test_config();
+        for chain in [
+            ChainKey::EthSepolia,
+            ChainKey::ArbSepolia,
+            ChainKey::AvaxFuji,
+            ChainKey::OpSepolia,
+        ] {
+            assert_eq!(token(USDC).unwrap().address_for(&cfg, chain), None);
+            assert_eq!(token(ETH).unwrap().address_for(&cfg, chain), None);
+        }
     }
 }

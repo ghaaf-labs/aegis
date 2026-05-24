@@ -368,11 +368,21 @@ async fn propose_defensive_plan(
     }
 
     let depegged_asset = rule.asset.to_uppercase();
-    let target_asset = rule
-        .target_asset
-        .clone()
-        .unwrap_or_else(|| "USYC".into())
-        .to_uppercase();
+    // Repoint the defensive sleeve to a target that can actually execute today.
+    // A rule's configured target is honored only if it is an executable stable
+    // that isn't the depegged asset; otherwise (e.g. the legacy "USYC" default,
+    // which is allowlist-gated and disabled) it falls back to the best
+    // executable stable. Without this, peg defense emits a plan that the route
+    // registry blocks at approval/execute — never actionable under auto-pilot.
+    let target_asset = match rule.target_asset.clone().map(|t| t.to_uppercase()) {
+        Some(t)
+            if !t.eq_ignore_ascii_case(&depegged_asset)
+                && is_executable_stable(&state.config, &t) =>
+        {
+            t
+        }
+        _ => default_defensive_target(&state.config, &depegged_asset),
+    };
 
     let Some((target_weights, depegged_weight)) =
         build_defensive_target(&current_weights, &depegged_asset, &target_asset)
@@ -403,12 +413,36 @@ async fn propose_defensive_plan(
         .unwrap_or_default()
     };
 
-    // Zero-pool gateway USDC: a peg-defense plan ignores idle USDC and just
-    // rebalances around the depegged asset. The planner falls back to
-    // single-chain legs in this configuration.
-    let mut usdc_per_chain: HashMap<ChainKey, f64> = HashMap::new();
-    usdc_per_chain.insert(ChainKey::Arc, 0.0);
-    usdc_per_chain.insert(ChainKey::Base, 0.0);
+    // Seed the planner with the user's real Gateway USDC per chain. A defensive
+    // move converts the depegged USDC into the target stable, so the buy leg
+    // must be able to fund from the USDC actually in the wallet — a zero pool
+    // makes every buy `consumed == 0`, so no legs are emitted and the alert
+    // surfaces a plan that can't execute. If Gateway is unavailable we can't
+    // build a safe plan, so the alert downgrades to no plan rather than guessing.
+    let usdc_per_chain = match crate::modules::gateway::service::fetch_balance_for_user(
+        &state.db,
+        &state.http,
+        &state.config,
+        rule.user_id,
+    )
+    .await
+    {
+        Ok(balance) => {
+            let mut pool: HashMap<ChainKey, f64> = HashMap::new();
+            pool.insert(ChainKey::Arc, 0.0);
+            pool.insert(ChainKey::Base, 0.0);
+            for (chain, amount) in balance.per_chain {
+                if let Some(key) = ChainKey::parse(chain.to_lowercase().as_str()) {
+                    pool.insert(key, amount);
+                }
+            }
+            pool
+        }
+        Err(e) => {
+            warn!(rule_id=%rule.id, error=%e, "peg defense: gateway balance unavailable; no defensive plan");
+            return Ok(None);
+        }
+    };
 
     let input = PlanInput {
         portfolio_value_usd: total_value_usd,
@@ -420,6 +454,9 @@ async fn propose_defensive_plan(
         drift_threshold: 0.0,
         dust_threshold_usd: 5.0,
         prices,
+        // A depeg is a risk-off event; tag the plan accordingly (moot at
+        // drift_threshold 0, but keeps the signal honest).
+        regime: Some("risk_off".to_string()),
     };
 
     let legs = plan_legs(&input);
@@ -516,6 +553,47 @@ pub async fn record_sample_for_test(
     monitor.push_sample(rule_id, window_seconds, sample).await;
 }
 
+/// The set of stable-class symbols peg defense may rotate into: the settlement
+/// stable, the yield sleeve, and the FX sleeve. (Volatiles are never a peg
+/// hedge.) Used to keep a defensive target within the "stable" universe.
+const DEFENSIVE_STABLE_SYMBOLS: &[&str] = &["USDC", "EURC", "USYC"];
+
+/// Whether `symbol` is a stable that can actually execute right now (the route
+/// registry's executable set ∩ the defensive-stable universe).
+fn is_executable_stable(cfg: &crate::config::Config, symbol: &str) -> bool {
+    use crate::modules::rebalance::registry::{
+        capabilities::RuntimeCapabilities, executable_token_symbols,
+    };
+    if !DEFENSIVE_STABLE_SYMBOLS
+        .iter()
+        .any(|s| s.eq_ignore_ascii_case(symbol))
+    {
+        return false;
+    }
+    let caps = RuntimeCapabilities::from_config(cfg);
+    executable_token_symbols(&caps, cfg)
+        .iter()
+        .any(|s| s.eq_ignore_ascii_case(symbol))
+}
+
+/// Pick the best executable stable to rotate a depegged asset into. Prefers the
+/// yield sleeve (USYC), then the FX sleeve (EURC), then plain USDC — skipping
+/// the depegged asset itself. Falls back to USDC when nothing else is
+/// executable: `build_defensive_target` then yields no net move (track-only),
+/// the honest outcome when there is no executable hedge.
+fn default_defensive_target(cfg: &crate::config::Config, depegged_asset: &str) -> String {
+    const PREFERENCE: &[&str] = &["USYC", "EURC", "USDC"];
+    for candidate in PREFERENCE {
+        if candidate.eq_ignore_ascii_case(depegged_asset) {
+            continue;
+        }
+        if is_executable_stable(cfg, candidate) {
+            return (*candidate).to_string();
+        }
+    }
+    "USDC".to_string()
+}
+
 /// Pure helper extracted for unit testability. Returns `Some((target_weights,
 /// depegged_weight))` when a defensive rebalance is warranted (depegged asset
 /// has ≥1% weight), `None` otherwise. The target map zeroes the depegged
@@ -559,6 +637,41 @@ mod tests {
         assert_eq!(target.get("BTC"), Some(&0.20));
         let total: f64 = target.values().sum();
         assert!((total - 1.0).abs() < 1e-9, "weights still sum to 1.0");
+    }
+
+    #[test]
+    fn default_defensive_target_avoids_disabled_usyc() {
+        let mut cfg = crate::config::test_config();
+        cfg.execution_mock = false;
+        cfg.circle_mock = false;
+        use crate::modules::rebalance::models::ChainKey;
+        cfg.chains[ChainKey::Arc.index()].private_key = "0xaa".into();
+        cfg.chains[ChainKey::Base.index()].private_key = "0xbb".into();
+        cfg.chains[ChainKey::Base.index()].usdc =
+            "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
+        cfg.eurc_base = "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42".into();
+        // The Base swap venue must be wired for EURC to count as executable.
+        cfg.chains[ChainKey::Base.index()].swap_router =
+            "0x1111111111111111111111111111111111111111".into();
+        cfg.chains[ChainKey::Base.index()].swap_quoter =
+            "0x2222222222222222222222222222222222222222".into();
+
+        // USYC is disabled by default → never an executable stable, never chosen.
+        assert!(!is_executable_stable(&cfg, "USYC"));
+        assert_ne!(default_defensive_target(&cfg, "USDC"), "USYC");
+        assert_ne!(default_defensive_target(&cfg, "EURC"), "USYC");
+
+        // USDC is always executable and is the safe fallback for an EURC depeg.
+        assert!(is_executable_stable(&cfg, "USDC"));
+        assert_eq!(default_defensive_target(&cfg, "EURC"), "USDC");
+
+        // With the swap rail compiled + EURC wired, a USDC depeg routes to the
+        // executable EURC sleeve rather than the disabled USYC one.
+        #[cfg(feature = "real-swap")]
+        {
+            assert!(is_executable_stable(&cfg, "EURC"));
+            assert_eq!(default_defensive_target(&cfg, "USDC"), "EURC");
+        }
     }
 
     #[test]
