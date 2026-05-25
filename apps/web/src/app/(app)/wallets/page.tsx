@@ -20,7 +20,7 @@ import { formatCurrency, timeAgo } from "@/lib/utils";
 import { deriveCashSplit } from "@/lib/cash-model";
 import { derivePortfolioPositionMetrics } from "@/lib/portfolio-values";
 import { targetAllocationsForPortfolio } from "@/components/dashboard/target-allocations";
-import { gatewayApi, portfolioApi, walletApi } from "@/lib/api";
+import { gatewayApi, walletApi } from "@/lib/api";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { explorerAddressUrl, type ExplorerChain } from "@/lib/explorers";
 import {
@@ -31,9 +31,7 @@ import {
   formatGatewayBalanceError,
   walletStatusError,
 } from "@/lib/account-error-copy";
-import type { PortfolioGoal, RoutePreferences } from "@/types";
 import { AccountWalletCard } from "./account-wallet-card";
-import { NetworkTokenPanel } from "./network-token-panel";
 import { WalletOperationalPanel } from "./wallet-operational-panel";
 
 /**
@@ -56,7 +54,6 @@ export default function WalletPage() {
   const snapshot = usePortfolioStore((s) => s.marketSnapshot);
   const sessionActive = usePortfolioStore((s) => s.sessionActive);
   const setWallet = usePortfolioStore((s) => s.setWallet);
-  const patchPortfolio = usePortfolioStore((s) => s.patchPortfolio);
   const setUnifiedUsdc = usePortfolioStore((s) => s.setUnifiedUsdc);
   const setUnifiedEurc = usePortfolioStore((s) => s.setUnifiedEurc);
   const setPerChain = usePortfolioStore((s) => s.setPerChain);
@@ -92,6 +89,11 @@ export default function WalletPage() {
   });
   const eurcUsd = cashSplit.eurcUsd;
   const totalUsdEquivalent = cashSplit.totalWalletUsd;
+  const reserveShortfallUsd = cashSplit.hasUsdcReserveTarget
+    ? Math.max(0, cashSplit.reserveUsd - unifiedUsdc)
+    : 0;
+  const reserveCovered =
+    cashSplit.hasUsdcReserveTarget && reserveShortfallUsd <= 0.01;
   const balanceFreshness = gatewayBalanceUpdatedAt
     ? `refreshed ${timeAgo(new Date(gatewayBalanceUpdatedAt).toISOString())}`
     : "live";
@@ -123,37 +125,6 @@ export default function WalletPage() {
       setRefreshingGateway(false);
     }
   }, [setGatewayBalanceStatus, setPerChain, setUnifiedEurc, setUnifiedUsdc]);
-  const saveRoutePreferences = useCallback(
-    (preferences: RoutePreferences) => {
-      if (!activePortfolio?.goal) {
-        return;
-      }
-
-      const routePreferences: RoutePreferences = {
-        ...preferences,
-        updatedAt: new Date().toISOString(),
-      };
-      const goal: PortfolioGoal = {
-        ...activePortfolio.goal,
-        routePreferences,
-      };
-
-      patchPortfolio(activePortfolio.id, { goal });
-      void portfolioApi
-        .update(activePortfolio.id, { goal })
-        .then(() => {
-          setStatusError(null);
-          setStatusMessage("Agent route preferences saved to this portfolio.");
-        })
-        .catch(() => {
-          setStatusMessage(null);
-          setStatusError(
-            "Route preference saved on this device, but Aegis could not save it to the portfolio.",
-          );
-        });
-    },
-    [activePortfolio, patchPortfolio],
-  );
 
   if (!wallet) {
     const continueHref = sessionActive
@@ -425,14 +396,35 @@ export default function WalletPage() {
           {!balanceUnavailable &&
             !balanceLoading &&
             cashSplit.hasUsdcReserveTarget && (
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
                 <div className="border border-border-default bg-bg/70 px-3 py-2">
                   <p className="font-mono text-[10px] uppercase tracking-wider text-text-mut">
-                    USDC reserve · target{" "}
-                    {cashSplit.usdcTargetWeight.toFixed(0)}%
+                    Reserve target · {cashSplit.usdcTargetWeight.toFixed(0)}%
                   </p>
                   <p className="mt-0.5 font-mono text-base font-semibold tabular-nums text-text-hi">
                     {formatCurrency(cashSplit.reserveUsd)}
+                  </p>
+                </div>
+                <div
+                  className={`border px-3 py-2 ${
+                    reserveCovered
+                      ? "border-accent-pnl/30 bg-accent-pnl/5"
+                      : "border-warn/45 bg-warn/5"
+                  }`}
+                >
+                  <p
+                    className={`font-mono text-[10px] uppercase tracking-wider ${
+                      reserveCovered ? "text-accent-pnl" : "text-warn"
+                    }`}
+                  >
+                    {reserveCovered ? "Reserve covered" : "Reserve shortfall"}
+                  </p>
+                  <p
+                    className={`mt-0.5 font-mono text-base font-semibold tabular-nums ${
+                      reserveCovered ? "text-accent-pnl" : "text-warn"
+                    }`}
+                  >
+                    {formatCurrency(reserveShortfallUsd)}
                   </p>
                 </div>
                 <div className="border border-accent-pnl/30 bg-accent-pnl/5 px-3 py-2">
@@ -454,9 +446,11 @@ export default function WalletPage() {
                 : isEmpty
                   ? "This can be $0 even when you own investments. Deployed positions are counted on Dashboard and Portfolio; newly funded USDC appears here first."
                   : cashSplit.hasUsdcReserveTarget
-                    ? cashSplit.deployableUsd > 5
-                      ? "The deployable surplus is what the agent can move into the target mix. The USDC reserve stays put — it is the cash sleeve the agent targets."
-                      : "Your wallet is at the agent's target — the USDC is held as the reserve sleeve, so there is no surplus to deploy right now."
+                    ? reserveShortfallUsd > 0.01
+                      ? "Current USDC is below the agent's reserve target, so no wallet cash is deployable until the reserve is rebuilt."
+                      : cashSplit.deployableUsd > 5
+                        ? "The deployable surplus is what the agent can move into the target mix. The USDC reserve stays put — it is the cash sleeve the agent targets."
+                        : "Current USDC covers the reserve target, but there is no meaningful surplus to deploy right now."
                     : "Balances as reported by Circle. The agent moves funds only after a plan is approved (or autonomously under auto-pilot, within the guardrails)."}
           </p>
         </BrutalCardBody>
@@ -470,32 +464,41 @@ export default function WalletPage() {
         explorerLinks={chains}
       />
 
-      <NetworkTokenPanel
-        networks={allNetworks}
-        initialPreferences={activePortfolio?.goal?.routePreferences}
-        persistenceLabel={
-          activePortfolio?.goal
-            ? "Saved to active portfolio"
-            : "Saved on this device"
-        }
-        onPreferencesChange={saveRoutePreferences}
-      />
+      <section className="space-y-3">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="font-mono text-lg font-semibold text-text-hi">
+              Network balances
+            </h2>
+            <p className="mt-1 text-xs leading-relaxed text-text-lo">
+              Circle reports cash per wallet route. Arc and Base are execution
+              venues; other routes are visible funding paths that consolidate
+              before execution.
+            </p>
+          </div>
+          {!balanceUnavailable && !balanceLoading && (
+            <span className="font-mono text-[10px] uppercase tracking-widest text-text-mut">
+              via Circle · {balanceFreshness}
+            </span>
+          )}
+        </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {chains.map((c) => (
-          <ChainCard
-            key={c.key}
-            chain={c.key}
-            label={c.label}
-            address={c.address}
-            usdc={perChainUsdc[c.key] ?? 0}
-            eurc={perChainEurc[c.key] ?? 0}
-            eurcUsd={eurcUsd}
-            balanceStatus={gatewayBalanceStatus}
-            showFundingAddress={!accountAddress}
-          />
-        ))}
-      </div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {chains.map((c) => (
+            <ChainCard
+              key={c.key}
+              chain={c.key}
+              label={c.label}
+              address={c.address}
+              usdc={perChainUsdc[c.key] ?? 0}
+              eurc={perChainEurc[c.key] ?? 0}
+              eurcUsd={eurcUsd}
+              balanceStatus={gatewayBalanceStatus}
+              showFundingAddress={!accountAddress}
+            />
+          ))}
+        </div>
+      </section>
     </div>
   );
 }
