@@ -483,6 +483,30 @@ export interface RebalancePlanResponse {
   }>;
 }
 
+/** The plan endpoint returns 200 with a typed outcome — a no-op is not an error. */
+export type RebalancePlanNoopStatus =
+  | "on_target_noop"
+  | "reserve_fallback"
+  | "unfunded"
+  | "dust_only";
+
+export interface ExecutablePlan extends RebalancePlanResponse {
+  status: "executable";
+}
+
+export interface RebalancePlanNoop {
+  status: RebalancePlanNoopStatus;
+  message: string;
+}
+
+export type RebalancePlanOutcome = ExecutablePlan | RebalancePlanNoop;
+
+/** `unfunded`/`dust_only` are actionable; `on_target`/`reserve` are calm success.
+ *  None are errors — callers must render them, never throw. */
+export function isExecutablePlan(o: RebalancePlanOutcome): o is ExecutablePlan {
+  return o.status === "executable";
+}
+
 export interface RebalanceApprovalSafety {
   approvable: boolean;
   code: string;
@@ -496,13 +520,10 @@ export interface RebalanceApprovalSafety {
 
 export const rebalanceApi = {
   plan: (portfolioId: string) =>
-    request<RebalancePlanResponse>(
-      `/portfolios/${portfolioId}/rebalance/plan`,
-      {
-        method: "POST",
-        authed: true,
-      },
-    ),
+    request<RebalancePlanOutcome>(`/portfolios/${portfolioId}/rebalance/plan`, {
+      method: "POST",
+      authed: true,
+    }),
   execute: (rebalanceId: string) =>
     request<void>(`/rebalance/${rebalanceId}/execute`, {
       method: "POST",

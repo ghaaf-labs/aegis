@@ -21,6 +21,7 @@ import { DashboardSkeleton } from "../dashboard-loading";
 import {
   agentApi,
   gatewayApi,
+  isExecutablePlan,
   portfolioApi,
   rebalanceApi,
   userAgentApi,
@@ -496,6 +497,16 @@ export default function PortfolioDashboardPage() {
         rebalanceApi.plan(activePortfolio.id),
         "Plan creation is taking longer than expected. Try again in a moment.",
       );
+      if (!isExecutablePlan(planned)) {
+        // A no-op (on-target / USDC reserve / unfunded / dust) is a calm or
+        // actionable outcome, never a red error. Surface it as an agent notice.
+        setExecutionProgress(null);
+        setReviewPlan(null);
+        setReviewOpen(false);
+        setDeployError(null);
+        setReviewMessage(planned.message);
+        return;
+      }
       setExecutionProgress(null);
       setReviewPlan(planned);
       setReviewOpen(true);

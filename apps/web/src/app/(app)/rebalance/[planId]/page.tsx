@@ -8,6 +8,7 @@ import {
   rebalanceApi,
   ratesApi,
   agentApi,
+  isExecutablePlan,
   type RebalanceApprovalSafety,
   type RebalancePlanResponse,
 } from "@/lib/api";
@@ -138,6 +139,11 @@ export default function RebalancePage({ params }: PageProps) {
     setFreshReviewError(null);
     try {
       const fresh = await rebalanceApi.plan(portfolioId);
+      if (!isExecutablePlan(fresh)) {
+        // No executable review to navigate to — show the friendly reason.
+        setFreshReviewError(fresh.message);
+        return;
+      }
       router.replace(`/rebalance/${fresh.rebalanceId}`);
     } catch (e) {
       const raw =

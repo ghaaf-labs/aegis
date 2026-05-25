@@ -19,7 +19,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
-import { agentApi, rebalanceApi } from "@/lib/api";
+import { agentApi, isExecutablePlan, rebalanceApi } from "@/lib/api";
 import { pollDecisionReady } from "@/lib/decision-poll";
 import type { AgentDecision } from "@/types";
 import { formatCurrency } from "@/lib/utils";
@@ -161,6 +161,13 @@ export function RebalanceModal({ open, onClose }: Props) {
         "Plan creation is taking longer than expected. Try again in a moment.",
         PLAN_TIMEOUT_MS,
       );
+      if (!isExecutablePlan(planned)) {
+        // Nothing to execute (on-target / reserve / unfunded / dust): surface
+        // the friendly message in place; there is no review page to open.
+        setError(planned.message);
+        setIsRebalancing(false);
+        return;
+      }
       onClose();
       router.push(`/rebalance/${planned.rebalanceId}`);
     } catch (e) {
