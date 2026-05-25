@@ -179,7 +179,12 @@ mod tests {
         assert_eq!(led.settleable("USDC", dec!(100)), dec!(0));
     }
 
-    fn leg(kind: &str, src: Option<ChainKey>, dest: Option<ChainKey>, amt: Decimal) -> ReservationLeg {
+    fn leg(
+        kind: &str,
+        src: Option<ChainKey>,
+        dest: Option<ChainKey>,
+        amt: Decimal,
+    ) -> ReservationLeg {
         ReservationLeg {
             kind: kind.into(),
             src_chain: src,
@@ -193,13 +198,32 @@ mod tests {
         // burn Arc 7.08 -> mint Base 7.08 -> swap Base 7.08: the Base swap spends
         // bridged USDC, so only the Arc source is reserved (no double-count).
         let legs = vec![
-            leg("cross_chain_burn", Some(ChainKey::Arc), Some(ChainKey::Base), dec!(7.08)),
-            leg("cross_chain_mint", Some(ChainKey::Arc), Some(ChainKey::Base), dec!(7.08)),
-            leg("local_swap", Some(ChainKey::Base), Some(ChainKey::Base), dec!(7.08)),
+            leg(
+                "cross_chain_burn",
+                Some(ChainKey::Arc),
+                Some(ChainKey::Base),
+                dec!(7.08),
+            ),
+            leg(
+                "cross_chain_mint",
+                Some(ChainKey::Arc),
+                Some(ChainKey::Base),
+                dec!(7.08),
+            ),
+            leg(
+                "local_swap",
+                Some(ChainKey::Base),
+                Some(ChainKey::Base),
+                dec!(7.08),
+            ),
         ];
         let reserved = reserved_usdc_per_chain(&legs);
         assert_eq!(reserved.get(&ChainKey::Arc).copied(), Some(dec!(7.08)));
-        assert_eq!(reserved.get(&ChainKey::Base), None, "bridged swap is not a reservation");
+        assert_eq!(
+            reserved.get(&ChainKey::Base),
+            None,
+            "bridged swap is not a reservation"
+        );
     }
 
     #[test]
@@ -218,8 +242,18 @@ mod tests {
     #[test]
     fn mint_only_and_nonpositive_legs_reserve_nothing() {
         let legs = vec![
-            leg("cross_chain_mint", Some(ChainKey::Arc), Some(ChainKey::Base), dec!(5)),
-            leg("local_swap", Some(ChainKey::Base), Some(ChainKey::Base), dec!(0)),
+            leg(
+                "cross_chain_mint",
+                Some(ChainKey::Arc),
+                Some(ChainKey::Base),
+                dec!(5),
+            ),
+            leg(
+                "local_swap",
+                Some(ChainKey::Base),
+                Some(ChainKey::Base),
+                dec!(0),
+            ),
         ];
         assert!(reserved_usdc_per_chain(&legs).is_empty());
     }

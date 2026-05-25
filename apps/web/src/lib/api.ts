@@ -581,6 +581,7 @@ export const rebalanceApi = {
         destSymbol: string | null;
         amountUsdc: number;
         status: string;
+        legState: string;
         txHash: string | null;
         failureReason: string | null;
         submittedAt: string | null;

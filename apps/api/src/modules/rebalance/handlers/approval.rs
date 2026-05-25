@@ -104,7 +104,7 @@ pub(super) async fn approval_safety(
 
     let stored_legs: Vec<LegView> = sqlx::query_as(
         "SELECT id, rebalance_id, leg_index, kind, src_chain, dest_chain,
-                src_symbol, dest_symbol, amount_usdc, status, tx_hash,
+                src_symbol, dest_symbol, amount_usdc, status, leg_state, tx_hash,
                 failure_reason, submitted_at, confirmed_at
          FROM rebalance_legs WHERE rebalance_id = $1
          ORDER BY leg_index ASC",

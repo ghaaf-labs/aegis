@@ -1,9 +1,16 @@
-import type { RebalanceApprovalSafety, RebalancePlanResponse } from "@/lib/api";
+import type {
+  DeferredTarget,
+  RebalanceApprovalSafety,
+  RebalancePlanResponse,
+} from "@/lib/api";
 import type { AgentDecision } from "@/types";
 
 export interface ApprovalModalProps {
   open: boolean;
   plan: RebalancePlanResponse | null;
+  /** Sleeves the plan intended but couldn't route now — held as USDC reserve
+   *  and shown as intent so the review reflects the full target (spec §12). */
+  deferred?: DeferredTarget[];
   /** Drives the inline backtest preview. Defaults to no preview when null. */
   portfolioId?: string | null;
   estimatedFeeUsdc: number;

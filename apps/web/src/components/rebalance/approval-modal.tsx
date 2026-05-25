@@ -32,6 +32,7 @@ export type { ApprovalModalProps } from "@/components/rebalance/approval-modal/t
 export function ApprovalModal({
   open,
   plan,
+  deferred,
   portfolioId,
   estimatedFeeUsdc,
   feeFetchedAt,
@@ -196,6 +197,22 @@ export function ApprovalModal({
           </p>
 
           <LegList plan={plan} />
+
+          {deferred && deferred.length > 0 && (
+            <div className="border-brutal border-white/15 bg-white/5 p-3 mb-4 text-[11px] font-mono text-text-lo">
+              <div className="text-text-mut uppercase tracking-wider mb-1">
+                Deferred — held as USDC until routable
+              </div>
+              {deferred.map((d) => (
+                <div key={d.symbol} className="flex justify-between gap-3">
+                  <span className="text-text-hi">
+                    {d.symbol} · {(d.targetWeight * 100).toFixed(0)}% target
+                  </span>
+                  <span className="text-text-mut truncate">{d.reason}</span>
+                </div>
+              ))}
+            </div>
+          )}
 
           {plan.legs.some(
             (l) => l.srcSymbol === "EURC" || l.destSymbol === "EURC",

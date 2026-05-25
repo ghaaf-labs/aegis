@@ -44,8 +44,31 @@ interface InternalLeg {
   destSymbol: string | null;
   amountUsdc: number;
   status: LegStatus;
+  /** Typed FSM phase (bridge_in_flight / bridge_landed / confirmed / …): lets a
+   *  confirmed cross-chain burn read as "in flight" rather than fully done. */
+  legState: string;
   txHash: string | null;
   failureReason: string | null;
+}
+
+/** Human label for the FSM phase, shown when it adds information beyond the
+ *  coarse `status` (i.e. the cross-chain in-flight/landed phases). */
+function legPhaseLabel(legState: string, status: LegStatus): string | null {
+  switch (legState) {
+    case "bridge_in_flight":
+      return "bridging — USDC in flight";
+    case "bridge_landed":
+      return "USDC landed on destination";
+    case "stranded_reserve":
+      return "held as USDC reserve";
+    case "compensated_to_usdc":
+      return "refunded to USDC";
+    default:
+      // pending/submitted/confirmed/failed are already conveyed by `status`.
+      return status === "confirmed" && legState === "confirmed"
+        ? "target acquired"
+        : null;
+  }
 }
 
 /**
@@ -112,6 +135,7 @@ export function ExecutionTrace({
           destSymbol: l.destSymbol,
           amountUsdc: l.amountUsdc,
           status: l.status as LegStatus,
+          legState: l.legState,
           txHash: l.txHash,
           failureReason: l.failureReason,
         })),
@@ -134,6 +158,7 @@ export function ExecutionTrace({
             ? {
                 ...leg,
                 status: data.status as LegStatus,
+                legState: (data.legState ?? leg.legState) as string,
                 txHash: (data.txHash ?? leg.txHash) as string | null,
                 failureReason: data.failureReason ?? leg.failureReason,
               }
@@ -270,6 +295,7 @@ export function ExecutionTrace({
                 destSymbol={leg.destSymbol}
                 amountUsdc={leg.amountUsdc}
                 status={leg.status}
+                phase={legPhaseLabel(leg.legState, leg.status)}
                 txHash={leg.txHash}
                 failureReason={leg.failureReason}
               />

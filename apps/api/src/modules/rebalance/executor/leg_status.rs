@@ -30,6 +30,7 @@ pub(super) async fn mark_leg_submitted(
         user_id,
         leg,
         "submitted",
+        LegState::Submitted.as_str(),
         None,
         None,
     );
@@ -64,6 +65,7 @@ pub(super) async fn mark_leg_confirmed(
         user_id,
         leg,
         "confirmed",
+        confirmed_leg_state(&leg.kind).as_str(),
         Some(tx_hash),
         None,
     );
@@ -93,6 +95,7 @@ pub(super) async fn mark_leg_failed(
         user_id,
         leg,
         "failed",
+        LegState::Failed.as_str(),
         None,
         Some(reason),
     );
@@ -154,6 +157,7 @@ pub(super) async fn mark_leg_stranded(
         user_id,
         leg,
         "failed",
+        LegState::StrandedReserve.as_str(),
         None,
         Some(reason),
     );
@@ -168,6 +172,7 @@ pub(super) fn broadcast_leg(
     user_id: Uuid,
     leg: &LegRow,
     status: &str,
+    leg_state: &str,
     tx_hash: Option<&str>,
     failure_reason: Option<&str>,
 ) {
@@ -183,6 +188,7 @@ pub(super) fn broadcast_leg(
         dest_symbol: leg.dest_symbol.clone(),
         amount_usdc: leg.amount_usdc.to_f64().unwrap_or(0.0),
         status: status.to_string(),
+        leg_state: leg_state.to_string(),
         tx_hash: tx_hash.map(str::to_string),
         failure_reason: failure_reason.map(str::to_string),
         updated_at: Utc::now(),
@@ -199,8 +205,14 @@ mod tests {
     fn confirmed_leg_state_reflects_funds_location_by_kind() {
         // The persisted state for a confirmed leg must match where the funds
         // physically are (the fund-safety model), per cross-chain phase.
-        assert_eq!(confirmed_leg_state("cross_chain_burn"), LegState::BridgeInFlight);
-        assert_eq!(confirmed_leg_state("cross_chain_mint"), LegState::BridgeLanded);
+        assert_eq!(
+            confirmed_leg_state("cross_chain_burn"),
+            LegState::BridgeInFlight
+        );
+        assert_eq!(
+            confirmed_leg_state("cross_chain_mint"),
+            LegState::BridgeLanded
+        );
         assert_eq!(confirmed_leg_state("local_swap"), LegState::Confirmed);
         assert_eq!(confirmed_leg_state("park_usyc"), LegState::Confirmed);
 

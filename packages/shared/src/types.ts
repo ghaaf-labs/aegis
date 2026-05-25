@@ -518,6 +518,10 @@ export interface RebalanceLeg {
   amountUsdc: number;
   minOut?: number;
   status: LegStatus;
+  /** Typed FSM phase (pending/submitted/bridge_in_flight/bridge_landed/confirmed/
+   *  failed/stranded_reserve/compensated_to_usdc) — finer than `status`, so the
+   *  trace can show a confirmed cross-chain burn as "in flight" vs a swap as done. */
+  legState?: string;
   txHash?: string;
   cctpMessageHash?: string;
   failureReason?: string;
