@@ -493,6 +493,44 @@ mod tests {
     }
 
     #[test]
+    fn zero_value_asset_never_produces_a_sell_leg_inv3() {
+        // INV-3: the planner sizes only off value-derived current weights
+        // (`build_plan_input` marks holdings to live value). An asset the user
+        // no longer holds — real value 0 ⇒ current weight 0 — can never be sold,
+        // even if a stale `allocations.current_weight` once claimed 100%. This is
+        // the structural cure for the "phantom ETH sell" in the screenshots: a
+        // sell leg requires a positive current weight, which only exists when the
+        // asset has confirmed value.
+        let i = input(
+            100.0,
+            &[("ETH", 0.0), ("USDC", 1.0)],
+            &[("ETH", 0.40), ("USDC", 0.60)],
+            0.0,
+            100.0,
+        );
+        let legs = plan_legs(&i);
+        assert!(
+            legs.iter().all(|l| l.src_symbol.as_deref() != Some("ETH")),
+            "must never sell an asset with zero current value, got {legs:?}"
+        );
+    }
+
+    #[test]
+    fn on_target_holdings_emit_no_legs_inv3() {
+        // INV-3: when value-derived current weights already match the target,
+        // there is nothing to trade — no spurious sells/buys. The handler maps an
+        // empty plan to a calm `PlanOutcome`, never a phantom move or a 409.
+        let i = input(
+            10_000.0,
+            &[("BTC", 0.60), ("ETH", 0.40)],
+            &[("BTC", 0.60), ("ETH", 0.40)],
+            0.0,
+            0.0,
+        );
+        assert!(plan_legs(&i).is_empty());
+    }
+
+    #[test]
     fn over_weight_usdc_never_self_swaps() {
         // Current 100% USDC, target 60% USDC / 40% ETH: the only action is one
         // USDC->ETH swap. The 40% USDC reduction is absorbed by that buy and
