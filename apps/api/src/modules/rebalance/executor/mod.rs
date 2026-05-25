@@ -32,7 +32,9 @@ use crate::modules::rebalance::cross_chain::build_hook_payload;
 use crate::modules::rebalance::models::{ChainKey, LegKind, PlannedLeg};
 use crate::modules::rebalance::quote::ValidatedQuote;
 use crate::modules::rebalance::registry::{
-    capabilities::RuntimeCapabilities, route::RouteLeg, ticket::ExecutionTicket,
+    capabilities::RuntimeCapabilities,
+    route::{executable_token_symbols, RouteLeg},
+    ticket::ExecutionTicket,
 };
 use crate::modules::sse::{RebalancePlanPayload, SseEvent};
 use crate::modules::wallet_routes;
@@ -437,6 +439,23 @@ struct LegDispatch {
     filled_qty: Option<f64>,
 }
 
+/// The non-USDC symbol a swap leg trades, if any. A local swap is always
+/// token↔USDC, so the traded asset is whichever side isn't USDC. Returns `None`
+/// for a degenerate USDC-only leg (nothing to gate).
+fn swap_traded_symbol<'a>(
+    dest_symbol: Option<&'a str>,
+    src_symbol: Option<&'a str>,
+) -> Option<&'a str> {
+    let dest = dest_symbol.unwrap_or_default();
+    let src = src_symbol.unwrap_or_default();
+    let traded = if dest.eq_ignore_ascii_case("USDC") {
+        src
+    } else {
+        dest
+    };
+    (!traded.is_empty() && !traded.eq_ignore_ascii_case("USDC")).then_some(traded)
+}
+
 async fn dispatch(
     state: &AppState,
     rebalance_id: Uuid,
@@ -457,6 +476,25 @@ async fn dispatch(
             cctp_hash: None,
             filled_qty: None,
         });
+    }
+
+    // Bulletproof execution guard: never quote/swap into a token that isn't on
+    // the live executable set right now. The planner already folds
+    // non-executable sleeves into USDC, but a stale/reused `planned` rebalance,
+    // a sleeve whose rail went away, or any future code path could otherwise
+    // feed e.g. a `USDC→EURC` leg to the AMM and revert ("no pool with
+    // liquidity"). Fail closed here with a clear reason instead.
+    if matches!(kind, LegKind::LocalSwap) {
+        if let Some(traded) =
+            swap_traded_symbol(leg.dest_symbol.as_deref(), leg.src_symbol.as_deref())
+        {
+            let executable = executable_token_symbols(&caps, &state.config);
+            if !executable.iter().any(|e| e.eq_ignore_ascii_case(traded)) {
+                return Err(AppError::Conflict(format!(
+                    "{traded} has no executable route on its chain right now (track-only); refusing a swap that would revert"
+                )));
+            }
+        }
     }
 
     // Real mode: the leg must clear the route registry and (for swaps) carry a
@@ -714,7 +752,18 @@ mod tests {
     use crate::error::AppError;
     use crate::modules::rebalance::models::ChainKey;
 
-    use super::build_cross_chain_hook;
+    use super::{build_cross_chain_hook, swap_traded_symbol};
+
+    #[test]
+    fn swap_traded_symbol_picks_the_non_usdc_side() {
+        // Buy: USDC -> EURC  ⇒ traded asset is EURC.
+        assert_eq!(swap_traded_symbol(Some("EURC"), Some("USDC")), Some("EURC"));
+        // Sell: ETH -> USDC  ⇒ traded asset is ETH.
+        assert_eq!(swap_traded_symbol(Some("USDC"), Some("ETH")), Some("ETH"));
+        // Degenerate USDC-only / missing sides ⇒ nothing to gate.
+        assert_eq!(swap_traded_symbol(Some("USDC"), Some("USDC")), None);
+        assert_eq!(swap_traded_symbol(None, None), None);
+    }
 
     fn hook_cfg() -> Config {
         let mut cfg = crate::config::test_config();

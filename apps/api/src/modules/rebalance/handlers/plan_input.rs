@@ -6,7 +6,7 @@ use crate::domain::token::native_chain;
 use crate::error::AppError;
 use crate::error::Result;
 use crate::modules::rebalance::models::{ChainKey, PlanInput};
-use crate::modules::rebalance::registry::RuntimeCapabilities;
+use crate::modules::rebalance::registry::{executable_token_symbols, RuntimeCapabilities};
 use crate::modules::wallet_routes;
 use crate::router::AppState;
 
@@ -45,6 +45,7 @@ pub(super) async fn build_plan_input(state: &AppState, portfolio_id: Uuid) -> Re
         }
     }
     apply_route_preferences_to_targets(&goal, &mut target_weights);
+    fold_nonexecutable_targets_into_usdc(&state.config, &mut target_weights);
     let wallet_cash_only = real_wallet_cash_only_planning(&state.config);
 
     let relevant_symbols: Vec<String> = allocations
@@ -150,6 +151,53 @@ fn reserve_real_execution_usdc_buffer(
         if *amount > 0.0 {
             *amount = (*amount - REAL_EXECUTION_CHAIN_USDC_BUFFER).max(0.0);
         }
+    }
+}
+
+/// Fold any target weight for a non-executable sleeve into USDC before the
+/// planner builds legs.
+///
+/// The agent and the UI still *target* the full designable menu (EURC, cbBTC,
+/// …) so the proposal reads as the intended allocation — but the planner must
+/// only build legs the executor can actually settle *now*. Without this, a
+/// designable-but-not-executable sleeve (e.g. EURC, which has no Uniswap pool
+/// on Base Sepolia) becomes a real `USDC→EURC` swap leg that reverts at the AMM.
+/// The folded weight stays as USDC (idle reserve); executable sleeves (ETH) are
+/// untouched, so a real plan is still built whenever any sleeve is live. When
+/// nothing is executable the target reduces to USDC and the plan is simply
+/// empty — handled as a graceful no-op upstream, never a reverting leg.
+///
+/// Mock mode is exempt: every leg settles with a mock receipt, so the full
+/// designable target is plannable offline/in CI.
+fn fold_nonexecutable_targets_into_usdc(
+    cfg: &crate::config::Config,
+    target_weights: &mut HashMap<String, f64>,
+) {
+    if target_weights.is_empty() {
+        return;
+    }
+    let caps = RuntimeCapabilities::from_config(cfg);
+    if !caps.real_mode {
+        return;
+    }
+    let executable = executable_token_symbols(&caps, cfg);
+    retain_executable_targets(target_weights, &executable);
+}
+
+/// Keep USDC and every executable sleeve; move the rest of the weight into USDC.
+/// Pure (no config/IO) so the fold rule is unit-testable without a live runtime.
+fn retain_executable_targets(target_weights: &mut HashMap<String, f64>, executable: &[&str]) {
+    let mut folded = 0.0;
+    target_weights.retain(|symbol, weight| {
+        let keep = symbol.eq_ignore_ascii_case("USDC")
+            || executable.iter().any(|e| e.eq_ignore_ascii_case(symbol));
+        if !keep && weight.is_finite() && *weight > 0.0 {
+            folded += *weight;
+        }
+        keep
+    });
+    if folded > 0.0 {
+        *target_weights.entry("USDC".to_string()).or_insert(0.0) += folded;
     }
 }
 
@@ -403,6 +451,37 @@ mod tests {
 
         assert!(targets.contains_key("EURC"));
         assert!(!targets.contains_key("USYC"));
+    }
+
+    #[test]
+    fn fold_moves_nonexecutable_target_weight_into_usdc() {
+        // EURC/cbBTC have no executable route on Base Sepolia; their weight must
+        // become idle USDC, never a swap leg that reverts at the AMM. ETH stays.
+        let mut targets = HashMap::from([
+            ("ETH".to_string(), 0.28),
+            ("EURC".to_string(), 0.10),
+            ("cbBTC".to_string(), 0.12),
+            ("USDC".to_string(), 0.50),
+        ]);
+
+        retain_executable_targets(&mut targets, &["USDC", "ETH"]);
+
+        assert_eq!(targets.get("ETH").copied(), Some(0.28));
+        assert!(!targets.contains_key("EURC"));
+        assert!(!targets.contains_key("cbBTC"));
+        let usdc = targets.get("USDC").copied().unwrap_or_default();
+        assert!((usdc - 0.72).abs() < 1e-9, "folded EURC+cbBTC into USDC");
+    }
+
+    #[test]
+    fn fold_reduces_all_nonexecutable_target_to_usdc() {
+        // Everything non-executable ⇒ target collapses to USDC. The planner then
+        // produces an empty plan (graceful no-op), not a reverting EURC leg.
+        let mut targets = HashMap::from([("EURC".to_string(), 1.0)]);
+
+        retain_executable_targets(&mut targets, &["USDC", "ETH"]);
+
+        assert_eq!(targets, HashMap::from([("USDC".to_string(), 1.0)]));
     }
 
     #[test]
