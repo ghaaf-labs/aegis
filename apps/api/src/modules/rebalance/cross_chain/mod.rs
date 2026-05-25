@@ -255,7 +255,7 @@ impl<'a> CctpClient<'a> {
     ) -> Result<BurnReceipt> {
         use alloy::network::EthereumWallet;
 
-        let amount = (amount_usdc * 1_000_000.0) as u128;
+        let amount = crate::domain::units::usdc_to_base_units(amount_usdc);
 
         // Part B0 — non-custodial: submit the approve + burn from the user's
         // Circle developer-controlled wallet (entity-secret signed) instead of

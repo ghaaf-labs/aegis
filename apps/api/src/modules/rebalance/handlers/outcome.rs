@@ -78,7 +78,7 @@ impl PlanOutcome {
     /// (no live route), that is `Blocked` — distinct from a genuine USDC reserve.
     pub fn from_noop(input: &PlanInput, deferred: &[DeferredTarget]) -> Self {
         let reason = classify_noop(input);
-        if !deferred.is_empty() && reason == NoopReason::UsdcReserve {
+        if !deferred.is_empty() {
             return Self::Blocked {
                 message: blocked_message(deferred),
                 deferred: deferred.to_vec(),
@@ -120,6 +120,7 @@ mod tests {
         PlanInput {
             portfolio_value_usd,
             current_weights: HashMap::new(),
+            token_values_by_chain: HashMap::new(),
             target_weights: HashMap::new(),
             usdc_per_chain,
             drift_threshold: 0.05,
@@ -174,6 +175,22 @@ mod tests {
             PlanOutcome::Blocked { deferred, message } => {
                 assert_eq!(deferred.len(), 1);
                 assert!(message.contains("EURC"));
+            }
+            other => panic!("expected Blocked, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deferred_sell_noop_is_blocked_even_when_classifier_would_say_on_target() {
+        let mut i = input(100.0, 0.0);
+        i.target_weights.insert("ETH".into(), 0.2);
+        i.current_weights.insert("ETH".into(), 1.0);
+        let out = PlanOutcome::from_noop(&i, &[deferred("ETH", 0.2)]);
+        assert_eq!(status_of(&out), "blocked");
+        match out {
+            PlanOutcome::Blocked { message, deferred } => {
+                assert!(message.contains("ETH"));
+                assert_eq!(deferred.len(), 1);
             }
             other => panic!("expected Blocked, got {other:?}"),
         }

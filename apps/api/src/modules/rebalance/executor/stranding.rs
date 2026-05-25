@@ -74,18 +74,14 @@ pub(super) fn leg_strands_funds_on_failure(
 ) -> bool {
     match kind {
         // Plain-bridge baseline: burn → mint → local swap. The mint is the leg
-        // that *lands* the destination USDC, so a same-chain swap strands its
-        // input USDC only when a companion `CrossChainMint` already confirmed on
-        // this swap's chain. Without that preceding bridge, a revert returns the
-        // USDC atomically — nothing stranded. (Pairs by chain to the same mint
-        // `pending_funding_dependency` waits on.)
+        // that *lands* the destination USDC, so a swap only strands funds when it
+        // explicitly depends on a confirmed mint for the same chain. Independent
+        // same-chain swaps revert atomically and leave no bridged cash stranded.
         LegKind::LocalSwap => {
             let chain = leg.src_chain.as_deref().and_then(ChainKey::parse);
-            chain.is_some()
-                && prior_confirmed.iter().any(|l| {
-                    l.kind == LegKind::CrossChainMint.as_str()
-                        && l.dest_chain.as_deref().and_then(ChainKey::parse) == chain
-                })
+            chain.is_some_and(|chain| {
+                depends_on_confirmed_mint_to_chain(leg, prior_confirmed, chain)
+            })
         }
         // A failed mint means the destination USDC never landed (it's still in
         // CCTP transit, recoverable by re-mint via the existing attestation), and
@@ -106,7 +102,8 @@ pub(super) fn leg_strands_funds_on_failure(
 /// new USDC, so a swap that spends it would fail closed.
 ///
 /// Pure (DB-free) so the dependency decision is unit-testable. Returns `None`
-/// when the leg doesn't spend USDC or no prior mint targeted its spend chain.
+/// when the leg doesn't spend USDC or no explicit mint dependency targeted its
+/// spend chain.
 pub(super) fn pending_funding_dependency(
     leg: &LegRow,
     confirmed: &[LegRow],
@@ -116,14 +113,18 @@ pub(super) fn pending_funding_dependency(
         return None;
     }
     let spend_chain = leg.src_chain.as_deref().and_then(ChainKey::parse)?;
-    let delivered_here = confirmed.iter().any(|c| {
-        c.kind == LegKind::CrossChainMint.as_str()
-            && c.dest_chain.as_deref().and_then(ChainKey::parse) == Some(spend_chain)
-    });
-    if !delivered_here {
+    if !depends_on_confirmed_mint_to_chain(leg, confirmed, spend_chain) {
         return None;
     }
     Some((spend_chain, leg.amount_usdc.to_f64().unwrap_or(0.0)))
+}
+
+fn depends_on_confirmed_mint_to_chain(leg: &LegRow, confirmed: &[LegRow], chain: ChainKey) -> bool {
+    confirmed.iter().any(|c| {
+        c.kind == LegKind::CrossChainMint.as_str()
+            && leg.depends_on.contains(&c.leg_index)
+            && c.dest_chain.as_deref().and_then(ChainKey::parse) == Some(chain)
+    })
 }
 
 pub(super) fn protocol_fee_notional_from_legs(legs: &[LegRow]) -> f64 {
@@ -262,7 +263,8 @@ mod tests {
     fn dependent_swap_waits_for_minted_usdc_on_same_chain() {
         // Mint delivered USDC to Base; the next leg is a USDC→ETH swap on Base.
         let confirmed = vec![make_mint_leg(ChainKey::Base, 40.0)];
-        let dep = make_swap_leg("USDC", "ETH"); // Base→Base, amount 600
+        let mut dep = make_swap_leg("USDC", "ETH"); // Base→Base, amount 600
+        dep.depends_on = vec![1];
         assert_eq!(
             pending_funding_dependency(&dep, &confirmed),
             Some((ChainKey::Base, 600.0))
@@ -288,6 +290,14 @@ mod tests {
     }
 
     #[test]
+    fn independent_same_chain_swap_does_not_wait_for_unrelated_mint() {
+        let confirmed = vec![make_mint_leg(ChainKey::Base, 40.0)];
+        let dep = make_swap_leg("USDC", "ETH");
+
+        assert_eq!(pending_funding_dependency(&dep, &confirmed), None);
+    }
+
+    #[test]
     fn mint_failure_does_not_strand_even_after_burn() {
         // A failed mint means the destination USDC never landed (still in CCTP
         // transit, re-mintable) — a source-burn confirmation does NOT imply idle
@@ -306,8 +316,21 @@ mod tests {
         // burn → mint (confirmed on Base) → local swap on Base fails: the bridged
         // USDC is now idle cash on Base, so the swap leg strands for the replan.
         let confirmed = vec![make_mint_leg(ChainKey::Base, 600.0)];
-        let swap = make_swap_leg("USDC", "ETH"); // Base → Base
+        let mut swap = make_swap_leg("USDC", "ETH"); // Base → Base
+        swap.depends_on = vec![1];
         assert!(leg_strands_funds_on_failure(
+            LegKind::LocalSwap,
+            &swap,
+            &confirmed
+        ));
+    }
+
+    #[test]
+    fn independent_same_chain_swap_failure_after_unrelated_mint_does_not_strand() {
+        let confirmed = vec![make_mint_leg(ChainKey::Base, 600.0)];
+        let swap = make_swap_leg("USDC", "ETH");
+
+        assert!(!leg_strands_funds_on_failure(
             LegKind::LocalSwap,
             &swap,
             &confirmed

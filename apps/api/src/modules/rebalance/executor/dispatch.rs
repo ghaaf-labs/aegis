@@ -7,10 +7,14 @@
 //! executor's saga loop per the decomposition in spec §8.
 
 use chrono::Utc;
-use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::prelude::{FromPrimitive, ToPrimitive};
+use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::config::Config;
+use crate::domain::units::{
+    apply_bps_margin, base_units_to_whole_token, whole_token_to_base_units,
+};
 use crate::error::{AppError, Result};
 use crate::modules::rebalance::adapters;
 use crate::modules::rebalance::cross_chain::build_hook_payload;
@@ -20,6 +24,7 @@ use crate::modules::rebalance::registry::{
     capabilities::RuntimeCapabilities,
     route::{executable_token_symbols, RouteLeg},
     ticket::ExecutionTicket,
+    tokens,
 };
 use crate::modules::wallet_routes;
 use crate::router::AppState;
@@ -30,6 +35,7 @@ use super::legs::{blockchain_for_chain, quote_filled_qty, LegRow};
 /// cushion for gas/rounding so the clamped `amountIn` never tips back over the
 /// wallet's balance and re-triggers Circle's `INSUFFICIENT_TOKEN`.
 const LIVE_BALANCE_SPEND_MARGIN: f64 = 0.995;
+const LIVE_TOKEN_SPEND_MARGIN_BPS: u32 = 9_950;
 
 /// Outcome of dispatching one leg: the on-chain hashes plus the real, on-chain
 /// fill of the leg's non-USDC asset (whole token units) when the executed quote
@@ -39,6 +45,7 @@ const LIVE_BALANCE_SPEND_MARGIN: f64 = 0.995;
 pub(super) struct LegDispatch {
     pub(super) tx_hash: String,
     pub(super) cctp_hash: Option<String>,
+    pub(super) executed_amount_usdc: Decimal,
     pub(super) filled_qty: Option<f64>,
 }
 
@@ -66,7 +73,6 @@ pub(super) async fn dispatch(
     leg: &LegRow,
     user_id: Uuid,
 ) -> Result<LegDispatch> {
-    let _ = rebalance_id;
     let caps = RuntimeCapabilities::from_config(&state.config);
 
     // Opt-in mock mode (tests/CI/offline dev): simulate every leg with a
@@ -77,6 +83,7 @@ pub(super) async fn dispatch(
         return Ok(LegDispatch {
             tx_hash: r.tx_hash,
             cctp_hash: None,
+            executed_amount_usdc: leg.amount_usdc,
             filled_qty: None,
         });
     }
@@ -151,6 +158,9 @@ pub(super) async fn dispatch(
         }
     }
 
+    let executed_amount_usdc = Decimal::from_f64(amount_usdc_f64)
+        .ok_or_else(|| AppError::BadRequest("USDC amount is outside executable range".into()))?;
+
     let route_leg = RouteLeg::from_parts(
         kind.as_str(),
         leg.src_chain.clone(),
@@ -165,7 +175,7 @@ pub(super) async fn dispatch(
     let src_chain = ChainKey::parse(leg.src_chain.as_deref().unwrap_or(""))
         .or_else(|| ChainKey::parse(leg.dest_chain.as_deref().unwrap_or("")));
     let dest_chain = ChainKey::parse(leg.dest_chain.as_deref().unwrap_or("")).or(src_chain);
-    let amount_base = (amount_usdc_f64 * 1_000_000.0) as u128;
+    let amount_base = usdc_decimal_to_base_units(executed_amount_usdc)?;
 
     let quote = match kind {
         LegKind::LocalSwap => adapters::swap::quote(&state.config, &route_leg, now).await?,
@@ -175,6 +185,7 @@ pub(super) async fn dispatch(
             ValidatedQuote::cctp_one_to_one(s, d, amount_base, now)
         }
     };
+    ensure_sell_quote_is_funded(state, kind, leg, user_id, &quote).await?;
 
     let ticket = ExecutionTicket::mint(&caps, &state.config, leg.id, &route_leg, quote, now)
         .map_err(|e| AppError::BadRequest(e.detail()))?;
@@ -234,23 +245,34 @@ pub(super) async fn dispatch(
             Ok(LegDispatch {
                 tx_hash: r.tx_hash,
                 cctp_hash: r.cctp_message_hash,
+                executed_amount_usdc,
                 filled_qty,
             })
         }
         LegKind::CrossChainMint => {
-            // The companion burn leg already produced a tx_hash; read it back.
-            let burn_hash = sqlx::query_scalar::<_, Option<String>>(
-                "SELECT tx_hash FROM rebalance_legs
-                 WHERE rebalance_id = (SELECT rebalance_id FROM rebalance_legs WHERE id = $1)
+            // The companion burn leg already produced a tx_hash; read it back
+            // through the explicit DAG dependency, not by assuming adjacency.
+            let (burn_hash, burn_amount): (String, Decimal) =
+                sqlx::query_as::<_, (Option<String>, Decimal)>(
+                    "SELECT tx_hash, amount_usdc FROM rebalance_legs
+                 WHERE rebalance_id = $1
                    AND kind = 'cross_chain_burn'
-                   AND leg_index = $2 - 1",
-            )
-            .bind(leg.id)
-            .bind(leg.leg_index)
-            .fetch_optional(&state.db)
-            .await?
-            .flatten()
-            .unwrap_or_default();
+                   AND status = 'confirmed'
+                   AND leg_index = ANY($2)
+                 ORDER BY leg_index ASC
+                 LIMIT 1",
+                )
+                .bind(rebalance_id)
+                .bind(&leg.depends_on)
+                .fetch_optional(&state.db)
+                .await?
+                .and_then(|(hash, amount)| hash.map(|h| (h, amount)))
+                .ok_or_else(|| {
+                    AppError::Internal(anyhow::anyhow!(
+                        "cross_chain_mint leg {} has no confirmed burn dependency",
+                        leg.leg_index
+                    ))
+                })?;
             let r = adapters::cctp::mint(
                 &state.config,
                 &state.http,
@@ -263,6 +285,7 @@ pub(super) async fn dispatch(
             Ok(LegDispatch {
                 tx_hash: r.tx_hash,
                 cctp_hash: None,
+                executed_amount_usdc: burn_amount,
                 filled_qty,
             })
         }
@@ -273,6 +296,7 @@ pub(super) async fn dispatch(
             Ok(LegDispatch {
                 tx_hash: r.tx_hash,
                 cctp_hash: r.cctp_message_hash,
+                executed_amount_usdc,
                 filled_qty,
             })
         }
@@ -282,6 +306,65 @@ pub(super) async fn dispatch(
             Err(AppError::BadRequest("route is not executable".into()))
         }
     }
+}
+
+async fn ensure_sell_quote_is_funded(
+    state: &AppState,
+    kind: LegKind,
+    leg: &LegRow,
+    user_id: Uuid,
+    quote: &ValidatedQuote,
+) -> Result<()> {
+    if !state.config.circle_wallet_exec
+        || state.config.execution_mock
+        || state.config.circle_mock
+        || !matches!(kind, LegKind::LocalSwap)
+        || leg.dest_symbol.as_deref() != Some(tokens::USDC)
+        || leg.src_symbol.as_deref() == Some(tokens::USDC)
+    {
+        return Ok(());
+    }
+    let symbol = leg
+        .src_symbol
+        .as_deref()
+        .ok_or_else(|| AppError::BadRequest("sell leg missing source token".into()))?;
+    let chain = leg
+        .src_chain
+        .as_deref()
+        .and_then(ChainKey::parse)
+        .or_else(|| leg.dest_chain.as_deref().and_then(ChainKey::parse))
+        .ok_or_else(|| AppError::BadRequest("sell leg missing chain".into()))?;
+    let spec = tokens::token(symbol)
+        .ok_or_else(|| AppError::BadRequest(format!("unknown sell token {symbol}")))?;
+    let live_units = crate::modules::gateway::service::fetch_chain_token_balance_units(
+        &state.http,
+        &state.config,
+        &state.db,
+        user_id,
+        chain,
+        symbol,
+        spec.decimals,
+    )
+    .await?;
+    let spendable_units = apply_bps_margin(live_units, LIVE_TOKEN_SPEND_MARGIN_BPS);
+    if quote.amount_in <= spendable_units {
+        return Ok(());
+    }
+    let needed = base_units_to_whole_token(quote.amount_in, spec.decimals);
+    let spendable = base_units_to_whole_token(spendable_units, spec.decimals);
+    Err(AppError::Conflict(format!(
+        "Live {symbol} balance on {} cannot fund the on-chain sell quote. Quote needs {:.8} {symbol}; spendable wallet balance is {:.8}. Build a fresh review after funding or choose a smaller move.",
+        chain.as_str(),
+        needed,
+        spendable
+    )))
+}
+
+fn usdc_decimal_to_base_units(amount_usdc: Decimal) -> Result<u128> {
+    (amount_usdc * Decimal::from(1_000_000_u64))
+        .trunc()
+        .to_u128()
+        .ok_or_else(|| AppError::BadRequest("USDC amount is outside executable range".into()))
 }
 
 /// Build the 160-byte CCTP V2 hook payload for a cross-chain burn.
@@ -335,7 +418,7 @@ fn build_cross_chain_hook(
     // slippage miss, but a priced min_out is the first line of defense).
     let min_out_base = min_out
         .filter(|m| m.is_finite() && *m > 0.0)
-        .map(|m| (m * 10f64.powi(spec.decimals as i32)) as u128)
+        .map(|m| whole_token_to_base_units(m, spec.decimals))
         .unwrap_or(0);
 
     Ok(build_hook_payload(

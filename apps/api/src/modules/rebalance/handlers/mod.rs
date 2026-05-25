@@ -24,10 +24,7 @@ use uuid::Uuid;
 use crate::error::{AppError, Result};
 use crate::middleware::auth::Claims;
 use crate::modules::agent::{models::AnalyzeRequest, service::analyze_portfolio};
-use crate::modules::rebalance::{
-    executor::{approve_and_execute, create_plan},
-    planner::plan_legs,
-};
+use crate::modules::rebalance::executor::{approve_and_execute, create_plan};
 use crate::router::AppState;
 
 use approval::{approval_safety, history_approval_safety, ApprovalSafety};
@@ -36,7 +33,7 @@ use plan_input::build_plan_input;
 use shared::{
     ensure_no_active_execution, ensure_rebalance_wallet_ready, execution_mode,
     own_portfolio_or_404, own_rebalance_or_404, plan_leg_view, rebalance_totals_by_id,
-    reusable_planned_rebalance,
+    reusable_planned_rebalance, route_shaped_plan,
 };
 
 use autonomous::{mock_agent_decision, planner_agent_decision};
@@ -96,14 +93,28 @@ pub async fn create(
     // A balance read can transiently fail (Circle Gateway slow/unavailable).
     // That is the only `Conflict` `build_plan_input` raises — surface it as a
     // typed, retryable 200 instead of the dead-end 409 the UI renders in red.
-    let (input, deferred) = match build_plan_input(&state, portfolio_id).await {
+    let (input, mut deferred) = match build_plan_input(&state, portfolio_id).await {
         Ok(built) => built,
         Err(AppError::Conflict(message)) => {
             return Ok(Json(PlanOutcome::BalanceUnavailable { message }))
         }
         Err(e) => return Err(e),
     };
-    let legs = plan_legs(&input);
+    let shaped = match route_shaped_plan(&state, claims.sub, input).await {
+        Ok(shaped) => shaped,
+        Err(e) => {
+            tracing::warn!(error = %e, "live route assessment failed while creating review plan");
+            return Ok(Json(PlanOutcome::BalanceUnavailable {
+                message: "Live route quotes are temporarily unavailable, so Aegis cannot build a real review safely. Retry once the route providers respond.".into(),
+            }));
+        }
+    };
+    let input = shaped.input;
+    let legs = shaped.legs;
+    deferred.extend(shaped.route_deferred);
+    if let Some(message) = shaped.blocked_message {
+        return Ok(Json(PlanOutcome::Blocked { message, deferred }));
+    }
     if legs.is_empty() {
         // A no-op is not an error: classify it into a typed 200 outcome the UI
         // renders calmly (on-target / reserve), actionably (unfunded / dust), or
@@ -328,6 +339,7 @@ mod tests {
         let empty = PlanInput {
             portfolio_value_usd: 0.0,
             current_weights: HashMap::new(),
+            token_values_by_chain: HashMap::new(),
             target_weights: HashMap::new(),
             usdc_per_chain: HashMap::new(),
             drift_threshold: 0.05,
@@ -344,6 +356,7 @@ mod tests {
             portfolio_value_usd: 100.0,
             target_weights: current_weights.clone(),
             current_weights,
+            token_values_by_chain: HashMap::new(),
             usdc_per_chain: HashMap::new(),
             drift_threshold: 0.05,
             dust_threshold_usd: 5.0,

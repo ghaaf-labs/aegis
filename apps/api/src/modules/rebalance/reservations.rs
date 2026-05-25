@@ -19,6 +19,8 @@ use crate::modules::rebalance::models::ChainKey;
 /// user's in-flight (`executing`) rebalances so the ledger reflects real locks.
 #[derive(Debug, Clone)]
 pub struct ReservationLeg {
+    pub leg_index: i32,
+    pub depends_on: Vec<i32>,
     pub kind: String,
     pub src_chain: Option<ChainKey>,
     pub dest_chain: Option<ChainKey>,
@@ -30,15 +32,15 @@ pub struct ReservationLeg {
 /// Only legs that draw down balance the user already holds count — never USDC a
 /// bridge mints mid-plan. A `cross_chain_burn` consumes its source chain; an
 /// acquire (`local_swap`/`park_usyc`/`fx_stablefx`) consumes its own chain
-/// *unless* a `cross_chain_mint` in the same plan funded that chain (then it
-/// spends bridged USDC, already accounted as the burn on the source). A
-/// `cross_chain_mint` is a receive, never a reservation. Pure + grouped per
+/// *unless* it explicitly depends on a `cross_chain_mint` in the same plan
+/// (then it spends bridged USDC, already accounted as the burn on the source).
+/// A `cross_chain_mint` is a receive, never a reservation. Pure + grouped per
 /// plan so the "fed by a mint" rule is decided within a single transfer.
 pub fn reserved_usdc_per_chain(legs: &[ReservationLeg]) -> BTreeMap<ChainKey, Decimal> {
-    let minted_chains: BTreeSet<ChainKey> = legs
+    let mint_leg_indexes: BTreeSet<i32> = legs
         .iter()
         .filter(|l| l.kind == "cross_chain_mint")
-        .filter_map(|l| l.dest_chain)
+        .map(|l| l.leg_index)
         .collect();
 
     let mut reserved: BTreeMap<ChainKey, Decimal> = BTreeMap::new();
@@ -48,10 +50,13 @@ pub fn reserved_usdc_per_chain(legs: &[ReservationLeg]) -> BTreeMap<ChainKey, De
         }
         let chain = match leg.kind.as_str() {
             "cross_chain_burn" => leg.src_chain,
-            "local_swap" | "park_usyc" | "fx_stablefx" => leg
-                .src_chain
-                .or(leg.dest_chain)
-                .filter(|c| !minted_chains.contains(c)),
+            "local_swap" | "park_usyc" | "fx_stablefx" => {
+                let funded_by_mint = leg
+                    .depends_on
+                    .iter()
+                    .any(|dep| mint_leg_indexes.contains(dep));
+                leg.src_chain.or(leg.dest_chain).filter(|_| !funded_by_mint)
+            }
             // mint = receive; redeem produces USDC; nothing else draws balance.
             _ => None,
         };
@@ -180,12 +185,16 @@ mod tests {
     }
 
     fn leg(
+        leg_index: i32,
         kind: &str,
         src: Option<ChainKey>,
         dest: Option<ChainKey>,
         amt: Decimal,
+        depends_on: Vec<i32>,
     ) -> ReservationLeg {
         ReservationLeg {
+            leg_index,
+            depends_on,
             kind: kind.into(),
             src_chain: src,
             dest_chain: dest,
@@ -199,22 +208,28 @@ mod tests {
         // bridged USDC, so only the Arc source is reserved (no double-count).
         let legs = vec![
             leg(
+                0,
                 "cross_chain_burn",
                 Some(ChainKey::Arc),
                 Some(ChainKey::Base),
                 dec!(7.08),
+                vec![],
             ),
             leg(
+                1,
                 "cross_chain_mint",
                 Some(ChainKey::Arc),
                 Some(ChainKey::Base),
                 dec!(7.08),
+                vec![0],
             ),
             leg(
+                2,
                 "local_swap",
                 Some(ChainKey::Base),
                 Some(ChainKey::Base),
                 dec!(7.08),
+                vec![1],
             ),
         ];
         let reserved = reserved_usdc_per_chain(&legs);
@@ -227,13 +242,60 @@ mod tests {
     }
 
     #[test]
+    fn independent_same_chain_swap_on_a_minted_chain_still_reserves() {
+        // A plan can both mint USDC to Base for one branch and independently
+        // spend pre-existing Base USDC for another branch. Only the branch that
+        // depends on the mint is exempt from pre-existing balance reservation.
+        let legs = vec![
+            leg(
+                0,
+                "cross_chain_burn",
+                Some(ChainKey::Arc),
+                Some(ChainKey::Base),
+                dec!(10),
+                vec![],
+            ),
+            leg(
+                1,
+                "cross_chain_mint",
+                Some(ChainKey::Arc),
+                Some(ChainKey::Base),
+                dec!(10),
+                vec![0],
+            ),
+            leg(
+                2,
+                "local_swap",
+                Some(ChainKey::Base),
+                Some(ChainKey::Base),
+                dec!(10),
+                vec![1],
+            ),
+            leg(
+                3,
+                "local_swap",
+                Some(ChainKey::Base),
+                Some(ChainKey::Base),
+                dec!(20),
+                vec![],
+            ),
+        ];
+
+        let reserved = reserved_usdc_per_chain(&legs);
+        assert_eq!(reserved.get(&ChainKey::Arc).copied(), Some(dec!(10)));
+        assert_eq!(reserved.get(&ChainKey::Base).copied(), Some(dec!(20)));
+    }
+
+    #[test]
     fn same_chain_swap_reserves_its_own_chain() {
         // A standalone Base USDC->ETH swap draws pre-existing Base USDC.
         let legs = vec![leg(
+            0,
             "local_swap",
             Some(ChainKey::Base),
             Some(ChainKey::Base),
             dec!(20),
+            vec![],
         )];
         let reserved = reserved_usdc_per_chain(&legs);
         assert_eq!(reserved.get(&ChainKey::Base).copied(), Some(dec!(20)));
@@ -243,16 +305,20 @@ mod tests {
     fn mint_only_and_nonpositive_legs_reserve_nothing() {
         let legs = vec![
             leg(
+                0,
                 "cross_chain_mint",
                 Some(ChainKey::Arc),
                 Some(ChainKey::Base),
                 dec!(5),
+                vec![],
             ),
             leg(
+                1,
                 "local_swap",
                 Some(ChainKey::Base),
                 Some(ChainKey::Base),
                 dec!(0),
+                vec![],
             ),
         ];
         assert!(reserved_usdc_per_chain(&legs).is_empty());

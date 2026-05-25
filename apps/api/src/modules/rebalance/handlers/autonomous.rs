@@ -5,14 +5,13 @@ use crate::error::Result;
 use crate::modules::rebalance::{
     executor::create_plan,
     models::{PlanInput, PlannedLeg},
-    planner::plan_legs,
 };
 use crate::router::AppState;
 
 use super::{
     approval::{approval_safety, ApprovalSafety},
     plan_input::build_plan_input,
-    shared::{reusable_planned_rebalance, stamp_routable_snapshot},
+    shared::{reusable_planned_rebalance, route_shaped_plan, stamp_routable_snapshot},
 };
 
 /// Outcome of the auto-pilot plan preparation. `NoOp` ⇒ nothing to move
@@ -40,7 +39,23 @@ pub async fn prepare_autonomous_plan(
     // reserve (the `create` handler surfaces them to the user, the scheduler
     // does not need them).
     let (input, _deferred) = build_plan_input(state, portfolio_id).await?;
-    let legs = plan_legs(&input);
+    let user_id = portfolio_id_user(state, portfolio_id).await?;
+    let shaped = match route_shaped_plan(state, user_id, input).await {
+        Ok(shaped) => shaped,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                portfolio_id = %portfolio_id,
+                "live route assessment failed while preparing autonomous plan"
+            );
+            return Ok(AutonomousPlan::NoOp);
+        }
+    };
+    if shaped.blocked_message.is_some() {
+        return Ok(AutonomousPlan::NoOp);
+    }
+    let input = shaped.input;
+    let legs = shaped.legs;
     if legs.is_empty() {
         // On-target or sub-$5 dust — the planner drops it. Nothing to execute.
         return Ok(AutonomousPlan::NoOp);
@@ -73,6 +88,15 @@ pub async fn prepare_autonomous_plan(
         rebalance_id,
         safety,
     })
+}
+
+async fn portfolio_id_user(state: &AppState, portfolio_id: Uuid) -> Result<Uuid> {
+    Ok(
+        sqlx::query_scalar("SELECT user_id FROM portfolios WHERE id = $1")
+            .bind(portfolio_id)
+            .fetch_one(&state.db)
+            .await?,
+    )
 }
 
 /// Insert a canned agent decision for mock-backed local/demo mode. Lets the
@@ -251,6 +275,7 @@ mod tests {
     fn planned_leg(kind: LegKind, chain: ChainKey) -> PlannedLeg {
         PlannedLeg {
             leg_index: 0,
+            deps: vec![],
             kind,
             src_chain: Some(chain),
             dest_chain: Some(chain),

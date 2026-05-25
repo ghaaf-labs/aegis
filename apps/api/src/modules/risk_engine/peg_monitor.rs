@@ -34,7 +34,8 @@ use uuid::Uuid;
 use crate::db::Db;
 use crate::modules::rebalance::executor::create_plan;
 use crate::modules::rebalance::models::{ChainKey, PlanInput, PlannedLeg};
-use crate::modules::rebalance::planner::plan_legs;
+use crate::modules::rebalance::registry::RuntimeCapabilities;
+use crate::modules::rebalance::snapshot::RoutableSnapshot;
 use crate::modules::sse::{PegAlertPayload, SseEvent};
 use crate::router::AppState;
 
@@ -316,10 +317,9 @@ async fn user_tier(db: &Db, user_id: Uuid) -> anyhow::Result<String> {
 }
 
 /// Build a defensive rebalance plan that shifts the depegged asset's full
-/// weight into the rule's `target_asset`. Reuses the existing pure-function
-/// `rebalance::planner::plan_legs` so the same routing logic applies as for
-/// user-triggered rebalances (cross-chain burn/mint when USDC liquidity sits
-/// on the other chain, local swaps otherwise).
+/// weight into the rule's `target_asset`. Uses the same graph-backed routing
+/// engine as manual reviews, so peg-defense plans get explicit DAG dependencies,
+/// N-chain USDC source selection, and the same typed route model.
 ///
 /// Returns the rebalance plan id when legs were produced; `Ok(None)` when
 /// the rule has no resolvable portfolio, the depegged asset's weight is
@@ -373,6 +373,7 @@ async fn propose_defensive_plan(
     let input = PlanInput {
         portfolio_value_usd: total_value_usd,
         current_weights,
+        token_values_by_chain: HashMap::new(),
         target_weights,
         usdc_per_chain,
         // Peg defense bypasses the usual drift threshold — a depeg is the
@@ -385,7 +386,7 @@ async fn propose_defensive_plan(
         regime: Some("risk_off".to_string()),
     };
 
-    let legs = plan_legs(&input);
+    let legs = defensive_plan_legs(&state.config, &input);
     if legs.is_empty() {
         debug!(rule_id=%rule.id, "planner produced no legs (dust or zero portfolio); no plan persisted");
         return Ok(None);
@@ -409,6 +410,10 @@ async fn propose_defensive_plan(
     );
 
     Ok(Some(rebalance_id))
+}
+
+fn defensive_plan_legs(cfg: &crate::config::Config, input: &PlanInput) -> Vec<PlannedLeg> {
+    crate::modules::rebalance::routing::engine_plan_legs(cfg, input)
 }
 
 /// Resolve the portfolio a peg rule defends and load its current allocation.
@@ -537,16 +542,46 @@ async fn persist_defensive_plan(
         target = target_asset,
     );
     let decision_id: Uuid = sqlx::query_scalar(
-        "INSERT INTO agent_decisions (portfolio_id, reasoning, confidence, triggered_by)
-         VALUES ($1, $2, 0.9, 'peg_alert')
+        "INSERT INTO agent_decisions
+            (portfolio_id, reasoning, recommendation, confidence, triggered_by,
+             model_slug, regime, prompt_tokens, completion_tokens, latency_ms,
+             critic_verdict, snapshot, raw_confidence, counterfactual)
+         VALUES ($1, $2, $3, 0.9, 'peg_alert',
+                 'aegis/rebalance-planner-v1', 'risk_off', 0, 0, 0,
+                 $4, $5, 0.9, $6)
          RETURNING id",
     )
     .bind(portfolio_id)
     .bind(&reasoning)
+    .bind(serde_json::json!({
+        "summary": "Peg-defense rebalance",
+        "trades": [],
+        "expectedImpact": { "riskDelta": -1.0, "diversificationScore": 0.5 }
+    }))
+    .bind(serde_json::json!({
+        "verdict": "approved",
+        "notes": "Deterministic peg-defense planner built an approval-gated route from live Gateway balances.",
+        "confidence": 0.90
+    }))
+    .bind(serde_json::json!({
+        "planner": "deterministic",
+        "trigger": "peg_alert",
+        "legs": legs.len(),
+        "targetAsset": target_asset,
+    }))
+    .bind("If the peg recovers or route readiness changes, rebuild the review before approving.".to_string())
     .fetch_one(&state.db)
     .await?;
 
-    Ok(create_plan(state, portfolio_id, decision_id, legs).await?)
+    let rebalance_id = create_plan(state, portfolio_id, decision_id, legs).await?;
+    let caps = RuntimeCapabilities::from_config(&state.config);
+    let snapshot = RoutableSnapshot::capture(&caps, &state.config);
+    sqlx::query("UPDATE rebalances SET routable_snapshot_hash = $1 WHERE id = $2")
+        .bind(snapshot.hash())
+        .bind(rebalance_id)
+        .execute(&state.db)
+        .await?;
+    Ok(rebalance_id)
 }
 
 /// Sample the current stablecoin prices via the platform price provider.
@@ -732,6 +767,57 @@ mod tests {
             assert!(is_executable_stable(&cfg, "EURC"));
             assert_eq!(default_defensive_target(&cfg, "USDC"), "EURC");
         }
+    }
+
+    #[test]
+    fn defensive_plan_legs_use_routing_engine_dag() {
+        let sentinel = "0x1111111111111111111111111111111111111111";
+        let mut cfg = crate::config::test_config();
+        cfg.chains[ChainKey::Arc.index()].usdc = sentinel.into();
+        cfg.chains[ChainKey::Base.index()].usdc = sentinel.into();
+        cfg.set_token_address("ETH", ChainKey::Base, sentinel);
+
+        let mut current_weights = HashMap::new();
+        current_weights.insert("USDC".to_string(), 1.0);
+        let mut target_weights = HashMap::new();
+        target_weights.insert("USDC".to_string(), 0.0);
+        target_weights.insert("ETH".to_string(), 1.0);
+        let mut usdc_per_chain = HashMap::new();
+        usdc_per_chain.insert(ChainKey::Arc, 1_000.0);
+        usdc_per_chain.insert(ChainKey::Base, 0.0);
+
+        let input = PlanInput {
+            portfolio_value_usd: 1_000.0,
+            current_weights,
+            token_values_by_chain: HashMap::new(),
+            target_weights,
+            usdc_per_chain,
+            drift_threshold: 0.0,
+            dust_threshold_usd: 5.0,
+            prices: HashMap::new(),
+            regime: Some("risk_off".to_string()),
+        };
+
+        let legs = defensive_plan_legs(&cfg, &input);
+
+        let burn = legs
+            .iter()
+            .find(|l| l.kind == crate::modules::rebalance::models::LegKind::CrossChainBurn)
+            .expect("Arc-funded Base buy must bridge first");
+        let mint = legs
+            .iter()
+            .find(|l| l.kind == crate::modules::rebalance::models::LegKind::CrossChainMint)
+            .expect("bridge must include mint leg");
+        let swap = legs
+            .iter()
+            .find(|l| {
+                l.kind == crate::modules::rebalance::models::LegKind::LocalSwap
+                    && l.dest_symbol.as_deref() == Some("ETH")
+            })
+            .expect("destination token must be acquired after mint");
+
+        assert!(mint.deps.contains(&burn.leg_index));
+        assert!(swap.deps.contains(&mint.leg_index));
     }
 
     #[test]

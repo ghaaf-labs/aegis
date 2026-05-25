@@ -1,0 +1,53 @@
+# aegis-routing — the pure n→m liquidity-routing engine.
+#
+# Deliberately a *pure* crate: it knows about a graph of (chain, token) nodes,
+# typed settlement-rail edges, a convex all-in cost model, a min-cost-flow
+# solver, and a leg DAG. It has NO knowledge of HTTP, the database, Axum, SQLx,
+# or Reqwest — apps/api adapts its own ChainKey / TokenSpec / Config into this
+# crate's value types and implements `RouteProvider`. `cargo tree -p
+# aegis-routing` must therefore show none of those dependencies (metric 6).
+[package]
+name = "aegis-routing"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Pure n→m liquidity-graph routing engine: typed graph, convex cost model, min-cost-flow solver, leg DAG."
+
+[dependencies]
+# Money is Decimal, never f64 (matches apps/api). serde-with-str keeps JSON
+# values as strings so a plan/cost round-trips without binary-float drift.
+rust_decimal = { version = "1", features = ["serde-with-str"] }
+# Deterministic graph fingerprint (graph_id / INV-6).
+sha2 = "0.10"
+# Typed solver/graph errors.
+thiserror = "2"
+# Serde derives on the public plan/cost/graph types so apps/api can persist
+# them as jsonb. serde is not a web/db dependency.
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+# Property-based tests: convexity, monotonicity, determinism, conservation.
+proptest = "1"
+# Latency benchmark harness (M6: p95 route planning ≤ 50 ms).
+criterion = "0.5"
+
+[[bench]]
+name = "solve"
+harness = false
+
+[lints.clippy]
+# This crate holds itself to the pedantic bar (apps/api's ratchet does not reach
+# path dependencies, so we opt in here explicitly). Kept clean, not allowed-back.
+pedantic = { level = "warn", priority = -1 }
+# Decimal math + bps conversions are inherently lossy at the f64/stat boundary;
+# these mirror apps/api's allow-backs so the shared style holds.
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+# Stylistic — code identifiers in prose; mirrors apps/api's allow-back.
+doc_markdown = "allow"

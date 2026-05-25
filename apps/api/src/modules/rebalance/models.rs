@@ -91,6 +91,11 @@ impl LegKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlannedLeg {
     pub leg_index: i32,
+    /// Explicit DAG dependencies: leg_index values that must confirm before
+    /// this leg can be dispatched. Within a CCTP transfer the mint depends
+    /// on the burn; a post-bridge swap depends on the mint. Empty means no
+    /// prerequisite (the leg can start immediately).
+    pub deps: Vec<i32>,
     pub kind: LegKind,
     pub src_chain: Option<ChainKey>,
     pub dest_chain: Option<ChainKey>,
@@ -105,6 +110,13 @@ pub struct PlanInput {
     pub portfolio_value_usd: f64,
     /// Current allocation weights by symbol — what the user holds today.
     pub current_weights: std::collections::HashMap<String, f64>,
+    /// Current executable non-USDC holding value by symbol and chain. Real
+    /// Circle planning fills this from live wallet balances so sells originate
+    /// from the chain where the token is actually held instead of assuming the
+    /// token's canonical/native chain. Mock/offline planning leaves it empty and
+    /// falls back to canonical-chain routing.
+    pub token_values_by_chain:
+        std::collections::HashMap<String, std::collections::HashMap<ChainKey, f64>>,
     /// Target allocation weights by symbol — from `portfolios.goal.targetAllocation`.
     pub target_weights: std::collections::HashMap<String, f64>,
     /// Unified USDC available across chains (from Gateway).

@@ -8,8 +8,8 @@
 //! Decisions encoded here:
 //!
 //! - A symbol lands on its registry canonical chain (`tokens::native_chain`):
-//!   USYC on Arc; everything else (incl. EURC, which trades on the permissionless
-//!   Base USDC/EURC pool) defaults to Base (Uniswap V3 / Aerodrome venue).
+//!   USYC on Arc; everything else (incl. EURC, when a permissionless Base
+//!   USDC/EURC pool is configured) defaults to Base's V3-compatible venue.
 //! - A buy that needs USDC on Base while liquidity is on Arc emits a
 //!   `cross_chain_burn` + `cross_chain_mint` pair instead of two legs.
 //! - Sells route through `redeem_usyc` (USYC → USDC) or a local swap into USDC
@@ -26,17 +26,12 @@ use std::collections::HashMap;
 use super::models::{ChainKey, LegKind, PlanInput, PlannedLeg};
 use crate::domain::token::native_chain;
 
-/// Compute the minimum set of legs to bring `current_weights` to
-/// `target_weights`. Returns an empty Vec if no leg exceeds the drift / dust
-/// thresholds — that's the no-op signal callers expect.
-pub fn plan_legs(input: &PlanInput) -> Vec<PlannedLeg> {
+/// Ordered, filtered set of symbol deltas for a plan: sells first (so they
+/// free USDC for buys), USYC last among buys (Teller failures at the tail
+/// don't block earlier legs), dust/drift bands applied. Shared by both the
+/// heuristic planner and the routing-engine planner.
+pub(crate) fn sorted_plan_deltas(input: &PlanInput) -> Vec<SymbolDelta> {
     let idle_total: f64 = input.usdc_per_chain.values().copied().sum();
-
-    // First-deploy: a freshly-funded user has zero invested positions but real
-    // USDC sitting in Gateway. `portfolio_value_usd` is the planning basis
-    // after idle USDC is included, so detect this from current exposure rather
-    // than total basis. Otherwise a target USDC sleeve becomes a bogus
-    // USDC->USDC buy leg.
     let has_current_exposure = input
         .current_weights
         .values()
@@ -51,12 +46,6 @@ pub fn plan_legs(input: &PlanInput) -> Vec<PlannedLeg> {
         symbol_deltas(input)
     };
 
-    // "Let winners run" — regime-aware asymmetric drift bands. A winner that
-    // grew above its target produces a SELL delta (weight_drift < 0); in
-    // `risk_on` we widen its band so we don't trim a rallying position too
-    // eagerly, and in `risk_off` we tighten it to de-risk sooner. Buys (adding
-    // to underweight sleeves, weight_drift > 0) always use the base threshold.
-    // First-deploy is exempt (every leg should fire).
     let (sell_band, buy_band) = if first_deploy {
         (0.0, 0.0)
     } else {
@@ -66,13 +55,9 @@ pub fn plan_legs(input: &PlanInput) -> Vec<PlannedLeg> {
             _ => (input.drift_threshold, input.drift_threshold),
         }
     };
+
     let mut deltas: Vec<SymbolDelta> = deltas_source
         .into_iter()
-        // USDC is the settlement unit, not a tradeable position. A USDC weight
-        // delta is absorbed by the other legs (buys consume USDC, sells produce
-        // it), never its own USDC->USDC swap. `first_deploy_deltas` already drops
-        // it; `symbol_deltas` does not, so an over-weight USDC sleeve would emit a
-        // bogus self-swap the adapter rejects ("USDC<->token swaps only").
         .filter(|d| !d.symbol.eq_ignore_ascii_case("USDC"))
         .filter(|d| {
             let band = if d.weight_drift < 0.0 {
@@ -85,16 +70,6 @@ pub fn plan_legs(input: &PlanInput) -> Vec<PlannedLeg> {
         .filter(|d| d.value_delta_usd.abs() >= input.dust_threshold_usd)
         .collect();
 
-    if deltas.is_empty() {
-        return Vec::new();
-    }
-
-    // Sells first (negative deltas) so they free up USDC for same-plan buys.
-    // Among buys: USYC is routed *last*. Its final leg calls an external
-    // integration (Hashnote Teller) — when that reverts on testnet the executor
-    // halts the plan, so putting it at the tail keeps a Teller failure from
-    // blocking the BTC/ETH/SOL/EURC legs. EURC now trades on the Base DEX like
-    // the volatiles, so it is no longer deferred.
     deltas.sort_by(|a, b| {
         use std::cmp::Ordering;
         let a_sell = a.value_delta_usd < 0.0;
@@ -121,17 +96,28 @@ pub fn plan_legs(input: &PlanInput) -> Vec<PlannedLeg> {
         }
     });
 
+    deltas
+}
+
+/// Heuristic hub-and-spoke planner. Produces `PlannedLeg`s with `deps: vec![]`
+/// (sequential ordering by leg_index). Kept for planner unit tests and the
+/// approval staleness check. Real execution uses `routing::engine_plan_legs`
+/// which calls the routing engine and sets explicit DAG deps.
+pub fn plan_legs(input: &PlanInput) -> Vec<PlannedLeg> {
+    let deltas = sorted_plan_deltas(input);
+    if deltas.is_empty() {
+        return Vec::new();
+    }
+
     let mut legs: Vec<PlannedLeg> = Vec::new();
     let mut next_idx: i32 = 0;
     let mut usdc_pool: HashMap<ChainKey, f64> = input.usdc_per_chain.clone();
 
     for d in &deltas {
         if d.value_delta_usd < 0.0 {
-            // Sell: convert non-USDC asset back to USDC on its native chain.
             append_sell_legs(&mut legs, &mut next_idx, d, &mut usdc_pool);
         }
     }
-
     for d in deltas.iter().filter(|d| d.value_delta_usd > 0.0) {
         append_buy_legs(&mut legs, &mut next_idx, d, &mut usdc_pool, &input.prices);
     }
@@ -140,10 +126,10 @@ pub fn plan_legs(input: &PlanInput) -> Vec<PlannedLeg> {
 }
 
 #[derive(Debug, Clone)]
-struct SymbolDelta {
-    symbol: String,
-    weight_drift: f64,
-    value_delta_usd: f64,
+pub(crate) struct SymbolDelta {
+    pub(crate) symbol: String,
+    pub(crate) weight_drift: f64,
+    pub(crate) value_delta_usd: f64,
 }
 
 /// First-deploy deltas: treat the idle USDC pool as the deployable capital and
@@ -206,6 +192,7 @@ fn append_sell_legs(
     };
     legs.push(PlannedLeg {
         leg_index: *next_idx,
+        deps: vec![],
         kind,
         src_chain: Some(chain),
         dest_chain: Some(chain),
@@ -292,8 +279,10 @@ fn append_buy_legs(
         // burn never carries a swap hook — a failed destination swap can't strand
         // bridged USDC at the executor waiting on a relay() the CCTP core never
         // calls. USYC's park leg below consumes the bridged USDC the same way.
+        let burn_idx = *next_idx;
         legs.push(PlannedLeg {
-            leg_index: *next_idx,
+            leg_index: burn_idx,
+            deps: vec![],
             kind: LegKind::CrossChainBurn,
             src_chain: Some(source_chain),
             dest_chain: Some(target_chain),
@@ -306,6 +295,7 @@ fn append_buy_legs(
 
         legs.push(PlannedLeg {
             leg_index: *next_idx,
+            deps: vec![burn_idx],
             kind: LegKind::CrossChainMint,
             src_chain: Some(source_chain),
             dest_chain: Some(target_chain),
@@ -384,6 +374,7 @@ fn push_acquire_leg(
     });
     legs.push(PlannedLeg {
         leg_index: *next_idx,
+        deps: vec![],
         kind,
         src_chain: Some(chain),
         dest_chain: Some(chain),
@@ -416,6 +407,7 @@ mod tests {
         PlanInput {
             portfolio_value_usd: portfolio_value,
             current_weights: weights(current),
+            token_values_by_chain: HashMap::new(),
             target_weights: weights(target),
             usdc_per_chain,
             drift_threshold: 0.05,
@@ -442,6 +434,7 @@ mod tests {
         let i = PlanInput {
             portfolio_value_usd: 100.0,
             current_weights: weights(&[("BTC", 0.95)]),
+            token_values_by_chain: HashMap::new(),
             target_weights: weights(&[("BTC", 0.85), ("ETH", 0.10)]),
             usdc_per_chain: HashMap::new(),
             drift_threshold: 0.01,
@@ -594,6 +587,7 @@ mod tests {
         let i = PlanInput {
             portfolio_value_usd: 0.0,
             current_weights: weights(&[]),
+            token_values_by_chain: HashMap::new(),
             target_weights: weights(&[("ETH", 1.0)]),
             usdc_per_chain,
             drift_threshold: 0.05,

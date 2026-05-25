@@ -9,8 +9,8 @@
 //! synthetic success.
 //!
 //! The venue is resolved per chain via `Config::chain(c).swap_router` /
-//! `.swap_quoter`: Base = Aerodrome Slipstream, OP = Velodrome,
-//! Eth/Arb = Uniswap V3. All three expose the same V3-style
+//! `.swap_quoter`: Base/Eth/Arb/OP currently use Uniswap V3-compatible
+//! deployments. These venues expose the same V3-style
 //! `exactInputSingle`/`exactOutputSingle` router + QuoterV2 surface, so the
 //! single `sol!` interface below works against any of their addresses. Avax's
 //! Trader Joe Liquidity Book (LB v2.2) uses a different `LBRouter` ABI (a
@@ -20,6 +20,8 @@
 //! Both directions are wired: buys (USDC → token) via `exactInputSingle` sized
 //! by the USDC budget, and sells (token → USDC) via `exactOutputSingle` sized
 //! by the USDC value the planner wants to realize (no token price needed).
+//! Route assessment can also ask for an exact-input sell quote to evaluate the
+//! best live exit for a finite wallet balance before any review is created.
 //! Anything that isn't a USDC↔token swap (or sits on a non-swap chain) fails
 //! closed upstream.
 
@@ -59,12 +61,21 @@ pub(super) const POOL_FEE: u32 = 3000;
 pub(super) const SLIPPAGE_BPS: u32 = 50;
 
 /// The V3 fee tiers probed for every USDC↔token pair, in canonical order
-/// (0.05% / 0.30% / 1.00%). Best-execution quotes each live pool and routes
+/// (0.01% / 0.05% / 0.30% / 1.00%). Best-execution quotes each live pool and routes
 /// through whichever gives the user the best fill — "different markets, highest
 /// amount." Compiled for the `real-swap` quoter loop and for the (always-on)
 /// selection unit tests.
 #[cfg(any(feature = "real-swap", test))]
-pub(super) const FEE_TIERS: [u32; 3] = [500, 3000, 10000];
+pub(super) const FEE_TIERS: [u32; 4] = [100, 500, 3000, 10000];
+
+/// Exact-input sell assessment result: the validated quote is executable as a
+/// token→USDC exact-input swap, while `expected_usdc_units` records the quoter's
+/// expected USDC output before the slippage haircut in `quote.min_out`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExactInputSellQuote {
+    pub quote: ValidatedQuote,
+    pub expected_usdc_units: u128,
+}
 
 /// Pick the best **buy** pool from per-tier `(fee_tier, amount_out)` quotes:
 /// the most token out, ties broken toward the cheaper (lower) fee tier.
@@ -288,9 +299,8 @@ fn swap_chain(leg: &RouteLeg) -> Option<ChainKey> {
         .filter(|c| c.is_execution())
 }
 
-/// Which on-chain DEX a swap leg routes through. The V3-style venues
-/// (Aerodrome/Velodrome/Uniswap V3) share one router ABI; Trader Joe LB on Avax
-/// has its own.
+/// Which on-chain DEX a swap leg routes through. V3-compatible venues share one
+/// router ABI; Trader Joe LB on Avax has its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SwapVenue {
     /// Uniswap-V3-compatible `exactInputSingle`/`exactOutputSingle` venue.
@@ -357,6 +367,45 @@ pub async fn quote(cfg: &Config, leg: &RouteLeg, now: DateTime<Utc>) -> Result<V
     }
 }
 
+/// Quote the best token→USDC route for an exact token input. This is used by
+/// live route assessment to determine whether any safe sale exists before Aegis
+/// creates an approval plan. Execution still mints a fresh quote at dispatch.
+pub async fn quote_sell_exact_input_units(
+    cfg: &Config,
+    chain: ChainKey,
+    token_symbol: &str,
+    amount_in_units: u128,
+    now: DateTime<Utc>,
+) -> Result<ExactInputSellQuote> {
+    #[cfg(not(feature = "real-swap"))]
+    {
+        let _ = (cfg, chain, token_symbol, amount_in_units, now);
+        Err(AppError::Internal(anyhow::anyhow!(
+            "real-swap feature not enabled; build with --features real-swap"
+        )))
+    }
+
+    #[cfg(feature = "real-swap")]
+    {
+        match swap_venue(chain) {
+            SwapVenue::UniswapV3 => {
+                uniswap::real_quote_sell_exact_input(cfg, chain, token_symbol, amount_in_units, now)
+                    .await
+            }
+            SwapVenue::TraderJoeLb => {
+                trader_joe::lb_quote_sell_exact_input(
+                    cfg,
+                    chain,
+                    token_symbol,
+                    amount_in_units,
+                    now,
+                )
+                .await
+            }
+        }
+    }
+}
+
 /// Execute a USDC↔token swap authorized by `ticket`. `db` + `user_id` are only
 /// read in the non-custodial (`circle_wallet_exec`) path, where the swap is
 /// submitted from the user's Circle developer-controlled wallet.
@@ -384,8 +433,8 @@ pub async fn execute(
 /// Resolve the four on-chain addresses a swap needs on `chain`: USDC, the
 /// non-USDC token's ERC-20, the V3-compatible router, and the quoter. Every
 /// lookup goes through the per-chain `Config` helpers, so the same code path
-/// serves Base (Aerodrome), OP (Velodrome), and Eth/Arb (Uniswap V3). Any
-/// unconfigured address fails closed here rather than reaching the venue.
+/// serves every configured V3-compatible chain. Any unconfigured address fails
+/// closed here rather than reaching the venue.
 #[cfg(feature = "real-swap")]
 pub(super) fn swap_addresses(
     cfg: &Config,
@@ -502,8 +551,8 @@ mod tests {
 
     #[test]
     fn fee_tiers_are_the_canonical_ascending_v3_set() {
-        // 0.05% / 0.30% / 1.00% — the tiers the quoter probes for best execution.
-        assert_eq!(FEE_TIERS, [500, 3000, 10000]);
+        // 0.01% / 0.05% / 0.30% / 1.00% — every canonical V3 fee tier.
+        assert_eq!(FEE_TIERS, [100, 500, 3000, 10000]);
     }
 
     #[test]
@@ -522,7 +571,10 @@ mod tests {
 
     #[test]
     fn best_buy_tier_is_none_when_no_pool_has_liquidity() {
-        assert_eq!(best_buy_tier(&[(500, 0), (3000, 0), (10000, 0)]), None);
+        assert_eq!(
+            best_buy_tier(&[(100, 0), (500, 0), (3000, 0), (10000, 0)]),
+            None
+        );
         assert_eq!(best_buy_tier(&[]), None);
     }
 

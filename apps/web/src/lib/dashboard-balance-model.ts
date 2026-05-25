@@ -124,6 +124,7 @@ export function deriveDashboardBalanceModel({
   const walletBalanceLoading =
     gatewayBalanceStatus === "idle" || gatewayBalanceStatus === "loading";
   const walletBalanceUnavailable = gatewayBalanceStatus === "error";
+  const useLiveWalletTokenBalances = gatewayBalanceStatus === "ready";
   const routeRows = chainBalanceRows({
     perChainUsdc,
     perChainEurc,
@@ -137,22 +138,6 @@ export function deriveDashboardBalanceModel({
   const routeKeys: string[] = routeRows.map((row) => row.key);
   const walletByTokenByChain = new Map<string, Map<string, number>>();
   let liveInvestedUsd = 0;
-  const economicValueBySymbol = new Map(
-    positionMetrics.positions.map((position) => [
-      position.symbol,
-      position.valueUsd,
-    ]),
-  );
-  const extraQuantityBySymbol = new Map<string, number>();
-  for (const balances of Object.values(extraTokenBalancesByChain)) {
-    for (const [symbol, quantity] of Object.entries(balances)) {
-      if (!Number.isFinite(quantity) || quantity <= 0) continue;
-      extraQuantityBySymbol.set(
-        symbol,
-        (extraQuantityBySymbol.get(symbol) ?? 0) + quantity,
-      );
-    }
-  }
   const liveSymbols = new Set<string>();
 
   for (const row of routeRows) {
@@ -169,13 +154,13 @@ export function deriveDashboardBalanceModel({
     extraTokenBalancesByChain,
   )) {
     for (const [symbol, quantity] of Object.entries(balances)) {
-      const totalQuantity = extraQuantityBySymbol.get(symbol) ?? 0;
-      const economicValue = economicValueBySymbol.get(symbol);
-      const valueUsd =
-        economicValue !== undefined && totalQuantity > 0
-          ? economicValue * (quantity / totalQuantity)
-          : quantity *
-            priceUsdForSymbol(symbol, snapshot, preliminaryCashSplit.eurcUsd);
+      if (!Number.isFinite(quantity) || quantity <= 0) continue;
+      const markPriceUsd = priceUsdForSymbol(
+        symbol,
+        snapshot,
+        preliminaryCashSplit.eurcUsd,
+      );
+      const valueUsd = quantity * markPriceUsd;
       liveInvestedUsd += valueUsd;
       if (valueUsd > 0.005) liveSymbols.add(symbol);
       addWalletTokenValue(walletByTokenByChain, symbol, chainKey, valueUsd);
@@ -184,25 +169,27 @@ export function deriveDashboardBalanceModel({
       }
     }
   }
-  for (const position of positionMetrics.positions) {
-    if (
-      position.valueUsd <= 0.005 ||
-      liveSymbols.has(position.symbol) ||
-      isCashSymbol(position.symbol)
-    ) {
-      continue;
-    }
-    const fallbackChain = "base";
-    addWalletTokenValue(
-      walletByTokenByChain,
-      position.symbol,
-      fallbackChain,
-      position.valueUsd,
-    );
-    liveInvestedUsd += position.valueUsd;
-    liveSymbols.add(position.symbol);
-    if (!routeKeys.includes(fallbackChain)) {
-      routeKeys.push(fallbackChain);
+  if (!useLiveWalletTokenBalances) {
+    for (const position of positionMetrics.positions) {
+      if (
+        position.valueUsd <= 0.005 ||
+        liveSymbols.has(position.symbol) ||
+        isCashSymbol(position.symbol)
+      ) {
+        continue;
+      }
+      const fallbackChain = "base";
+      addWalletTokenValue(
+        walletByTokenByChain,
+        position.symbol,
+        fallbackChain,
+        position.valueUsd,
+      );
+      liveInvestedUsd += position.valueUsd;
+      liveSymbols.add(position.symbol);
+      if (!routeKeys.includes(fallbackChain)) {
+        routeKeys.push(fallbackChain);
+      }
     }
   }
 
@@ -247,9 +234,11 @@ export function deriveDashboardBalanceModel({
   }
 
   const hasLiveInvestedBalances = liveInvestedUsd > 0.005;
-  const investedUsd = hasLiveInvestedBalances
+  const investedUsd = useLiveWalletTokenBalances
     ? liveInvestedUsd
-    : positionMetrics.investedUsd;
+    : hasLiveInvestedBalances
+      ? liveInvestedUsd
+      : positionMetrics.investedUsd;
   const cashSplit = deriveCashSplit({
     unifiedUsdc,
     unifiedEurc,
@@ -268,7 +257,7 @@ export function deriveDashboardBalanceModel({
     targetAllocations.map((row) => [row.symbol, row.targetWeight]),
   );
   const investedBySymbol = new Map<string, number>();
-  if (!hasLiveInvestedBalances) {
+  if (!useLiveWalletTokenBalances && !hasLiveInvestedBalances) {
     for (const position of positionMetrics.positions ?? []) {
       investedBySymbol.set(
         position.symbol,
@@ -451,19 +440,19 @@ function deriveStatus({
       tone: "agent",
     };
   }
+  if (hasInvestedPositions && hasReviewableDrift && hasAgentTarget) {
+    return {
+      label: "Drift needs review",
+      detail: "Positions moved far enough from target to review a plan.",
+      tone: "warn",
+    };
+  }
   if (deployableUsd > 5 && hasAgentTarget) {
     return {
       label: hasInvestedPositions
         ? "Ready to rebalance"
         : "Awaiting first approval",
       detail: "Deployable wallet cash is ready for a review plan.",
-      tone: "warn",
-    };
-  }
-  if (hasInvestedPositions && hasReviewableDrift && deployableUsd > 5) {
-    return {
-      label: "Drift needs review",
-      detail: "Positions moved far enough from target to review a plan.",
       tone: "warn",
     };
   }

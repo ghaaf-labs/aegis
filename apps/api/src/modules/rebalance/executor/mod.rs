@@ -28,6 +28,7 @@ pub use stranding::{remaining_delta_after_strand, RemainingDelta, StrandedLeg};
 use dispatch::{dispatch, LegDispatch};
 
 use chrono::Utc;
+use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::error::{AppError, Result};
@@ -82,10 +83,6 @@ pub async fn create_plan(
     .await?;
 
     for leg in legs {
-        // Stamp the deterministic idempotency key at plan time so a resumed or
-        // retried walk recomputes the same value and the UNIQUE index rejects a
-        // double-submit. The key is fixed by the plan, not by the submit, so it
-        // is stable across attempts.
         let idempotency_key = idempotency_key_for_leg(
             rebalance_id,
             leg.leg_index,
@@ -96,12 +93,13 @@ pub async fn create_plan(
         );
         sqlx::query(
             "INSERT INTO rebalance_legs
-               (rebalance_id, leg_index, kind, src_chain, dest_chain,
+               (rebalance_id, leg_index, depends_on, kind, src_chain, dest_chain,
                 src_symbol, dest_symbol, amount_usdc, min_out, status, idempotency_key)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', $10)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11)",
         )
         .bind(rebalance_id)
         .bind(leg.leg_index)
+        .bind(&leg.deps)
         .bind(leg.kind.as_str())
         .bind(leg.src_chain.map(|c| c.as_str()))
         .bind(leg.dest_chain.map(|c| c.as_str()))
@@ -133,6 +131,12 @@ pub async fn create_plan(
         }));
 
     Ok(rebalance_id)
+}
+
+fn leg_with_executed_amount(leg: &LegRow, executed_amount_usdc: Decimal) -> LegRow {
+    let mut out = leg.clone();
+    out.amount_usdc = executed_amount_usdc;
+    out
 }
 
 /// Sum the Paymaster fee estimate across distinct chains a plan touches.
@@ -259,6 +263,64 @@ pub(super) async fn user_for_portfolio(state: &AppState, portfolio_id: Uuid) -> 
     Ok(user_id)
 }
 
+/// Kahn's topological sort over `legs` using `LegRow::depends_on`. Returns
+/// the positions in `legs` in a valid execution order (all deps before their
+/// dependents). Returns `Err` if the depends_on graph has a cycle (cannot
+/// happen with well-formed plans — would indicate a planning bug).
+fn topological_leg_order(legs: &[LegRow]) -> Result<Vec<usize>> {
+    // Map: leg_index → position in `legs` array.
+    let idx_to_pos: std::collections::HashMap<i32, usize> = legs
+        .iter()
+        .enumerate()
+        .map(|(pos, l)| (l.leg_index, pos))
+        .collect();
+
+    let n = legs.len();
+    let mut indegree = vec![0usize; n];
+    let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); n];
+
+    for (pos, leg) in legs.iter().enumerate() {
+        for &dep_idx in &leg.depends_on {
+            let Some(&dep_pos) = idx_to_pos.get(&dep_idx) else {
+                return Err(AppError::Internal(anyhow::anyhow!(
+                    "rebalance leg {} depends on missing leg {dep_idx}",
+                    leg.leg_index
+                )));
+            };
+            indegree[pos] += 1;
+            dependents[dep_pos].push(pos);
+        }
+    }
+
+    // Start with all legs that have no unmet deps (sorted for determinism).
+    let mut ready: Vec<usize> = (0..n).filter(|&i| indegree[i] == 0).collect();
+    ready.sort_unstable();
+    let mut order = Vec::with_capacity(n);
+
+    while let Some(&pos) = ready.first() {
+        ready.remove(0);
+        order.push(pos);
+        let mut newly_ready: Vec<usize> = dependents[pos]
+            .iter()
+            .copied()
+            .filter(|&d| {
+                indegree[d] -= 1;
+                indegree[d] == 0
+            })
+            .collect();
+        newly_ready.sort_unstable();
+        ready.extend(newly_ready);
+        ready.sort_unstable();
+    }
+
+    if order.len() != n {
+        return Err(AppError::Internal(anyhow::anyhow!(
+            "rebalance leg DAG has a cycle — plan is malformed"
+        )));
+    }
+    Ok(order)
+}
+
 async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Result<()> {
     let portfolio_id: Uuid =
         sqlx::query_scalar("SELECT portfolio_id FROM rebalances WHERE id = $1")
@@ -267,7 +329,7 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
             .await?;
 
     let legs: Vec<LegRow> = sqlx::query_as(
-        "SELECT id, leg_index, kind, src_chain, dest_chain, src_symbol,
+        "SELECT id, leg_index, depends_on, kind, src_chain, dest_chain, src_symbol,
                 dest_symbol, amount_usdc, min_out, status, attempt_count
          FROM rebalance_legs
          WHERE rebalance_id = $1
@@ -277,11 +339,17 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
     .fetch_all(&state.db)
     .await?;
 
-    // Track which legs have already settled this run so a failure can decide
-    // whether funds moved (and the leg should strand) or not.
+    // Build a topological execution order from the explicit `depends_on` DAG.
+    // Legs with no deps start immediately; a leg becomes ready once every leg
+    // in its `depends_on` list has been processed. This replaces the implicit
+    // `leg_index` ordering and allows honest concurrency within independent
+    // routes (future work) while guaranteeing CCTP mint waits on its burn.
+    let topo_order = topological_leg_order(&legs)?;
+
     let mut confirmed_so_far: Vec<LegRow> = Vec::new();
 
-    for leg in &legs {
+    for pos in topo_order {
+        let leg = &legs[pos];
         let kind = parse_kind(&leg.kind)?;
 
         // Reconcile-on-restart: a resumed or retried walk must never re-submit a
@@ -350,6 +418,7 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
         let LegDispatch {
             tx_hash,
             cctp_hash,
+            executed_amount_usdc,
             filled_qty,
         } = match dispatch(state, rebalance_id, kind, leg, user_id).await {
             Ok(v) => v,
@@ -370,23 +439,24 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
                 return Err(e);
             }
         };
+        let executed_leg = leg_with_executed_amount(leg, executed_amount_usdc);
 
         mark_leg_confirmed(
             state,
             rebalance_id,
             leg.id,
             user_id,
-            leg,
+            &executed_leg,
             &tx_hash,
             cctp_hash.as_deref(),
         )
         .await?;
-        confirmed_so_far.push(leg.clone());
+        confirmed_so_far.push(executed_leg.clone());
 
         // Mirror the confirmed leg into the holdings ledger (sell reduces /
         // buy increments the allocation, recompute totals once). Without this
         // Portfolio Value stays $0 after real swaps confirm.
-        ledger::apply_leg_writeback(state, portfolio_id, kind, leg, filled_qty).await;
+        ledger::apply_leg_writeback(state, portfolio_id, kind, &executed_leg, filled_qty).await;
 
         sqlx::query(
             "UPDATE rebalances
@@ -411,9 +481,89 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
     // CCTP mint legs are the receive-side accounting event for a burn leg, not
     // a second user-initiated movement. Billing them would double-charge bridge
     // plans and disagree with the review UI/history totals.
-    let plan_total = protocol_fee_notional_from_legs(&legs);
+    let plan_total = protocol_fee_notional_from_legs(&confirmed_so_far);
     crate::modules::observability::counters::record_rebalance_succeeded(plan_total);
     ledger::settle_protocol_fee(state, rebalance_id, portfolio_id, plan_total).await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod dependency_tests {
+    use rust_decimal::prelude::{FromPrimitive, ToPrimitive};
+
+    use crate::modules::rebalance::models::LegKind;
+
+    use super::{
+        leg_with_executed_amount,
+        legs::test_helpers::{make_leg, make_swap_leg},
+        stranding::protocol_fee_notional_from_legs,
+        topological_leg_order,
+    };
+
+    #[test]
+    fn topological_order_respects_explicit_dependencies() {
+        let mut burn = make_leg(LegKind::CrossChainBurn, 100.0);
+        burn.leg_index = 10;
+        let mut mint = make_leg(LegKind::CrossChainMint, 100.0);
+        mint.leg_index = 20;
+        mint.depends_on = vec![10];
+
+        let order = topological_leg_order(&[mint, burn]).expect("valid DAG");
+        assert_eq!(
+            order,
+            vec![1, 0],
+            "burn position must precede mint position"
+        );
+    }
+
+    #[test]
+    fn topological_order_rejects_missing_dependencies() {
+        let mut mint = make_leg(LegKind::CrossChainMint, 100.0);
+        mint.leg_index = 1;
+        mint.depends_on = vec![999];
+
+        let err = topological_leg_order(&[mint]).expect_err("missing dep must fail closed");
+        assert!(
+            format!("{err}").contains("missing leg 999"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn topological_order_rejects_cycles() {
+        let mut a = make_leg(LegKind::LocalSwap, 100.0);
+        a.leg_index = 1;
+        a.depends_on = vec![2];
+        let mut b = make_leg(LegKind::LocalSwap, 100.0);
+        b.leg_index = 2;
+        b.depends_on = vec![1];
+
+        let err = topological_leg_order(&[a, b]).expect_err("cycle must fail closed");
+        assert!(
+            format!("{err}").contains("cycle"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn executed_amount_replaces_planned_amount_for_confirmed_accounting() {
+        let planned_burn = make_leg(LegKind::CrossChainBurn, 100.0);
+        let planned_mint = make_leg(LegKind::CrossChainMint, 100.0);
+        let planned_swap = make_swap_leg("USDC", "ETH");
+        let actual = rust_decimal::Decimal::from_f64(87.5).unwrap();
+
+        let burn = leg_with_executed_amount(&planned_burn, actual);
+        let mint = leg_with_executed_amount(&planned_mint, actual);
+        let swap = leg_with_executed_amount(&planned_swap, actual);
+
+        assert_eq!(burn.amount_usdc.to_f64(), Some(87.5));
+        assert_eq!(mint.amount_usdc.to_f64(), Some(87.5));
+        assert_eq!(swap.amount_usdc.to_f64(), Some(87.5));
+        assert_eq!(
+            protocol_fee_notional_from_legs(&[burn, mint, swap]),
+            175.0,
+            "confirmed accounting must bill the executed burn+swap, not the original planned 100+100"
+        );
+    }
 }

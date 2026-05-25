@@ -1,6 +1,7 @@
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
+use crate::domain::units::base_units_to_whole_token;
 use crate::error::{AppError, Result};
 use crate::modules::rebalance::models::{ChainKey, LegKind};
 use crate::modules::rebalance::quote::ValidatedQuote;
@@ -11,6 +12,9 @@ use crate::modules::wallet_routes;
 pub(super) struct LegRow {
     pub(super) id: Uuid,
     pub(super) leg_index: i32,
+    /// Explicit DAG dependencies: leg_index values that must confirm before
+    /// this leg can be dispatched (migration 0009). Empty = no prerequisites.
+    pub(super) depends_on: Vec<i32>,
     pub(super) kind: String,
     pub(super) src_chain: Option<String>,
     pub(super) dest_chain: Option<String>,
@@ -22,13 +26,8 @@ pub(super) struct LegRow {
     /// USDC bridges. Used to size the hook's `min_out`.
     pub(super) min_out: Option<Decimal>,
     /// Per-leg state-machine status (`pending`/`submitted`/`confirmed`/`failed`).
-    /// Read on every walk so a resumed plan can skip legs already confirmed
-    /// rather than re-submitting them. NOT NULL DEFAULT in the schema.
     pub(super) status: String,
     /// How many times this leg has been submitted (bumped before each dispatch).
-    /// Read on every walk so a persistently-reverting leg can be capped at
-    /// `MAX_LEG_ATTEMPTS` rather than re-dispatching forever across resumes.
-    /// NOT NULL DEFAULT 0 (migration 0038).
     pub(super) attempt_count: i32,
 }
 
@@ -67,7 +66,7 @@ pub(super) fn quote_filled_qty(quote: &ValidatedQuote) -> Option<f64> {
         return None;
     }
     let decimals = tokens::token(symbol)?.decimals;
-    let qty = quote.expected_asset_units as f64 / 10f64.powi(i32::from(decimals));
+    let qty = base_units_to_whole_token(quote.expected_asset_units, decimals);
     (qty.is_finite() && qty > 0.0).then_some(qty)
 }
 
@@ -132,6 +131,7 @@ pub(super) mod test_helpers {
         LegRow {
             id: Uuid::new_v4(),
             leg_index: 0,
+            depends_on: vec![],
             kind: kind.as_str().to_string(),
             src_chain: None,
             dest_chain: None,
@@ -148,6 +148,7 @@ pub(super) mod test_helpers {
         LegRow {
             id: Uuid::new_v4(),
             leg_index: 0,
+            depends_on: vec![],
             kind: LegKind::LocalSwap.as_str().to_string(),
             src_chain: Some(ChainKey::Base.as_str().to_string()),
             dest_chain: Some(ChainKey::Base.as_str().to_string()),
@@ -164,6 +165,7 @@ pub(super) mod test_helpers {
         LegRow {
             id: Uuid::new_v4(),
             leg_index: 1,
+            depends_on: vec![0],
             kind: LegKind::CrossChainMint.as_str().to_string(),
             src_chain: Some(ChainKey::Arc.as_str().to_string()),
             dest_chain: Some(dest.as_str().to_string()),

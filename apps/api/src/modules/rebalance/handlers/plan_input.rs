@@ -100,10 +100,15 @@ pub(super) async fn build_plan_input(
     // wallet's sellable holdings (INV-1, ground truth) so overweight positions
     // can be sold, not just topped up; an empty wallet is naturally cash-only.
     // Mock/EOA: the persisted allocation book (confirmed marks, else stale %).
+    let token_values_by_chain = if real_circle {
+        wallet_holding_values_by_chain(&balance, &prices, &executable)
+    } else {
+        HashMap::new()
+    };
     let (mode, marked_allocations, frozen_value_usd) = if real_circle {
         (
             ValuationMode::WalletHoldings,
-            wallet_holdings_marked(&balance, &prices, &executable),
+            wallet_holdings_marked(&token_values_by_chain),
             // Track-only holdings: real value the planner can't trade, counted
             // into NAV so targets aren't sized against an understated portfolio.
             frozen_holdings_value(&balance, &prices, &executable),
@@ -149,6 +154,7 @@ pub(super) async fn build_plan_input(
         PlanInput {
             portfolio_value_usd: valuation.plan_value_usd,
             current_weights: valuation.current_weights,
+            token_values_by_chain,
             target_weights,
             usdc_per_chain,
             drift_threshold: 0.05,
@@ -309,7 +315,7 @@ pub(super) fn marked_allocation_value(
 
 pub(super) fn stable_planning_price(symbol: &str) -> Option<f64> {
     match symbol {
-        "USDC" | "USYC" => Some(1.0),
+        "USDC" | "USYC" | "EURC" => Some(1.0),
         _ => None,
     }
 }
@@ -500,28 +506,17 @@ fn usdc_pool_from_balance(
     pool
 }
 
-/// Value the wallet's non-USDC token holdings as the planner's current book
-/// (the real Circle path's ground truth — INV-1), so an overweight position can
-/// be *sold* down to target, not just topped up with idle USDC.
-///
-/// Only **executable** tokens are valued: a holding the executor cannot sell
-/// (no live route — e.g. real-swap off, or a track-only token) is left out of
-/// the rebalancing basis entirely, so the planner can never emit a sell leg that
-/// would fail closed. This makes valuing-holdings and sell-ability one decision
-/// and keeps the cash-only behaviour intact whenever nothing is sellable.
-///
-/// A holding is valued **only on the chain its sell leg will execute on** — the
-/// planner sells on `native_chain(symbol)` (e.g. ETH on Base), so a balance of
-/// the same token sitting on another chain (Eth/Arb/Avax) is not counted: it
-/// could not be sold on the native chain and would oversize the sell into an
-/// `INSUFFICIENT_TOKEN` revert. Valuation and the sell venue are one chain.
-/// Returns `(symbol, 0.0 stale-weight, marked_value_usd)` rows for `derive_valuation`.
-fn wallet_holdings_marked(
+/// Value the wallet's non-USDC token holdings by actual holding chain. Only
+/// executable tokens are included: a holding the executor cannot sell (no live
+/// route, feature off, or track-only token) is left out of the rebalancing basis
+/// so the planner can never emit a doomed sell leg. The chain dimension is kept
+/// for the route planner, which sells from the chain where funds really sit.
+fn wallet_holding_values_by_chain(
     balance: &crate::modules::gateway::service::GatewayBalance,
     prices: &HashMap<String, f64>,
     executable: &[&str],
-) -> Vec<(String, f64, f64)> {
-    let mut qty_by_symbol: HashMap<String, f64> = HashMap::new();
+) -> HashMap<String, HashMap<ChainKey, f64>> {
+    let mut values: HashMap<String, HashMap<ChainKey, f64>> = HashMap::new();
     for (chain_str, tokens) in &balance.token_balances_by_chain {
         let Some(chain) = ChainKey::parse(&chain_str.to_lowercase()) else {
             continue;
@@ -529,23 +524,62 @@ fn wallet_holdings_marked(
         for (symbol, qty) in tokens {
             if symbol.eq_ignore_ascii_case("USDC")
                 || !executable.iter().any(|e| e.eq_ignore_ascii_case(symbol))
-                || native_chain(symbol) != chain
             {
                 continue;
             }
-            *qty_by_symbol.entry(symbol.clone()).or_insert(0.0) += *qty;
+            let Some(price) = prices
+                .get(symbol)
+                .copied()
+                .or_else(|| stable_planning_price(symbol))
+                .filter(|p| p.is_finite() && *p > 0.0)
+            else {
+                continue;
+            };
+            let value = qty * price;
+            if value > 0.0 {
+                *values
+                    .entry(symbol.clone())
+                    .or_default()
+                    .entry(chain)
+                    .or_insert(0.0) += value;
+            }
         }
     }
-    let mut marked: Vec<(String, f64, f64)> = qty_by_symbol
-        .into_iter()
-        .filter_map(|(symbol, qty)| {
-            let price = prices
-                .get(&symbol)
+    if executable.iter().any(|e| e.eq_ignore_ascii_case("EURC")) {
+        for (chain_str, qty) in &balance.per_chain_eurc {
+            let Some(chain) = ChainKey::parse(&chain_str.to_lowercase()) else {
+                continue;
+            };
+            let Some(price) = prices
+                .get("EURC")
                 .copied()
-                .or_else(|| stable_planning_price(&symbol))?;
+                .or_else(|| stable_planning_price("EURC"))
+                .filter(|p| p.is_finite() && *p > 0.0)
+            else {
+                continue;
+            };
             let value = qty * price;
-            (price.is_finite() && value > 0.0).then_some((symbol, 0.0, value))
-        })
+            if value > 0.0 {
+                *values
+                    .entry("EURC".to_string())
+                    .or_default()
+                    .entry(chain)
+                    .or_insert(0.0) += value;
+            }
+        }
+    }
+    values
+}
+
+/// Collapse chain-level wallet values to `(symbol, stale_weight, value)` rows
+/// for valuation. The chain map remains on `PlanInput` for sell routing.
+fn wallet_holdings_marked(
+    token_values_by_chain: &HashMap<String, HashMap<ChainKey, f64>>,
+) -> Vec<(String, f64, f64)> {
+    let mut marked: Vec<(String, f64, f64)> = token_values_by_chain
+        .iter()
+        .map(|(symbol, by_chain)| (symbol.clone(), 0.0, by_chain.values().sum()))
+        .filter(|(_, _, value): &(String, f64, f64)| value.is_finite() && *value > 0.0)
         .collect();
     marked.sort_by(|a, b| a.0.cmp(&b.0));
     marked
@@ -581,6 +615,8 @@ fn frozen_holdings_value(
 #[derive(sqlx::FromRow)]
 struct ReservationLegRow {
     rebalance_id: Uuid,
+    leg_index: i32,
+    depends_on: Vec<i32>,
     kind: String,
     src_chain: Option<String>,
     dest_chain: Option<String>,
@@ -597,7 +633,7 @@ async fn subtract_active_reservations(
     pool: &mut HashMap<ChainKey, f64>,
 ) -> Result<()> {
     let rows: Vec<ReservationLegRow> = sqlx::query_as(
-        "SELECT l.rebalance_id, l.kind, l.src_chain, l.dest_chain, l.amount_usdc
+        "SELECT l.rebalance_id, l.leg_index, l.depends_on, l.kind, l.src_chain, l.dest_chain, l.amount_usdc
          FROM rebalance_legs l
          JOIN rebalances r ON r.id = l.rebalance_id
          JOIN portfolios p ON p.id = r.portfolio_id
@@ -618,6 +654,8 @@ async fn subtract_active_reservations(
             .entry(row.rebalance_id)
             .or_default()
             .push(ReservationLeg {
+                leg_index: row.leg_index,
+                depends_on: row.depends_on,
                 kind: row.kind,
                 src_chain: row
                     .src_chain
@@ -704,28 +742,30 @@ mod tests {
     }
 
     #[test]
-    fn wallet_holdings_marked_values_only_the_native_chain_balance() {
+    fn wallet_holding_values_preserves_actual_holding_chains() {
         use crate::modules::gateway::service::GatewayBalance;
         let mut balance = GatewayBalance::default();
         balance.token_balances_by_chain.insert(
             "base".to_string(),
             HashMap::from([("ETH".to_string(), 0.5), ("RANDO".to_string(), 100.0)]),
         );
-        // Same token on a non-native chain (ETH→Base, so Arc ETH can't be sold
-        // on Base): must be EXCLUDED, or the Base sell leg oversizes (P1 fix).
         balance.token_balances_by_chain.insert(
             "arc".to_string(),
             HashMap::from([("ETH".to_string(), 0.25)]),
         );
         let prices = HashMap::from([("ETH".to_string(), 2000.0), ("RANDO".to_string(), 1.0)]);
 
-        let marked = wallet_holdings_marked(&balance, &prices, &["ETH"]);
+        let values = wallet_holding_values_by_chain(&balance, &prices, &["ETH"]);
+        let marked = wallet_holdings_marked(&values);
 
         // RANDO is not executable → never in the basis (no doomed sell leg).
-        // ETH counted only on Base (0.5 × $2000 = $1000); the 0.25 Arc ETH dropped.
+        // ETH is valued on every chain where it is held; sell routing later
+        // consumes this map so the leg originates from the actual chain.
         assert_eq!(marked.len(), 1);
         assert_eq!(marked[0].0, "ETH");
-        assert!((marked[0].2 - 1000.0).abs() < 1e-9);
+        assert!((marked[0].2 - 1500.0).abs() < 1e-9);
+        assert!((values["ETH"][&ChainKey::Base] - 1000.0).abs() < 1e-9);
+        assert!((values["ETH"][&ChainKey::Arc] - 500.0).abs() < 1e-9);
     }
 
     #[test]

@@ -1,14 +1,17 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use rust_decimal::prelude::ToPrimitive;
 use uuid::Uuid;
 
 use crate::error::{AppError, Result};
-use crate::modules::rebalance::models::PlannedLeg;
+use crate::modules::rebalance::models::{PlanInput, PlannedLeg};
 use crate::modules::wallet_routes;
 use crate::router::AppState;
 
-use super::{approval::legs_match_current, LegView, PlanLegView, PlanResponse, RebalanceView};
+use super::{
+    approval::legs_match_current, outcome::DeferredTarget, LegView, PlanLegView, PlanResponse,
+    RebalanceView,
+};
 
 pub(super) async fn own_portfolio_or_404(
     state: &AppState,
@@ -178,6 +181,146 @@ pub(super) fn execution_mode(state: &AppState) -> &'static str {
     }
 }
 
+pub(super) struct RouteShapedPlan {
+    pub input: PlanInput,
+    pub legs: Vec<PlannedLeg>,
+    pub route_deferred: Vec<DeferredTarget>,
+    pub blocked_message: Option<String>,
+}
+
+/// Build the deterministic plan, remove unsafe live sell routes from the input,
+/// and re-plan. This is the first route-quality feedback loop: unsafe trims are
+/// frozen, while independent safe buys/bridges can still proceed.
+pub(super) async fn route_shaped_plan(
+    state: &AppState,
+    user_id: Uuid,
+    input: PlanInput,
+) -> Result<RouteShapedPlan> {
+    let initial_legs = crate::modules::rebalance::routing::engine_plan_legs(&state.config, &input);
+    let blocks = crate::modules::rebalance::route_assessment::live_route_blocks(
+        state,
+        user_id,
+        &input,
+        &initial_legs,
+    )
+    .await?;
+    if blocks.is_empty() {
+        return Ok(RouteShapedPlan {
+            input,
+            legs: initial_legs,
+            route_deferred: Vec::new(),
+            blocked_message: None,
+        });
+    }
+
+    let (adjusted, route_deferred) = freeze_blocked_routes(input, &blocks);
+
+    let legs = crate::modules::rebalance::routing::engine_plan_legs(&state.config, &adjusted);
+    let residual_blocks = crate::modules::rebalance::route_assessment::live_route_blocks(
+        state, user_id, &adjusted, &legs,
+    )
+    .await?;
+    let blocked_message = if !residual_blocks.is_empty() {
+        Some(join_unique_route_block_messages(&residual_blocks, &blocks))
+    } else {
+        None
+    };
+
+    Ok(RouteShapedPlan {
+        input: adjusted,
+        legs,
+        route_deferred,
+        blocked_message,
+    })
+}
+
+fn freeze_blocked_routes(
+    mut input: PlanInput,
+    blocks: &[crate::modules::rebalance::route_assessment::RouteBlock],
+) -> (PlanInput, Vec<DeferredTarget>) {
+    let mut route_deferred = Vec::new();
+    for block in blocks {
+        let original_target = input.target_weights.get(&block.symbol).copied();
+        let current_weight = input
+            .current_weights
+            .get(&block.symbol)
+            .copied()
+            .unwrap_or(0.0);
+        match block.side {
+            crate::modules::rebalance::route_assessment::RouteBlockSide::Sell => {
+                freeze_blocked_sell_source(&mut input, block);
+            }
+            crate::modules::rebalance::route_assessment::RouteBlockSide::Buy => {
+                input
+                    .target_weights
+                    .insert(block.symbol.clone(), current_weight);
+                input
+                    .current_weights
+                    .insert(block.symbol.clone(), current_weight);
+            }
+        }
+        route_deferred.push(DeferredTarget {
+            symbol: block.symbol.clone(),
+            target_weight: original_target.unwrap_or(current_weight),
+            reason: block.message.clone(),
+        });
+    }
+    (input, route_deferred)
+}
+
+fn freeze_blocked_sell_source(
+    input: &mut PlanInput,
+    block: &crate::modules::rebalance::route_assessment::RouteBlock,
+) {
+    let Some(by_chain) = input.token_values_by_chain.get_mut(&block.symbol) else {
+        let current_weight = input
+            .current_weights
+            .get(&block.symbol)
+            .copied()
+            .unwrap_or(0.0);
+        let target_weight = input
+            .target_weights
+            .get(&block.symbol)
+            .copied()
+            .unwrap_or(current_weight);
+        input
+            .target_weights
+            .insert(block.symbol.clone(), target_weight);
+        input
+            .current_weights
+            .insert(block.symbol.clone(), target_weight);
+        return;
+    };
+    by_chain.remove(&block.chain);
+    if by_chain.is_empty() {
+        // Keep an explicit empty map as a "no live sell source remains" marker.
+        // Removing the key would make the routing planner fall back to the
+        // token's canonical chain and recreate the same blocked sell.
+        input
+            .token_values_by_chain
+            .insert(block.symbol.clone(), HashMap::new());
+    }
+}
+
+fn join_unique_route_block_messages(
+    residual: &[crate::modules::rebalance::route_assessment::RouteBlock],
+    initial: &[crate::modules::rebalance::route_assessment::RouteBlock],
+) -> String {
+    let mut seen = HashSet::new();
+    residual
+        .iter()
+        .chain(initial.iter())
+        .filter_map(|b| {
+            if seen.insert(b.message.as_str()) {
+                Some(b.message.as_str())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Why a plan produced zero executable legs. The single classifier consumed by
 /// both the human message (`noop_plan_message`) and the typed HTTP outcome
 /// (`PlanOutcome::from_noop`) so the two can never drift. None of these are
@@ -272,5 +415,140 @@ pub(super) fn plan_leg_view_from_row(leg: &LegView) -> PlanLegView {
         src_symbol: leg.src_symbol.clone(),
         dest_symbol: leg.dest_symbol.clone(),
         amount_usdc: leg.amount_usdc.to_f64().unwrap_or(0.0),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use crate::modules::rebalance::{
+        models::{ChainKey, PlanInput},
+        route_assessment::{RouteBlock, RouteBlockSide},
+    };
+
+    use super::freeze_blocked_routes;
+
+    fn input() -> PlanInput {
+        let mut current_weights = HashMap::new();
+        current_weights.insert("ETH".into(), 1.0);
+        let mut target_weights = HashMap::new();
+        target_weights.insert("ETH".into(), 0.2);
+        target_weights.insert("cbBTC".into(), 0.8);
+        let mut usdc_per_chain = HashMap::new();
+        usdc_per_chain.insert(ChainKey::Base, 50.0);
+        PlanInput {
+            portfolio_value_usd: 1_000.0,
+            current_weights,
+            token_values_by_chain: HashMap::new(),
+            target_weights,
+            usdc_per_chain,
+            drift_threshold: 0.05,
+            dust_threshold_usd: 5.0,
+            prices: HashMap::new(),
+            regime: None,
+        }
+    }
+
+    #[test]
+    fn freeze_blocked_sells_removes_only_the_unsafe_trim_delta() {
+        let block = RouteBlock {
+            leg_index: 0,
+            side: RouteBlockSide::Sell,
+            symbol: "ETH".into(),
+            chain: ChainKey::Base,
+            amount_usd: 800.0,
+            message: "bad ETH route".into(),
+        };
+
+        let (adjusted, deferred) = freeze_blocked_routes(input(), &[block]);
+
+        assert_eq!(
+            adjusted.current_weights["ETH"],
+            adjusted.target_weights["ETH"]
+        );
+        assert_eq!(adjusted.target_weights["cbBTC"], 0.8);
+        assert_eq!(adjusted.usdc_per_chain[&ChainKey::Base], 50.0);
+        assert_eq!(deferred.len(), 1);
+        assert_eq!(deferred[0].symbol, "ETH");
+        assert!(deferred[0].reason.contains("bad ETH route"));
+    }
+
+    #[test]
+    fn freeze_blocked_buys_removes_only_the_unsafe_acquire_delta() {
+        let block = RouteBlock {
+            leg_index: 1,
+            side: RouteBlockSide::Buy,
+            symbol: "cbBTC".into(),
+            chain: ChainKey::Base,
+            amount_usd: 800.0,
+            message: "bad cbBTC route".into(),
+        };
+
+        let (adjusted, deferred) = freeze_blocked_routes(input(), &[block]);
+
+        assert_eq!(adjusted.target_weights["cbBTC"], 0.0);
+        assert_eq!(adjusted.current_weights["cbBTC"], 0.0);
+        assert_eq!(adjusted.target_weights["ETH"], 0.2);
+        assert_eq!(adjusted.current_weights["ETH"], 1.0);
+        assert_eq!(deferred.len(), 1);
+        assert_eq!(deferred[0].symbol, "cbBTC");
+        assert_eq!(deferred[0].target_weight, 0.8);
+        assert!(deferred[0].reason.contains("bad cbBTC route"));
+    }
+
+    #[test]
+    fn freeze_blocked_sell_removes_only_the_blocked_chain_slice() {
+        let mut input = input();
+        input.token_values_by_chain.insert(
+            "ETH".into(),
+            HashMap::from([(ChainKey::Base, 500.0), (ChainKey::ArbSepolia, 500.0)]),
+        );
+        let block = RouteBlock {
+            leg_index: 0,
+            side: RouteBlockSide::Sell,
+            symbol: "ETH".into(),
+            chain: ChainKey::Base,
+            amount_usd: 100.0,
+            message: "bad Base ETH route".into(),
+        };
+
+        let (adjusted, deferred) = freeze_blocked_routes(input, &[block]);
+
+        assert!(!adjusted.token_values_by_chain["ETH"].contains_key(&ChainKey::Base));
+        assert_eq!(
+            adjusted.token_values_by_chain["ETH"][&ChainKey::ArbSepolia],
+            500.0
+        );
+        assert_eq!(adjusted.current_weights["ETH"], 1.0);
+        assert_eq!(adjusted.target_weights["ETH"], 0.2);
+        assert_eq!(deferred.len(), 1);
+    }
+
+    #[test]
+    fn freeze_blocked_sell_keeps_empty_source_marker_when_last_chain_is_removed() {
+        let mut input = input();
+        input
+            .token_values_by_chain
+            .insert("ETH".into(), HashMap::from([(ChainKey::Base, 500.0)]));
+        let block = RouteBlock {
+            leg_index: 0,
+            side: RouteBlockSide::Sell,
+            symbol: "ETH".into(),
+            chain: ChainKey::Base,
+            amount_usd: 500.0,
+            message: "bad Base ETH route".into(),
+        };
+
+        let (adjusted, deferred) = freeze_blocked_routes(input, &[block]);
+
+        assert!(
+            adjusted
+                .token_values_by_chain
+                .get("ETH")
+                .is_some_and(HashMap::is_empty),
+            "empty source marker prevents canonical-chain sell fallback"
+        );
+        assert_eq!(deferred.len(), 1);
     }
 }

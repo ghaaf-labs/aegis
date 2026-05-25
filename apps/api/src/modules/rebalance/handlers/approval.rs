@@ -7,13 +7,12 @@ use crate::config::Config;
 use crate::error::{AppError, Result};
 use crate::modules::rebalance::{
     models::PlannedLeg,
-    planner::plan_legs,
     registry::{capabilities::RuntimeCapabilities, route, route::RouteLeg},
     snapshot::{routability_changed, RoutableSnapshot},
 };
 use crate::router::AppState;
 
-use super::{plan_input::build_plan_input, LegView, RebalanceView};
+use super::{plan_input::build_plan_input, shared::route_shaped_plan, LegView, RebalanceView};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -122,6 +121,11 @@ pub(super) async fn approval_safety(
         });
     }
 
+    let user_id: Uuid = sqlx::query_scalar("SELECT user_id FROM portfolios WHERE id = $1")
+        .bind(plan.portfolio_id)
+        .fetch_one(&state.db)
+        .await?;
+
     let current_input = match build_plan_input(state, plan.portfolio_id).await {
         Ok((input, _deferred)) => input,
         Err(AppError::Conflict(message)) => {
@@ -134,7 +138,31 @@ pub(super) async fn approval_safety(
         }
         Err(e) => return Err(e),
     };
-    let current_legs = plan_legs(&current_input);
+    let shaped = match route_shaped_plan(state, user_id, current_input).await {
+        Ok(shaped) => shaped,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                rebalance_id = %rebalance_id,
+                "live route assessment failed while checking approval safety"
+            );
+            return Ok(ApprovalSafety {
+                approvable: false,
+                code: "QUOTE_UNAVAILABLE".into(),
+                message: "Live route quotes are temporarily unavailable. Build a fresh review once the route providers respond.".into(),
+                missing_capabilities: None,
+            });
+        }
+    };
+    if let Some(message) = shaped.blocked_message {
+        return Ok(ApprovalSafety {
+            approvable: false,
+            code: "QUOTE_UNSAFE".into(),
+            message,
+            missing_capabilities: None,
+        });
+    }
+    let current_legs = shaped.legs;
     if !legs_match_current(&stored_legs, &current_legs) {
         return Ok(ApprovalSafety {
             approvable: false,

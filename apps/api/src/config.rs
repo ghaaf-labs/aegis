@@ -687,12 +687,12 @@ fn chain_env_suffix(chain: ChainKey) -> &'static str {
 
 /// Build the per-chain config array from env, indexed by [`ChainKey::index`].
 /// Env var names are unchanged (`{KNOB}_{CHAIN}`). The swap venue mapping
-/// mirrors the old `swap_router_for`/`swap_quoter_for`: Base = Aerodrome
-/// Slipstream, OP = Velodrome, Eth/Arb = Uniswap V3 (all share the V3-style
-/// router + QuoterV2 surface, so they read `UNISWAP_V3_{ROUTER,QUOTER}_*`); Avax
-/// = Trader Joe LB (its own bin-step `Path` ABI — `TRADER_JOE_LB_*`); Arc has no
-/// AMM venue, so its swap addresses stay empty and fail closed. Only Arc/Base
-/// have a deployed RebalanceExecutor; the rest leave it empty.
+/// mirrors the old `swap_router_for`/`swap_quoter_for`: Base/Eth/Arb/OP use
+/// Uniswap V3-compatible router + QuoterV2 surfaces, so they read
+/// `UNISWAP_V3_{ROUTER,QUOTER}_*`; Avax = Trader Joe LB (its own bin-step
+/// `Path` ABI — `TRADER_JOE_LB_*`); Arc has no AMM venue, so its swap addresses
+/// stay empty and fail closed. Only Arc/Base have a deployed RebalanceExecutor;
+/// the rest leave it empty.
 fn chain_configs_from_env() -> [ChainConfig; 6] {
     let env = |key: &str| std::env::var(key).unwrap_or_default();
     [

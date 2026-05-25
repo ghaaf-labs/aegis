@@ -48,13 +48,14 @@ pub(super) async fn mark_leg_confirmed(
 ) -> Result<()> {
     sqlx::query(
         "UPDATE rebalance_legs SET status = 'confirmed', leg_state = $4, confirmed_at = NOW(),
-                                  tx_hash = $2, cctp_message_hash = $3
+                                  tx_hash = $2, cctp_message_hash = $3, amount_usdc = $5
          WHERE id = $1",
     )
     .bind(leg_id)
     .bind(tx_hash)
     .bind(cctp_hash)
     .bind(confirmed_leg_state(&leg.kind).as_str())
+    .bind(leg.amount_usdc)
     .execute(&state.db)
     .await?;
 

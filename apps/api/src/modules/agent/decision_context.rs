@@ -377,7 +377,25 @@ fn format_gateway_block(b: &crate::modules::gateway::service::GatewayBalance) ->
             lines.push(format!("  - {} EURC: {:.2}", chain.to_uppercase(), amt));
         }
     }
+    for (chain, tokens) in &b.token_balances_by_chain {
+        for (symbol, qty) in tokens {
+            if *qty > 0.0 {
+                lines.push(format!(
+                    "  - {} {}: {:.8}",
+                    chain.to_uppercase(),
+                    symbol,
+                    qty
+                ));
+            }
+        }
+    }
     let cash_total = b.unified_usdc + b.unified_eurc;
+    if !b.token_balances_by_chain.is_empty() {
+        lines.push(
+            "Note: live wallet token balances are authoritative for rebalance sizing; do not size proposed trades from stale allocation percentages."
+                .into(),
+        );
+    }
     if cash_total > 5.0 {
         lines.push(
             "Note: deployable capital is already in Gateway. Do not recommend 'deposit funds' — propose how to ALLOCATE this cash into the target weights (a first-deploy plan).".into(),
