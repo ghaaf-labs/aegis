@@ -850,10 +850,11 @@ async fn run_allocation_pipeline(
     let confidence = parsed.confidence.clamp(0.0, 1.0);
 
     // Reconcile the raw model output into a consistent, persist-ready target:
-    // clamp against the runtime target universe, annotate the reasoning with any
-    // risk adjustments, and keep the drawdown consistent with the final mix. In
-    // real mode that universe is executable-only so Gate-1 cannot approve a mix
-    // that Gate-2 must reject.
+    // clamp against the designable target universe, annotate the reasoning with
+    // any risk adjustments, and keep the drawdown consistent with the final mix.
+    // Execution readiness is checked later by the approval safety gate; do not
+    // silently convert a valid target into a 100% USDC no-op just because a rail
+    // is temporarily not ready.
     let FinalizedAllocation {
         allocation: clamped,
         reasoning,
@@ -1102,9 +1103,10 @@ pub(crate) async fn apply_allocation_once(
         });
     }
 
-    // Re-clamp the stored allocation against the runtime target universe + user
-    // guardrails. This is defense in depth for older/stale proposals: in real
-    // mode we only persist targets that can build an executable review.
+    // Re-clamp the stored allocation against the designable target universe +
+    // user guardrails. This is defense in depth for older/stale proposals while
+    // preserving the user's approved target; execution blockers are surfaced by
+    // the Gate-2 route safety check instead of hidden by rewriting to USDC.
     let raw = rec_alloc
         .as_ref()
         .and_then(|v| v.as_object().cloned())

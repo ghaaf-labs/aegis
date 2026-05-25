@@ -484,23 +484,20 @@ pub fn executable_token_symbols(caps: &RuntimeCapabilities, cfg: &Config) -> Vec
     out
 }
 
-/// Symbols the allocator may place in a target allocation for the current
-/// runtime. Mock/demo mode keeps the full product sleeve menu; real mode only
-/// offers sleeves that can build an approvable execution review now.
+/// Symbols the allocator may place in a target allocation.
+///
+/// This is intentionally the product's designable sleeve menu, not the current
+/// executable-only subset. Execution readiness is surfaced separately through
+/// [`route_state_for_token`] / [`executable_token_symbols`]. Collapsing the
+/// allocator universe to only "ready right now" made real-mode accounts fall
+/// back to a 100% USDC target whenever swap rails were not fully live, which
+/// produced a misleading no-op instead of an actionable review.
 pub fn allocation_target_symbols(cfg: &Config) -> Vec<&'static str> {
-    let caps = RuntimeCapabilities::from_config(cfg);
-    if caps.real_mode {
-        executable_token_symbols(&caps, cfg)
-    } else {
-        designable_allocation_symbols(cfg)
-    }
+    designable_allocation_symbols(cfg)
 }
 
 /// The product's supported sleeve universe, derived from each token's
-/// [`TokenSpec::designable`] flag. This is wider than the current real-mode
-/// target universe; allocator call sites should use [`allocation_target_symbols`]
-/// so local demos can keep the full menu while real execution only targets
-/// approvable sleeves.
+/// [`TokenSpec::designable`] flag.
 ///
 /// USYC is the one runtime-gated sleeve: it is only offered while `USYC_ENABLED`
 /// (declared via its [`TokenSpec::gate`]), otherwise it stays coming-soon /
@@ -672,13 +669,15 @@ mod tests {
     }
 
     #[test]
-    fn allocation_targets_are_executable_only_in_real_mode() {
+    fn allocation_targets_stay_designable_in_real_mode() {
         let cfg = real_cfg();
         let caps = RuntimeCapabilities::from_config(&cfg);
         let targets = allocation_target_symbols(&cfg);
-        assert_eq!(targets, executable_token_symbols(&caps, &cfg));
+        let executable = executable_token_symbols(&caps, &cfg);
         assert!(targets.contains(&USDC));
-        assert!(!targets.contains(&"UNI"));
+        assert!(targets.contains(&"UNI"));
+        assert!(!executable.contains(&"UNI"));
+        assert!(targets.len() > executable.len());
     }
 
     #[test]

@@ -148,7 +148,7 @@ async fn run_autopilot(
     triggered_by: &str,
 ) -> crate::error::Result<()> {
     // 1. Propose a fresh target. This runs the allocator, the deterministic
-    //    clamp (single-asset cap, stable floor, executable-only), and the
+    //    clamp (single-asset cap, stable floor, designable target universe), and the
     //    constitution check — all surfaced over SSE for the activity feed.
     let proposal = propose_allocation(
         state,

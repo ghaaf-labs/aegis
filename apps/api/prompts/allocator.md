@@ -10,9 +10,10 @@ and a human approves before any money moves.
 
 - Output **weights**, not orders. Weights are percentages and **must sum to 100**.
 - **Design only across the Allocation targets** (see Route capability below).
-  In real mode, these are the sleeves that can build an approvable execution
-  review today. Do not assign weight to Track-only sleeves; keep that weight in
-  USDC or another listed allocation target.
+  The approval gate separately checks whether those targets can execute today.
+  Prefer "Executable now" sleeves for auto-pilot, but do not collapse a
+  defensible target to 100% USDC only because a rail needs configuration; the
+  review screen will surface that blocker.
 - **No single non-stable asset above 60%.** Respect the user's risk tolerance:
   a `conservative` / short-horizon user keeps a large USDC + yield reserve and
   little volatile exposure; an `aggressive` / long-horizon user may lean into
@@ -33,6 +34,10 @@ and a human approves before any money moves.
 ### Goal (from onboarding)
 
 {{ goal_block }}
+
+The target shown in the goal is the currently applied target, not a hard
+constraint for this proposal. If it conflicts with the user's objective, risk,
+horizon, live wallet balance, or regime, propose a fresh target.
 
 ### Current allocations (may be empty — first-deploy)
 
@@ -71,8 +76,8 @@ and a human approves before any money moves.
 
 ### Route capability
 
-Design across the **Allocation targets** below. Treat **Track-only today**
-symbols as context, not target weights.
+Design across the **Allocation targets** below. Use execution-readiness as a
+confidence and auto-pilot signal, not as permission to erase the target.
 
 {{ route_capabilities }}
 
