@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use rust_decimal::prelude::FromPrimitive;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -101,8 +102,12 @@ pub struct PlannedLeg {
     pub dest_chain: Option<ChainKey>,
     pub src_symbol: Option<String>,
     pub dest_symbol: Option<String>,
-    pub amount_usdc: f64,
-    pub min_out: Option<f64>,
+    pub amount_usdc: Decimal,
+    pub min_out: Option<Decimal>,
+}
+
+pub fn decimal_usd(amount: f64) -> Decimal {
+    Decimal::from_f64(amount).unwrap_or(Decimal::ZERO)
 }
 
 #[derive(Debug, Clone, PartialEq)]

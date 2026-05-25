@@ -24,7 +24,7 @@ use uuid::Uuid;
 use crate::error::{AppError, Result};
 use crate::middleware::auth::Claims;
 use crate::modules::agent::{models::AnalyzeRequest, service::analyze_portfolio};
-use crate::modules::rebalance::executor::{approve_and_execute, create_plan};
+use crate::modules::rebalance::executor::{approve_and_execute, replace_planned_review};
 use crate::router::AppState;
 
 use approval::{approval_safety, history_approval_safety, ApprovalSafety};
@@ -134,11 +134,11 @@ pub async fn create(
     } else {
         planner_agent_decision(&state, portfolio_id, &input, &legs).await?
     };
-    let rebalance_id = create_plan(&state, portfolio_id, decision.id, &legs).await?;
+    let rebalance_id = replace_planned_review(&state, portfolio_id, decision.id, &legs).await?;
 
     // Bind the plan to the routability it was built against (INV-6): approval
     // re-captures and refuses if a rail flipped Ready⇄track-only meanwhile.
-    shared::stamp_routable_snapshot(&state, rebalance_id, &input.prices).await?;
+    shared::stamp_routable_snapshot(&state, rebalance_id, &input.prices, &legs).await?;
 
     let plan = PlanResponse {
         rebalance_id,

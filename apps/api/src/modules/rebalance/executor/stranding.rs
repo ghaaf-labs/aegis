@@ -1,4 +1,5 @@
 use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::modules::rebalance::models::{ChainKey, LegKind};
@@ -151,16 +152,20 @@ pub(super) fn idempotency_key_for_leg(
     kind: &str,
     src_symbol: Option<&str>,
     dest_symbol: Option<&str>,
-    amount_usdc: f64,
+    amount_usdc: Decimal,
 ) -> String {
     let src = src_symbol.unwrap_or("none");
     let dest = dest_symbol.unwrap_or("none");
-    let rounded_cents = (amount_usdc * 100.0).round() as i64;
+    let rounded_cents = (amount_usdc * Decimal::from(100))
+        .round()
+        .to_i64()
+        .unwrap_or(0);
     format!("{rebalance_id}:{leg_index}:{kind}:{src}>{dest}:{rounded_cents}")
 }
 
 #[cfg(test)]
 mod tests {
+    use rust_decimal::prelude::FromPrimitive;
     use uuid::Uuid;
 
     use crate::modules::rebalance::models::{ChainKey, LegKind};
@@ -173,6 +178,10 @@ mod tests {
             dest_symbol: dest.to_string(),
             amount_usdc: amount,
         }
+    }
+
+    fn usd(amount: f64) -> Decimal {
+        Decimal::from_f64(amount).unwrap()
     }
 
     #[test]
@@ -202,8 +211,8 @@ mod tests {
     #[test]
     fn idempotency_key_is_deterministic_for_same_leg() {
         let id = Uuid::new_v4();
-        let a = idempotency_key_for_leg(id, 2, "local_swap", Some("USDC"), Some("ETH"), 600.0);
-        let b = idempotency_key_for_leg(id, 2, "local_swap", Some("USDC"), Some("ETH"), 600.0);
+        let a = idempotency_key_for_leg(id, 2, "local_swap", Some("USDC"), Some("ETH"), usd(600.0));
+        let b = idempotency_key_for_leg(id, 2, "local_swap", Some("USDC"), Some("ETH"), usd(600.0));
         assert_eq!(a, b, "same logical leg must derive the same key");
         assert_eq!(a, format!("{id}:2:local_swap:USDC>ETH:60000"));
     }
@@ -213,8 +222,10 @@ mod tests {
         // A price re-fetch nudges the notional by a fraction of a cent on a
         // resume; the rounded key must still match so we don't double-submit.
         let id = Uuid::new_v4();
-        let a = idempotency_key_for_leg(id, 0, "local_swap", Some("USDC"), Some("BTC"), 600.001);
-        let b = idempotency_key_for_leg(id, 0, "local_swap", Some("USDC"), Some("BTC"), 599.999);
+        let a =
+            idempotency_key_for_leg(id, 0, "local_swap", Some("USDC"), Some("BTC"), usd(600.001));
+        let b =
+            idempotency_key_for_leg(id, 0, "local_swap", Some("USDC"), Some("BTC"), usd(599.999));
         assert_eq!(a, b, "sub-cent drift must collapse to the same key");
     }
 
@@ -222,38 +233,46 @@ mod tests {
     fn idempotency_key_differs_across_legs_and_plans() {
         let id1 = Uuid::new_v4();
         let id2 = Uuid::new_v4();
-        let base = idempotency_key_for_leg(id1, 0, "local_swap", Some("USDC"), Some("ETH"), 100.0);
+        let base =
+            idempotency_key_for_leg(id1, 0, "local_swap", Some("USDC"), Some("ETH"), usd(100.0));
         // Different leg index.
         assert_ne!(
             base,
-            idempotency_key_for_leg(id1, 1, "local_swap", Some("USDC"), Some("ETH"), 100.0)
+            idempotency_key_for_leg(id1, 1, "local_swap", Some("USDC"), Some("ETH"), usd(100.0))
         );
         // Different kind.
         assert_ne!(
             base,
-            idempotency_key_for_leg(id1, 0, "cross_chain_burn", Some("USDC"), Some("ETH"), 100.0)
+            idempotency_key_for_leg(
+                id1,
+                0,
+                "cross_chain_burn",
+                Some("USDC"),
+                Some("ETH"),
+                usd(100.0)
+            )
         );
         // Different token pair.
         assert_ne!(
             base,
-            idempotency_key_for_leg(id1, 0, "local_swap", Some("USDC"), Some("BTC"), 100.0)
+            idempotency_key_for_leg(id1, 0, "local_swap", Some("USDC"), Some("BTC"), usd(100.0))
         );
         // Different amount (≥ 1 cent).
         assert_ne!(
             base,
-            idempotency_key_for_leg(id1, 0, "local_swap", Some("USDC"), Some("ETH"), 100.5)
+            idempotency_key_for_leg(id1, 0, "local_swap", Some("USDC"), Some("ETH"), usd(100.5))
         );
         // Different rebalance.
         assert_ne!(
             base,
-            idempotency_key_for_leg(id2, 0, "local_swap", Some("USDC"), Some("ETH"), 100.0)
+            idempotency_key_for_leg(id2, 0, "local_swap", Some("USDC"), Some("ETH"), usd(100.0))
         );
     }
 
     #[test]
     fn idempotency_key_handles_missing_symbols() {
         let id = Uuid::new_v4();
-        let k = idempotency_key_for_leg(id, 3, "cross_chain_mint", None, None, 250.0);
+        let k = idempotency_key_for_leg(id, 3, "cross_chain_mint", None, None, usd(250.0));
         assert_eq!(k, format!("{id}:3:cross_chain_mint:none>none:25000"));
     }
 

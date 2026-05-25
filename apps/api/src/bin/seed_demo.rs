@@ -8,7 +8,7 @@
 //!   2. sets the diary public + a per-user risk profile,
 //!   3. creates a goal-only portfolio (objective + horizon + risk),
 //!   4. runs the real pipeline: allocator (`propose_allocation`) → approve
-//!      (`apply_allocation`) → plan (`create_plan`) → execute in mock mode
+//!      (`apply_allocation`) → plan (`replace_planned_review`) → execute in mock mode
 //!      (`approve_and_execute`).
 //!
 //! This writes real `agent_decisions` (`kind:"allocation_proposal"` + a planner
@@ -53,7 +53,7 @@ use aegis_api::{
             service::{apply_allocation, propose_allocation},
         },
         ai::PromptRegistry,
-        rebalance::executor::{approve_and_execute, create_plan},
+        rebalance::executor::{approve_and_execute, replace_planned_review},
         rebalance::models::PlannedLeg,
         rebalance::planner::plan_legs,
         sse,
@@ -410,7 +410,7 @@ async fn insert_fallback_proposal(
 }
 
 /// Build a rebalance plan from the approved target + idle mock Gateway USDC and
-/// execute it in mock mode. Reuses the real `create_plan` / `approve_and_execute`
+/// execute it in mock mode. Reuses the real `replace_planned_review` / `approve_and_execute`
 /// path, then polls until the rebalance reaches a terminal state. A no-op plan
 /// (nothing to deploy) is not an error — the proposal + allocations already give
 /// the demo surfaces real state.
@@ -423,7 +423,7 @@ async fn drive_rebalance(state: &AppState, portfolio_id: Uuid) -> anyhow::Result
 
     // A mock-mode planner decision tied to the legs the executor will walk.
     let decision_id = insert_mock_rebalance_decision(state, portfolio_id).await?;
-    let rebalance_id = create_plan(state, portfolio_id, decision_id, &legs).await?;
+    let rebalance_id = replace_planned_review(state, portfolio_id, decision_id, &legs).await?;
     approve_and_execute(state.clone(), rebalance_id).await?;
 
     // `approve_and_execute` spawns the walk on a background task; poll until the

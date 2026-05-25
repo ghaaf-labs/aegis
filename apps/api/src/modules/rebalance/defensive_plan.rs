@@ -4,7 +4,7 @@ use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
-use crate::modules::rebalance::executor::create_plan;
+use crate::modules::rebalance::executor::replace_planned_review;
 use crate::modules::rebalance::models::{ChainKey, PlanInput, PlannedLeg};
 use crate::modules::rebalance::registry::RuntimeCapabilities;
 use crate::modules::rebalance::snapshot::RoutableSnapshot;
@@ -247,9 +247,9 @@ async fn persist_defensive_plan(
     .fetch_one(&state.db)
     .await?;
 
-    let rebalance_id = create_plan(state, portfolio_id, decision_id, legs).await?;
+    let rebalance_id = replace_planned_review(state, portfolio_id, decision_id, legs).await?;
     let caps = RuntimeCapabilities::from_config(&state.config);
-    let snapshot = RoutableSnapshot::capture_with_prices(&caps, &state.config, prices);
+    let snapshot = RoutableSnapshot::capture_for_plan(&caps, &state.config, prices, legs);
     sqlx::query("UPDATE rebalances SET routable_snapshot_hash = $1 WHERE id = $2")
         .bind(snapshot.hash())
         .bind(rebalance_id)

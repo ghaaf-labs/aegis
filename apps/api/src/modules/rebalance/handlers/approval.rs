@@ -181,8 +181,12 @@ pub(super) async fn approval_safety(
             .fetch_one(&state.db)
             .await?;
     let current_caps = RuntimeCapabilities::from_config(&state.config);
-    let current_snapshot =
-        RoutableSnapshot::capture_with_prices(&current_caps, &state.config, &shaped.input.prices);
+    let current_snapshot = RoutableSnapshot::capture_for_plan(
+        &current_caps,
+        &state.config,
+        &shaped.input.prices,
+        &current_legs,
+    );
     if routability_changed(stored_snapshot_hash.as_deref(), current_snapshot.hash()) {
         return Ok(ApprovalSafety {
             approvable: false,
@@ -302,13 +306,12 @@ fn execution_blocked_message(missing: &[MissingCapability]) -> String {
     )
 }
 
-fn amount_matches(stored: Decimal, current: f64) -> bool {
-    let stored = stored.to_f64().unwrap_or(0.0);
-    let tolerance = (current.abs() * 0.005).max(0.01);
+fn amount_matches(stored: Decimal, current: Decimal) -> bool {
+    let tolerance = (current.abs() * Decimal::new(5, 3)).max(Decimal::new(1, 2));
     (stored - current).abs() <= tolerance
 }
 
-fn min_out_matches(stored: Option<Decimal>, current: Option<f64>) -> bool {
+fn min_out_matches(stored: Option<Decimal>, current: Option<Decimal>) -> bool {
     match (stored, current) {
         (None, None) => true,
         (Some(stored), Some(current)) => amount_matches(stored, current),

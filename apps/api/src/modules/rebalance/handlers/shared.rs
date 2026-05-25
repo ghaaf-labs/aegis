@@ -158,8 +158,8 @@ pub(super) async fn rebalance_totals_by_id(
 
 /// Bind a freshly-created plan to the routability and quote-price buckets it
 /// was built against (INV-6).
-/// Both the manual `create` handler and the auto-pilot `prepare_autonomous_plan`
-/// path call this immediately after `create_plan`, so a rail flip
+/// Both the manual handler and the auto-pilot path call this immediately after
+/// `replace_planned_review`, so a rail flip
 /// Ready⇄track-only or material price move after planning is caught at approval
 /// for *either* path — never only manual reviews. Stamp only newly-created
 /// plans: re-stamping a reused plan with the current snapshot would erase the
@@ -168,12 +168,14 @@ pub(super) async fn stamp_routable_snapshot(
     state: &AppState,
     rebalance_id: Uuid,
     prices: &HashMap<String, f64>,
+    legs: &[PlannedLeg],
 ) -> Result<()> {
     let caps = crate::modules::rebalance::registry::RuntimeCapabilities::from_config(&state.config);
-    let snapshot = crate::modules::rebalance::snapshot::RoutableSnapshot::capture_with_prices(
+    let snapshot = crate::modules::rebalance::snapshot::RoutableSnapshot::capture_for_plan(
         &caps,
         &state.config,
         prices,
+        legs,
     );
     sqlx::query("UPDATE rebalances SET routable_snapshot_hash = $1 WHERE id = $2")
         .bind(snapshot.hash())
@@ -340,7 +342,9 @@ fn freeze_blocked_sell_source(
     };
     match sources {
         SellSources::ByChain(by_chain) => {
-            by_chain.remove(&block.chain);
+            if let Some(chain) = block.chain {
+                by_chain.remove(&chain);
+            }
             if by_chain.is_empty() {
                 *sources = SellSources::Frozen;
             }
@@ -451,7 +455,7 @@ pub(super) fn plan_leg_view(leg: &PlannedLeg) -> PlanLegView {
         dest_chain: leg.dest_chain.map(|c| c.as_str().to_string()),
         src_symbol: leg.src_symbol.clone(),
         dest_symbol: leg.dest_symbol.clone(),
-        amount_usdc: leg.amount_usdc,
+        amount_usdc: leg.amount_usdc.to_f64().unwrap_or(0.0),
     }
 }
 
@@ -505,7 +509,7 @@ mod tests {
             leg_index: 0,
             side: RouteBlockSide::Sell,
             symbol: "ETH".into(),
-            chain: ChainKey::Base,
+            chain: Some(ChainKey::Base),
             amount_usd: 800.0,
             message: "bad ETH route".into(),
         };
@@ -529,7 +533,7 @@ mod tests {
             leg_index: 1,
             side: RouteBlockSide::Buy,
             symbol: "cbBTC".into(),
-            chain: ChainKey::Base,
+            chain: Some(ChainKey::Base),
             amount_usd: 800.0,
             message: "bad cbBTC route".into(),
         };
@@ -560,7 +564,7 @@ mod tests {
             leg_index: 0,
             side: RouteBlockSide::Sell,
             symbol: "ETH".into(),
-            chain: ChainKey::Base,
+            chain: Some(ChainKey::Base),
             amount_usd: 100.0,
             message: "bad Base ETH route".into(),
         };
@@ -588,7 +592,7 @@ mod tests {
             leg_index: 0,
             side: RouteBlockSide::Sell,
             symbol: "ETH".into(),
-            chain: ChainKey::Base,
+            chain: Some(ChainKey::Base),
             amount_usd: 500.0,
             message: "bad Base ETH route".into(),
         };

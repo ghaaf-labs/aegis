@@ -1,9 +1,11 @@
 use serde_json::json;
 use uuid::Uuid;
 
+use rust_decimal::prelude::ToPrimitive;
+
 use crate::error::Result;
 use crate::modules::rebalance::{
-    executor::create_plan,
+    executor::replace_planned_review,
     models::{PlanInput, PlannedLeg},
 };
 use crate::router::AppState;
@@ -61,27 +63,28 @@ pub async fn prepare_autonomous_plan(
         return Ok(AutonomousPlan::NoOp);
     }
 
-    let rebalance_id =
-        if let Some(existing) = reusable_planned_rebalance(state, portfolio_id, &legs).await? {
-            existing.rebalance_id
+    let rebalance_id = if let Some(existing) =
+        reusable_planned_rebalance(state, portfolio_id, &legs).await?
+    {
+        existing.rebalance_id
+    } else {
+        // Auto-pilot is a real-execution control path; record the same
+        // deterministic planner decision the manual `create` route does so the
+        // approval-safety gate (which rejects mock/legacy decisions in real
+        // mode) accepts it.
+        let decision = if state.config.execution_mock || state.config.circle_mock {
+            mock_agent_decision(state, portfolio_id).await?
         } else {
-            // Auto-pilot is a real-execution control path; record the same
-            // deterministic planner decision the manual `create` route does so the
-            // approval-safety gate (which rejects mock/legacy decisions in real
-            // mode) accepts it.
-            let decision = if state.config.execution_mock || state.config.circle_mock {
-                mock_agent_decision(state, portfolio_id).await?
-            } else {
-                planner_agent_decision(state, portfolio_id, &input, &legs).await?
-            };
-            let rebalance_id = create_plan(state, portfolio_id, decision.id, &legs).await?;
-            // INV-6 must hold for auto-pilot too: bind the freshly-created plan
-            // to its routability so the scheduler's approval gate refuses it if a
-            // rail flipped Ready⇄track-only after planning (manual `create` does
-            // the same). Reused plans keep the hash from their own creation.
-            stamp_routable_snapshot(state, rebalance_id, &input.prices).await?;
-            rebalance_id
+            planner_agent_decision(state, portfolio_id, &input, &legs).await?
         };
+        let rebalance_id = replace_planned_review(state, portfolio_id, decision.id, &legs).await?;
+        // INV-6 must hold for auto-pilot too: bind the freshly-created plan
+        // to its routability so the scheduler's approval gate refuses it if a
+        // rail flipped Ready⇄track-only after planning (manual `create` does
+        // the same). Reused plans keep the hash from their own creation.
+        stamp_routable_snapshot(state, rebalance_id, &input.prices, &legs).await?;
+        rebalance_id
+    };
 
     let safety = approval_safety(state, rebalance_id).await?;
     Ok(AutonomousPlan::Prepared {
@@ -225,13 +228,14 @@ pub(super) fn planned_trade(input: &PlanInput, leg: &PlannedLeg) -> Option<serde
         _ => return None,
     };
     let price = input.prices.get(symbol).copied().unwrap_or(1.0).max(0.01);
-    let quantity = leg.amount_usdc / price;
+    let value_usd = leg.amount_usdc.to_f64().unwrap_or(0.0);
+    let quantity = value_usd / price;
     Some(json!({
         "assetId": symbol,
         "symbol": symbol,
         "action": action,
         "quantity": quantity,
-        "valueUsd": leg.amount_usdc,
+        "valueUsd": value_usd,
         "reason": format!("{} on {}", leg.kind.as_str(), leg.dest_chain.or(leg.src_chain).map(|c| c.as_str()).unwrap_or("gateway"))
     }))
 }
@@ -265,7 +269,7 @@ pub(super) fn plan_route_surface(legs: &[PlannedLeg]) -> String {
 mod tests {
     use super::*;
 
-    use crate::modules::rebalance::models::{ChainKey, LegKind, PlannedLeg};
+    use crate::modules::rebalance::models::{decimal_usd, ChainKey, LegKind, PlannedLeg};
 
     fn planned_leg(kind: LegKind, chain: ChainKey) -> PlannedLeg {
         PlannedLeg {
@@ -276,7 +280,7 @@ mod tests {
             dest_chain: Some(chain),
             src_symbol: Some("USDC".into()),
             dest_symbol: Some("ETH".into()),
-            amount_usdc: 10.0,
+            amount_usdc: decimal_usd(10.0),
             min_out: None,
         }
     }

@@ -23,7 +23,10 @@
 
 use std::collections::HashMap;
 
-use super::models::{ChainKey, LegKind, PlanInput, PlannedLeg};
+use rust_decimal::prelude::FromPrimitive;
+use rust_decimal::Decimal;
+
+use super::models::{decimal_usd, ChainKey, LegKind, PlanInput, PlannedLeg};
 use crate::domain::token::native_chain;
 
 /// Ordered, filtered set of symbol deltas for a plan: sells first (so they
@@ -198,7 +201,7 @@ fn append_sell_legs(
         dest_chain: Some(chain),
         src_symbol: Some(d.symbol.clone()),
         dest_symbol: Some("USDC".into()),
-        amount_usdc: amount,
+        amount_usdc: decimal_usd(amount),
         min_out: None,
     });
     *next_idx += 1;
@@ -288,7 +291,7 @@ fn append_buy_legs(
             dest_chain: Some(target_chain),
             src_symbol: Some("USDC".into()),
             dest_symbol: Some("USDC".into()),
-            amount_usdc: to_bridge,
+            amount_usdc: decimal_usd(to_bridge),
             min_out: None,
         });
         *next_idx += 1;
@@ -301,7 +304,7 @@ fn append_buy_legs(
             dest_chain: Some(target_chain),
             src_symbol: Some("USDC".into()),
             dest_symbol: Some("USDC".into()),
-            amount_usdc: to_bridge,
+            amount_usdc: decimal_usd(to_bridge),
             min_out: None,
         });
         *next_idx += 1;
@@ -354,8 +357,7 @@ fn append_buy_legs(
 
 /// Emit a same-chain "acquire" leg: spend `amount_usdc` of USDC on `chain` to
 /// obtain `symbol` (a local USDC→token swap, or a USYC park). `min_out` floors
-/// the fill at the current price less a 5% slippage allowance — `None` when the
-/// price is unknown, `Some(0.0)` when it is non-positive.
+/// the fill at the current price less a 5% slippage allowance.
 fn push_acquire_leg(
     legs: &mut Vec<PlannedLeg>,
     next_idx: &mut i32,
@@ -365,12 +367,10 @@ fn push_acquire_leg(
     amount_usdc: f64,
     prices: &HashMap<String, f64>,
 ) {
-    let min_out = prices.get(symbol).map(|&price| {
-        if price > 0.0 {
-            (amount_usdc / price) * 0.95
-        } else {
-            0.0
-        }
+    let amount = decimal_usd(amount_usdc);
+    let min_out = prices.get(symbol).and_then(|&price| {
+        let price = Decimal::from_f64(price)?;
+        (price > Decimal::ZERO).then(|| (amount / price) * Decimal::new(95, 2))
     });
     legs.push(PlannedLeg {
         leg_index: *next_idx,
@@ -380,7 +380,7 @@ fn push_acquire_leg(
         dest_chain: Some(chain),
         src_symbol: Some("USDC".into()),
         dest_symbol: Some(symbol.to_string()),
-        amount_usdc,
+        amount_usdc: amount,
         min_out,
     });
     *next_idx += 1;
@@ -389,6 +389,7 @@ fn push_acquire_leg(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rust_decimal::prelude::ToPrimitive;
 
     fn weights(pairs: &[(&str, f64)]) -> HashMap<String, f64> {
         pairs.iter().map(|(k, v)| ((*k).to_string(), *v)).collect()
@@ -701,7 +702,10 @@ mod tests {
             5_000.0,
         );
         let legs = plan_legs(&i);
-        let total: f64 = legs.iter().map(|l| l.amount_usdc).sum();
+        let total: f64 = legs
+            .iter()
+            .map(|l| l.amount_usdc.to_f64().unwrap_or(0.0))
+            .sum();
         assert!(
             total < 10_000.0,
             "leg amounts must sum to less than portfolio value (got {total})"
@@ -729,7 +733,7 @@ mod tests {
         let total_buy_usdc: f64 = legs
             .iter()
             .filter(|l| matches!(l.kind, LegKind::LocalSwap | LegKind::ParkUsyc))
-            .map(|l| l.amount_usdc)
+            .map(|l| l.amount_usdc.to_f64().unwrap_or(0.0))
             .sum();
         assert!(
             (total_buy_usdc - 200.0).abs() < 0.01,
@@ -761,7 +765,7 @@ mod tests {
         let routed: f64 = legs
             .iter()
             .filter(|l| l.kind != LegKind::CrossChainMint)
-            .map(|l| l.amount_usdc)
+            .map(|l| l.amount_usdc.to_f64().unwrap_or(0.0))
             .sum();
         assert!(
             (routed - 30.0).abs() < 0.01,
@@ -808,7 +812,7 @@ mod tests {
         let routed: f64 = legs
             .iter()
             .filter(|l| !matches!(l.kind, LegKind::CrossChainMint | LegKind::CrossChainBurn))
-            .map(|l| l.amount_usdc)
+            .map(|l| l.amount_usdc.to_f64().unwrap_or(0.0))
             .sum();
         assert!(
             (routed - 42.46).abs() < 0.25,

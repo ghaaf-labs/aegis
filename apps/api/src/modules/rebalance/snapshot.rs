@@ -9,13 +9,14 @@
 //! bucket changed since the plan was built (INV-4: one executability authority;
 //! INV-6: a plan is bound to the routing context it was solved against).
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 
 use crate::config::Config;
 
+use super::models::PlannedLeg;
 use super::registry::{
     allocation_target_symbols, route_state_for_token, RouteState, RuntimeCapabilities,
 };
@@ -55,6 +56,21 @@ impl RoutableSnapshot {
         }
     }
 
+    pub fn capture_for_plan(
+        caps: &RuntimeCapabilities,
+        cfg: &Config,
+        prices: &HashMap<String, f64>,
+        legs: &[PlannedLeg],
+    ) -> Self {
+        let relevant = plan_price_symbols(legs);
+        let prices = prices
+            .iter()
+            .filter(|(symbol, _)| relevant.contains(symbol.as_str()))
+            .map(|(symbol, price)| (symbol.clone(), *price))
+            .collect();
+        Self::capture_with_prices(caps, cfg, &prices)
+    }
+
     /// Can this sleeve settle right now? The one query the planner/agent use.
     pub fn is_ready(&self, symbol: &str) -> bool {
         matches!(self.states.get(symbol), Some(RouteState::Ready))
@@ -89,6 +105,14 @@ impl RoutableSnapshot {
             .map(|(symbol, _)| symbol.as_str())
             .collect()
     }
+}
+
+fn plan_price_symbols(legs: &[PlannedLeg]) -> BTreeSet<&str> {
+    legs.iter()
+        .flat_map(|leg| [leg.src_symbol.as_deref(), leg.dest_symbol.as_deref()])
+        .flatten()
+        .filter(|symbol| !symbol.eq_ignore_ascii_case("USDC"))
+        .collect()
 }
 
 /// Has routability changed since a plan was built? Compares the plan's stored
@@ -198,5 +222,38 @@ mod tests {
             &HashMap::from([("ETH".to_string(), 2_130.0)]),
         );
         assert_ne!(a.hash(), b.hash());
+    }
+
+    #[test]
+    fn plan_snapshot_ignores_unrelated_price_moves() {
+        use super::super::models::{decimal_usd, LegKind, PlannedLeg};
+        use super::super::ChainKey;
+
+        let (caps, cfg) = caps_and_cfg();
+        let legs = vec![PlannedLeg {
+            leg_index: 0,
+            deps: vec![],
+            kind: LegKind::LocalSwap,
+            src_chain: Some(ChainKey::Base),
+            dest_chain: Some(ChainKey::Base),
+            src_symbol: Some("USDC".into()),
+            dest_symbol: Some("ETH".into()),
+            amount_usdc: decimal_usd(100.0),
+            min_out: None,
+        }];
+        let a = RoutableSnapshot::capture_for_plan(
+            &caps,
+            &cfg,
+            &HashMap::from([("ETH".to_string(), 2_100.0), ("BTC".to_string(), 90_000.0)]),
+            &legs,
+        );
+        let b = RoutableSnapshot::capture_for_plan(
+            &caps,
+            &cfg,
+            &HashMap::from([("ETH".to_string(), 2_100.0), ("BTC".to_string(), 100_000.0)]),
+            &legs,
+        );
+
+        assert_eq!(a.hash(), b.hash());
     }
 }

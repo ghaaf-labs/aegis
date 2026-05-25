@@ -37,8 +37,7 @@ use crate::modules::sse::{RebalancePlanPayload, SseEvent};
 use crate::router::AppState;
 
 use leg_status::{
-    bump_attempt_count, mark_leg_confirmed, mark_leg_failed, mark_leg_quoted, mark_leg_stranded,
-    mark_leg_submitted,
+    bump_attempt_count, mark_leg_confirmed, mark_leg_failed, mark_leg_stranded, mark_leg_submitted,
 };
 use legs::{parse_kind, LegRow, MAX_LEG_ATTEMPTS};
 use stranding::{
@@ -53,7 +52,7 @@ use stranding::{
 /// `total_gas_usdc` is the sum of the Paymaster fee estimate across each
 /// distinct destination chain in the plan — what the user sees in the
 /// approval modal before signing.
-pub async fn create_plan(
+pub async fn replace_planned_review(
     state: &AppState,
     portfolio_id: Uuid,
     decision_id: Uuid,
@@ -427,11 +426,6 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
                 }
             }
         }
-
-        // Quote/submit are distinct FSM states even though the coarse SQL
-        // `status` only has pending/submitted. Mark quoted before the network
-        // handoff so the trace shows a leg passed local quote validation.
-        mark_leg_quoted(state, rebalance_id, leg.id, user_id, leg).await?;
 
         // Bump the attempt counter on every submit so retries are observable and
         // a runaway leg can be capped. Done before the network call so a crash

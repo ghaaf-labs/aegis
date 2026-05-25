@@ -5,6 +5,7 @@
 //! missing a feature, address, adapter, or signer produces a blocker.
 
 use crate::config::Config;
+use rust_decimal::prelude::ToPrimitive;
 
 use super::super::models::{ChainKey, LegKind, PlannedLeg, TokenClass};
 use super::capabilities::{AdapterCapability, RuntimeCapabilities};
@@ -121,7 +122,7 @@ impl RouteLeg {
             dest_chain: p.dest_chain.map(|c| c.as_str().to_string()),
             src_symbol: p.src_symbol.clone(),
             dest_symbol: p.dest_symbol.clone(),
-            amount_usdc: p.amount_usdc,
+            amount_usdc: p.amount_usdc.to_f64().unwrap_or(0.0),
         }
     }
 
@@ -315,11 +316,13 @@ fn push_cctp_blocker(cfg: &Config, leg: &RouteLeg, hooked: bool, out: &mut Vec<R
 }
 
 fn push_swap_blocker(cfg: &Config, leg: &RouteLeg, out: &mut Vec<RouteBlocker>) {
-    // A swap is same-chain; resolve the leg's execution chain (fall back to Base,
-    // the chain whose venue is wired today, for a chain-less leg) and validate
-    // *that* chain's venue rather than the Base aggregate, so a swap on a chain
-    // with no configured router/quoter fails closed at approval.
-    let chain = swap_leg_chain(leg).unwrap_or(ChainKey::Base);
+    let Some(chain) = swap_leg_chain(leg) else {
+        out.push(RouteBlocker::new(
+            BlockerCode::NonExecutionChain,
+            "Swap leg has no Arc or Base execution chain set.",
+        ));
+        return;
+    };
     match crate::modules::rebalance::adapters::swap::capability_for(cfg, chain) {
         AdapterCapability::NeedsFeature => out.push(RouteBlocker::new(
             BlockerCode::RealSwapFeature,

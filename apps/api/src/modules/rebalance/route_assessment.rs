@@ -13,17 +13,22 @@ use crate::error::Result;
 use crate::modules::rebalance::models::{ChainKey, LegKind, PlanInput, PlannedLeg};
 use crate::modules::rebalance::registry::{route::RouteLeg, tokens, RuntimeCapabilities};
 use crate::router::AppState;
+use rust_decimal::prelude::ToPrimitive;
 
 const MAX_QUOTER_PRICE_GAP_BPS: f64 = 25.0;
 const LIVE_TOKEN_SPEND_MARGIN_BPS: u32 = 9_950;
 const USDC_DECIMALS: u8 = 6;
+
+fn leg_amount_usd(leg: &PlannedLeg) -> f64 {
+    leg.amount_usdc.to_f64().unwrap_or(0.0)
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RouteBlock {
     pub leg_index: i32,
     pub side: RouteBlockSide,
     pub symbol: String,
-    pub chain: ChainKey,
+    pub chain: Option<ChainKey>,
     pub amount_usd: f64,
     pub message: String,
 }
@@ -96,14 +101,14 @@ pub async fn assess_live_sell_leg(
         leg.dest_chain.map(|c| c.as_str().to_string()),
         leg.src_symbol.clone(),
         leg.dest_symbol.clone(),
-        leg.amount_usdc,
+        leg_amount_usd(leg),
     ) else {
         return Ok(RouteAssessment::Blocked(RouteBlock {
             leg_index: leg.leg_index,
             side: RouteBlockSide::Sell,
             symbol: leg.src_symbol.clone().unwrap_or_default(),
-            chain: leg.src_chain.or(leg.dest_chain).unwrap_or(ChainKey::Base),
-            amount_usd: leg.amount_usdc,
+            chain: leg.src_chain.or(leg.dest_chain),
+            amount_usd: leg_amount_usd(leg),
             message: "A sell leg could not be parsed into an executable route.".into(),
         }));
     };
@@ -112,8 +117,8 @@ pub async fn assess_live_sell_leg(
             leg_index: leg.leg_index,
             side: RouteBlockSide::Sell,
             symbol: leg.src_symbol.clone().unwrap_or_default(),
-            chain: leg.src_chain.or(leg.dest_chain).unwrap_or(ChainKey::Base),
-            amount_usd: leg.amount_usdc,
+            chain: leg.src_chain.or(leg.dest_chain),
+            amount_usd: leg_amount_usd(leg),
             message: "A sell leg is missing token, chain, price, or registry metadata.".into(),
         }));
     };
@@ -165,8 +170,8 @@ pub async fn assess_live_sell_leg(
         leg_index: leg.leg_index,
         side: RouteBlockSide::Sell,
         symbol: ctx.symbol.clone(),
-        chain: ctx.chain,
-        amount_usd: leg.amount_usdc,
+        chain: Some(ctx.chain),
+        amount_usd: leg_amount_usd(leg),
         message: sell_route_block_message(leg, &ctx, price_gap, balance_gap, exact_input.as_ref()),
     }))
 }
@@ -186,14 +191,14 @@ pub async fn assess_live_buy_leg(
         leg.dest_chain.map(|c| c.as_str().to_string()),
         leg.src_symbol.clone(),
         leg.dest_symbol.clone(),
-        leg.amount_usdc,
+        leg_amount_usd(leg),
     ) else {
         return Ok(RouteAssessment::Blocked(RouteBlock {
             leg_index: leg.leg_index,
             side: RouteBlockSide::Buy,
             symbol: leg.dest_symbol.clone().unwrap_or_default(),
-            chain: leg.dest_chain.or(leg.src_chain).unwrap_or(ChainKey::Base),
-            amount_usd: leg.amount_usdc,
+            chain: leg.dest_chain.or(leg.src_chain),
+            amount_usd: leg_amount_usd(leg),
             message: "A buy leg could not be parsed into an executable route.".into(),
         }));
     };
@@ -202,8 +207,8 @@ pub async fn assess_live_buy_leg(
             leg_index: leg.leg_index,
             side: RouteBlockSide::Buy,
             symbol: leg.dest_symbol.clone().unwrap_or_default(),
-            chain: leg.dest_chain.or(leg.src_chain).unwrap_or(ChainKey::Base),
-            amount_usd: leg.amount_usdc,
+            chain: leg.dest_chain.or(leg.src_chain),
+            amount_usd: leg_amount_usd(leg),
             message: "A buy leg is missing token, chain, price, or registry metadata.".into(),
         }));
     };
@@ -221,13 +226,13 @@ pub async fn assess_live_buy_leg(
                 leg_index: leg.leg_index,
                 side: RouteBlockSide::Buy,
                 symbol: ctx.symbol.clone(),
-                chain: ctx.chain,
-                amount_usd: leg.amount_usdc,
+                chain: Some(ctx.chain),
+                amount_usd: leg_amount_usd(leg),
                 message: format!(
                     "No safe live {} buy route is available on {} for the planned ${:.2} spend. Exact-input quote failed: {err}.",
                     ctx.symbol,
                     ctx.chain.as_str(),
-                    leg.amount_usdc,
+                    leg_amount_usd(leg),
                 ),
             }));
         }
@@ -238,8 +243,8 @@ pub async fn assess_live_buy_leg(
             leg_index: leg.leg_index,
             side: RouteBlockSide::Buy,
             symbol: ctx.symbol,
-            chain: ctx.chain,
-            amount_usd: leg.amount_usdc,
+            chain: Some(ctx.chain),
+            amount_usd: leg_amount_usd(leg),
             message,
         }));
     }
@@ -288,7 +293,7 @@ fn buy_quote_price_gap(
     if expected_qty <= 0.0 || ctx.market_price <= 0.0 {
         return None;
     }
-    let quoted_price = leg.amount_usdc / expected_qty;
+    let quoted_price = leg_amount_usd(leg) / expected_qty;
     let gap_bps = ((quoted_price - ctx.market_price).abs() / ctx.market_price) * 10_000.0;
     if gap_bps <= MAX_QUOTER_PRICE_GAP_BPS {
         return None;
@@ -301,7 +306,7 @@ fn buy_quote_price_gap(
         "No safe live USDC→{} route is available on {} for the planned ${:.2} spend. Best {}{} quote implies ${quoted_price:.2}/{} versus market ${:.2} (gap {:.0} bps, limit {MAX_QUOTER_PRICE_GAP_BPS:.0} bps).",
         ctx.symbol,
         ctx.chain.as_str(),
-        leg.amount_usdc,
+        leg_amount_usd(leg),
         quote.provider,
         fee,
         ctx.symbol,
@@ -322,7 +327,7 @@ fn sell_quote_price_gap(
     if expected_qty <= 0.0 || market_price <= 0.0 {
         return None;
     }
-    let quoted_price = leg.amount_usdc / expected_qty;
+    let quoted_price = leg_amount_usd(leg) / expected_qty;
     let gap_bps = ((quoted_price - market_price).abs() / market_price) * 10_000.0;
     if gap_bps <= MAX_QUOTER_PRICE_GAP_BPS {
         return None;
@@ -411,7 +416,7 @@ fn sell_route_block_message(
         "No safe live {}→USDC route is available on {} for the planned ${:.2} sale. Aegis will not create a review that would execute at a bad pool price or fail in Circle estimation.",
         ctx.symbol,
         ctx.chain.as_str(),
-        leg.amount_usdc,
+        leg_amount_usd(leg),
     )];
 
     if let Some(reason) = price_gap {
@@ -464,7 +469,7 @@ mod tests {
 
     use crate::modules::rebalance::{
         adapters::swap::ExactInputSellQuote,
-        models::{ChainKey, LegKind, PlanInput, PlannedLeg},
+        models::{decimal_usd, ChainKey, LegKind, PlanInput, PlannedLeg},
         quote::ValidatedQuote,
     };
 
@@ -482,7 +487,7 @@ mod tests {
             dest_chain: Some(ChainKey::Base),
             src_symbol: Some("ETH".into()),
             dest_symbol: Some("USDC".into()),
-            amount_usdc,
+            amount_usdc: decimal_usd(amount_usdc),
             min_out: None,
         }
     }
@@ -590,7 +595,7 @@ mod tests {
             dest_chain: Some(ChainKey::Base),
             src_symbol: Some("USDC".into()),
             dest_symbol: Some("ETH".into()),
-            amount_usdc: 400.0,
+            amount_usdc: decimal_usd(400.0),
             min_out: None,
         };
         let ctx = LiveBuyContext {
@@ -627,7 +632,7 @@ mod tests {
             dest_chain: Some(ChainKey::Base),
             src_symbol: Some("USDC".into()),
             dest_symbol: Some("ETH".into()),
-            amount_usdc: 1_000.0,
+            amount_usdc: decimal_usd(1_000.0),
             min_out: None,
         };
         let ctx = LiveBuyContext {

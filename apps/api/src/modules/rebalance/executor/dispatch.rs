@@ -29,6 +29,7 @@ use crate::modules::rebalance::registry::{
 use crate::modules::wallet_routes;
 use crate::router::AppState;
 
+use super::leg_status::mark_leg_quoted;
 use super::legs::{blockchain_for_chain, quote_filled_qty, LegRow};
 
 /// Fraction of the live USDC balance a buy-swap may spend, leaving a small
@@ -189,6 +190,7 @@ pub(super) async fn dispatch(
 
     let ticket = ExecutionTicket::mint(&caps, &state.config, leg.id, &route_leg, quote, now)
         .map_err(|e| AppError::BadRequest(e.detail()))?;
+    mark_leg_quoted(state, rebalance_id, leg.id, user_id, leg).await?;
 
     // The real on-chain fill (from the executed quote) drives the holdings
     // writeback. A USDC↔USDC bridge leg yields `None` here naturally.
