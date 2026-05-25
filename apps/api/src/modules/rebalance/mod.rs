@@ -8,6 +8,7 @@
 
 pub mod adapters;
 pub mod cross_chain;
+pub mod defensive_plan;
 pub mod executor;
 pub mod handlers;
 pub mod models;

@@ -70,7 +70,7 @@ pub enum SolveError {
 
 /// Knobs for the flow solver. More increments → smaller optimality gap (the gap
 /// is O(demand / increments)); the default meets the ≥95% saving gate (M2) with
-/// margin. `max_routes` caps candidate diversity (Yen-style), keeping the solve
+/// margin. `max_routes` caps candidate diversity (Yen k-shortest simple paths), keeping the solve
 /// sub-quadratic at scale (M6).
 #[derive(Debug, Clone, Copy)]
 pub struct FlowConfig {
@@ -282,9 +282,10 @@ fn path_nodes(graph: &LiquidityGraph, source: NodeIdx, path: &[EdgeIdx]) -> Vec<
 /// bounded for production-sized graphs, but unlike the previous edge-disjoint
 /// seeding it does not forbid shared bridges or USDC hubs. Shared edge costs are
 /// accounted later by `edge_flow`, so convex splits across routes with common
-/// prefixes/suffixes are valid candidates. Like Yen's algorithm, each outer
-/// iteration spurs from the route most recently accepted into `routes` while
-/// retaining the global candidate pool from earlier accepted routes.
+/// prefixes/suffixes are valid candidates. This is canonical Yen: each
+/// iteration spurs from the latest accepted path, removes every accepted path's
+/// next edge when it shares the same root, keeps a global candidate pool, and
+/// accepts the cheapest deterministic candidate.
 fn candidate_routes(
     graph: &LiquidityGraph,
     s: NodeIdx,
@@ -308,22 +309,25 @@ fn candidate_routes(
     let limit = k.max(1) as usize;
 
     while routes.len() < limit {
-        let previous = routes[routes.len() - 1].clone();
-        let prev_nodes = path_nodes(graph, s, &previous);
+        let previous = routes
+            .last()
+            .cloned()
+            .expect("at least the first route is present");
+        let previous_nodes = path_nodes(graph, s, &previous);
 
         for spur_pos in 0..previous.len() {
-            let spur_node = prev_nodes[spur_pos];
+            let spur_node = previous_nodes[spur_pos];
             let root = &previous[..spur_pos];
 
             let mut forbidden_edges: HashSet<EdgeIdx> = HashSet::new();
-            for route in &routes {
-                if route.len() > spur_pos && route[..spur_pos] == *root {
-                    forbidden_edges.insert(route[spur_pos]);
+            for accepted in &routes {
+                if accepted.len() > spur_pos && accepted[..spur_pos] == *root {
+                    forbidden_edges.insert(accepted[spur_pos]);
                 }
             }
 
             let mut forbidden_nodes: HashSet<NodeIdx> =
-                prev_nodes[..spur_pos].iter().copied().collect();
+                previous_nodes[..spur_pos].iter().copied().collect();
             forbidden_nodes.remove(&spur_node);
 
             let Some(spur) = dijkstra(

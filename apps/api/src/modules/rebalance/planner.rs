@@ -407,7 +407,7 @@ mod tests {
         PlanInput {
             portfolio_value_usd: portfolio_value,
             current_weights: weights(current),
-            token_values_by_chain: HashMap::new(),
+            sell_sources: HashMap::new(),
             target_weights: weights(target),
             usdc_per_chain,
             drift_threshold: 0.05,
@@ -434,7 +434,7 @@ mod tests {
         let i = PlanInput {
             portfolio_value_usd: 100.0,
             current_weights: weights(&[("BTC", 0.95)]),
-            token_values_by_chain: HashMap::new(),
+            sell_sources: HashMap::new(),
             target_weights: weights(&[("BTC", 0.85), ("ETH", 0.10)]),
             usdc_per_chain: HashMap::new(),
             drift_threshold: 0.01,
@@ -587,7 +587,7 @@ mod tests {
         let i = PlanInput {
             portfolio_value_usd: 0.0,
             current_weights: weights(&[]),
-            token_values_by_chain: HashMap::new(),
+            sell_sources: HashMap::new(),
             target_weights: weights(&[("ETH", 1.0)]),
             usdc_per_chain,
             drift_threshold: 0.05,

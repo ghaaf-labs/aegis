@@ -106,17 +106,36 @@ pub struct PlannedLeg {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum SellSources {
+    /// Mock/offline path: no live chain-level token balance is known, so route a
+    /// sell from the token's canonical execution chain.
+    CanonicalFallback,
+    /// Real wallet path: sell only from the chains where live wallet value exists.
+    ByChain(std::collections::HashMap<ChainKey, f64>),
+    /// Live route assessment froze this symbol because every known source failed
+    /// a quote/balance safety check. Do not fall back to the canonical chain.
+    Frozen,
+}
+
+impl SellSources {
+    pub fn by_chain(values: std::collections::HashMap<ChainKey, f64>) -> Self {
+        if values.is_empty() {
+            Self::Frozen
+        } else {
+            Self::ByChain(values)
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct PlanInput {
     pub portfolio_value_usd: f64,
     /// Current allocation weights by symbol — what the user holds today.
     pub current_weights: std::collections::HashMap<String, f64>,
-    /// Current executable non-USDC holding value by symbol and chain. Real
-    /// Circle planning fills this from live wallet balances so sells originate
-    /// from the chain where the token is actually held instead of assuming the
-    /// token's canonical/native chain. Mock/offline planning leaves it empty and
-    /// falls back to canonical-chain routing.
-    pub token_values_by_chain:
-        std::collections::HashMap<String, std::collections::HashMap<ChainKey, f64>>,
+    /// Sell source model by symbol. Absence is interpreted as
+    /// `CanonicalFallback`; explicit `Frozen` means route assessment removed all
+    /// safe sources and the planner must not invent a canonical-chain sell.
+    pub sell_sources: std::collections::HashMap<String, SellSources>,
     /// Target allocation weights by symbol — from `portfolios.goal.targetAllocation`.
     pub target_weights: std::collections::HashMap<String, f64>,
     /// Unified USDC available across chains (from Gateway).

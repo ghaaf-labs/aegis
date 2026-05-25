@@ -1,8 +1,9 @@
 //! apps/api ↔ `aegis-routing` adapter + routing-engine-driven planner.
 //!
-//! [`engine_plan_legs`] is the real planning entry point: it calls the routing
+//! [`engine_plan`] is the real planning entry point: it calls the routing
 //! engine for every symbol delta, translates each `FlowPlan`/`LegDag` into
-//! `PlannedLeg`s with **explicit `deps`**, and returns the full execution DAG.
+//! `PlannedLeg`s with **explicit `deps`**, and returns the execution DAG plus
+//! any deltas that could not be routed.
 //! The heuristic `planner::plan_legs` is kept for staleness-check comparisons
 //! (it generates a structurally identical leg list from the same inputs, which
 //! the approval gate uses to detect portfolio drift), but execution goes
@@ -23,10 +24,31 @@ use rust_decimal::Decimal;
 use crate::config::Config;
 use crate::domain::chain::ChainKey;
 use crate::domain::token;
-use crate::modules::rebalance::models::{LegKind, PlanInput, PlannedLeg};
+use crate::modules::rebalance::models::{LegKind, PlanInput, PlannedLeg, SellSources};
 use crate::modules::rebalance::planner::sorted_plan_deltas;
 
 const ROUTING_DUST_USD: f64 = 0.01;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeferredSide {
+    Buy,
+    Sell,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EngineDeferred {
+    pub symbol: String,
+    pub side: DeferredSide,
+    pub chain: Option<ChainKey>,
+    pub amount_usd: f64,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct EnginePlan {
+    pub legs: Vec<PlannedLeg>,
+    pub deferred: Vec<EngineDeferred>,
+}
 
 /// Map a `ChainKey` to the routing crate's `ChainId` (stable CCTP domain id).
 fn chain_id(c: ChainKey) -> ChainId {
@@ -196,12 +218,30 @@ fn route_and_append(
     added
 }
 
-fn sell_sources(input: &PlanInput, symbol: &str, amount_usd: f64) -> Vec<(ChainKey, f64)> {
-    let Some(values_by_chain) = input.token_values_by_chain.get(symbol) else {
-        return vec![(token::native_chain(symbol), amount_usd)];
+#[derive(Debug, Clone)]
+struct SellSelection {
+    sources: Vec<(ChainKey, f64)>,
+    shortfall_usd: f64,
+}
+
+fn sell_sources(input: &PlanInput, symbol: &str, amount_usd: f64) -> SellSelection {
+    let sources = match input.sell_sources.get(symbol) {
+        None | Some(SellSources::CanonicalFallback) => {
+            return SellSelection {
+                sources: vec![(token::native_chain(symbol), amount_usd)],
+                shortfall_usd: 0.0,
+            };
+        }
+        Some(SellSources::Frozen) => {
+            return SellSelection {
+                sources: Vec::new(),
+                shortfall_usd: amount_usd,
+            };
+        }
+        Some(SellSources::ByChain(values_by_chain)) => values_by_chain,
     };
 
-    let mut rows: Vec<(ChainKey, f64)> = values_by_chain
+    let mut rows: Vec<(ChainKey, f64)> = sources
         .iter()
         .filter_map(|(&chain, &value)| {
             (value.is_finite() && value >= ROUTING_DUST_USD).then_some((chain, value))
@@ -225,15 +265,10 @@ fn sell_sources(input: &PlanInput, symbol: &str, amount_usd: f64) -> Vec<(ChainK
             remaining -= take;
         }
     }
-    if remaining >= ROUTING_DUST_USD && !out.is_empty() {
-        tracing::warn!(
-            symbol = %symbol,
-            requested_usd = amount_usd,
-            unrouted_usd = remaining,
-            "sell sources could not cover full trim delta"
-        );
+    SellSelection {
+        sources: out,
+        shortfall_usd: remaining.max(0.0),
     }
-    out
 }
 
 #[derive(Debug, Clone)]
@@ -323,21 +358,33 @@ fn best_source_target_candidate(
 /// available USDC sources by route cost. This keeps target selection faithful to
 /// the user's allocation while letting the engine choose source chains and split
 /// funding across chains when that is cheaper than a single source.
-pub fn engine_plan_legs(cfg: &Config, input: &PlanInput) -> Vec<PlannedLeg> {
+pub fn engine_plan(cfg: &Config, input: &PlanInput) -> EnginePlan {
     let deltas = sorted_plan_deltas(input);
     if deltas.is_empty() {
-        return Vec::new();
+        return EnginePlan::default();
     }
 
     let graph = liquidity_graph(cfg);
     let prices = &input.prices;
     let mut all_legs: Vec<PlannedLeg> = Vec::new();
+    let mut deferred = Vec::new();
     let mut usdc_pool: HashMap<ChainKey, f64> = input.usdc_per_chain.clone();
 
     // Sells first: asset → USDC (same chain).
     for d in deltas.iter().filter(|d| d.value_delta_usd < 0.0) {
         let amount = d.value_delta_usd.abs();
-        for (chain, source_amount) in sell_sources(input, &d.symbol, amount) {
+        let selection = sell_sources(input, &d.symbol, amount);
+        if selection.sources.is_empty() {
+            deferred.push(EngineDeferred {
+                symbol: d.symbol.clone(),
+                side: DeferredSide::Sell,
+                chain: None,
+                amount_usd: amount,
+                reason: format!("No safe sell source is available for {}.", d.symbol),
+            });
+            continue;
+        }
+        for (chain, source_amount) in selection.sources {
             let size = Decimal::from_f64(source_amount).unwrap_or_default();
             if route_and_append(
                 &graph,
@@ -355,7 +402,30 @@ pub fn engine_plan_legs(cfg: &Config, input: &PlanInput) -> Vec<PlannedLeg> {
                     "routing engine: no sell route for {}, skipping delta",
                     d.symbol
                 );
+                deferred.push(EngineDeferred {
+                    symbol: d.symbol.clone(),
+                    side: DeferredSide::Sell,
+                    chain: Some(chain),
+                    amount_usd: source_amount,
+                    reason: format!(
+                        "No sell route is available for {} on {}.",
+                        d.symbol,
+                        chain.as_str()
+                    ),
+                });
             }
+        }
+        if selection.shortfall_usd >= ROUTING_DUST_USD {
+            deferred.push(EngineDeferred {
+                symbol: d.symbol.clone(),
+                side: DeferredSide::Sell,
+                chain: None,
+                amount_usd: selection.shortfall_usd,
+                reason: format!(
+                    "Live wallet holdings could not cover ${:.2} of the requested {} trim.",
+                    selection.shortfall_usd, d.symbol
+                ),
+            });
         }
     }
 
@@ -393,6 +463,21 @@ pub fn engine_plan_legs(cfg: &Config, input: &PlanInput) -> Vec<PlannedLeg> {
         }
     }
 
+    for demand in &demands {
+        if demand.remaining_usd >= ROUTING_DUST_USD {
+            deferred.push(EngineDeferred {
+                symbol: demand.symbol.clone(),
+                side: DeferredSide::Buy,
+                chain: Some(demand.target_chain),
+                amount_usd: demand.remaining_usd,
+                reason: format!(
+                    "No route or source liquidity is available for ${:.2} of the {} target.",
+                    demand.remaining_usd, demand.symbol
+                ),
+            });
+        }
+    }
+
     // Re-number leg_index to match position (the translate step produces
     // contiguous indices within each allocation, but across allocations the
     // offset is already tracked — verify here for safety).
@@ -400,7 +485,14 @@ pub fn engine_plan_legs(cfg: &Config, input: &PlanInput) -> Vec<PlannedLeg> {
         leg.leg_index = i as i32;
     }
 
-    all_legs
+    EnginePlan {
+        legs: all_legs,
+        deferred,
+    }
+}
+
+pub fn engine_plan_legs(cfg: &Config, input: &PlanInput) -> Vec<PlannedLeg> {
+    engine_plan(cfg, input).legs
 }
 
 #[cfg(test)]
@@ -445,7 +537,7 @@ mod tests {
         PlanInput {
             portfolio_value_usd: portfolio_value,
             current_weights,
-            token_values_by_chain: HashMap::new(),
+            sell_sources: HashMap::new(),
             target_weights,
             usdc_per_chain,
             drift_threshold: 0.01,
@@ -617,7 +709,7 @@ mod tests {
         let input = PlanInput {
             portfolio_value_usd: 5_000.0,
             current_weights: HashMap::new(),
-            token_values_by_chain: HashMap::new(),
+            sell_sources: HashMap::new(),
             target_weights,
             usdc_per_chain,
             drift_threshold: 0.01,
@@ -669,16 +761,16 @@ mod tests {
         current_weights.insert("ETH".to_string(), 1.0);
         let mut target_weights = HashMap::new();
         target_weights.insert("ETH".to_string(), 0.0);
-        let mut token_values_by_chain = HashMap::new();
-        token_values_by_chain.insert(
+        let mut sell_sources = HashMap::new();
+        sell_sources.insert(
             "ETH".to_string(),
-            HashMap::from([(ChainKey::ArbSepolia, 1_000.0)]),
+            SellSources::ByChain(HashMap::from([(ChainKey::ArbSepolia, 1_000.0)])),
         );
 
         let input = PlanInput {
             portfolio_value_usd: 1_000.0,
             current_weights,
-            token_values_by_chain,
+            sell_sources,
             target_weights,
             usdc_per_chain: HashMap::new(),
             drift_threshold: 0.01,
@@ -704,13 +796,13 @@ mod tests {
         current_weights.insert("ETH".to_string(), 1.0);
         let mut target_weights = HashMap::new();
         target_weights.insert("ETH".to_string(), 0.0);
-        let mut token_values_by_chain = HashMap::new();
-        token_values_by_chain.insert("ETH".to_string(), HashMap::new());
+        let mut sell_sources = HashMap::new();
+        sell_sources.insert("ETH".to_string(), SellSources::Frozen);
 
         let input = PlanInput {
             portfolio_value_usd: 1_000.0,
             current_weights,
-            token_values_by_chain,
+            sell_sources,
             target_weights,
             usdc_per_chain: HashMap::new(),
             drift_threshold: 0.01,

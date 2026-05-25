@@ -172,7 +172,7 @@ async fn main() -> anyhow::Result<()> {
     let input = PlanInput {
         portfolio_value_usd: total_value_usd,
         current_weights,
-        token_values_by_chain: HashMap::new(),
+        sell_sources: HashMap::new(),
         target_weights,
         usdc_per_chain,
         drift_threshold: 0.05,

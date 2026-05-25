@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::domain::token::native_chain;
 use crate::error::AppError;
 use crate::error::Result;
-use crate::modules::rebalance::models::{ChainKey, PlanInput};
+use crate::modules::rebalance::models::{ChainKey, PlanInput, SellSources};
 use crate::modules::rebalance::registry::{executable_token_symbols, RuntimeCapabilities};
 use crate::modules::rebalance::reservations::{reserved_usdc_per_chain, ReservationLeg};
 use crate::modules::wallet_routes;
@@ -100,15 +100,19 @@ pub(super) async fn build_plan_input(
     // wallet's sellable holdings (INV-1, ground truth) so overweight positions
     // can be sold, not just topped up; an empty wallet is naturally cash-only.
     // Mock/EOA: the persisted allocation book (confirmed marks, else stale %).
-    let token_values_by_chain = if real_circle {
+    let sell_source_values = if real_circle {
         wallet_holding_values_by_chain(&balance, &prices, &executable)
     } else {
         HashMap::new()
     };
+    let sell_sources = sell_source_values
+        .into_iter()
+        .map(|(symbol, values)| (symbol, SellSources::by_chain(values)))
+        .collect::<HashMap<_, _>>();
     let (mode, marked_allocations, frozen_value_usd) = if real_circle {
         (
             ValuationMode::WalletHoldings,
-            wallet_holdings_marked(&token_values_by_chain),
+            wallet_holdings_marked(&sell_sources),
             // Track-only holdings: real value the planner can't trade, counted
             // into NAV so targets aren't sized against an understated portfolio.
             frozen_holdings_value(&balance, &prices, &executable),
@@ -154,7 +158,7 @@ pub(super) async fn build_plan_input(
         PlanInput {
             portfolio_value_usd: valuation.plan_value_usd,
             current_weights: valuation.current_weights,
-            token_values_by_chain,
+            sell_sources,
             target_weights,
             usdc_per_chain,
             drift_threshold: 0.05,
@@ -573,12 +577,13 @@ fn wallet_holding_values_by_chain(
 
 /// Collapse chain-level wallet values to `(symbol, stale_weight, value)` rows
 /// for valuation. The chain map remains on `PlanInput` for sell routing.
-fn wallet_holdings_marked(
-    token_values_by_chain: &HashMap<String, HashMap<ChainKey, f64>>,
-) -> Vec<(String, f64, f64)> {
-    let mut marked: Vec<(String, f64, f64)> = token_values_by_chain
+fn wallet_holdings_marked(sell_sources: &HashMap<String, SellSources>) -> Vec<(String, f64, f64)> {
+    let mut marked: Vec<(String, f64, f64)> = sell_sources
         .iter()
-        .map(|(symbol, by_chain)| (symbol.clone(), 0.0, by_chain.values().sum()))
+        .filter_map(|(symbol, sources)| match sources {
+            SellSources::ByChain(by_chain) => Some((symbol.clone(), 0.0, by_chain.values().sum())),
+            SellSources::CanonicalFallback | SellSources::Frozen => None,
+        })
         .filter(|(_, _, value): &(String, f64, f64)| value.is_finite() && *value > 0.0)
         .collect();
     marked.sort_by(|a, b| a.0.cmp(&b.0));
@@ -756,7 +761,12 @@ mod tests {
         let prices = HashMap::from([("ETH".to_string(), 2000.0), ("RANDO".to_string(), 1.0)]);
 
         let values = wallet_holding_values_by_chain(&balance, &prices, &["ETH"]);
-        let marked = wallet_holdings_marked(&values);
+        let sell_sources = values
+            .clone()
+            .into_iter()
+            .map(|(symbol, values)| (symbol, SellSources::by_chain(values)))
+            .collect();
+        let marked = wallet_holdings_marked(&sell_sources);
 
         // RANDO is not executable → never in the basis (no doomed sell leg).
         // ETH is valued on every chain where it is held; sell routing later

@@ -493,7 +493,7 @@ mod tests {
         PlanInput {
             portfolio_value_usd: 1_000.0,
             current_weights: HashMap::new(),
-            token_values_by_chain: HashMap::new(),
+            sell_sources: HashMap::new(),
             target_weights: HashMap::new(),
             usdc_per_chain: HashMap::new(),
             drift_threshold: 0.05,

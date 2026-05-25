@@ -4,7 +4,8 @@ use rust_decimal::prelude::ToPrimitive;
 use uuid::Uuid;
 
 use crate::error::{AppError, Result};
-use crate::modules::rebalance::models::{PlanInput, PlannedLeg};
+use crate::modules::rebalance::models::{PlanInput, PlannedLeg, SellSources};
+use crate::modules::rebalance::routing::EngineDeferred;
 use crate::modules::wallet_routes;
 use crate::router::AppState;
 
@@ -196,28 +197,32 @@ pub(super) async fn route_shaped_plan(
     user_id: Uuid,
     input: PlanInput,
 ) -> Result<RouteShapedPlan> {
-    let initial_legs = crate::modules::rebalance::routing::engine_plan_legs(&state.config, &input);
+    let initial = crate::modules::rebalance::routing::engine_plan(&state.config, &input);
     let blocks = crate::modules::rebalance::route_assessment::live_route_blocks(
         state,
         user_id,
         &input,
-        &initial_legs,
+        &initial.legs,
     )
     .await?;
     if blocks.is_empty() {
+        let route_deferred = engine_deferred_targets(&input, initial.deferred);
         return Ok(RouteShapedPlan {
             input,
-            legs: initial_legs,
-            route_deferred: Vec::new(),
+            legs: initial.legs,
+            route_deferred,
             blocked_message: None,
         });
     }
 
     let (adjusted, route_deferred) = freeze_blocked_routes(input, &blocks);
 
-    let legs = crate::modules::rebalance::routing::engine_plan_legs(&state.config, &adjusted);
+    let shaped = crate::modules::rebalance::routing::engine_plan(&state.config, &adjusted);
     let residual_blocks = crate::modules::rebalance::route_assessment::live_route_blocks(
-        state, user_id, &adjusted, &legs,
+        state,
+        user_id,
+        &adjusted,
+        &shaped.legs,
     )
     .await?;
     let blocked_message = if !residual_blocks.is_empty() {
@@ -226,12 +231,42 @@ pub(super) async fn route_shaped_plan(
         None
     };
 
+    let mut all_deferred = route_deferred;
+    all_deferred.extend(engine_deferred_targets(&adjusted, shaped.deferred));
+
     Ok(RouteShapedPlan {
         input: adjusted,
-        legs,
-        route_deferred,
+        legs: shaped.legs,
+        route_deferred: all_deferred,
         blocked_message,
     })
+}
+
+fn engine_deferred_targets(
+    input: &PlanInput,
+    deferred: Vec<EngineDeferred>,
+) -> Vec<DeferredTarget> {
+    deferred
+        .into_iter()
+        .map(|d| {
+            let fallback_weight = d.amount_usd / input.portfolio_value_usd.max(1.0);
+            let target_weight = match d.side {
+                crate::modules::rebalance::routing::DeferredSide::Buy => {
+                    input.target_weights.get(&d.symbol)
+                }
+                crate::modules::rebalance::routing::DeferredSide::Sell => {
+                    input.current_weights.get(&d.symbol)
+                }
+            }
+            .copied()
+            .unwrap_or(fallback_weight);
+            DeferredTarget {
+                target_weight,
+                symbol: d.symbol,
+                reason: d.reason,
+            }
+        })
+        .collect()
 }
 
 fn freeze_blocked_routes(
@@ -272,7 +307,7 @@ fn freeze_blocked_sell_source(
     input: &mut PlanInput,
     block: &crate::modules::rebalance::route_assessment::RouteBlock,
 ) {
-    let Some(by_chain) = input.token_values_by_chain.get_mut(&block.symbol) else {
+    let Some(sources) = input.sell_sources.get_mut(&block.symbol) else {
         let current_weight = input
             .current_weights
             .get(&block.symbol)
@@ -289,16 +324,21 @@ fn freeze_blocked_sell_source(
         input
             .current_weights
             .insert(block.symbol.clone(), target_weight);
+        input
+            .sell_sources
+            .insert(block.symbol.clone(), SellSources::Frozen);
         return;
     };
-    by_chain.remove(&block.chain);
-    if by_chain.is_empty() {
-        // Keep an explicit empty map as a "no live sell source remains" marker.
-        // Removing the key would make the routing planner fall back to the
-        // token's canonical chain and recreate the same blocked sell.
-        input
-            .token_values_by_chain
-            .insert(block.symbol.clone(), HashMap::new());
+    match sources {
+        SellSources::ByChain(by_chain) => {
+            by_chain.remove(&block.chain);
+            if by_chain.is_empty() {
+                *sources = SellSources::Frozen;
+            }
+        }
+        SellSources::CanonicalFallback | SellSources::Frozen => {
+            *sources = SellSources::Frozen;
+        }
     }
 }
 
@@ -423,7 +463,7 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::modules::rebalance::{
-        models::{ChainKey, PlanInput},
+        models::{ChainKey, PlanInput, SellSources},
         route_assessment::{RouteBlock, RouteBlockSide},
     };
 
@@ -440,7 +480,7 @@ mod tests {
         PlanInput {
             portfolio_value_usd: 1_000.0,
             current_weights,
-            token_values_by_chain: HashMap::new(),
+            sell_sources: HashMap::new(),
             target_weights,
             usdc_per_chain,
             drift_threshold: 0.05,
@@ -500,9 +540,12 @@ mod tests {
     #[test]
     fn freeze_blocked_sell_removes_only_the_blocked_chain_slice() {
         let mut input = input();
-        input.token_values_by_chain.insert(
+        input.sell_sources.insert(
             "ETH".into(),
-            HashMap::from([(ChainKey::Base, 500.0), (ChainKey::ArbSepolia, 500.0)]),
+            SellSources::ByChain(HashMap::from([
+                (ChainKey::Base, 500.0),
+                (ChainKey::ArbSepolia, 500.0),
+            ])),
         );
         let block = RouteBlock {
             leg_index: 0,
@@ -515,11 +558,11 @@ mod tests {
 
         let (adjusted, deferred) = freeze_blocked_routes(input, &[block]);
 
-        assert!(!adjusted.token_values_by_chain["ETH"].contains_key(&ChainKey::Base));
-        assert_eq!(
-            adjusted.token_values_by_chain["ETH"][&ChainKey::ArbSepolia],
-            500.0
-        );
+        let SellSources::ByChain(by_chain) = &adjusted.sell_sources["ETH"] else {
+            panic!("expected remaining Arb source");
+        };
+        assert!(!by_chain.contains_key(&ChainKey::Base));
+        assert_eq!(by_chain[&ChainKey::ArbSepolia], 500.0);
         assert_eq!(adjusted.current_weights["ETH"], 1.0);
         assert_eq!(adjusted.target_weights["ETH"], 0.2);
         assert_eq!(deferred.len(), 1);
@@ -528,9 +571,10 @@ mod tests {
     #[test]
     fn freeze_blocked_sell_keeps_empty_source_marker_when_last_chain_is_removed() {
         let mut input = input();
-        input
-            .token_values_by_chain
-            .insert("ETH".into(), HashMap::from([(ChainKey::Base, 500.0)]));
+        input.sell_sources.insert(
+            "ETH".into(),
+            SellSources::ByChain(HashMap::from([(ChainKey::Base, 500.0)])),
+        );
         let block = RouteBlock {
             leg_index: 0,
             side: RouteBlockSide::Sell,
@@ -543,11 +587,8 @@ mod tests {
         let (adjusted, deferred) = freeze_blocked_routes(input, &[block]);
 
         assert!(
-            adjusted
-                .token_values_by_chain
-                .get("ETH")
-                .is_some_and(HashMap::is_empty),
-            "empty source marker prevents canonical-chain sell fallback"
+            matches!(adjusted.sell_sources.get("ETH"), Some(SellSources::Frozen)),
+            "explicit Frozen source prevents canonical-chain sell fallback"
         );
         assert_eq!(deferred.len(), 1);
     }

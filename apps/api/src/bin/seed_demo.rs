@@ -495,7 +495,7 @@ async fn build_plan_legs(state: &AppState, portfolio_id: Uuid) -> anyhow::Result
     let input = PlanInput {
         portfolio_value_usd: idle_usdc,
         current_weights: HashMap::new(),
-        token_values_by_chain: HashMap::new(),
+        sell_sources: HashMap::new(),
         target_weights,
         usdc_per_chain,
         drift_threshold: 0.05,
