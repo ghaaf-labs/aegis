@@ -9,6 +9,7 @@ use crate::modules::rebalance::{
     models::PlannedLeg,
     planner::plan_legs,
     registry::{capabilities::RuntimeCapabilities, route, route::RouteLeg},
+    snapshot::{routability_changed, RoutableSnapshot},
 };
 use crate::router::AppState;
 
@@ -139,6 +140,25 @@ pub(super) async fn approval_safety(
             approvable: false,
             code: "STALE_PLAN".into(),
             message: "Portfolio holdings or Gateway cash changed after this plan was created. Build a fresh review before approving real execution.".into(),
+            missing_capabilities: None,
+        });
+    }
+
+    // INV-6: the plan is bound to the routability it was built against. If a
+    // rail flipped Ready⇄track-only since then, the approved legs may no longer
+    // settle — refuse so the user rebuilds against the live routable set.
+    let stored_snapshot_hash: Option<String> =
+        sqlx::query_scalar("SELECT routable_snapshot_hash FROM rebalances WHERE id = $1")
+            .bind(rebalance_id)
+            .fetch_one(&state.db)
+            .await?;
+    let current_caps = RuntimeCapabilities::from_config(&state.config);
+    let current_snapshot = RoutableSnapshot::capture(&current_caps, &state.config);
+    if routability_changed(stored_snapshot_hash.as_deref(), current_snapshot.hash()) {
+        return Ok(ApprovalSafety {
+            approvable: false,
+            code: "ROUTABILITY_CHANGED".into(),
+            message: "A token's route went live or track-only since this plan was built. Build a fresh review so the agent only targets what can settle now.".into(),
             missing_capabilities: None,
         });
     }

@@ -80,6 +80,14 @@ impl RoutableSnapshot {
     }
 }
 
+/// Has routability changed since a plan was built? Compares the plan's stored
+/// fingerprint against a freshly-captured one. A `None` stored hash means the
+/// plan predates snapshot binding (legacy/mock) — treated as "no binding", never
+/// a false stale (so old plans don't suddenly become un-approvable).
+pub fn routability_changed(stored: Option<&str>, current: &str) -> bool {
+    stored.is_some_and(|s| s != current)
+}
+
 /// Deterministic content hash of the routable set. Uses each state's stable
 /// serde label, so the hash is reproducible across captures of identical
 /// routability and changes the moment any sleeve flips Ready ⇄ not-Ready.
@@ -122,6 +130,15 @@ mod tests {
             designable,
             "every designable sleeve is either ready or track-only, never both/neither"
         );
+    }
+
+    #[test]
+    fn routability_changed_honors_legacy_null_binding() {
+        // Legacy/mock plan (no stored hash) is never treated as stale.
+        assert!(!routability_changed(None, "abc"));
+        // Same hash ⇒ unchanged; different hash ⇒ a rail flipped ⇒ changed.
+        assert!(!routability_changed(Some("abc"), "abc"));
+        assert!(routability_changed(Some("abc"), "def"));
     }
 
     #[test]

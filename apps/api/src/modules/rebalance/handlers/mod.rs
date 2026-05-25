@@ -115,6 +115,20 @@ pub async fn create(
     };
     let rebalance_id = create_plan(&state, portfolio_id, decision.id, &legs).await?;
 
+    // Bind the plan to the routability it was built against (INV-6): approval
+    // re-captures and refuses if a rail flipped Ready⇄track-only meanwhile.
+    let snapshot_caps =
+        crate::modules::rebalance::registry::RuntimeCapabilities::from_config(&state.config);
+    let routable_snapshot = crate::modules::rebalance::snapshot::RoutableSnapshot::capture(
+        &snapshot_caps,
+        &state.config,
+    );
+    sqlx::query("UPDATE rebalances SET routable_snapshot_hash = $1 WHERE id = $2")
+        .bind(routable_snapshot.hash())
+        .bind(rebalance_id)
+        .execute(&state.db)
+        .await?;
+
     Ok(Json(PlanOutcome::Executable(PlanResponse {
         rebalance_id,
         decision_id: decision.id,
