@@ -6,6 +6,7 @@ use crate::error::Result;
 use crate::modules::sse::{RebalanceLegPayload, SseEvent};
 use crate::router::AppState;
 
+use super::leg_state::LegState;
 use super::legs::LegRow;
 
 pub(super) async fn mark_leg_submitted(
@@ -16,9 +17,10 @@ pub(super) async fn mark_leg_submitted(
     leg: &LegRow,
 ) -> Result<()> {
     sqlx::query(
-        "UPDATE rebalance_legs SET status = 'submitted', submitted_at = NOW() WHERE id = $1",
+        "UPDATE rebalance_legs SET status = 'submitted', leg_state = $2, submitted_at = NOW() WHERE id = $1",
     )
     .bind(leg_id)
+    .bind(LegState::Submitted.as_str())
     .execute(&state.db)
     .await?;
     broadcast_leg(
@@ -44,13 +46,14 @@ pub(super) async fn mark_leg_confirmed(
     cctp_hash: Option<&str>,
 ) -> Result<()> {
     sqlx::query(
-        "UPDATE rebalance_legs SET status = 'confirmed', confirmed_at = NOW(),
+        "UPDATE rebalance_legs SET status = 'confirmed', leg_state = $4, confirmed_at = NOW(),
                                   tx_hash = $2, cctp_message_hash = $3
          WHERE id = $1",
     )
     .bind(leg_id)
     .bind(tx_hash)
     .bind(cctp_hash)
+    .bind(LegState::Confirmed.as_str())
     .execute(&state.db)
     .await?;
 
@@ -75,11 +78,14 @@ pub(super) async fn mark_leg_failed(
     leg: &LegRow,
     reason: &str,
 ) -> Result<()> {
-    sqlx::query("UPDATE rebalance_legs SET status = 'failed', failure_reason = $2 WHERE id = $1")
-        .bind(leg_id)
-        .bind(reason)
-        .execute(&state.db)
-        .await?;
+    sqlx::query(
+        "UPDATE rebalance_legs SET status = 'failed', leg_state = $3, failure_reason = $2 WHERE id = $1",
+    )
+    .bind(leg_id)
+    .bind(reason)
+    .bind(LegState::Failed.as_str())
+    .execute(&state.db)
+    .await?;
     broadcast_leg(
         state,
         rebalance_id,
@@ -117,11 +123,12 @@ pub(super) async fn mark_leg_stranded(
 ) -> Result<()> {
     sqlx::query(
         "UPDATE rebalance_legs
-            SET status = 'failed', stranded_asset = TRUE, failure_reason = $2
+            SET status = 'failed', stranded_asset = TRUE, leg_state = $3, failure_reason = $2
           WHERE id = $1",
     )
     .bind(leg_id)
     .bind(reason)
+    .bind(LegState::StrandedReserve.as_str())
     .execute(&state.db)
     .await?;
     broadcast_leg(
