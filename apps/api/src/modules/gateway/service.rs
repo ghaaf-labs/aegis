@@ -12,7 +12,7 @@ use crate::modules::rebalance::models::ChainKey;
 use crate::modules::sse::{GatewayBalance as SseGatewayBalance, SseEvent, SseSender};
 use crate::modules::wallet_routes::SUPPORTED_WALLET_BLOCKCHAINS;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GatewayBalance {
     /// Sum of USDC across every chain the user holds a wallet on.

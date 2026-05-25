@@ -59,38 +59,57 @@ pub(super) async fn build_plan_input(
     }
     apply_route_preferences_to_targets(&goal, &mut target_weights);
     let deferred = fold_nonexecutable_targets_into_usdc(&state.config, &mut target_weights);
-    let wallet_cash_only = real_wallet_cash_only_planning(&state.config);
 
-    let relevant_symbols: Vec<String> = allocations
-        .iter()
-        .map(|(sym, _, _, _)| sym.clone())
+    // Real Circle planning values the *live wallet* (cash + sellable token
+    // holdings) as the current book; mock/EOA uses the persisted allocation book.
+    let caps = RuntimeCapabilities::from_config(&state.config);
+    let executable = executable_token_symbols(&caps, &state.config);
+    let real_circle = real_circle_wallet_planning(&state.config);
+
+    // One live balance read → USDC pool (settleable, after reservations + buffer)
+    // and, in real Circle mode, the sellable token holdings.
+    let balance = load_gateway_balance(state, user_id).await?;
+    let mut usdc_per_chain = usdc_pool_from_balance(&balance);
+    // INV-8: size only against settleable = balance − reserved (what the user's
+    // other in-flight plans already committed) so two plans can't double-spend.
+    subtract_active_reservations(state, user_id, &mut usdc_per_chain).await?;
+    reserve_real_execution_usdc_buffer(&state.config, &mut usdc_per_chain);
+    let idle_usdc: f64 = usdc_per_chain.values().copied().sum();
+
+    let holding_symbols: Vec<String> = if real_circle {
+        balance
+            .token_balances_by_chain
+            .values()
+            .flat_map(|tokens| tokens.keys().cloned())
+            .collect()
+    } else {
+        allocations.iter().map(|(sym, _, _, _)| sym.clone()).collect()
+    };
+    let relevant_symbols: Vec<String> = holding_symbols
+        .into_iter()
         .chain(target_weights.keys().cloned())
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
     let prices = load_planning_prices(state, &relevant_symbols).await;
 
-    let marked_allocations: Vec<(String, f64, f64)> = allocations
-        .into_iter()
-        .map(|(sym, weight, value_usd, quantity)| {
-            let marked = marked_allocation_value(&sym, value_usd, quantity, &prices);
-            (sym, weight, marked)
-        })
-        .collect();
-
-    let mut usdc_per_chain = load_gateway_pool(state, user_id).await?;
-    reserve_real_execution_usdc_buffer(&state.config, &mut usdc_per_chain);
-    let idle_usdc: f64 = usdc_per_chain.values().copied().sum();
-
-    // Single valuation authority (extracted + unit-tested): current weights
-    // derive from confirmed value (live mark or booked value), never the stale
-    // `current_weight` percentage — except the explicit `AllocationBook` fallback
-    // (mock/EOA), now a *named mode* rather than an implicit branch. Real Circle
-    // wallets are cash-only: positions live in the wallet, not a synthetic book.
-    let mode = if wallet_cash_only {
-        ValuationMode::WalletCashOnly
+    // Current book + valuation mode by execution path. Real Circle: the live
+    // wallet's sellable holdings (INV-1, ground truth) so overweight positions
+    // can be sold, not just topped up; an empty wallet is naturally cash-only.
+    // Mock/EOA: the persisted allocation book (confirmed marks, else stale %).
+    let (mode, marked_allocations) = if real_circle {
+        (
+            ValuationMode::WalletHoldings,
+            wallet_holdings_marked(&balance, &prices, &executable),
+        )
     } else {
-        ValuationMode::AllocationBook
+        let marked = allocations
+            .into_iter()
+            .map(|(sym, weight, value_usd, quantity)| {
+                (sym.clone(), weight, marked_allocation_value(&sym, value_usd, quantity, &prices))
+            })
+            .collect();
+        (ValuationMode::AllocationBook, marked)
     };
     let valuation = derive_valuation(mode, &marked_allocations, portfolio_value_usd, idle_usdc);
 
@@ -125,7 +144,7 @@ pub(super) async fn build_plan_input(
     ))
 }
 
-fn real_wallet_cash_only_planning(cfg: &crate::config::Config) -> bool {
+fn real_circle_wallet_planning(cfg: &crate::config::Config) -> bool {
     let caps = RuntimeCapabilities::from_config(cfg);
     caps.real_mode && cfg.circle_wallet_exec
 }
@@ -280,14 +299,14 @@ pub(super) fn stable_planning_price(symbol: &str) -> Option<f64> {
 }
 
 /// How a portfolio's invested value is established when deriving current weights.
-/// Making this a named mode (rather than the old implicit `wallet_cash_only` plus
-/// `allocation_value_sum == 0` branch) keeps the stale-percentage path explicit
-/// and impossible to reach by accident.
+/// Making this a named mode (rather than an implicit `allocation_value_sum == 0`
+/// branch) keeps the stale-percentage path explicit and impossible to reach by
+/// accident.
 enum ValuationMode {
-    /// Real Circle wallet: only Gateway USDC is spendable; the allocation book is
-    /// ignored (positions live in the wallet, not a synthetic book). No position
-    /// can be sized off a stale percentage here.
-    WalletCashOnly,
+    /// Real Circle wallet: the live wallet's sellable token holdings are the
+    /// book (INV-1, ground truth). Empty holdings ⇒ invested value 0, so the
+    /// plan is naturally cash-only. Never sized off a stale percentage.
+    WalletHoldings,
     /// Mock/EOA: value positions from the allocation book — confirmed marks when
     /// present, else the last stored percentage of total (the documented
     /// offline/CI fallback, used only when no position has a confirmed value).
@@ -314,25 +333,27 @@ fn derive_valuation(
     portfolio_value_usd: f64,
     idle_usdc: f64,
 ) -> Valuation {
-    let book = matches!(mode, ValuationMode::AllocationBook);
-    let allocation_value_sum: f64 = if book {
-        marked_allocations.iter().map(|(_, _, v)| v.max(0.0)).sum()
-    } else {
-        0.0
-    };
-    let invested_value_usd = if allocation_value_sum > 0.0 {
-        allocation_value_sum
-    } else if book {
-        portfolio_value_usd
-    } else {
-        0.0
+    let allocation_value_sum: f64 = marked_allocations.iter().map(|(_, _, v)| v.max(0.0)).sum();
+    let invested_value_usd = match mode {
+        // Live wallet is ground truth: value what is actually held; an empty
+        // wallet leaves invested value at 0 (cash-only), never a stale total.
+        ValuationMode::WalletHoldings => allocation_value_sum,
+        // Book: confirmed marks if any, else the stored total (stale-% fallback).
+        ValuationMode::AllocationBook => {
+            if allocation_value_sum > 0.0 {
+                allocation_value_sum
+            } else {
+                portfolio_value_usd
+            }
+        }
     };
     let mut invested_weights = HashMap::new();
-    if book && invested_value_usd > 0.0 {
+    if invested_value_usd > 0.0 {
         for (sym, stale_weight_pct, marked_value) in marked_allocations {
             let confirmed_value = if allocation_value_sum > 0.0 {
                 marked_value.max(0.0)
             } else {
+                // Only reachable in AllocationBook mode with no confirmed marks.
                 (stale_weight_pct / 100.0) * portfolio_value_usd
             };
             invested_weights.insert(sym.clone(), confirmed_value / invested_value_usd);
@@ -411,17 +432,14 @@ pub(super) fn route_preference_set(
     values
 }
 
-/// Lookup unified USDC by chain from Circle Gateway. Real execution fails
-/// closed when Gateway is unavailable; mock/demo mode degrades to a zero pool
-/// so local review screens can still be exercised.
-pub(super) async fn load_gateway_pool(
+/// Fetch the user's unified Circle balance once (USDC per chain **and** non-cash
+/// token holdings). Real execution fails closed when Gateway is unavailable so a
+/// plan is never sized against unknown funds; mock/demo mode degrades to an empty
+/// balance so local review screens still work.
+async fn load_gateway_balance(
     state: &AppState,
     user_id: Uuid,
-) -> Result<HashMap<ChainKey, f64>> {
-    let mut pool: HashMap<ChainKey, f64> = HashMap::new();
-    pool.insert(ChainKey::Arc, 0.0);
-    pool.insert(ChainKey::Base, 0.0);
-
+) -> Result<crate::modules::gateway::service::GatewayBalance> {
     match crate::modules::gateway::service::fetch_balance_for_user(
         &state.db,
         &state.http,
@@ -430,13 +448,7 @@ pub(super) async fn load_gateway_pool(
     )
     .await
     {
-        Ok(b) => {
-            for (chain, amount) in b.per_chain {
-                if let Some(key) = ChainKey::parse(chain.to_lowercase().as_str()) {
-                    pool.insert(key, amount);
-                }
-            }
-        }
+        Ok(balance) => Ok(balance),
         Err(e) => {
             if !state.config.execution_mock && !state.config.circle_mock {
                 return Err(AppError::Conflict(
@@ -445,15 +457,66 @@ pub(super) async fn load_gateway_pool(
                 ));
             }
             tracing::warn!(error=%e, ?user_id, "gateway balance fetch failed; mock planner will use zero pool");
+            Ok(crate::modules::gateway::service::GatewayBalance::default())
         }
     }
-    // INV-8: a new plan may only size against settleable = balance − reserved,
-    // where `reserved` is the pre-existing USDC the user's other in-flight plans
-    // have already committed. Without this, two concurrent plans (e.g. across a
-    // user's portfolios) could both spend the same idle USDC and the second
-    // would fail mid-execution.
-    subtract_active_reservations(state, user_id, &mut pool).await?;
-    Ok(pool)
+}
+
+/// Extract the spendable USDC pool per chain from a fetched balance, seeding Arc
+/// and Base at zero so an unfunded chain reads as $0 rather than absent.
+fn usdc_pool_from_balance(
+    balance: &crate::modules::gateway::service::GatewayBalance,
+) -> HashMap<ChainKey, f64> {
+    let mut pool: HashMap<ChainKey, f64> = HashMap::new();
+    pool.insert(ChainKey::Arc, 0.0);
+    pool.insert(ChainKey::Base, 0.0);
+    for (chain, amount) in &balance.per_chain {
+        if let Some(key) = ChainKey::parse(chain.to_lowercase().as_str()) {
+            pool.insert(key, *amount);
+        }
+    }
+    pool
+}
+
+/// Value the wallet's non-USDC token holdings as the planner's current book
+/// (the real Circle path's ground truth — INV-1), so an overweight position can
+/// be *sold* down to target, not just topped up with idle USDC.
+///
+/// Only **executable** tokens are valued: a holding the executor cannot sell
+/// (no live route — e.g. real-swap off, or a track-only token) is left out of
+/// the rebalancing basis entirely, so the planner can never emit a sell leg that
+/// would fail closed. This makes valuing-holdings and sell-ability one decision
+/// and keeps the cash-only behaviour intact whenever nothing is sellable.
+/// Returns `(symbol, 0.0 stale-weight, marked_value_usd)` rows for `derive_valuation`.
+fn wallet_holdings_marked(
+    balance: &crate::modules::gateway::service::GatewayBalance,
+    prices: &HashMap<String, f64>,
+    executable: &[&str],
+) -> Vec<(String, f64, f64)> {
+    let mut qty_by_symbol: HashMap<String, f64> = HashMap::new();
+    for tokens in balance.token_balances_by_chain.values() {
+        for (symbol, qty) in tokens {
+            if symbol.eq_ignore_ascii_case("USDC")
+                || !executable.iter().any(|e| e.eq_ignore_ascii_case(symbol))
+            {
+                continue;
+            }
+            *qty_by_symbol.entry(symbol.clone()).or_insert(0.0) += *qty;
+        }
+    }
+    let mut marked: Vec<(String, f64, f64)> = qty_by_symbol
+        .into_iter()
+        .filter_map(|(symbol, qty)| {
+            let price = prices
+                .get(&symbol)
+                .copied()
+                .or_else(|| stable_planning_price(&symbol))?;
+            let value = qty * price;
+            (price.is_finite() && value > 0.0).then_some((symbol, 0.0, value))
+        })
+        .collect();
+    marked.sort_by(|a, b| a.0.cmp(&b.0));
+    marked
 }
 
 #[derive(sqlx::FromRow)]
@@ -540,17 +603,52 @@ mod tests {
     }
 
     #[test]
-    fn valuation_wallet_cash_only_ignores_allocation_book() {
-        // Real Circle wallet: the book is ignored; only idle USDC funds the plan.
-        // A phantom row (stale 100%, $0 value) produces no weight.
+    fn valuation_wallet_holdings_empty_wallet_is_cash_only() {
+        // Real Circle wallet with no sellable holdings (a $0-value row): the
+        // stale percentage is ignored and only idle USDC funds the plan.
         let marked = vec![("ETH".to_string(), 100.0, 0.0)];
-        let v = derive_valuation(ValuationMode::WalletCashOnly, &marked, 1000.0, 50.0);
+        let v = derive_valuation(ValuationMode::WalletHoldings, &marked, 1000.0, 50.0);
         assert!(v.invested_weights.is_empty());
         assert!(
             v.current_weights.is_empty(),
-            "no phantom ETH weight from a cash-only wallet"
+            "an empty wallet plans cash-only, no phantom ETH weight"
         );
         assert!((v.plan_value_usd - 50.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn valuation_wallet_holdings_values_sellable_positions() {
+        // Real Circle wallet holding $600 ETH + $400 idle USDC: ETH is invested
+        // weight 1.0, current weight 0.6 over the full basis — so a target below
+        // 60% ETH produces a SELL (the planner's append_sell_legs), not a no-op.
+        let marked = vec![("ETH".to_string(), 0.0, 600.0)];
+        let v = derive_valuation(ValuationMode::WalletHoldings, &marked, 0.0, 400.0);
+        assert!((v.invested_weights["ETH"] - 1.0).abs() < 1e-9);
+        assert!((v.current_weights["ETH"] - 0.6).abs() < 1e-9);
+        assert!((v.plan_value_usd - 1000.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn wallet_holdings_marked_values_executable_tokens_and_skips_the_rest() {
+        use crate::modules::gateway::service::GatewayBalance;
+        let mut balance = GatewayBalance::default();
+        balance.token_balances_by_chain.insert(
+            "base".to_string(),
+            HashMap::from([("ETH".to_string(), 0.5), ("RANDO".to_string(), 100.0)]),
+        );
+        // ETH also held on another chain — aggregated across chains by symbol.
+        balance
+            .token_balances_by_chain
+            .insert("arc".to_string(), HashMap::from([("ETH".to_string(), 0.25)]));
+        let prices = HashMap::from([("ETH".to_string(), 2000.0), ("RANDO".to_string(), 1.0)]);
+
+        let marked = wallet_holdings_marked(&balance, &prices, &["ETH"]);
+
+        // RANDO is not executable → never in the basis (no doomed sell leg).
+        assert_eq!(marked.len(), 1);
+        assert_eq!(marked[0].0, "ETH");
+        // 0.5 + 0.25 = 0.75 ETH × $2000 = $1500.
+        assert!((marked[0].2 - 1500.0).abs() < 1e-9);
     }
 
     #[test]
@@ -734,7 +832,7 @@ mod tests {
         cfg.circle_mock = false;
         cfg.circle_wallet_exec = true;
 
-        assert!(real_wallet_cash_only_planning(&cfg));
+        assert!(real_circle_wallet_planning(&cfg));
     }
 
     #[test]
@@ -743,11 +841,11 @@ mod tests {
         cfg.execution_mock = false;
         cfg.circle_mock = false;
         cfg.circle_wallet_exec = false;
-        assert!(!real_wallet_cash_only_planning(&cfg));
+        assert!(!real_circle_wallet_planning(&cfg));
 
         cfg.execution_mock = true;
         cfg.circle_mock = true;
         cfg.circle_wallet_exec = true;
-        assert!(!real_wallet_cash_only_planning(&cfg));
+        assert!(!real_circle_wallet_planning(&cfg));
     }
 }
