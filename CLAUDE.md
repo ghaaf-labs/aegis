@@ -92,9 +92,9 @@ forge build · forge test
 **Cargo build matrix** (real-execution paths are feature-gated; default build is hermetic mocks):
 
 ```bash
-cargo run                                    # every flag off, no chain code compiled
-cargo run --features real-cctp               # cross-chain works, USYC park stays mocked
-cargo run --features "real-cctp real-usyc"   # full real-exec readiness
+cargo run                                            # every flag off, no chain code compiled
+cargo run --features real-cctp                       # cross-chain works, USYC park + swaps stay mocked
+cargo run --features "real-cctp real-usyc real-swap" # full real-exec readiness (incl. Base swaps)
 ```
 
 ## Quality bar
