@@ -53,7 +53,7 @@ pub(super) async fn mark_leg_confirmed(
     .bind(leg_id)
     .bind(tx_hash)
     .bind(cctp_hash)
-    .bind(LegState::Confirmed.as_str())
+    .bind(confirmed_leg_state(&leg.kind).as_str())
     .execute(&state.db)
     .await?;
 
@@ -97,6 +97,22 @@ pub(super) async fn mark_leg_failed(
         Some(reason),
     );
     Ok(())
+}
+
+/// The `leg_state` a confirmed leg records, by kind. A cross-chain transfer is
+/// three leg rows (burn → mint → acquire) in this executor, so the persisted
+/// state reflects where the funds are after each phase (the FSM funds-location
+/// model, §8/§17): a confirmed **burn** leaves funds in flight, a confirmed
+/// **mint** lands them as USDC on the destination, and only an **acquire**
+/// (local swap / USYC park / FX) reaches the target asset. This makes the
+/// per-leg state honest for cross-chain plans instead of flattening every
+/// confirmed leg to `Confirmed`.
+fn confirmed_leg_state(kind: &str) -> LegState {
+    match kind {
+        "cross_chain_burn" => LegState::BridgeInFlight,
+        "cross_chain_mint" => LegState::BridgeLanded,
+        _ => LegState::Confirmed,
+    }
 }
 
 /// Increment the leg's submit attempt counter. Called before each network
@@ -172,4 +188,35 @@ pub(super) fn broadcast_leg(
         updated_at: Utc::now(),
     };
     let _ = state.sse.send(SseEvent::RebalanceLegUpdate(payload));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::confirmed_leg_state;
+    use crate::modules::rebalance::executor::leg_state::{FundsLocation, LegState};
+
+    #[test]
+    fn confirmed_leg_state_reflects_funds_location_by_kind() {
+        // The persisted state for a confirmed leg must match where the funds
+        // physically are (the fund-safety model), per cross-chain phase.
+        assert_eq!(confirmed_leg_state("cross_chain_burn"), LegState::BridgeInFlight);
+        assert_eq!(confirmed_leg_state("cross_chain_mint"), LegState::BridgeLanded);
+        assert_eq!(confirmed_leg_state("local_swap"), LegState::Confirmed);
+        assert_eq!(confirmed_leg_state("park_usyc"), LegState::Confirmed);
+
+        assert_eq!(
+            confirmed_leg_state("cross_chain_burn").funds_location(),
+            FundsLocation::InFlight,
+            "a confirmed burn has funds in flight, not at the target"
+        );
+        assert_eq!(
+            confirmed_leg_state("cross_chain_mint").funds_location(),
+            FundsLocation::Usdc,
+            "a confirmed mint has landed USDC on the destination"
+        );
+        assert_eq!(
+            confirmed_leg_state("local_swap").funds_location(),
+            FundsLocation::TargetAsset
+        );
+    }
 }
