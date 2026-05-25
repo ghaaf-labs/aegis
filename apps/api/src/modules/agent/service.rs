@@ -384,12 +384,19 @@ async fn run_strategist_with_critic(
             verdict: Some("veto".into()),
         }
     } else {
+        let critic_caps =
+            crate::modules::rebalance::registry::RuntimeCapabilities::from_config(&state.config);
+        let critic_executable = crate::modules::rebalance::registry::executable_token_symbols(
+            &critic_caps,
+            &state.config,
+        );
         let critic_ctx = build_critic_context(
             &proposal,
             &ctx.allocations,
             &ctx.user_profile,
             &ctx.regime,
             &ctx.risk,
+            &critic_executable,
         );
         let critic_prompt = state.prompts.render(PromptKey::Critic, &critic_ctx);
         let critic = ai
@@ -1248,6 +1255,7 @@ fn build_critic_context(
     user: &UserProfile,
     regime: &RegimeClassification,
     risk: &crate::modules::risk_engine::RiskReport,
+    executable: &[&str],
 ) -> HashMap<&'static str, String> {
     let mut ctx = HashMap::new();
     ctx.insert(
@@ -1270,6 +1278,16 @@ fn build_critic_context(
     );
     ctx.insert("risk_tolerance", user.risk_tolerance.clone());
     ctx.insert("horizon_months", user.investment_horizon_months.to_string());
+    // The live executable set, so the critic can flag any proposed target that
+    // is track-only right now (would never settle) as a route-viability risk.
+    ctx.insert(
+        "executable_tokens",
+        if executable.is_empty() {
+            "(none executable right now)".to_string()
+        } else {
+            executable.join(", ")
+        },
+    );
     ctx
 }
 
@@ -1867,6 +1885,7 @@ mod tests {
             &sample_user(),
             &sample_regime(),
             &sample_risk(),
+            &["USDC", "ETH"],
         );
         let rendered = reg.render(PromptKey::Critic, &ctx);
         assert!(
