@@ -13,7 +13,10 @@
 use std::collections::HashMap;
 
 use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::Decimal;
 use uuid::Uuid;
+
+use crate::domain::rebalance::ValueUsd;
 
 use super::memory;
 use crate::modules::ai::OpenRouterClient;
@@ -326,7 +329,15 @@ pub(super) fn build_strategist_context(
     ctx.insert("pnl_pct", format!("{:.2}", portfolio.total_pnl_pct));
     ctx.insert("risk_tolerance", user.risk_tolerance.clone());
     ctx.insert("horizon_months", user.investment_horizon_months.to_string());
-    ctx.insert("allocations_table", format_allocations(allocations));
+    let live_prices: HashMap<String, f64> = snapshot
+        .assets
+        .iter()
+        .map(|asset| (asset.symbol.clone(), asset.price_usd))
+        .collect();
+    ctx.insert(
+        "allocations_table",
+        format_allocations(allocations, &live_prices),
+    );
 
     ctx.insert("regime", regime.regime.as_str().into());
     ctx.insert("regime_confidence", format!("{:.2}", regime.confidence));
@@ -518,19 +529,59 @@ pub(super) fn build_decision_snapshot(
     })
 }
 
-pub(super) fn format_allocations(allocations: &[Allocation]) -> String {
+pub(super) fn format_allocations(
+    allocations: &[Allocation],
+    prices: &HashMap<String, f64>,
+) -> String {
     if allocations.is_empty() {
         return "(empty portfolio)".into();
     }
+    // Current weight is derived from live value (quantity × price via
+    // `ValueUsd::mark`), never the stale `allocations.current_weight`: a position
+    // the wallet no longer holds marks to $0 and shows 0%, so the strategist
+    // cannot reason over a phantom holding — the "100% ETH" mismatch in the
+    // screenshots. Falls back to the last confirmed value_usd when no live price
+    // is available (INV-1: weight is value-derived, never a stored percentage).
+    let values: Vec<(&Allocation, Decimal)> = allocations
+        .iter()
+        .map(|a| (a, position_value_usd(a, prices)))
+        .collect();
+    let total: Decimal = values.iter().map(|(_, v)| *v).sum();
     let mut rows = vec!["| Symbol | Qty | Target % | Current % | Value USD |".to_string()];
     rows.push("|---|---|---|---|---|".into());
-    for a in allocations {
+    for (a, value) in &values {
+        let current_pct = if total > Decimal::ZERO {
+            (*value / total * Decimal::from(100))
+                .to_f64()
+                .unwrap_or(0.0)
+        } else {
+            0.0
+        };
         rows.push(format!(
             "| {} | {:.4} | {:.2} | {:.2} | {:.2} |",
-            a.asset_symbol, a.quantity, a.target_weight, a.current_weight, a.value_usd
+            a.asset_symbol,
+            a.quantity.to_f64().unwrap_or(0.0),
+            a.target_weight,
+            current_pct,
+            value.to_f64().unwrap_or(0.0),
         ));
     }
     rows.join("\n")
+}
+
+/// A position's value in USD: a live `quantity × price` mark when a price is
+/// known, else the last confirmed `value_usd`. `ValueUsd::mark` is the only
+/// value constructor, so a phantom (zero-quantity) row is structurally $0.
+fn position_value_usd(a: &Allocation, prices: &HashMap<String, f64>) -> Decimal {
+    match prices
+        .get(&a.asset_symbol)
+        .copied()
+        .filter(|p| p.is_finite() && *p > 0.0)
+        .and_then(Decimal::from_f64_retain)
+    {
+        Some(price) => ValueUsd::mark(a.quantity, price).as_decimal(),
+        None => a.value_usd.max(Decimal::ZERO),
+    }
 }
 
 /// Render harvestable losses as a human-readable block the strategist can

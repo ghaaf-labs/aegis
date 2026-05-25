@@ -1262,7 +1262,12 @@ fn build_critic_context(
     );
     ctx.insert("volatility_score", format!("{:.3}", risk.volatility_score));
     ctx.insert("drift_score", format!("{:.3}", risk.drift_score));
-    ctx.insert("allocations_table", format_allocations(allocations));
+    // The critic re-derives current weights from confirmed value (no live price
+    // map here) — still value-based, never the stale `current_weight`.
+    ctx.insert(
+        "allocations_table",
+        format_allocations(allocations, &HashMap::new()),
+    );
     ctx.insert("risk_tolerance", user.risk_tolerance.clone());
     ctx.insert("horizon_months", user.investment_horizon_months.to_string());
     ctx
@@ -1664,14 +1669,26 @@ mod tests {
             current_weight: 55.0,
             value_usd: dec!(30000.0),
         }];
-        let table = format_allocations(&allocs);
+        // Current weight is value-derived, not the stale `current_weight` (55.0):
+        // a sole position is 100% by value regardless of any lagged percentage.
+        let table = format_allocations(&allocs, &std::collections::HashMap::new());
         assert!(table.contains("BTC"));
-        assert!(table.contains("55.00"));
+        assert!(
+            table.contains("100.00"),
+            "value-derived current %, got: {table}"
+        );
+        assert!(
+            !table.contains("55.00"),
+            "stale current_weight must not leak"
+        );
     }
 
     #[test]
     fn format_allocations_handles_empty() {
-        assert_eq!(format_allocations(&[]), "(empty portfolio)");
+        assert_eq!(
+            format_allocations(&[], &std::collections::HashMap::new()),
+            "(empty portfolio)"
+        );
     }
 
     // ── Contract tests: prompts ↔ context builders ────────────────────────
