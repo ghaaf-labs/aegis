@@ -44,7 +44,6 @@ use stranding::{
     protocol_fee_notional_from_legs,
 };
 
-
 /// Persist a planned set of legs as a new `rebalances` + `rebalance_legs`
 /// rows. Status starts as `planned`; the user must approve via
 /// `POST /rebalance/:id/execute` to transition into `approved → executing`.
@@ -418,4 +417,3 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
 
     Ok(())
 }
-

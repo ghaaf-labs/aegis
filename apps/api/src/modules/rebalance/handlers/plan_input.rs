@@ -83,7 +83,10 @@ pub(super) async fn build_plan_input(
             .flat_map(|tokens| tokens.keys().cloned())
             .collect()
     } else {
-        allocations.iter().map(|(sym, _, _, _)| sym.clone()).collect()
+        allocations
+            .iter()
+            .map(|(sym, _, _, _)| sym.clone())
+            .collect()
     };
     let relevant_symbols: Vec<String> = holding_symbols
         .into_iter()
@@ -97,21 +100,34 @@ pub(super) async fn build_plan_input(
     // wallet's sellable holdings (INV-1, ground truth) so overweight positions
     // can be sold, not just topped up; an empty wallet is naturally cash-only.
     // Mock/EOA: the persisted allocation book (confirmed marks, else stale %).
-    let (mode, marked_allocations) = if real_circle {
+    let (mode, marked_allocations, frozen_value_usd) = if real_circle {
         (
             ValuationMode::WalletHoldings,
             wallet_holdings_marked(&balance, &prices, &executable),
+            // Track-only holdings: real value the planner can't trade, counted
+            // into NAV so targets aren't sized against an understated portfolio.
+            frozen_holdings_value(&balance, &prices, &executable),
         )
     } else {
         let marked = allocations
             .into_iter()
             .map(|(sym, weight, value_usd, quantity)| {
-                (sym.clone(), weight, marked_allocation_value(&sym, value_usd, quantity, &prices))
+                (
+                    sym.clone(),
+                    weight,
+                    marked_allocation_value(&sym, value_usd, quantity, &prices),
+                )
             })
             .collect();
-        (ValuationMode::AllocationBook, marked)
+        (ValuationMode::AllocationBook, marked, 0.0)
     };
-    let valuation = derive_valuation(mode, &marked_allocations, portfolio_value_usd, idle_usdc);
+    let valuation = derive_valuation(
+        mode,
+        &marked_allocations,
+        portfolio_value_usd,
+        idle_usdc,
+        frozen_value_usd,
+    );
 
     if target_weights.is_empty() {
         // Portfolios without a goal fall back to "stay where you are".
@@ -327,11 +343,15 @@ struct Valuation {
 /// Turn marked allocations + idle USDC into value-derived current weights.
 /// Pure (no IO) so the valuation modes are unit-testable without a live runtime.
 /// `marked_allocations` is `(symbol, stale_weight_pct, marked_value_usd)`.
+/// `frozen_value_usd` is real but non-tradeable holdings (track-only sleeves):
+/// it lifts NAV (so targets are sized against the true portfolio) without ever
+/// entering the sellable book, and dilutes current weights like idle cash does.
 fn derive_valuation(
     mode: ValuationMode,
     marked_allocations: &[(String, f64, f64)],
     portfolio_value_usd: f64,
     idle_usdc: f64,
+    frozen_value_usd: f64,
 ) -> Valuation {
     let allocation_value_sum: f64 = marked_allocations.iter().map(|(_, _, v)| v.max(0.0)).sum();
     let invested_value_usd = match mode {
@@ -359,8 +379,10 @@ fn derive_valuation(
             invested_weights.insert(sym.clone(), confirmed_value / invested_value_usd);
         }
     }
-    let plan_value_usd = invested_value_usd + idle_usdc;
-    let current_weights = if idle_usdc > 0.0 && plan_value_usd > 0.0 {
+    let plan_value_usd = invested_value_usd + idle_usdc + frozen_value_usd;
+    // Idle cash and frozen (track-only) value both dilute the invested weights
+    // over the full NAV basis.
+    let current_weights = if (idle_usdc + frozen_value_usd) > 0.0 && plan_value_usd > 0.0 {
         invested_weights
             .iter()
             .map(|(sym, weight)| (sym.clone(), (weight * invested_value_usd) / plan_value_usd))
@@ -487,6 +509,12 @@ fn usdc_pool_from_balance(
 /// the rebalancing basis entirely, so the planner can never emit a sell leg that
 /// would fail closed. This makes valuing-holdings and sell-ability one decision
 /// and keeps the cash-only behaviour intact whenever nothing is sellable.
+///
+/// A holding is valued **only on the chain its sell leg will execute on** — the
+/// planner sells on `native_chain(symbol)` (e.g. ETH on Base), so a balance of
+/// the same token sitting on another chain (Eth/Arb/Avax) is not counted: it
+/// could not be sold on the native chain and would oversize the sell into an
+/// `INSUFFICIENT_TOKEN` revert. Valuation and the sell venue are one chain.
 /// Returns `(symbol, 0.0 stale-weight, marked_value_usd)` rows for `derive_valuation`.
 fn wallet_holdings_marked(
     balance: &crate::modules::gateway::service::GatewayBalance,
@@ -494,10 +522,14 @@ fn wallet_holdings_marked(
     executable: &[&str],
 ) -> Vec<(String, f64, f64)> {
     let mut qty_by_symbol: HashMap<String, f64> = HashMap::new();
-    for tokens in balance.token_balances_by_chain.values() {
+    for (chain_str, tokens) in &balance.token_balances_by_chain {
+        let Some(chain) = ChainKey::parse(&chain_str.to_lowercase()) else {
+            continue;
+        };
         for (symbol, qty) in tokens {
             if symbol.eq_ignore_ascii_case("USDC")
                 || !executable.iter().any(|e| e.eq_ignore_ascii_case(symbol))
+                || native_chain(symbol) != chain
             {
                 continue;
             }
@@ -517,6 +549,33 @@ fn wallet_holdings_marked(
         .collect();
     marked.sort_by(|a, b| a.0.cmp(&b.0));
     marked
+}
+
+/// Total USD value of the wallet's **non-executable (track-only)** token
+/// holdings — real value the planner can't trade. Counted into NAV (the planner's
+/// `plan_value_usd`) so targets and idle-cash deployment are sized against the
+/// true portfolio, not an understated one, while staying *out* of the sellable
+/// book (no sell leg is ever emitted for them). Valued wherever held — they are
+/// frozen, not sold, so no native-chain restriction applies.
+fn frozen_holdings_value(
+    balance: &crate::modules::gateway::service::GatewayBalance,
+    prices: &HashMap<String, f64>,
+    executable: &[&str],
+) -> f64 {
+    balance
+        .token_balances_by_chain
+        .values()
+        .flat_map(|tokens| tokens.iter())
+        .filter(|(symbol, _)| {
+            !symbol.eq_ignore_ascii_case("USDC")
+                && !executable.iter().any(|e| e.eq_ignore_ascii_case(symbol))
+        })
+        .filter_map(|(symbol, qty)| {
+            let price = prices.get(symbol).copied()?;
+            let value = qty * price;
+            (price.is_finite() && value > 0.0).then_some(value)
+        })
+        .sum()
 }
 
 #[derive(sqlx::FromRow)]
@@ -560,8 +619,12 @@ async fn subtract_active_reservations(
             .or_default()
             .push(ReservationLeg {
                 kind: row.kind,
-                src_chain: row.src_chain.and_then(|c| ChainKey::parse(&c.to_lowercase())),
-                dest_chain: row.dest_chain.and_then(|c| ChainKey::parse(&c.to_lowercase())),
+                src_chain: row
+                    .src_chain
+                    .and_then(|c| ChainKey::parse(&c.to_lowercase())),
+                dest_chain: row
+                    .dest_chain
+                    .and_then(|c| ChainKey::parse(&c.to_lowercase())),
                 amount_usdc: row.amount_usdc,
             });
     }
@@ -607,7 +670,7 @@ mod tests {
         // Real Circle wallet with no sellable holdings (a $0-value row): the
         // stale percentage is ignored and only idle USDC funds the plan.
         let marked = vec![("ETH".to_string(), 100.0, 0.0)];
-        let v = derive_valuation(ValuationMode::WalletHoldings, &marked, 1000.0, 50.0);
+        let v = derive_valuation(ValuationMode::WalletHoldings, &marked, 1000.0, 50.0, 0.0);
         assert!(v.invested_weights.is_empty());
         assert!(
             v.current_weights.is_empty(),
@@ -622,33 +685,62 @@ mod tests {
         // weight 1.0, current weight 0.6 over the full basis — so a target below
         // 60% ETH produces a SELL (the planner's append_sell_legs), not a no-op.
         let marked = vec![("ETH".to_string(), 0.0, 600.0)];
-        let v = derive_valuation(ValuationMode::WalletHoldings, &marked, 0.0, 400.0);
+        let v = derive_valuation(ValuationMode::WalletHoldings, &marked, 0.0, 400.0, 0.0);
         assert!((v.invested_weights["ETH"] - 1.0).abs() < 1e-9);
         assert!((v.current_weights["ETH"] - 0.6).abs() < 1e-9);
         assert!((v.plan_value_usd - 1000.0).abs() < 1e-9);
     }
 
     #[test]
-    fn wallet_holdings_marked_values_executable_tokens_and_skips_the_rest() {
+    fn valuation_wallet_holdings_counts_frozen_track_only_value_in_nav() {
+        // $600 sellable ETH + $400 idle + $1000 frozen (track-only) ⇒ NAV $2000,
+        // ETH current weight 0.3 (not 0.6) — a 20%-ETH target then trims to $400,
+        // sized against the true portfolio, not the understated tradeable slice.
+        let marked = vec![("ETH".to_string(), 0.0, 600.0)];
+        let v = derive_valuation(ValuationMode::WalletHoldings, &marked, 0.0, 400.0, 1000.0);
+        assert!((v.invested_weights["ETH"] - 1.0).abs() < 1e-9);
+        assert!((v.current_weights["ETH"] - 0.3).abs() < 1e-9);
+        assert!((v.plan_value_usd - 2000.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn wallet_holdings_marked_values_only_the_native_chain_balance() {
         use crate::modules::gateway::service::GatewayBalance;
         let mut balance = GatewayBalance::default();
         balance.token_balances_by_chain.insert(
             "base".to_string(),
             HashMap::from([("ETH".to_string(), 0.5), ("RANDO".to_string(), 100.0)]),
         );
-        // ETH also held on another chain — aggregated across chains by symbol.
-        balance
-            .token_balances_by_chain
-            .insert("arc".to_string(), HashMap::from([("ETH".to_string(), 0.25)]));
+        // Same token on a non-native chain (ETH→Base, so Arc ETH can't be sold
+        // on Base): must be EXCLUDED, or the Base sell leg oversizes (P1 fix).
+        balance.token_balances_by_chain.insert(
+            "arc".to_string(),
+            HashMap::from([("ETH".to_string(), 0.25)]),
+        );
         let prices = HashMap::from([("ETH".to_string(), 2000.0), ("RANDO".to_string(), 1.0)]);
 
         let marked = wallet_holdings_marked(&balance, &prices, &["ETH"]);
 
         // RANDO is not executable → never in the basis (no doomed sell leg).
+        // ETH counted only on Base (0.5 × $2000 = $1000); the 0.25 Arc ETH dropped.
         assert_eq!(marked.len(), 1);
         assert_eq!(marked[0].0, "ETH");
-        // 0.5 + 0.25 = 0.75 ETH × $2000 = $1500.
-        assert!((marked[0].2 - 1500.0).abs() < 1e-9);
+        assert!((marked[0].2 - 1000.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn frozen_holdings_value_sums_track_only_holdings_only() {
+        use crate::modules::gateway::service::GatewayBalance;
+        let mut balance = GatewayBalance::default();
+        balance.token_balances_by_chain.insert(
+            "base".to_string(),
+            HashMap::from([("ETH".to_string(), 0.5), ("RANDO".to_string(), 100.0)]),
+        );
+        let prices = HashMap::from([("ETH".to_string(), 2000.0), ("RANDO".to_string(), 3.0)]);
+
+        // ETH is executable → not frozen; RANDO is track-only → its $300 is NAV.
+        let frozen = frozen_holdings_value(&balance, &prices, &["ETH"]);
+        assert!((frozen - 300.0).abs() < 1e-9);
     }
 
     #[test]
@@ -659,7 +751,7 @@ mod tests {
             ("ETH".to_string(), 100.0, 0.0),
             ("BTC".to_string(), 0.0, 600.0),
         ];
-        let v = derive_valuation(ValuationMode::AllocationBook, &marked, 600.0, 0.0);
+        let v = derive_valuation(ValuationMode::AllocationBook, &marked, 600.0, 0.0, 0.0);
         assert!((v.invested_weights["BTC"] - 1.0).abs() < 1e-9);
         assert!(v.invested_weights["ETH"].abs() < 1e-9);
         assert!((v.plan_value_usd - 600.0).abs() < 1e-9);
@@ -673,7 +765,7 @@ mod tests {
             ("BTC".to_string(), 60.0, 0.0),
             ("ETH".to_string(), 40.0, 0.0),
         ];
-        let v = derive_valuation(ValuationMode::AllocationBook, &marked, 1000.0, 0.0);
+        let v = derive_valuation(ValuationMode::AllocationBook, &marked, 1000.0, 0.0, 0.0);
         assert!((v.invested_weights["BTC"] - 0.6).abs() < 1e-9);
         assert!((v.invested_weights["ETH"] - 0.4).abs() < 1e-9);
     }
@@ -683,7 +775,7 @@ mod tests {
         // $600 invested BTC + $400 idle USDC ⇒ BTC current weight 0.6 over the
         // full $1000 basis; invested-only weight stays 1.0.
         let marked = vec![("BTC".to_string(), 0.0, 600.0)];
-        let v = derive_valuation(ValuationMode::AllocationBook, &marked, 600.0, 400.0);
+        let v = derive_valuation(ValuationMode::AllocationBook, &marked, 600.0, 400.0, 0.0);
         assert!((v.invested_weights["BTC"] - 1.0).abs() < 1e-9);
         assert!((v.current_weights["BTC"] - 0.6).abs() < 1e-9);
         assert!((v.plan_value_usd - 1000.0).abs() < 1e-9);
