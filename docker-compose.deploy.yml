@@ -48,16 +48,16 @@ services:
       CIRCLE_API_KEY: ${CIRCLE_API_KEY:-}
       CIRCLE_BASE_URL: https://api.circle.com
       EXECUTION_MOCK: ${EXECUTION_MOCK:-true}
-      CORS_ALLOW_ORIGIN: https://${APP_DOMAIN:-aegis.devberlin.de}
+      CORS_ALLOW_ORIGIN: https://${APP_DOMAIN:-aegis.ghaaf.org}
       SESSION_COOKIE_NAME: __Host-aegis_session
       SESSION_COOKIE_SECURE: "true"
-      PUBLIC_BASE_URL: https://${APP_DOMAIN:-aegis.devberlin.de}
-      API_BASE_URL: https://${APP_DOMAIN:-aegis.devberlin.de}/api
+      PUBLIC_BASE_URL: https://${APP_DOMAIN:-aegis.ghaaf.org}
+      API_BASE_URL: https://${APP_DOMAIN:-aegis.ghaaf.org}/api
       SCHEDULER_TICK_SECS: 300
       SCHEDULER_COOLDOWN_SECS: 1800
       DIGEST_HOUR_UTC: 13
       RESEND_API_KEY: ${RESEND_API_KEY:-}
-      DIGEST_FROM: ${DIGEST_FROM:-Aegis <noreply@aegis.devberlin.de>}
+      DIGEST_FROM: ${DIGEST_FROM:-Aegis <noreply@aegis.ghaaf.org>}
     ports:
       - "127.0.0.1:8090:8080"
     sysctls:
@@ -75,9 +75,9 @@ services:
       context: .
       dockerfile: infra/docker/Dockerfile.web
       args:
-        NEXT_PUBLIC_API_URL: https://${APP_DOMAIN:-aegis.devberlin.de}/api
-        NEXT_PUBLIC_SSE_URL: https://${APP_DOMAIN:-aegis.devberlin.de}/api/sse
-        NEXT_PUBLIC_APP_URL: https://${APP_DOMAIN:-aegis.devberlin.de}
+        NEXT_PUBLIC_API_URL: https://${APP_DOMAIN:-aegis.ghaaf.org}/api
+        NEXT_PUBLIC_SSE_URL: https://${APP_DOMAIN:-aegis.ghaaf.org}/api/sse
+        NEXT_PUBLIC_APP_URL: https://${APP_DOMAIN:-aegis.ghaaf.org}
         NEXT_PUBLIC_SERVER_API_URL: http://api:8080
         NEXT_PUBLIC_SITE_INDEXABLE: "true"
     restart: unless-stopped
