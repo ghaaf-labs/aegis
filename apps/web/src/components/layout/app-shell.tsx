@@ -200,6 +200,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div className="hidden xl:block">
           <Header />
         </div>
+        <div
+          role="alert"
+          className="flex items-center gap-2 border-b border-risk/30 bg-risk/10 px-4 py-2"
+        >
+          <span
+            className="inline-block h-1.5 w-1.5 shrink-0 rounded-sharp bg-risk animate-pulse"
+            aria-hidden
+          />
+          <p className="font-mono text-[11px] text-text-hi">
+            <span className="font-semibold text-risk">
+              Execution degraded —
+            </span>{" "}
+            some rebalances may not process as expected. We&apos;re solving the
+            issue ASAP. No funds are at risk.
+          </p>
+        </div>
         <main className="flex-1 overflow-y-auto p-4 xl:p-6 scrollbar-thin">
           <ErrorBoundary>{children}</ErrorBoundary>
         </main>

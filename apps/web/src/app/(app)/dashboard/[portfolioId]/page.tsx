@@ -542,22 +542,6 @@ export default function PortfolioDashboardPage() {
       variants={stagger}
       className="mx-auto w-full max-w-[1280px] space-y-5 md:space-y-6"
     >
-      <motion.div
-        variants={fadeUp}
-        role="alert"
-        className="border-brutal border-risk/40 bg-risk/5 px-4 py-3 flex items-start gap-3"
-      >
-        <span
-          className="mt-0.5 inline-block h-2 w-2 shrink-0 rounded-sharp bg-risk animate-pulse"
-          aria-hidden
-        />
-        <p className="font-mono text-xs text-text-hi">
-          <span className="font-semibold text-risk">Execution degraded.</span>{" "}
-          Some rebalances may not process as expected. We&apos;re actively
-          working on a fix — no funds are at risk.
-        </p>
-      </motion.div>
-
       {autoPilotEnabled && (
         <motion.div
           variants={fadeUp}
