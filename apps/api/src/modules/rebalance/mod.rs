@@ -14,6 +14,7 @@ pub mod models;
 pub mod planner;
 pub mod quote;
 pub mod registry;
+pub mod reservations;
 pub mod snapshot;
 
 #[allow(unused_imports)]
