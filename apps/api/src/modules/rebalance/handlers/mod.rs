@@ -6,6 +6,7 @@
 
 mod approval;
 mod autonomous;
+mod outcome;
 mod plan_input;
 mod shared;
 
@@ -30,9 +31,10 @@ use crate::modules::rebalance::{
 use crate::router::AppState;
 
 use approval::{approval_safety, history_approval_safety, ApprovalSafety};
+use outcome::PlanOutcome;
 use plan_input::build_plan_input;
 use shared::{
-    ensure_no_active_execution, ensure_rebalance_wallet_ready, execution_mode, noop_plan_message,
+    ensure_no_active_execution, ensure_rebalance_wallet_ready, execution_mode,
     own_portfolio_or_404, own_rebalance_or_404, plan_leg_view, rebalance_totals_by_id,
     reusable_planned_rebalance,
 };
@@ -87,17 +89,19 @@ pub async fn create(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
     Path(portfolio_id): Path<Uuid>,
-) -> Result<Json<PlanResponse>> {
+) -> Result<Json<PlanOutcome>> {
     own_portfolio_or_404(&state, claims.sub, portfolio_id).await?;
     ensure_rebalance_wallet_ready(&state, claims.sub).await?;
     ensure_no_active_execution(&state, portfolio_id).await?;
     let input = build_plan_input(&state, portfolio_id).await?;
     let legs = plan_legs(&input);
     if legs.is_empty() {
-        return Err(AppError::Conflict(noop_plan_message(&input)));
+        // A no-op is not an error: classify it into a typed 200 outcome the UI
+        // renders calmly (on-target / reserve) or actionably (unfunded / dust).
+        return Ok(Json(PlanOutcome::from_noop(&input)));
     }
     if let Some(existing) = reusable_planned_rebalance(&state, portfolio_id, &legs).await? {
-        return Ok(Json(existing));
+        return Ok(Json(PlanOutcome::Executable(existing)));
     }
     // Plan creation is an execution-control path, not a model-chat path. It
     // must stay fast in real mode so users can reach the approval screen even
@@ -111,13 +115,13 @@ pub async fn create(
     };
     let rebalance_id = create_plan(&state, portfolio_id, decision.id, &legs).await?;
 
-    Ok(Json(PlanResponse {
+    Ok(Json(PlanOutcome::Executable(PlanResponse {
         rebalance_id,
         decision_id: decision.id,
         execution_mode: execution_mode(&state).to_string(),
         total_legs: legs.len() as i32,
         legs: legs.iter().map(plan_leg_view).collect(),
-    }))
+    })))
 }
 
 #[derive(Debug, Default, Deserialize)]
