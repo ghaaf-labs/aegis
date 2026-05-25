@@ -15,6 +15,9 @@
 //! reverting leg can't spin forever.
 
 mod ledger;
+// Public so the formally-verified leg state machine is reachable as crate API
+// (the live executor adopts it as it migrates off the boolean `stranded` flag).
+pub mod leg_state;
 mod leg_status;
 mod legs;
 mod stranding;
