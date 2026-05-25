@@ -1,14 +1,28 @@
 "use client";
-import { useState } from "react";
-import { CircleAlert, RefreshCw, ShieldCheck, Sparkles } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import {
+  Activity,
+  Banknote,
+  CircleAlert,
+  RefreshCw,
+  ShieldCheck,
+  Sparkles,
+  Target,
+  Wallet,
+} from "lucide-react";
 import Link from "next/link";
-import { BrutalButton } from "@aegis/ui";
+import { BrutalButton, ProvenanceLine } from "@aegis/ui";
 import { AssetTable } from "@/components/dashboard/asset-table";
 import { RebalanceModal } from "@/components/portfolio/rebalance-modal";
 import { RiskScoreCard } from "@/components/portfolio/risk-score-card";
 import { AllocationChart } from "@/components/dashboard/allocation-chart";
 import { useActivePortfolio, usePortfolioStore } from "@/stores/portfolio";
 import { agentApi } from "@/lib/api";
+import {
+  deriveDashboardBalanceModel,
+  type DashboardBalanceModel,
+} from "@/lib/dashboard-balance-model";
+import { formatCurrency } from "@/lib/utils";
 
 export default function PortfolioPage() {
   const [rebalanceOpen, setRebalanceOpen] = useState(false);
@@ -18,10 +32,32 @@ export default function PortfolioPage() {
   const wallet = usePortfolioStore((s) => s.wallet);
   const gatewayBalanceStatus = usePortfolioStore((s) => s.gatewayBalanceStatus);
   const gatewayBalanceError = usePortfolioStore((s) => s.gatewayBalanceError);
+  const gatewayBalanceUpdatedAt = usePortfolioStore(
+    (s) => s.gatewayBalanceUpdatedAt,
+  );
+  const snapshot = usePortfolioStore((s) => s.marketSnapshot);
+  const unifiedUsdc = usePortfolioStore((s) => s.unifiedUsdc);
+  const unifiedEurc = usePortfolioStore((s) => s.unifiedEurc);
+  const perChainUsdc = usePortfolioStore((s) => s.perChainUsdc);
+  const perChainEurc = usePortfolioStore((s) => s.perChainEurc);
+  const tokenBalancesByChain = usePortfolioStore((s) => s.tokenBalancesByChain);
   const reviewReady = !!wallet && gatewayBalanceStatus === "ready";
   const latestProposal = decisions.find(
     (d) => d.portfolioId === portfolio?.id && d.kind === "allocation_proposal",
   );
+  const balanceModel = deriveDashboardBalanceModel({
+    portfolio,
+    snapshot,
+    wallet,
+    unifiedUsdc,
+    unifiedEurc,
+    perChainUsdc,
+    perChainEurc,
+    extraTokenBalancesByChain: tokenBalancesByChain,
+    gatewayBalanceStatus,
+    gatewayBalanceError,
+    gatewayBalanceUpdatedAt,
+  });
 
   const handleRepropose = async () => {
     if (!portfolio) return;
@@ -58,14 +94,14 @@ export default function PortfolioPage() {
   }
 
   return (
-    <div className="max-w-[1400px] mx-auto space-y-6">
+    <div className="mx-auto w-full max-w-[1280px] space-y-5 md:space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <h1 className="text-2xl font-mono font-semibold text-text-hi tracking-tight">
             Agent-managed portfolio
           </h1>
           <p className="text-sm text-text-lo mt-1">
-            Review positions, targets, and wallet cash before approving a move.
+            Live wallet cash and positions reconciled against the agent target.
           </p>
           <p className="mt-2 font-mono text-[11px] text-text-mut">
             Agent decided this allocation
@@ -99,6 +135,8 @@ export default function PortfolioPage() {
           </BrutalButton>
         </div>
       </div>
+
+      <PortfolioSummary model={balanceModel} />
 
       <section
         aria-label="Rebalance setup"
@@ -167,13 +205,12 @@ export default function PortfolioPage() {
         </div>
       </section>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
-        <div className="space-y-6">
-          <AssetTable />
-        </div>
-        <div className="space-y-4">
-          <AllocationChart compact />
-          <RiskScoreCard />
+      <div className="grid min-w-0 grid-cols-1 gap-5 md:gap-6">
+        <AssetTable model={balanceModel} />
+
+        <div className="grid min-w-0 grid-cols-1 gap-5 md:gap-6 lg:grid-cols-2">
+          <AllocationChart compact model={balanceModel} />
+          <RiskScoreCard model={balanceModel} />
         </div>
       </div>
 
@@ -183,6 +220,119 @@ export default function PortfolioPage() {
       />
     </div>
   );
+}
+
+function PortfolioSummary({ model }: { model: DashboardBalanceModel }) {
+  return (
+    <section
+      aria-label="Portfolio totals"
+      className="overflow-hidden rounded-sharp border-brutal border-border-default bg-surface"
+    >
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4">
+        <SummaryCell
+          icon={<Activity className="h-4 w-4 text-accent-agent" />}
+          label="Net worth"
+          value={formatCurrency(model.netWorthUsd)}
+          detail="wallet cash + positions"
+        />
+        <SummaryCell
+          icon={<Banknote className="h-4 w-4 text-accent-pnl" />}
+          label="Invested"
+          value={formatCurrency(model.investedUsd)}
+          detail={
+            model.hasInvestedPositions ? "confirmed exposure" : "no live fills"
+          }
+        />
+        <SummaryCell
+          icon={<Wallet className="h-4 w-4 text-accent-pnl" />}
+          label="Wallet cash"
+          value={
+            model.walletBalanceUnavailable
+              ? "Unknown"
+              : formatCurrency(model.walletValueUsd)
+          }
+          detail={
+            model.walletBalanceUnavailable
+              ? "balance check failed"
+              : `${formatCurrency(model.reserveUsd)} reserve target`
+          }
+        />
+        <SummaryCell
+          icon={<Target className="h-4 w-4 text-warn" />}
+          label="Deployable"
+          value={formatCurrency(model.deployableUsd)}
+          detail={model.status.label}
+          tone={model.status.tone}
+        />
+      </div>
+      <div className="border-t border-border-default px-4 py-2 sm:px-5">
+        <ProvenanceLine
+          source="Circle balances + execution ledger"
+          freshness={
+            model.gatewayBalanceUpdatedAt
+              ? "live"
+              : model.walletBalanceLoading
+                ? "syncing"
+                : "current"
+          }
+        />
+      </div>
+    </section>
+  );
+}
+
+function SummaryCell({
+  detail,
+  icon,
+  label,
+  tone = "default",
+  value,
+}: {
+  detail: string;
+  icon: ReactNode;
+  label: string;
+  tone?: DashboardBalanceModel["status"]["tone"] | "default";
+  value: string;
+}) {
+  return (
+    <div className="min-w-0 border-b border-border-default p-4 md:[&:nth-child(odd)]:border-r xl:border-b-0 xl:border-r xl:last:border-r-0">
+      <div className="flex items-center gap-2">
+        {icon}
+        <p className="font-mono text-[10px] uppercase tracking-widest text-text-mut">
+          {label}
+        </p>
+      </div>
+      <p
+        className={`mt-3 truncate font-mono text-2xl font-semibold tabular-nums ${summaryToneClass(
+          tone,
+        )}`}
+      >
+        {value}
+      </p>
+      <p className="mt-1 truncate font-mono text-[11px] text-text-lo">
+        {detail}
+      </p>
+    </div>
+  );
+}
+
+function summaryToneClass(
+  tone: DashboardBalanceModel["status"]["tone"] | "default",
+) {
+  switch (tone) {
+    case "agent":
+      return "text-accent-agent";
+    case "pnl":
+      return "text-accent-pnl";
+    case "risk":
+      return "text-risk";
+    case "warn":
+      return "text-warn";
+    case "muted":
+      return "text-text-mut";
+    default:
+      return "text-text-hi";
+  }
 }
 
 type GatewayBalanceStatus = "idle" | "loading" | "ready" | "error";

@@ -9,8 +9,13 @@ import {
   BrutalCardBody as CardContent,
   ProvenanceLine,
 } from "@aegis/ui";
+import type { DashboardBalanceModel } from "@/lib/dashboard-balance-model";
 
-export function RiskScoreCard() {
+interface RiskScoreCardProps {
+  model?: DashboardBalanceModel;
+}
+
+export function RiskScoreCard({ model }: RiskScoreCardProps = {}) {
   const portfolio = useActivePortfolio();
   const snapshot = usePortfolioStore((s) => s.marketSnapshot);
 
@@ -19,7 +24,9 @@ export function RiskScoreCard() {
   // risk_score = 50 is the DB default — never updated by risk_engine yet.
   // When nothing's invested, show "—" with a clarifying note instead of a
   // bright "Moderate" badge that suggests the agent assessed real risk.
-  const isUninvested = portfolio.totalValueUsd < 0.5;
+  const isUninvested = model
+    ? !model.hasInvestedPositions
+    : portfolio.totalValueUsd < 0.5;
 
   if (isUninvested) {
     return (
