@@ -8,7 +8,7 @@ use crate::config::Config;
 
 use super::super::models::{ChainKey, LegKind, PlannedLeg, TokenClass};
 use super::capabilities::{AdapterCapability, RuntimeCapabilities};
-use super::tokens::{self, USDC, USYC};
+use super::tokens::{self, USDC};
 
 /// Plain-language route state surfaced to the UI for a token. One-to-one with
 /// the user-facing labels: Ready, Track only, Needs route, Needs quote,
@@ -461,27 +461,25 @@ fn cap_to_state(cap: AdapterCapability, has_addr: bool) -> RouteState {
     }
 }
 
-/// Symbols the agent may actually move funds into. Always USDC; USYC only when
-/// its adapter is live; every swap-acquired token (volatiles + EURC, which now
-/// trades on the Base USDC/EURC pool) only when the swap adapter is live and the
-/// token has a configured Base ERC-20.
+/// THE single executability authority: a token is executable iff its live route
+/// state is `Ready`. Both the agent's executable set (`executable_token_symbols`)
+/// and the executor's fail-closed dispatch guard derive from this one predicate,
+/// which in turn derives from `route_state_for_token` — so "executable" can never
+/// mean two different things in two places (the old divergent-gates risk).
+pub fn is_executable(caps: &RuntimeCapabilities, cfg: &Config, symbol: &str) -> bool {
+    route_state_for_token(caps, cfg, symbol) == RouteState::Ready
+}
+
+/// Symbols the agent may actually move funds into — every registry token whose
+/// live route state is `Ready`. Derived from the single `is_executable` authority
+/// (USDC is `Ready` as the settlement unit; USYC only when its adapter is live;
+/// swap-acquired tokens only with a Base ERC-20 + live venue + live swap rail).
 pub fn executable_token_symbols(caps: &RuntimeCapabilities, cfg: &Config) -> Vec<&'static str> {
-    let mut out = vec![USDC];
-    if caps.usyc.is_live() {
-        out.push(USYC);
-    }
-    if caps.swap.is_live() {
-        for spec in tokens::TOKEN_REGISTRY {
-            let swap_acquired = matches!(spec.class, TokenClass::Volatile | TokenClass::FxStable);
-            if swap_acquired
-                && spec.address_for(cfg, ChainKey::Base).is_some()
-                && cfg.swap_token_has_venue(spec.symbol, ChainKey::Base)
-            {
-                out.push(spec.symbol);
-            }
-        }
-    }
-    out
+    tokens::TOKEN_REGISTRY
+        .iter()
+        .map(|spec| spec.symbol)
+        .filter(|symbol| is_executable(caps, cfg, symbol))
+        .collect()
 }
 
 /// Symbols the allocator may place in a target allocation.
@@ -512,6 +510,7 @@ pub fn designable_allocation_symbols(cfg: &Config) -> Vec<&'static str> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::tokens::USYC;
     use super::*;
 
     #[test]
