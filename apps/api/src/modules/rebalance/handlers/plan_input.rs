@@ -57,7 +57,7 @@ pub(super) async fn build_plan_input(state: &AppState, portfolio_id: Uuid) -> Re
         .collect();
     let prices = load_planning_prices(state, &relevant_symbols).await;
 
-    let allocation_values: Vec<(String, f64, f64)> = allocations
+    let marked_allocations: Vec<(String, f64, f64)> = allocations
         .into_iter()
         .map(|(sym, weight, value_usd, quantity)| {
             let marked = marked_allocation_value(&sym, value_usd, quantity, &prices);
@@ -65,50 +65,26 @@ pub(super) async fn build_plan_input(state: &AppState, portfolio_id: Uuid) -> Re
         })
         .collect();
 
-    let allocation_value_sum: f64 = if wallet_cash_only {
-        0.0
-    } else {
-        allocation_values.iter().map(|(_, _, v)| v.max(0.0)).sum()
-    };
-    let invested_value_usd = if allocation_value_sum > 0.0 {
-        allocation_value_sum
-    } else if wallet_cash_only {
-        0.0
-    } else {
-        portfolio_value_usd
-    };
-    let mut invested_weights = HashMap::new();
-    if !wallet_cash_only && invested_value_usd > 0.0 {
-        for (sym, weight, value_usd) in allocation_values {
-            let confirmed_value = if allocation_value_sum > 0.0 {
-                value_usd.max(0.0)
-            } else {
-                (weight / 100.0) * portfolio_value_usd
-            };
-            invested_weights.insert(sym, confirmed_value / invested_value_usd);
-        }
-    }
-
-    if target_weights.is_empty() {
-        // Portfolios without a goal fall back to "stay where you are".
-        target_weights = invested_weights.clone();
-    }
-
     let mut usdc_per_chain = load_gateway_pool(state, user_id).await?;
     reserve_real_execution_usdc_buffer(&state.config, &mut usdc_per_chain);
     let idle_usdc: f64 = usdc_per_chain.values().copied().sum();
-    let plan_value_usd = invested_value_usd + idle_usdc;
-    let current_weights = if idle_usdc > 0.0 && plan_value_usd > 0.0 {
-        invested_weights
-            .into_iter()
-            .map(|(sym, weight)| {
-                let invested_value = weight * invested_value_usd;
-                (sym, invested_value / plan_value_usd)
-            })
-            .collect()
+
+    // Single valuation authority (extracted + unit-tested): current weights
+    // derive from confirmed value (live mark or booked value), never the stale
+    // `current_weight` percentage — except the explicit `AllocationBook` fallback
+    // (mock/EOA), now a *named mode* rather than an implicit branch. Real Circle
+    // wallets are cash-only: positions live in the wallet, not a synthetic book.
+    let mode = if wallet_cash_only {
+        ValuationMode::WalletCashOnly
     } else {
-        invested_weights
+        ValuationMode::AllocationBook
     };
+    let valuation = derive_valuation(mode, &marked_allocations, portfolio_value_usd, idle_usdc);
+
+    if target_weights.is_empty() {
+        // Portfolios without a goal fall back to "stay where you are".
+        target_weights = valuation.invested_weights.clone();
+    }
 
     // Latest classified regime drives the "let winners run" asymmetric bands.
     let regime: Option<String> = sqlx::query_scalar(
@@ -122,8 +98,8 @@ pub(super) async fn build_plan_input(state: &AppState, portfolio_id: Uuid) -> Re
     .flatten();
 
     Ok(PlanInput {
-        portfolio_value_usd: plan_value_usd,
-        current_weights,
+        portfolio_value_usd: valuation.plan_value_usd,
+        current_weights: valuation.current_weights,
         target_weights,
         usdc_per_chain,
         drift_threshold: 0.05,
@@ -263,6 +239,81 @@ pub(super) fn stable_planning_price(symbol: &str) -> Option<f64> {
     }
 }
 
+/// How a portfolio's invested value is established when deriving current weights.
+/// Making this a named mode (rather than the old implicit `wallet_cash_only` plus
+/// `allocation_value_sum == 0` branch) keeps the stale-percentage path explicit
+/// and impossible to reach by accident.
+enum ValuationMode {
+    /// Real Circle wallet: only Gateway USDC is spendable; the allocation book is
+    /// ignored (positions live in the wallet, not a synthetic book). No position
+    /// can be sized off a stale percentage here.
+    WalletCashOnly,
+    /// Mock/EOA: value positions from the allocation book — confirmed marks when
+    /// present, else the last stored percentage of total (the documented
+    /// offline/CI fallback, used only when no position has a confirmed value).
+    AllocationBook,
+}
+
+struct Valuation {
+    /// Weights over invested value only (pre-idle-USDC dilution). Used as the
+    /// "stay where you are" target when the portfolio has no goal.
+    invested_weights: HashMap<String, f64>,
+    /// Weights over the full planning basis (invested + idle USDC). What the
+    /// planner diffs against the target.
+    current_weights: HashMap<String, f64>,
+    /// Invested value + idle USDC — the planner's `portfolio_value_usd` basis.
+    plan_value_usd: f64,
+}
+
+/// Turn marked allocations + idle USDC into value-derived current weights.
+/// Pure (no IO) so the valuation modes are unit-testable without a live runtime.
+/// `marked_allocations` is `(symbol, stale_weight_pct, marked_value_usd)`.
+fn derive_valuation(
+    mode: ValuationMode,
+    marked_allocations: &[(String, f64, f64)],
+    portfolio_value_usd: f64,
+    idle_usdc: f64,
+) -> Valuation {
+    let book = matches!(mode, ValuationMode::AllocationBook);
+    let allocation_value_sum: f64 = if book {
+        marked_allocations.iter().map(|(_, _, v)| v.max(0.0)).sum()
+    } else {
+        0.0
+    };
+    let invested_value_usd = if allocation_value_sum > 0.0 {
+        allocation_value_sum
+    } else if book {
+        portfolio_value_usd
+    } else {
+        0.0
+    };
+    let mut invested_weights = HashMap::new();
+    if book && invested_value_usd > 0.0 {
+        for (sym, stale_weight_pct, marked_value) in marked_allocations {
+            let confirmed_value = if allocation_value_sum > 0.0 {
+                marked_value.max(0.0)
+            } else {
+                (stale_weight_pct / 100.0) * portfolio_value_usd
+            };
+            invested_weights.insert(sym.clone(), confirmed_value / invested_value_usd);
+        }
+    }
+    let plan_value_usd = invested_value_usd + idle_usdc;
+    let current_weights = if idle_usdc > 0.0 && plan_value_usd > 0.0 {
+        invested_weights
+            .iter()
+            .map(|(sym, weight)| (sym.clone(), (weight * invested_value_usd) / plan_value_usd))
+            .collect()
+    } else {
+        invested_weights.clone()
+    };
+    Valuation {
+        invested_weights,
+        current_weights,
+        plan_value_usd,
+    }
+}
+
 pub(super) fn apply_route_preferences_to_targets(
     goal: &serde_json::Value,
     target_weights: &mut HashMap<String, f64>,
@@ -379,6 +430,58 @@ mod tests {
             marked_allocation_value("ETH", 300.0, 0.1, &HashMap::new()),
             300.0
         );
+    }
+
+    #[test]
+    fn valuation_wallet_cash_only_ignores_allocation_book() {
+        // Real Circle wallet: the book is ignored; only idle USDC funds the plan.
+        // A phantom row (stale 100%, $0 value) produces no weight.
+        let marked = vec![("ETH".to_string(), 100.0, 0.0)];
+        let v = derive_valuation(ValuationMode::WalletCashOnly, &marked, 1000.0, 50.0);
+        assert!(v.invested_weights.is_empty());
+        assert!(
+            v.current_weights.is_empty(),
+            "no phantom ETH weight from a cash-only wallet"
+        );
+        assert!((v.plan_value_usd - 50.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn valuation_allocation_book_uses_confirmed_value_not_stale_percent() {
+        // ETH stale weight says 100% but its confirmed value is $0 (drained); a
+        // funded BTC position is the only real value, so ETH weights ~0 (INV-1).
+        let marked = vec![
+            ("ETH".to_string(), 100.0, 0.0),
+            ("BTC".to_string(), 0.0, 600.0),
+        ];
+        let v = derive_valuation(ValuationMode::AllocationBook, &marked, 600.0, 0.0);
+        assert!((v.invested_weights["BTC"] - 1.0).abs() < 1e-9);
+        assert!(v.invested_weights["ETH"].abs() < 1e-9);
+        assert!((v.plan_value_usd - 600.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn valuation_allocation_book_falls_back_to_stale_percent_when_no_confirmed_value() {
+        // Documented mock/EOA fallback: no position has a confirmed mark, so
+        // weights come from the stored percentages of total.
+        let marked = vec![
+            ("BTC".to_string(), 60.0, 0.0),
+            ("ETH".to_string(), 40.0, 0.0),
+        ];
+        let v = derive_valuation(ValuationMode::AllocationBook, &marked, 1000.0, 0.0);
+        assert!((v.invested_weights["BTC"] - 0.6).abs() < 1e-9);
+        assert!((v.invested_weights["ETH"] - 0.4).abs() < 1e-9);
+    }
+
+    #[test]
+    fn valuation_dilutes_current_weights_with_idle_usdc() {
+        // $600 invested BTC + $400 idle USDC ⇒ BTC current weight 0.6 over the
+        // full $1000 basis; invested-only weight stays 1.0.
+        let marked = vec![("BTC".to_string(), 0.0, 600.0)];
+        let v = derive_valuation(ValuationMode::AllocationBook, &marked, 600.0, 400.0);
+        assert!((v.invested_weights["BTC"] - 1.0).abs() < 1e-9);
+        assert!((v.current_weights["BTC"] - 0.6).abs() < 1e-9);
+        assert!((v.plan_value_usd - 1000.0).abs() < 1e-9);
     }
 
     #[test]
