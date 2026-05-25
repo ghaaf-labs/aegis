@@ -22,7 +22,7 @@ services:
       context: .
       dockerfile: infra/docker/Dockerfile.api
       args:
-        API_CARGO_FEATURES: ${API_CARGO_FEATURES:-real-cctp real-usyc}
+        API_CARGO_FEATURES: ${API_CARGO_FEATURES:-real-cctp real-usyc real-swap}
     container_name: aegis-api
     restart: unless-stopped
     env_file: .env
