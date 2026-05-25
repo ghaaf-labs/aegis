@@ -93,7 +93,16 @@ pub async fn create(
     own_portfolio_or_404(&state, claims.sub, portfolio_id).await?;
     ensure_rebalance_wallet_ready(&state, claims.sub).await?;
     ensure_no_active_execution(&state, portfolio_id).await?;
-    let input = build_plan_input(&state, portfolio_id).await?;
+    // A balance read can transiently fail (Circle Gateway slow/unavailable).
+    // That is the only `Conflict` `build_plan_input` raises — surface it as a
+    // typed, retryable 200 instead of the dead-end 409 the UI renders in red.
+    let input = match build_plan_input(&state, portfolio_id).await {
+        Ok(input) => input,
+        Err(AppError::Conflict(message)) => {
+            return Ok(Json(PlanOutcome::BalanceUnavailable { message }))
+        }
+        Err(e) => return Err(e),
+    };
     let legs = plan_legs(&input);
     if legs.is_empty() {
         // A no-op is not an error: classify it into a typed 200 outcome the UI
@@ -117,17 +126,7 @@ pub async fn create(
 
     // Bind the plan to the routability it was built against (INV-6): approval
     // re-captures and refuses if a rail flipped Ready⇄track-only meanwhile.
-    let snapshot_caps =
-        crate::modules::rebalance::registry::RuntimeCapabilities::from_config(&state.config);
-    let routable_snapshot = crate::modules::rebalance::snapshot::RoutableSnapshot::capture(
-        &snapshot_caps,
-        &state.config,
-    );
-    sqlx::query("UPDATE rebalances SET routable_snapshot_hash = $1 WHERE id = $2")
-        .bind(routable_snapshot.hash())
-        .bind(rebalance_id)
-        .execute(&state.db)
-        .await?;
+    shared::stamp_routable_snapshot(&state, rebalance_id).await?;
 
     Ok(Json(PlanOutcome::Executable(PlanResponse {
         rebalance_id,

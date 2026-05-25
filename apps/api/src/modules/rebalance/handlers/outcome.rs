@@ -31,6 +31,9 @@ pub enum PlanOutcome {
     Unfunded { message: String },
     /// Only sub-dust USDC is idle — below the minimum move size.
     DustOnly { message: String },
+    /// Circle Gateway balance could not be read just now (transient). Not a
+    /// no-op and not a dead-end 409 — a retryable 200 the UI renders in place.
+    BalanceUnavailable { message: String },
 }
 
 impl PlanOutcome {
@@ -112,6 +115,16 @@ mod tests {
         let out = PlanOutcome::from_noop(&i);
         assert!(matches!(out, PlanOutcome::OnTargetNoop { .. }));
         assert_eq!(status_of(&out), "on_target_noop");
+    }
+
+    #[test]
+    fn balance_unavailable_is_a_typed_retry_not_a_409() {
+        // Gateway unreadable must surface as a calm, retryable 200 outcome —
+        // never the red 409 the FE throws on for any non-2xx response.
+        let out = PlanOutcome::BalanceUnavailable {
+            message: "Circle Gateway balance is unavailable. Retry in a moment.".into(),
+        };
+        assert_eq!(status_of(&out), "balance_unavailable");
     }
 
     #[test]

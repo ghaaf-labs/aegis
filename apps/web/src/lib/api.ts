@@ -488,7 +488,8 @@ export type RebalancePlanNoopStatus =
   | "on_target_noop"
   | "reserve_fallback"
   | "unfunded"
-  | "dust_only";
+  | "dust_only"
+  | "balance_unavailable";
 
 export interface ExecutablePlan extends RebalancePlanResponse {
   status: "executable";
