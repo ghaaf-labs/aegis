@@ -12,7 +12,7 @@ use crate::router::AppState;
 use super::{
     approval::{approval_safety, ApprovalSafety},
     plan_input::build_plan_input,
-    shared::reusable_planned_rebalance,
+    shared::{reusable_planned_rebalance, stamp_routable_snapshot},
 };
 
 /// Outcome of the auto-pilot plan preparation. `NoOp` ⇒ nothing to move
@@ -56,7 +56,13 @@ pub async fn prepare_autonomous_plan(
             } else {
                 planner_agent_decision(state, portfolio_id, &input, &legs).await?
             };
-            create_plan(state, portfolio_id, decision.id, &legs).await?
+            let rebalance_id = create_plan(state, portfolio_id, decision.id, &legs).await?;
+            // INV-6 must hold for auto-pilot too: bind the freshly-created plan
+            // to its routability so the scheduler's approval gate refuses it if a
+            // rail flipped Ready⇄track-only after planning (manual `create` does
+            // the same). Reused plans keep the hash from their own creation.
+            stamp_routable_snapshot(state, rebalance_id).await?;
+            rebalance_id
         };
 
     let safety = approval_safety(state, rebalance_id).await?;

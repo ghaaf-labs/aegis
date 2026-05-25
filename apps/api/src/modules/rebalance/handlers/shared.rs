@@ -152,6 +152,25 @@ pub(super) async fn rebalance_totals_by_id(
     Ok(rows.into_iter().collect())
 }
 
+/// Bind a freshly-created plan to the routability it was built against (INV-6).
+/// Both the manual `create` handler and the auto-pilot `prepare_autonomous_plan`
+/// path call this immediately after `create_plan`, so a rail flip
+/// Ready⇄track-only after planning is caught at approval for *either* path —
+/// never only manual reviews. Stamp only newly-created plans: re-stamping a
+/// reused plan with the current snapshot would erase the binding it must keep.
+pub(super) async fn stamp_routable_snapshot(state: &AppState, rebalance_id: Uuid) -> Result<()> {
+    let caps =
+        crate::modules::rebalance::registry::RuntimeCapabilities::from_config(&state.config);
+    let snapshot =
+        crate::modules::rebalance::snapshot::RoutableSnapshot::capture(&caps, &state.config);
+    sqlx::query("UPDATE rebalances SET routable_snapshot_hash = $1 WHERE id = $2")
+        .bind(snapshot.hash())
+        .bind(rebalance_id)
+        .execute(&state.db)
+        .await?;
+    Ok(())
+}
+
 pub(super) fn execution_mode(state: &AppState) -> &'static str {
     if state.config.execution_mock || state.config.circle_mock {
         "mock"
