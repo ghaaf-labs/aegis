@@ -83,6 +83,7 @@ pub async fn propose_defensive_plan(
         &target_asset,
         depegged_weight,
         &legs,
+        &input.prices,
     )
     .await?;
     tracing::info!(
@@ -205,6 +206,7 @@ async fn persist_defensive_plan(
     target_asset: &str,
     depegged_weight: f64,
     legs: &[PlannedLeg],
+    prices: &HashMap<String, f64>,
 ) -> anyhow::Result<Uuid> {
     let reasoning = format!(
         "Peg-defense: {asset} observed at or below {threshold:.4} for the configured window; \
@@ -231,24 +233,23 @@ async fn persist_defensive_plan(
         "trades": [],
         "expectedImpact": { "riskDelta": -1.0, "diversificationScore": 0.5 }
     }))
-    .bind(serde_json::json!({
-        "verdict": "approved",
-        "notes": "Deterministic peg-defense planner built an approval-gated route from live Gateway balances.",
-        "confidence": 0.90
-    }))
+    .bind(None::<serde_json::Value>)
     .bind(serde_json::json!({
         "planner": "deterministic",
         "trigger": "peg_alert",
         "legs": legs.len(),
         "targetAsset": target_asset,
     }))
-    .bind("If the peg recovers or route readiness changes, rebuild the review before approving.".to_string())
+    .bind(
+        "If the peg recovers or route readiness changes, rebuild the review before approving."
+            .to_string(),
+    )
     .fetch_one(&state.db)
     .await?;
 
     let rebalance_id = create_plan(state, portfolio_id, decision_id, legs).await?;
     let caps = RuntimeCapabilities::from_config(&state.config);
-    let snapshot = RoutableSnapshot::capture(&caps, &state.config);
+    let snapshot = RoutableSnapshot::capture_with_prices(&caps, &state.config, prices);
     sqlx::query("UPDATE rebalances SET routable_snapshot_hash = $1 WHERE id = $2")
         .bind(snapshot.hash())
         .bind(rebalance_id)

@@ -37,7 +37,8 @@ use crate::modules::sse::{RebalancePlanPayload, SseEvent};
 use crate::router::AppState;
 
 use leg_status::{
-    bump_attempt_count, mark_leg_confirmed, mark_leg_failed, mark_leg_stranded, mark_leg_submitted,
+    bump_attempt_count, mark_leg_confirmed, mark_leg_failed, mark_leg_quoted, mark_leg_stranded,
+    mark_leg_submitted,
 };
 use legs::{parse_kind, LegRow, MAX_LEG_ATTEMPTS};
 use stranding::{
@@ -69,6 +70,24 @@ pub async fn create_plan(
     };
 
     let mut tx = state.db.begin().await?;
+    // Serialize review creation per portfolio. If two plan requests race, the
+    // later committed review supersedes the older draft before it can be
+    // approved, so there is never more than one approval-eligible planned
+    // rebalance competing for the same wallet cash.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))")
+        .bind(portfolio_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        "UPDATE rebalances
+            SET status = 'cancelled',
+                failure_reason = 'Superseded by a newer review.'
+          WHERE portfolio_id = $1 AND status = 'planned'",
+    )
+    .bind(portfolio_id)
+    .execute(&mut *tx)
+    .await?;
+
     let rebalance_id: Uuid = sqlx::query_scalar(
         "INSERT INTO rebalances (portfolio_id, decision_id, status, total_legs, total_gas_usdc, execution_mode)
          VALUES ($1, $2, 'planned', $3, $4, $5)
@@ -408,6 +427,11 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
                 }
             }
         }
+
+        // Quote/submit are distinct FSM states even though the coarse SQL
+        // `status` only has pending/submitted. Mark quoted before the network
+        // handoff so the trace shows a leg passed local quote validation.
+        mark_leg_quoted(state, rebalance_id, leg.id, user_id, leg).await?;
 
         // Bump the attempt counter on every submit so retries are observable and
         // a runaway leg can be capped. Done before the network call so a crash

@@ -79,7 +79,7 @@ pub async fn prepare_autonomous_plan(
             // to its routability so the scheduler's approval gate refuses it if a
             // rail flipped Ready⇄track-only after planning (manual `create` does
             // the same). Reused plans keep the hash from their own creation.
-            stamp_routable_snapshot(state, rebalance_id).await?;
+            stamp_routable_snapshot(state, rebalance_id, &input.prices).await?;
             rebalance_id
         };
 
@@ -177,11 +177,6 @@ pub(super) async fn planner_agent_decision(
         "expectedImpact": { "riskDelta": 0.0, "diversificationScore": 0.5 }
     });
     let invested_value_usd = (input.portfolio_value_usd - idle_usdc).max(0.0);
-    let critic_verdict = json!({
-        "verdict": "approved",
-        "notes": "Deterministic planner matched confirmed holdings, target weights, and Gateway balances; approval remains the final execution gate.",
-        "confidence": 0.92
-    });
     let decision = sqlx::query_as(
         r#"INSERT INTO agent_decisions
            (id, portfolio_id, reasoning, recommendation, confidence,
@@ -202,7 +197,7 @@ pub(super) async fn planner_agent_decision(
     .bind(0_i32)
     .bind(0_i32)
     .bind(0_i32)
-    .bind(critic_verdict)
+    .bind(None::<serde_json::Value>)
     .bind(json!({
         "planner": "deterministic",
         "legs": legs.len(),

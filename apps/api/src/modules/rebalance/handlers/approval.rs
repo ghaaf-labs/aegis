@@ -103,7 +103,7 @@ pub(super) async fn approval_safety(
 
     let stored_legs: Vec<LegView> = sqlx::query_as(
         "SELECT id, rebalance_id, leg_index, kind, src_chain, dest_chain,
-                src_symbol, dest_symbol, amount_usdc, status, leg_state, tx_hash,
+                src_symbol, dest_symbol, amount_usdc, min_out, status, leg_state, tx_hash,
                 failure_reason, submitted_at, confirmed_at
          FROM rebalance_legs WHERE rebalance_id = $1
          ORDER BY leg_index ASC",
@@ -181,7 +181,8 @@ pub(super) async fn approval_safety(
             .fetch_one(&state.db)
             .await?;
     let current_caps = RuntimeCapabilities::from_config(&state.config);
-    let current_snapshot = RoutableSnapshot::capture(&current_caps, &state.config);
+    let current_snapshot =
+        RoutableSnapshot::capture_with_prices(&current_caps, &state.config, &shaped.input.prices);
     if routability_changed(stored_snapshot_hash.as_deref(), current_snapshot.hash()) {
         return Ok(ApprovalSafety {
             approvable: false,
@@ -253,6 +254,7 @@ pub(super) fn legs_match_current(stored: &[LegView], current: &[PlannedLeg]) -> 
             && a.src_symbol.as_deref() == b.src_symbol.as_deref()
             && a.dest_symbol.as_deref() == b.dest_symbol.as_deref()
             && amount_matches(a.amount_usdc, b.amount_usdc)
+            && min_out_matches(a.min_out, b.min_out)
     })
 }
 
@@ -304,4 +306,12 @@ fn amount_matches(stored: Decimal, current: f64) -> bool {
     let stored = stored.to_f64().unwrap_or(0.0);
     let tolerance = (current.abs() * 0.005).max(0.01);
     (stored - current).abs() <= tolerance
+}
+
+fn min_out_matches(stored: Option<Decimal>, current: Option<f64>) -> bool {
+    match (stored, current) {
+        (None, None) => true,
+        (Some(stored), Some(current)) => amount_matches(stored, current),
+        _ => false,
+    }
 }

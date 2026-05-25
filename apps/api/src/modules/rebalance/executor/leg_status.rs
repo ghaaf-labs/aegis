@@ -9,6 +9,32 @@ use crate::router::AppState;
 use super::leg_state::LegState;
 use super::legs::LegRow;
 
+pub(super) async fn mark_leg_quoted(
+    state: &AppState,
+    rebalance_id: Uuid,
+    leg_id: Uuid,
+    user_id: Uuid,
+    leg: &LegRow,
+) -> Result<()> {
+    sqlx::query("UPDATE rebalance_legs SET leg_state = $2 WHERE id = $1")
+        .bind(leg_id)
+        .bind(LegState::Quoted.as_str())
+        .execute(&state.db)
+        .await?;
+    broadcast_leg(
+        state,
+        rebalance_id,
+        leg_id,
+        user_id,
+        leg,
+        "pending",
+        LegState::Quoted.as_str(),
+        None,
+        None,
+    );
+    Ok(())
+}
+
 pub(super) async fn mark_leg_submitted(
     state: &AppState,
     rebalance_id: Uuid,

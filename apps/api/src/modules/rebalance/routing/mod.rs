@@ -13,7 +13,10 @@ mod providers;
 
 pub use providers::liquidity_graph;
 
-use std::{cmp::Ordering, collections::HashMap};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+};
 
 use aegis_routing::{
     dag::LegDag, min_cost_flow, Asset as RouteAsset, ChainId, EdgeKind, FlowConfig, ValueUsd,
@@ -85,10 +88,14 @@ fn min_out_for(dest_symbol: &str, amount_usdc: f64, prices: &HashMap<String, f64
 /// explicit `deps` using the global `offset` (index of the first leg in the
 /// overall plan). CCTP edges expand to two legs (Burn + Mint) — the Mint
 /// becomes the global reference for any downstream deps on that edge.
-fn translate_dag(dag: &LegDag, prices: &HashMap<String, f64>, offset: i32) -> Vec<PlannedLeg> {
+fn translate_dag(
+    dag: &LegDag,
+    prices: &HashMap<String, f64>,
+    offset: i32,
+) -> Result<Vec<PlannedLeg>, String> {
     let topo = match dag.topological_order() {
         Ok(order) => order,
-        Err(_) => return Vec::new(),
+        Err(e) => return Err(format!("invalid routing leg DAG: {e}")),
     };
 
     // Maps DAG-internal leg id → global PlannedLeg index. For CCTP edges the
@@ -99,12 +106,15 @@ fn translate_dag(dag: &LegDag, prices: &HashMap<String, f64>, offset: i32) -> Ve
 
     for dag_id in topo {
         let leg = &dag.legs[dag_id];
-        let deps_global: Vec<i32> = leg
-            .depends_on
-            .iter()
-            .filter_map(|d| id_to_global.get(d))
-            .copied()
-            .collect();
+        let mut deps_global: Vec<i32> = Vec::with_capacity(leg.depends_on.len());
+        for dep in &leg.depends_on {
+            let Some(global) = id_to_global.get(dep) else {
+                return Err(format!(
+                    "routing leg {dag_id} depends on untranslated DAG leg {dep}"
+                ));
+            };
+            deps_global.push(*global);
+        }
 
         let from_chain = chain_from_id(leg.from.chain);
         let to_chain = chain_from_id(leg.to.chain);
@@ -190,7 +200,7 @@ fn translate_dag(dag: &LegDag, prices: &HashMap<String, f64>, offset: i32) -> Ve
         }
     }
 
-    out
+    Ok(out)
 }
 
 /// Route a single `(source → dest, size)` pair through the engine and append
@@ -212,7 +222,13 @@ fn route_and_append(
     }
     let offset = out.len() as i32;
     let dag = LegDag::compile(graph, &plan.allocations);
-    let new_legs = translate_dag(&dag, prices, offset);
+    let new_legs = match translate_dag(&dag, prices, offset) {
+        Ok(legs) => legs,
+        Err(e) => {
+            tracing::error!(error = %e, "routing engine produced an untranslatable leg DAG");
+            return false;
+        }
+    };
     let added = !new_legs.is_empty();
     out.extend(new_legs);
     added
@@ -307,6 +323,7 @@ fn best_source_target_candidate(
     graph: &aegis_routing::LiquidityGraph,
     usdc_pool: &HashMap<ChainKey, f64>,
     demands: &[BuyDemand],
+    failed_pairs: &HashSet<(ChainKey, usize)>,
 ) -> Option<SourceTargetCandidate> {
     let mut best: Option<SourceTargetCandidate> = None;
     for (&source_chain, &available) in usdc_pool {
@@ -314,6 +331,9 @@ fn best_source_target_candidate(
             continue;
         }
         for (demand_idx, demand) in demands.iter().enumerate() {
+            if failed_pairs.contains(&(source_chain, demand_idx)) {
+                continue;
+            }
             if demand.remaining_usd < ROUTING_DUST_USD {
                 continue;
             }
@@ -369,6 +389,7 @@ pub fn engine_plan(cfg: &Config, input: &PlanInput) -> EnginePlan {
     let mut all_legs: Vec<PlannedLeg> = Vec::new();
     let mut deferred = Vec::new();
     let mut usdc_pool: HashMap<ChainKey, f64> = input.usdc_per_chain.clone();
+    let mut failed_buy_pairs: HashSet<(ChainKey, usize)> = HashSet::new();
 
     // Sells first: asset → USDC (same chain).
     for d in deltas.iter().filter(|d| d.value_delta_usd < 0.0) {
@@ -439,7 +460,9 @@ pub fn engine_plan(cfg: &Config, input: &PlanInput) -> EnginePlan {
         })
         .collect();
 
-    while let Some(candidate) = best_source_target_candidate(&graph, &usdc_pool, &demands) {
+    while let Some(candidate) =
+        best_source_target_candidate(&graph, &usdc_pool, &demands, &failed_buy_pairs)
+    {
         let demand = &demands[candidate.demand_idx];
         let source_asset = asset(token::USDC, candidate.source_chain);
         let target_asset = asset(&demand.symbol, demand.target_chain);
@@ -459,7 +482,12 @@ pub fn engine_plan(cfg: &Config, input: &PlanInput) -> EnginePlan {
             demands[candidate.demand_idx].remaining_usd =
                 (demands[candidate.demand_idx].remaining_usd - candidate.amount_usd).max(0.0);
         } else {
-            usdc_pool.insert(candidate.source_chain, 0.0);
+            tracing::error!(
+                source_chain = %candidate.source_chain.as_str(),
+                symbol = %demand.symbol,
+                "routing engine found a buy route but could not translate it; skipping only this source-target pair"
+            );
+            failed_buy_pairs.insert((candidate.source_chain, candidate.demand_idx));
         }
     }
 

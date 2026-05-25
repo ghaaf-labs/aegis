@@ -102,7 +102,7 @@ pub(super) async fn reusable_planned_rebalance(
 
     let stored_legs: Vec<LegView> = sqlx::query_as(
         "SELECT id, rebalance_id, leg_index, kind, src_chain, dest_chain,
-                src_symbol, dest_symbol, amount_usdc, status, leg_state, tx_hash,
+                src_symbol, dest_symbol, amount_usdc, min_out, status, leg_state, tx_hash,
                 failure_reason, submitted_at, confirmed_at
          FROM rebalance_legs WHERE rebalance_id = $1
          ORDER BY leg_index ASC",
@@ -156,16 +156,25 @@ pub(super) async fn rebalance_totals_by_id(
     Ok(rows.into_iter().collect())
 }
 
-/// Bind a freshly-created plan to the routability it was built against (INV-6).
+/// Bind a freshly-created plan to the routability and quote-price buckets it
+/// was built against (INV-6).
 /// Both the manual `create` handler and the auto-pilot `prepare_autonomous_plan`
 /// path call this immediately after `create_plan`, so a rail flip
-/// Ready⇄track-only after planning is caught at approval for *either* path —
-/// never only manual reviews. Stamp only newly-created plans: re-stamping a
-/// reused plan with the current snapshot would erase the binding it must keep.
-pub(super) async fn stamp_routable_snapshot(state: &AppState, rebalance_id: Uuid) -> Result<()> {
+/// Ready⇄track-only or material price move after planning is caught at approval
+/// for *either* path — never only manual reviews. Stamp only newly-created
+/// plans: re-stamping a reused plan with the current snapshot would erase the
+/// binding it must keep.
+pub(super) async fn stamp_routable_snapshot(
+    state: &AppState,
+    rebalance_id: Uuid,
+    prices: &HashMap<String, f64>,
+) -> Result<()> {
     let caps = crate::modules::rebalance::registry::RuntimeCapabilities::from_config(&state.config);
-    let snapshot =
-        crate::modules::rebalance::snapshot::RoutableSnapshot::capture(&caps, &state.config);
+    let snapshot = crate::modules::rebalance::snapshot::RoutableSnapshot::capture_with_prices(
+        &caps,
+        &state.config,
+        prices,
+    );
     sqlx::query("UPDATE rebalances SET routable_snapshot_hash = $1 WHERE id = $2")
         .bind(snapshot.hash())
         .bind(rebalance_id)

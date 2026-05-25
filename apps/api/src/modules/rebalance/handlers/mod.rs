@@ -138,7 +138,7 @@ pub async fn create(
 
     // Bind the plan to the routability it was built against (INV-6): approval
     // re-captures and refuses if a rail flipped Ready⇄track-only meanwhile.
-    shared::stamp_routable_snapshot(&state, rebalance_id).await?;
+    shared::stamp_routable_snapshot(&state, rebalance_id, &input.prices).await?;
 
     let plan = PlanResponse {
         rebalance_id,
@@ -210,6 +210,8 @@ pub struct LegView {
     pub dest_symbol: Option<String>,
     #[serde(with = "rust_decimal::serde::float")]
     pub amount_usdc: Decimal,
+    #[serde(with = "rust_decimal::serde::float_option")]
+    pub min_out: Option<Decimal>,
     pub status: String,
     /// Typed FSM state (pending/submitted/bridge_in_flight/bridge_landed/
     /// confirmed/failed/stranded_reserve/compensated_to_usdc) — lets the trace
@@ -274,7 +276,7 @@ pub async fn get(
 
     let legs: Vec<LegView> = sqlx::query_as(
         "SELECT id, rebalance_id, leg_index, kind, src_chain, dest_chain,
-                src_symbol, dest_symbol, amount_usdc, status, leg_state, tx_hash,
+                src_symbol, dest_symbol, amount_usdc, min_out, status, leg_state, tx_hash,
                 failure_reason, submitted_at, confirmed_at
          FROM rebalance_legs WHERE rebalance_id = $1
          ORDER BY leg_index ASC",

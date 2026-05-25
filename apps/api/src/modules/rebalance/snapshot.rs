@@ -5,11 +5,11 @@
 //! authority) but **captured once** per decision, so the agent, planner, and
 //! approval gate all read the *same* routability rather than re-deriving it at
 //! three different moments (the drift that produced phantom targets and dead-end
-//! plans). The content `hash` lets an approval detect that a rail flipped since
-//! the plan was built (INV-4: one executability authority; INV-6: a plan is
-//! bound to the routability it was solved against).
+//! plans). The content `hash` lets approval detect that a rail or material price
+//! bucket changed since the plan was built (INV-4: one executability authority;
+//! INV-6: a plan is bound to the routing context it was solved against).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
@@ -32,11 +32,22 @@ pub struct RoutableSnapshot {
 impl RoutableSnapshot {
     /// Freeze the live route state of every designable sleeve.
     pub fn capture(caps: &RuntimeCapabilities, cfg: &Config) -> Self {
+        Self::capture_with_prices(caps, cfg, &HashMap::new())
+    }
+
+    /// Freeze route state plus the price buckets used to derive quote bounds.
+    /// Bucketing at roughly 25 bps avoids invalidating reviews on tiny provider
+    /// noise while still catching material price moves that would alter min_out.
+    pub fn capture_with_prices(
+        caps: &RuntimeCapabilities,
+        cfg: &Config,
+        prices: &HashMap<String, f64>,
+    ) -> Self {
         let states: BTreeMap<String, RouteState> = allocation_target_symbols(cfg)
             .into_iter()
             .map(|symbol| (symbol.to_string(), route_state_for_token(caps, cfg, symbol)))
             .collect();
-        let hash = fingerprint(&states);
+        let hash = fingerprint(&states, prices);
         Self {
             states,
             captured_at: Utc::now(),
@@ -88,16 +99,34 @@ pub fn routability_changed(stored: Option<&str>, current: &str) -> bool {
     stored.is_some_and(|s| s != current)
 }
 
-/// Deterministic content hash of the routable set. Uses each state's stable
-/// serde label, so the hash is reproducible across captures of identical
-/// routability and changes the moment any sleeve flips Ready ⇄ not-Ready.
-fn fingerprint(states: &BTreeMap<String, RouteState>) -> String {
+/// Deterministic content hash of the routable set plus optional price buckets.
+/// Uses each state's stable serde label, so the hash is reproducible across
+/// captures of identical routing context and changes the moment any sleeve flips
+/// Ready ⇄ not-Ready or any included price crosses a bucket.
+fn price_bucket(price: f64) -> Option<i64> {
+    (price.is_finite() && price > 0.0).then(|| (price.ln() / 1.0025_f64.ln()).round() as i64)
+}
+
+fn fingerprint(states: &BTreeMap<String, RouteState>, prices: &HashMap<String, f64>) -> String {
     let mut hasher = Sha256::new();
     for (symbol, state) in states {
         let label = serde_json::to_string(state).unwrap_or_default();
         hasher.update(symbol.as_bytes());
         hasher.update(b"=");
         hasher.update(label.as_bytes());
+        hasher.update(b";");
+    }
+    let mut price_buckets: BTreeMap<&str, i64> = BTreeMap::new();
+    for (symbol, price) in prices {
+        if let Some(bucket) = price_bucket(*price) {
+            price_buckets.insert(symbol.as_str(), bucket);
+        }
+    }
+    for (symbol, bucket) in price_buckets {
+        hasher.update(b"price:");
+        hasher.update(symbol.as_bytes());
+        hasher.update(b"=");
+        hasher.update(bucket.to_string().as_bytes());
         hasher.update(b";");
     }
     format!("{:x}", hasher.finalize())
@@ -144,13 +173,30 @@ mod tests {
     #[test]
     fn fingerprint_is_deterministic_across_identical_captures() {
         let (caps, cfg) = caps_and_cfg();
-        let a = RoutableSnapshot::capture(&caps, &cfg);
-        let b = RoutableSnapshot::capture(&caps, &cfg);
+        let prices = HashMap::from([("ETH".to_string(), 2_100.0)]);
+        let a = RoutableSnapshot::capture_with_prices(&caps, &cfg, &prices);
+        let b = RoutableSnapshot::capture_with_prices(&caps, &cfg, &prices);
         assert_eq!(
             a.hash(),
             b.hash(),
             "same routability must fingerprint identically"
         );
         assert_eq!(a.hash().len(), 64, "sha256 hex");
+    }
+
+    #[test]
+    fn fingerprint_changes_when_price_bucket_changes() {
+        let (caps, cfg) = caps_and_cfg();
+        let a = RoutableSnapshot::capture_with_prices(
+            &caps,
+            &cfg,
+            &HashMap::from([("ETH".to_string(), 2_100.0)]),
+        );
+        let b = RoutableSnapshot::capture_with_prices(
+            &caps,
+            &cfg,
+            &HashMap::from([("ETH".to_string(), 2_130.0)]),
+        );
+        assert_ne!(a.hash(), b.hash());
     }
 }
