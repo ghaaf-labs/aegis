@@ -123,7 +123,7 @@ pub(super) async fn approval_safety(
     }
 
     let current_input = match build_plan_input(state, plan.portfolio_id).await {
-        Ok(input) => input,
+        Ok((input, _deferred)) => input,
         Err(AppError::Conflict(message)) => {
             return Ok(ApprovalSafety {
                 approvable: false,

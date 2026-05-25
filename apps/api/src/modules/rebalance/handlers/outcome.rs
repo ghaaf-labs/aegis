@@ -17,16 +17,42 @@ use crate::modules::rebalance::models::PlanInput;
 use super::shared::{classify_noop, noop_plan_message, NoopReason};
 use super::PlanResponse;
 
+/// A target sleeve the agent wanted but could not route now (spec §11/§12:
+/// "deferred targets shown as intent"). Its weight was held as USDC reserve
+/// rather than silently dropped, so the UI can show the *intended* allocation
+/// alongside what actually executed.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeferredTarget {
+    pub symbol: String,
+    pub target_weight: f64,
+    pub reason: String,
+}
+
 /// Tagged on the `status` field so the frontend branches on one discriminator.
 #[derive(Debug, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum PlanOutcome {
     /// Real legs to review and approve.
     Executable(PlanResponse),
+    /// Real legs to review, *plus* targets that couldn't be routed now and were
+    /// held as USDC reserve — surfaced as intent, not silently folded.
+    PartialDeferred {
+        #[serde(flatten)]
+        plan: PlanResponse,
+        deferred: Vec<DeferredTarget>,
+    },
     /// Holdings already match the target within thresholds — calm success.
     OnTargetNoop { message: String },
     /// Approved target is a USDC reserve — cash is already in the target asset.
     ReserveFallback { message: String },
+    /// The desired non-USDC sleeves have no live route, so deployable cash is
+    /// held as USDC until one opens. Nothing executed, but not a no-op — the
+    /// intended (deferred) targets are surfaced so the user sees why.
+    Blocked {
+        message: String,
+        deferred: Vec<DeferredTarget>,
+    },
     /// Wallet has no confirmed positions and no deployable USDC — actionable.
     Unfunded { message: String },
     /// Only sub-dust USDC is idle — below the minimum move size.
@@ -37,16 +63,46 @@ pub enum PlanOutcome {
 }
 
 impl PlanOutcome {
+    /// A plan with real legs: `Executable` when everything routed, else
+    /// `PartialDeferred` carrying the sleeves held back as USDC reserve.
+    pub fn executable(plan: PlanResponse, deferred: Vec<DeferredTarget>) -> Self {
+        if deferred.is_empty() {
+            Self::Executable(plan)
+        } else {
+            Self::PartialDeferred { plan, deferred }
+        }
+    }
+
     /// Classify an empty-legs plan into its non-executable outcome. Never an error.
-    pub fn from_noop(input: &PlanInput) -> Self {
+    /// When deployable cash is idle *because* every non-USDC target was deferred
+    /// (no live route), that is `Blocked` — distinct from a genuine USDC reserve.
+    pub fn from_noop(input: &PlanInput, deferred: &[DeferredTarget]) -> Self {
+        let reason = classify_noop(input);
+        if !deferred.is_empty() && reason == NoopReason::UsdcReserve {
+            return Self::Blocked {
+                message: blocked_message(deferred),
+                deferred: deferred.to_vec(),
+            };
+        }
         let message = noop_plan_message(input);
-        match classify_noop(input) {
+        match reason {
             NoopReason::Unfunded => Self::Unfunded { message },
             NoopReason::UsdcReserve => Self::ReserveFallback { message },
             NoopReason::DustOnly => Self::DustOnly { message },
             NoopReason::OnTarget => Self::OnTargetNoop { message },
         }
     }
+}
+
+fn blocked_message(deferred: &[DeferredTarget]) -> String {
+    let names = deferred
+        .iter()
+        .map(|d| d.symbol.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "No plan was executed: {names} has no live execution route right now, so your deployable cash is held as USDC until a route opens. The intended allocation is shown so you can re-run once it is routable."
+    )
 }
 
 #[cfg(test)]
@@ -81,9 +137,17 @@ mod tests {
             .to_string()
     }
 
+    fn deferred(symbol: &str, weight: f64) -> DeferredTarget {
+        DeferredTarget {
+            symbol: symbol.into(),
+            target_weight: weight,
+            reason: "no live route".into(),
+        }
+    }
+
     #[test]
     fn unfunded_wallet_is_a_typed_outcome_not_an_error() {
-        let out = PlanOutcome::from_noop(&input(0.0, 0.0));
+        let out = PlanOutcome::from_noop(&input(0.0, 0.0), &[]);
         assert!(matches!(out, PlanOutcome::Unfunded { .. }));
         assert_eq!(status_of(&out), "unfunded");
     }
@@ -93,14 +157,31 @@ mod tests {
         // The exact screenshot scenario: real value + idle USDC, target is USDC-only.
         let mut i = input(100.0, 21.0);
         i.target_weights.insert("USDC".into(), 1.0);
-        let out = PlanOutcome::from_noop(&i);
+        let out = PlanOutcome::from_noop(&i, &[]);
         assert!(matches!(out, PlanOutcome::ReserveFallback { .. }));
         assert_eq!(status_of(&out), "reserve_fallback");
     }
 
     #[test]
+    fn deferred_targets_turn_a_reserve_noop_into_blocked() {
+        // Same idle-cash shape as the reserve case, but the cash is idle *because*
+        // the desired sleeve has no route — that is Blocked, not a calm reserve.
+        let mut i = input(100.0, 21.0);
+        i.target_weights.insert("USDC".into(), 1.0);
+        let out = PlanOutcome::from_noop(&i, &[deferred("EURC", 0.5)]);
+        assert_eq!(status_of(&out), "blocked");
+        match out {
+            PlanOutcome::Blocked { deferred, message } => {
+                assert_eq!(deferred.len(), 1);
+                assert!(message.contains("EURC"));
+            }
+            other => panic!("expected Blocked, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn dust_surplus_is_dust_only() {
-        let out = PlanOutcome::from_noop(&input(100.0, 3.0));
+        let out = PlanOutcome::from_noop(&input(100.0, 3.0), &[]);
         assert!(matches!(out, PlanOutcome::DustOnly { .. }));
         assert_eq!(status_of(&out), "dust_only");
     }
@@ -112,9 +193,27 @@ mod tests {
         i.target_weights.insert("ETH".into(), 0.4);
         i.current_weights.insert("BTC".into(), 0.6);
         i.current_weights.insert("ETH".into(), 0.4);
-        let out = PlanOutcome::from_noop(&i);
+        let out = PlanOutcome::from_noop(&i, &[]);
         assert!(matches!(out, PlanOutcome::OnTargetNoop { .. }));
         assert_eq!(status_of(&out), "on_target_noop");
+    }
+
+    #[test]
+    fn partial_deferred_flattens_plan_and_carries_deferred() {
+        let out = PlanOutcome::PartialDeferred {
+            plan: PlanResponse {
+                rebalance_id: uuid::Uuid::nil(),
+                decision_id: uuid::Uuid::nil(),
+                execution_mode: "real".into(),
+                legs: vec![],
+                total_legs: 1,
+            },
+            deferred: vec![deferred("cbBTC", 0.05)],
+        };
+        let v = serde_json::to_value(&out).unwrap();
+        assert_eq!(v["status"], "partial_deferred");
+        assert!(v.get("rebalanceId").is_some(), "plan fields flatten");
+        assert_eq!(v["deferred"][0]["symbol"], "cbBTC");
     }
 
     #[test]

@@ -10,9 +10,19 @@ use crate::modules::rebalance::registry::{executable_token_symbols, RuntimeCapab
 use crate::modules::wallet_routes;
 use crate::router::AppState;
 
+use super::outcome::DeferredTarget;
+
 const REAL_EXECUTION_CHAIN_USDC_BUFFER: f64 = 2.0;
 
-pub(super) async fn build_plan_input(state: &AppState, portfolio_id: Uuid) -> Result<PlanInput> {
+/// Build the planner input plus the targets that had to be deferred (held as
+/// USDC reserve because they have no live route). The deferred list is surfaced
+/// by the `create` handler as `PartialDeferred`/`Blocked` so a folded sleeve is
+/// shown as intent, never silently dropped (spec §11/§12). Callers that only
+/// plan executable legs (auto-pilot, approval re-check) ignore the second field.
+pub(super) async fn build_plan_input(
+    state: &AppState,
+    portfolio_id: Uuid,
+) -> Result<(PlanInput, Vec<DeferredTarget>)> {
     // The planner consumes fractions (0-1), but the persisted
     // `current_weight` can lag behind execution. Use confirmed dollar values
     // when present so a just-executed or partially deployed portfolio cannot
@@ -45,7 +55,7 @@ pub(super) async fn build_plan_input(state: &AppState, portfolio_id: Uuid) -> Re
         }
     }
     apply_route_preferences_to_targets(&goal, &mut target_weights);
-    fold_nonexecutable_targets_into_usdc(&state.config, &mut target_weights);
+    let deferred = fold_nonexecutable_targets_into_usdc(&state.config, &mut target_weights);
     let wallet_cash_only = real_wallet_cash_only_planning(&state.config);
 
     let relevant_symbols: Vec<String> = allocations
@@ -97,16 +107,19 @@ pub(super) async fn build_plan_input(state: &AppState, portfolio_id: Uuid) -> Re
     .await?
     .flatten();
 
-    Ok(PlanInput {
-        portfolio_value_usd: valuation.plan_value_usd,
-        current_weights: valuation.current_weights,
-        target_weights,
-        usdc_per_chain,
-        drift_threshold: 0.05,
-        dust_threshold_usd: 5.0,
-        prices,
-        regime,
-    })
+    Ok((
+        PlanInput {
+            portfolio_value_usd: valuation.plan_value_usd,
+            current_weights: valuation.current_weights,
+            target_weights,
+            usdc_per_chain,
+            drift_threshold: 0.05,
+            dust_threshold_usd: 5.0,
+            prices,
+            regime,
+        },
+        deferred,
+    ))
 }
 
 fn real_wallet_cash_only_planning(cfg: &crate::config::Config) -> bool {
@@ -148,33 +161,57 @@ fn reserve_real_execution_usdc_buffer(
 fn fold_nonexecutable_targets_into_usdc(
     cfg: &crate::config::Config,
     target_weights: &mut HashMap<String, f64>,
-) {
+) -> Vec<DeferredTarget> {
     if target_weights.is_empty() {
-        return;
+        return Vec::new();
     }
     let caps = RuntimeCapabilities::from_config(cfg);
     if !caps.real_mode {
-        return;
+        return Vec::new();
     }
     let executable = executable_token_symbols(&caps, cfg);
-    retain_executable_targets(target_weights, &executable);
+    retain_executable_targets(target_weights, &executable)
 }
 
-/// Keep USDC and every executable sleeve; move the rest of the weight into USDC.
-/// Pure (no config/IO) so the fold rule is unit-testable without a live runtime.
-fn retain_executable_targets(target_weights: &mut HashMap<String, f64>, executable: &[&str]) {
+/// Keep USDC and every executable sleeve; move the rest of the weight into USDC
+/// and return the folded sleeves as deferred targets (surfaced as intent, not
+/// silently dropped). Pure (no config/IO) so the fold rule is unit-testable
+/// without a live runtime.
+fn retain_executable_targets(
+    target_weights: &mut HashMap<String, f64>,
+    executable: &[&str],
+) -> Vec<DeferredTarget> {
     let mut folded = 0.0;
+    let mut deferred = Vec::new();
     target_weights.retain(|symbol, weight| {
         let keep = symbol.eq_ignore_ascii_case("USDC")
             || executable.iter().any(|e| e.eq_ignore_ascii_case(symbol));
         if !keep && weight.is_finite() && *weight > 0.0 {
             folded += *weight;
+            deferred.push(DeferredTarget {
+                symbol: symbol.clone(),
+                target_weight: *weight,
+                reason: deferred_reason(symbol),
+            });
         }
         keep
     });
     if folded > 0.0 {
         *target_weights.entry("USDC".to_string()).or_insert(0.0) += folded;
     }
+    deferred.sort_by(|a, b| {
+        a.symbol
+            .to_ascii_lowercase()
+            .cmp(&b.symbol.to_ascii_lowercase())
+    });
+    deferred
+}
+
+/// Why a sleeve was deferred — truthful and chain-specific so the UI can explain
+/// it ("EURC has no live route on Base right now"), not a generic placeholder.
+fn deferred_reason(symbol: &str) -> String {
+    let chain = native_chain(symbol).as_str();
+    format!("No live execution route on {chain} right now; held as USDC reserve until one opens.")
 }
 
 pub(super) async fn load_planning_prices(
@@ -567,13 +604,17 @@ mod tests {
             ("USDC".to_string(), 0.50),
         ]);
 
-        retain_executable_targets(&mut targets, &["USDC", "ETH"]);
+        let deferred = retain_executable_targets(&mut targets, &["USDC", "ETH"]);
 
         assert_eq!(targets.get("ETH").copied(), Some(0.28));
         assert!(!targets.contains_key("EURC"));
         assert!(!targets.contains_key("cbBTC"));
         let usdc = targets.get("USDC").copied().unwrap_or_default();
         assert!((usdc - 0.72).abs() < 1e-9, "folded EURC+cbBTC into USDC");
+        // The folded sleeves are surfaced as deferred intent (sorted), not dropped.
+        let symbols: Vec<&str> = deferred.iter().map(|d| d.symbol.as_str()).collect();
+        assert_eq!(symbols, vec!["cbBTC", "EURC"]);
+        assert!(deferred.iter().all(|d| !d.reason.is_empty()));
     }
 
     #[test]

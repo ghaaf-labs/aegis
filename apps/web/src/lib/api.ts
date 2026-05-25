@@ -487,25 +487,47 @@ export interface RebalancePlanResponse {
 export type RebalancePlanNoopStatus =
   | "on_target_noop"
   | "reserve_fallback"
+  | "blocked"
   | "unfunded"
   | "dust_only"
   | "balance_unavailable";
+
+/** A target sleeve the agent wanted but could not route now — held as USDC
+ *  reserve and shown as intent rather than silently dropped. */
+export interface DeferredTarget {
+  symbol: string;
+  targetWeight: number;
+  reason: string;
+}
 
 export interface ExecutablePlan extends RebalancePlanResponse {
   status: "executable";
 }
 
+export interface PartialDeferredPlan extends RebalancePlanResponse {
+  status: "partial_deferred";
+  deferred: DeferredTarget[];
+}
+
 export interface RebalancePlanNoop {
   status: RebalancePlanNoopStatus;
   message: string;
+  /** Present on `blocked`: the intended sleeves with no live route. */
+  deferred?: DeferredTarget[];
 }
 
-export type RebalancePlanOutcome = ExecutablePlan | RebalancePlanNoop;
+export type RebalancePlanOutcome =
+  | ExecutablePlan
+  | PartialDeferredPlan
+  | RebalancePlanNoop;
 
-/** `unfunded`/`dust_only` are actionable; `on_target`/`reserve` are calm success.
+/** `executable`/`partial_deferred` carry real legs to review; `unfunded`/
+ *  `dust_only`/`blocked` are actionable; `on_target`/`reserve` are calm success.
  *  None are errors — callers must render them, never throw. */
-export function isExecutablePlan(o: RebalancePlanOutcome): o is ExecutablePlan {
-  return o.status === "executable";
+export function isExecutablePlan(
+  o: RebalancePlanOutcome,
+): o is ExecutablePlan | PartialDeferredPlan {
+  return o.status === "executable" || o.status === "partial_deferred";
 }
 
 export interface RebalanceApprovalSafety {

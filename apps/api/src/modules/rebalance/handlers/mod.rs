@@ -96,8 +96,8 @@ pub async fn create(
     // A balance read can transiently fail (Circle Gateway slow/unavailable).
     // That is the only `Conflict` `build_plan_input` raises — surface it as a
     // typed, retryable 200 instead of the dead-end 409 the UI renders in red.
-    let input = match build_plan_input(&state, portfolio_id).await {
-        Ok(input) => input,
+    let (input, deferred) = match build_plan_input(&state, portfolio_id).await {
+        Ok(built) => built,
         Err(AppError::Conflict(message)) => {
             return Ok(Json(PlanOutcome::BalanceUnavailable { message }))
         }
@@ -106,11 +106,12 @@ pub async fn create(
     let legs = plan_legs(&input);
     if legs.is_empty() {
         // A no-op is not an error: classify it into a typed 200 outcome the UI
-        // renders calmly (on-target / reserve) or actionably (unfunded / dust).
-        return Ok(Json(PlanOutcome::from_noop(&input)));
+        // renders calmly (on-target / reserve), actionably (unfunded / dust), or
+        // as `Blocked` when cash is idle only because every sleeve was deferred.
+        return Ok(Json(PlanOutcome::from_noop(&input, &deferred)));
     }
     if let Some(existing) = reusable_planned_rebalance(&state, portfolio_id, &legs).await? {
-        return Ok(Json(PlanOutcome::Executable(existing)));
+        return Ok(Json(PlanOutcome::executable(existing, deferred)));
     }
     // Plan creation is an execution-control path, not a model-chat path. It
     // must stay fast in real mode so users can reach the approval screen even
@@ -128,13 +129,14 @@ pub async fn create(
     // re-captures and refuses if a rail flipped Ready⇄track-only meanwhile.
     shared::stamp_routable_snapshot(&state, rebalance_id).await?;
 
-    Ok(Json(PlanOutcome::Executable(PlanResponse {
+    let plan = PlanResponse {
         rebalance_id,
         decision_id: decision.id,
         execution_mode: execution_mode(&state).to_string(),
         total_legs: legs.len() as i32,
         legs: legs.iter().map(plan_leg_view).collect(),
-    })))
+    };
+    Ok(Json(PlanOutcome::executable(plan, deferred)))
 }
 
 #[derive(Debug, Default, Deserialize)]

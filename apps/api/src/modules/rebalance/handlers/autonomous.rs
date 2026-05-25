@@ -36,7 +36,10 @@ pub async fn prepare_autonomous_plan(
     state: &AppState,
     portfolio_id: Uuid,
 ) -> Result<AutonomousPlan> {
-    let input = build_plan_input(state, portfolio_id).await?;
+    // Auto-pilot plans only the executable legs; deferred sleeves stay as USDC
+    // reserve (the `create` handler surfaces them to the user, the scheduler
+    // does not need them).
+    let (input, _deferred) = build_plan_input(state, portfolio_id).await?;
     let legs = plan_legs(&input);
     if legs.is_empty() {
         // On-target or sub-$5 dust — the planner drops it. Nothing to execute.
