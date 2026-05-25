@@ -58,6 +58,7 @@ describe("<AssetTable />", () => {
     expect(mobileList?.textContent).toContain("BTC");
     expect(mobileList?.textContent).toContain("Price");
     expect(mobileList?.textContent).toContain("24h");
+    expect(mobileList?.textContent).toContain("Units");
     expect(mobileList?.textContent).toContain("Weight");
     expect(mobileList?.textContent).toContain("$32,000.00");
     expect(container.querySelector("table")?.className).toContain("lg:table");
@@ -77,13 +78,19 @@ describe("<AssetTable />", () => {
       <AssetTable model={makeBalanceModel()} />,
     );
 
-    expect(container.textContent).toContain("Current Holdings");
+    expect(container.textContent).toContain("Current Exposure");
     expect(container.textContent).toContain("ETH");
     expect(container.textContent).toContain("LINK");
     expect(container.textContent).toContain("USDC");
     expect(container.textContent).toContain("$161.77");
     expect(container.textContent).toContain("$24.21");
     expect(container.textContent).toContain("$260.35");
+    expect(container.textContent).toContain("wallet");
+    expect(
+      [...container.querySelectorAll("th")].some(
+        (header) => header.textContent === "Units",
+      ),
+    ).toBe(true);
 
     act(() => root.unmount());
   });

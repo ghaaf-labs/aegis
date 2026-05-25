@@ -45,8 +45,10 @@ type HoldingRow = {
   displayPriceUsd: number | null | undefined;
   drift: number;
   driftAbs: number;
+  investedUsd: number;
   price: { change24h: number } | undefined;
   valueUsd: number;
+  walletUsd: number;
 };
 
 export function AssetTable({
@@ -106,6 +108,7 @@ export function AssetTable({
   const walletCashUsd = walletCashKnown
     ? (model?.unifiedUsdc ?? unifiedUsdc)
     : 0;
+  const walletEurc = model?.unifiedEurc ?? unifiedEurc;
 
   const allocList = targetAllocationsForPortfolio(portfolio);
   const metrics = derivePortfolioPositionMetrics(portfolio, snapshot);
@@ -128,8 +131,6 @@ export function AssetTable({
           valueUsd: token.totalUsd,
           displayedPriceUsd: displayPriceUsd,
           storedQuantity: position?.quantity ?? 0,
-          unifiedUsdc: model?.unifiedUsdc ?? unifiedUsdc,
-          unifiedEurc: model?.unifiedEurc ?? unifiedEurc,
         });
         return {
           alloc: {
@@ -144,8 +145,10 @@ export function AssetTable({
           displayPriceUsd,
           drift: token.weightPct - token.targetWeight,
           driftAbs: Math.abs(token.weightPct - token.targetWeight),
+          investedUsd: token.investedUsd,
           price,
           valueUsd: token.totalUsd,
+          walletUsd: token.walletUsd,
         };
       }) ?? [];
   const isUninvested = (model?.investedUsd ?? metrics.investedUsd) < 0.5;
@@ -154,6 +157,16 @@ export function AssetTable({
     (a) => a.symbol === "USDC" && a.targetWeight > 0,
   );
   const hasTargets = allocList.length > 0;
+  const tableTitle =
+    model && !isUninvested
+      ? "Current Exposure"
+      : hasWalletCash
+        ? "After Approval"
+        : isUninvested
+          ? hasTargets
+            ? "Target Details"
+            : "Portfolio Details"
+          : "Current Holdings";
   const holdingRows =
     modelHoldingRows.length > 0
       ? modelHoldingRows
@@ -183,8 +196,10 @@ export function AssetTable({
             displayPriceUsd,
             drift,
             driftAbs,
+            investedUsd: alloc.symbol === "USDC" ? 0 : valueUsd,
             price,
             valueUsd,
+            walletUsd: alloc.symbol === "USDC" ? valueUsd : 0,
           };
         });
 
@@ -193,13 +208,7 @@ export function AssetTable({
       <CardHeader className="min-h-[52px] shrink-0">
         <CardTitle className="flex items-center gap-2">
           <PieChart className="h-3.5 w-3.5 text-accent-agent" />
-          {hasWalletCash
-            ? "After Approval"
-            : isUninvested
-              ? hasTargets
-                ? "Target Details"
-                : "Portfolio Details"
-              : "Current Holdings"}
+          {tableTitle}
         </CardTitle>
       </CardHeader>
       {hasWalletCash && (
@@ -214,7 +223,7 @@ export function AssetTable({
                 </p>
                 <p className="mt-1 text-xs font-mono text-text-lo leading-relaxed">
                   This preview shows the target mix before anything moves.
-                  {unifiedEurc > 0 &&
+                  {walletEurc > 0 &&
                     " Existing EURC cash stays in Wallet until you approve a move for it."}
                 </p>
               </div>
@@ -309,7 +318,7 @@ export function AssetTable({
                       ["Asset", ""],
                       ["Price", ""],
                       ["24h", "hidden xl:table-cell"],
-                      ["Holdings", "hidden xl:table-cell"],
+                      ["Units", "hidden xl:table-cell"],
                       ["Value", ""],
                       ["Weight vs Target", "hidden xl:table-cell"],
                     ] as const
@@ -341,21 +350,23 @@ export function AssetTable({
           </>
         )}
         <div className="mt-auto border-t border-white/5 px-5 py-2 font-mono text-[10px] text-text-mut">
-          {hasWalletCash
-            ? hasUsdcSleeve
-              ? "USDC target stays as reserve cash; other targets wait for approval"
-              : "Targets wait for approval before funds move"
-            : !hasTargets
-              ? "No target allocation is saved for this portfolio yet"
-              : walletCashUnavailable
-                ? "Wallet cash unavailable; planned values are hidden until the balance check succeeds"
-                : !walletCashKnown
-                  ? "Waiting for wallet cash before calculating planned values"
-                  : isUninvested
-                    ? "Targets are configured, but no confirmed position value exists yet"
-                    : snapshot
-                      ? `Prices via ${liveSource ?? "live feed"} · live snapshot`
-                      : "Values use last confirmed holdings while live prices warm up"}
+          {model && !walletCashUnavailable
+            ? "Values reconcile Circle balances with the execution ledger; units derive from live prices when wallet quantities are unavailable"
+            : hasWalletCash
+              ? hasUsdcSleeve
+                ? "USDC target stays as reserve cash; other targets wait for approval"
+                : "Targets wait for approval before funds move"
+              : !hasTargets
+                ? "No target allocation is saved for this portfolio yet"
+                : walletCashUnavailable
+                  ? "Wallet cash unavailable; planned values are hidden until the balance check succeeds"
+                  : !walletCashKnown
+                    ? "Waiting for wallet cash before calculating planned values"
+                    : isUninvested
+                      ? "Targets are configured, but no confirmed position value exists yet"
+                      : snapshot
+                        ? `Prices via ${liveSource ?? "live feed"} · live snapshot`
+                        : "Values use last confirmed holdings while live prices warm up"}
         </div>
       </CardContent>
     </Card>
@@ -382,19 +393,19 @@ function displayQuantity({
   displayedPriceUsd,
   storedQuantity,
   symbol,
-  unifiedEurc,
-  unifiedUsdc,
   valueUsd,
 }: {
   displayedPriceUsd: number | null | undefined;
   storedQuantity: number;
   symbol: string;
-  unifiedEurc: number;
-  unifiedUsdc: number;
   valueUsd: number;
 }) {
-  if (symbol === "USDC") return unifiedUsdc;
-  if (symbol === "EURC") return unifiedEurc;
+  if (symbol === "USDC" || symbol === "USYC") return valueUsd;
+  if (symbol === "EURC") {
+    return displayedPriceUsd && displayedPriceUsd > 0
+      ? valueUsd / displayedPriceUsd
+      : valueUsd;
+  }
   if (!displayedPriceUsd || displayedPriceUsd <= 0) return storedQuantity;
   const impliedQuantity = valueUsd / displayedPriceUsd;
   if (storedQuantity <= 0) return impliedQuantity;
@@ -518,7 +529,7 @@ function AssetMobileRow({
               {alloc.symbol}
             </p>
             <p className="text-[10px] uppercase tracking-wider text-text-mut">
-              target {alloc.targetWeight.toFixed(0)}%
+              {exposureSource(row)} · target {alloc.targetWeight.toFixed(0)}%
             </p>
           </div>
         </div>
@@ -541,7 +552,7 @@ function AssetMobileRow({
           className={price ? changeColor(price.change24h) : "text-text-mut"}
         />
         <AssetMetric
-          label="Holdings"
+          label="Units"
           value={isUninvested ? "none" : formatNumber(alloc.quantity)}
         />
         <div className="min-h-12 border border-border-default bg-bg/70 px-2 py-1.5">
@@ -622,9 +633,14 @@ function AssetTableRow({
               {alloc.symbol}
             </span>
           </div>
-          <span className="text-sm font-semibold text-text-hi font-mono">
-            {alloc.symbol}
-          </span>
+          <div className="min-w-0">
+            <span className="block truncate text-sm font-semibold text-text-hi font-mono">
+              {alloc.symbol}
+            </span>
+            <span className="block truncate font-mono text-[10px] uppercase tracking-wider text-text-mut">
+              {exposureSource(row)}
+            </span>
+          </div>
         </div>
       </td>
       <td
@@ -682,4 +698,13 @@ function AssetTableRow({
       </td>
     </tr>
   );
+}
+
+function exposureSource(row: HoldingRow): string {
+  const hasWallet = row.walletUsd > 0.005;
+  const hasInvested = row.investedUsd > 0.005;
+  if (hasWallet && hasInvested) return "wallet + invested";
+  if (hasWallet) return "wallet";
+  if (hasInvested) return "invested";
+  return "target only";
 }
