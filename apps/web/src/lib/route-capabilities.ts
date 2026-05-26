@@ -6,18 +6,26 @@ export const COMING_SOON_TOKEN_IDS = TOKENS.filter(
   (token) => token.designable && token.comingSoon,
 ).map((token) => token.symbol);
 
-// A sleeve the planner can actually trade/rebalance on this deployment. Mirrors
-// the backend `rebalanceable_token_symbols`: stablecoins are always tradeable
-// (1:1, no AMM price gap); every non-stable sleeve is tracked-not-traded until
-// the deployment turns on volatile execution (`VOLATILE_EXECUTION_ENABLED`),
-// which mainnet does. Used for route badges *and* for honest drift — drift in a
-// tracked sleeve is not reviewable because the user cannot action it here.
+// A sleeve the planner can actually trade/rebalance on this deployment, mirroring
+// the backend `rebalanceable_token_symbols` / `is_volatile_sleeve` split:
+//   • stablecoins are always tradeable (1:1, no AMM price gap);
+//   • *volatile* sleeves are tracked-not-traded until the deployment turns on
+//     volatile execution (`VOLATILE_EXECUTION_ENABLED`), which mainnet does;
+//   • FX/yield sleeves (EURC, USYC) are gated by their own rails (StableFX KYB,
+//     USYC_ENABLED) — the volatile flag does not make them tradeable, so this
+//     coarse predicate keeps them tracked. Exact per-asset readiness for those
+//     comes from backend `routeStates` (`allocationDisplayMeta`).
+// Used for route badges *and* for honest drift — drift in a tracked sleeve is
+// not reviewable because the user cannot action it here.
 export function isTradeableSleeve(tokenId: string): boolean {
   const token = TOKENS.find((candidate) => candidate.symbol === tokenId);
   if (token?.designable !== true || token.comingSoon === true) {
     return false;
   }
-  return token.class === "stable" || VOLATILE_EXECUTION_ENABLED;
+  if (token.class === "stable") {
+    return true;
+  }
+  return token.class === "volatile" && VOLATILE_EXECUTION_ENABLED;
 }
 
 function tokenComingSoon(tokenId: string): boolean {

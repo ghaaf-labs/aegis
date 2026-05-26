@@ -58,7 +58,7 @@ describe("isTradeableSleeve", () => {
     expect(isTradeableSleeve("XYZ")).toBe(false);
   });
 
-  it("flips volatile sleeves to tradeable when VOLATILE_EXECUTION_ENABLED is on (mainnet)", async () => {
+  it("flips only volatile sleeves to tradeable when VOLATILE_EXECUTION_ENABLED is on (mainnet)", async () => {
     process.env.NEXT_PUBLIC_VOLATILE_EXECUTION_ENABLED = "true";
     vi.resetModules();
     const mod = await import("./route-capabilities");
@@ -66,8 +66,9 @@ describe("isTradeableSleeve", () => {
     expect(mod.isTradeableSleeve("USDC")).toBe(true);
     expect(mod.isTradeableSleeve("ETH")).toBe(true);
     expect(mod.isTradeableSleeve("cbBTC")).toBe(true);
-    expect(mod.isTradeableSleeve("EURC")).toBe(true);
-    // Coming-soon stays excluded even with volatile execution on.
+    // FX/yield sleeves are gated by their own rails (StableFX KYB, USYC_ENABLED),
+    // not the volatile flag — they stay tracked in this coarse predicate.
+    expect(mod.isTradeableSleeve("EURC")).toBe(false);
     expect(mod.isTradeableSleeve("USYC")).toBe(false);
   });
 });
