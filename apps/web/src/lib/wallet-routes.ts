@@ -109,7 +109,9 @@ function normalizeWalletRouteKey(
 
 // Minimum idle USDC on a non-primary chain worth bridging. Mirrors the backend
 // routing engine's `CONSOLIDATION_MIN_USD` — below this the cash stays put.
-export const CONSOLIDATION_MIN_USD = 5;
+// Module-private: callers consume the `idleUsdcConsolidation` predicate, which
+// is the single shared entry point, rather than re-deriving the rule.
+const CONSOLIDATION_MIN_USD = 5;
 
 export interface IdleUsdcConsolidation {
   /** Non-primary chains holding consolidatable idle USDC (the bridge sources). */
