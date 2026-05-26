@@ -382,6 +382,7 @@ fn base_config() -> Config {
         usyc_teller_arc: String::new(),
         usyc_oracle_arc: String::new(),
         usyc_enabled: false,
+        volatile_execution_enabled: false,
         token_addrs: std::collections::HashMap::new(),
         swap_liquid_tokens: std::collections::HashMap::new(),
         swap_pool_depth_usd: std::collections::HashMap::new(),

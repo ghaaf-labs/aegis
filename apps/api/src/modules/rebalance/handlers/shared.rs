@@ -197,60 +197,69 @@ pub(super) struct RouteShapedPlan {
     pub input: PlanInput,
     pub legs: Vec<PlannedLeg>,
     pub route_deferred: Vec<DeferredTarget>,
-    pub blocked_message: Option<String>,
 }
 
-/// Build the deterministic plan, remove unsafe live sell routes from the input,
-/// and re-plan. This is the first route-quality feedback loop: unsafe trims are
-/// frozen, while independent safe buys/bridges can still proceed.
+/// Build the deterministic plan, then iteratively freeze any leg whose live
+/// route is unsafe and re-plan, so the safe legs still execute while only the
+/// blocked sleeves are deferred to a USDC reserve. One un-executable sleeve must
+/// never discard the rest of the rebalance. Each pass freezes at least one
+/// blocked route (a blocked buy is pinned to its current weight; a blocked sell
+/// source is frozen), so it converges in at most one pass per distinct
+/// target/sell source.
 pub(super) async fn route_shaped_plan(
     state: &AppState,
     user_id: Uuid,
-    input: PlanInput,
+    mut input: PlanInput,
 ) -> Result<RouteShapedPlan> {
-    let initial = crate::modules::rebalance::routing::engine_plan(&state.config, &input);
-    let blocks = crate::modules::rebalance::route_assessment::live_route_blocks(
-        state,
-        user_id,
-        &input,
-        &initial.legs,
-    )
-    .await?;
-    if blocks.is_empty() {
-        let route_deferred = engine_deferred_targets(&input, initial.deferred);
-        return Ok(RouteShapedPlan {
-            input,
-            legs: initial.legs,
-            route_deferred,
-            blocked_message: None,
-        });
+    let mut frozen_deferred: Vec<DeferredTarget> = Vec::new();
+    let max_passes = input.target_weights.len() + input.sell_sources.len() + 1;
+    let mut plan = crate::modules::rebalance::routing::engine_plan(&state.config, &input);
+
+    for _ in 0..max_passes {
+        let blocks = crate::modules::rebalance::route_assessment::live_route_blocks(
+            state, user_id, &input, &plan.legs,
+        )
+        .await?;
+        if blocks.is_empty() {
+            // Every remaining leg passed live assessment — ship them.
+            return Ok(shaped_plan(input, plan, frozen_deferred));
+        }
+        let (adjusted, deferred) = freeze_blocked_routes(input, &blocks);
+        frozen_deferred.extend(deferred);
+        input = adjusted;
+        plan = crate::modules::rebalance::routing::engine_plan(&state.config, &input);
     }
 
-    let (adjusted, route_deferred) = freeze_blocked_routes(input, &blocks);
+    // Unreachable in practice: each pass eliminates at least one block, and
+    // `max_passes` exceeds the number of distinct routable nodes. If we somehow
+    // never converge, ship zero legs (defer the whole intent) rather than risk
+    // an unassessed, unsafe leg.
+    tracing::warn!(%user_id, "route shaping did not converge; deferring all legs");
+    plan.legs.clear();
+    Ok(shaped_plan(input, plan, frozen_deferred))
+}
 
-    let shaped = crate::modules::rebalance::routing::engine_plan(&state.config, &adjusted);
-    let residual_blocks = crate::modules::rebalance::route_assessment::live_route_blocks(
-        state,
-        user_id,
-        &adjusted,
-        &shaped.legs,
-    )
-    .await?;
-    let blocked_message = if !residual_blocks.is_empty() {
-        Some(join_unique_route_block_messages(&residual_blocks, &blocks))
-    } else {
-        None
-    };
+/// Assemble the final shaped plan: safe legs + the frozen sleeves and the
+/// engine's residual deferrals, de-duplicated so each symbol is listed once.
+fn shaped_plan(
+    input: PlanInput,
+    plan: crate::modules::rebalance::routing::EnginePlan,
+    mut deferred: Vec<DeferredTarget>,
+) -> RouteShapedPlan {
+    deferred.extend(engine_deferred_targets(&input, plan.deferred));
+    dedup_deferred(&mut deferred);
+    RouteShapedPlan {
+        input,
+        legs: plan.legs,
+        route_deferred: deferred,
+    }
+}
 
-    let mut all_deferred = route_deferred;
-    all_deferred.extend(engine_deferred_targets(&adjusted, shaped.deferred));
-
-    Ok(RouteShapedPlan {
-        input: adjusted,
-        legs: shaped.legs,
-        route_deferred: all_deferred,
-        blocked_message,
-    })
+/// Keep one deferral per symbol. The freeze loop and the engine's own residual
+/// deferrals can name the same sleeve, which would otherwise list it twice.
+fn dedup_deferred(deferred: &mut Vec<DeferredTarget>) {
+    let mut seen: HashSet<String> = HashSet::new();
+    deferred.retain(|d| seen.insert(d.symbol.to_ascii_lowercase()));
 }
 
 fn engine_deferred_targets(
@@ -355,25 +364,6 @@ fn freeze_blocked_sell_source(
     }
 }
 
-fn join_unique_route_block_messages(
-    residual: &[crate::modules::rebalance::route_assessment::RouteBlock],
-    initial: &[crate::modules::rebalance::route_assessment::RouteBlock],
-) -> String {
-    let mut seen = HashSet::new();
-    residual
-        .iter()
-        .chain(initial.iter())
-        .filter_map(|b| {
-            if seen.insert(b.message.as_str()) {
-                Some(b.message.as_str())
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 /// Why a plan produced zero executable legs. The single classifier consumed by
 /// both the human message (`noop_plan_message`) and the typed HTTP outcome
 /// (`PlanOutcome::from_noop`) so the two can never drift. None of these are
@@ -413,7 +403,7 @@ pub(super) fn classify_noop(input: &crate::modules::rebalance::models::PlanInput
 pub(super) fn noop_plan_message(input: &crate::modules::rebalance::models::PlanInput) -> String {
     match classify_noop(input) {
         NoopReason::Unfunded => "No rebalance plan was created because this portfolio has no confirmed positions and no deployable USDC above the $5 dust threshold. Fund the wallet first, then review deployment.".into(),
-        NoopReason::UsdcReserve => "No rebalance plan was created because the approved target is a USDC reserve, so wallet cash is already in the target asset and no market move is required.".into(),
+        NoopReason::UsdcReserve => "Your portfolio is on target — wallet cash is already in USDC, the reserve asset, so no market move is needed right now.".into(),
         NoopReason::DustOnly => {
             let idle_usdc: f64 = input.usdc_per_chain.values().copied().sum();
             format!(
@@ -484,7 +474,34 @@ mod tests {
         route_assessment::{RouteBlock, RouteBlockSide},
     };
 
-    use super::freeze_blocked_routes;
+    use super::super::outcome::DeferredTarget;
+    use super::{dedup_deferred, freeze_blocked_routes};
+
+    fn deferred(symbol: &str, weight: f64) -> DeferredTarget {
+        DeferredTarget {
+            symbol: symbol.into(),
+            target_weight: weight,
+            reason: format!("no route for {symbol}"),
+        }
+    }
+
+    #[test]
+    fn dedup_deferred_keeps_one_entry_per_symbol() {
+        // The freeze loop and the engine's residual deferrals can both name the
+        // same blocked sleeve; the user must not see it listed twice (the
+        // "ETH, ETH" duplicate). Case-insensitive, first occurrence wins.
+        let mut list = vec![
+            deferred("cbBTC", 0.4),
+            deferred("ETH", 0.3),
+            deferred("eth", 0.3),
+            deferred("ETH", 0.3),
+        ];
+
+        dedup_deferred(&mut list);
+
+        let symbols: Vec<&str> = list.iter().map(|d| d.symbol.as_str()).collect();
+        assert_eq!(symbols, vec!["cbBTC", "ETH"]);
+    }
 
     fn input() -> PlanInput {
         let mut current_weights = HashMap::new();

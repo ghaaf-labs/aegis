@@ -560,6 +560,26 @@ pub fn executable_token_symbols(caps: &RuntimeCapabilities, cfg: &Config) -> Vec
         .collect()
 }
 
+/// Symbols the agent may actively *rebalance* into right now: the executable set
+/// minus volatile (non-stablecoin) sleeves while `volatile_execution_enabled` is
+/// off. Test-network AMM pools are detached from real-market marks, so every
+/// volatile swap trips the price-safety guard; rather than dead-end on targets
+/// it can never route, the platform tracks volatiles (held, not traded — excluded
+/// from the rebalanceable base, drift, and the actionable target) and manages the
+/// stablecoin layer. Stablecoins are always rebalanceable (1:1, no price gap).
+pub fn rebalanceable_token_symbols(caps: &RuntimeCapabilities, cfg: &Config) -> Vec<&'static str> {
+    executable_token_symbols(caps, cfg)
+        .into_iter()
+        .filter(|symbol| cfg.volatile_execution_enabled || is_stable_sleeve(symbol))
+        .collect()
+}
+
+/// A USD-stablecoin sleeve (settlement-equivalent) — always safe to rebalance
+/// because it carries no AMM price-gap risk.
+fn is_stable_sleeve(symbol: &str) -> bool {
+    tokens::token(symbol).is_some_and(|spec| spec.class == TokenClass::Stable)
+}
+
 /// Symbols the allocator may place in a target allocation.
 ///
 /// This is intentionally the product's designable sleeve menu, not the current

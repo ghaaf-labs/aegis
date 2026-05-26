@@ -114,9 +114,6 @@ pub async fn create(
     let input = shaped.input;
     let legs = shaped.legs;
     deferred.extend(shaped.route_deferred);
-    if let Some(message) = shaped.blocked_message {
-        return Ok(Json(PlanOutcome::Blocked { message, deferred }));
-    }
     if legs.is_empty() {
         // A no-op is not an error: classify it into a typed 200 outcome the UI
         // renders calmly (on-target / reserve), actionably (unfunded / dust), or

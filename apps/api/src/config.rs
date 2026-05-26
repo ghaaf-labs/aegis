@@ -156,6 +156,15 @@ pub struct Config {
     /// EOA is allowlisted and the real Teller path is wired.
     pub usyc_enabled: bool,
 
+    /// Whether volatile (non-stablecoin) sleeves may be actively traded. On test
+    /// networks the AMM pools are detached from real-market prices (e.g. WETH/USDC
+    /// quotes ETH at ~$900 vs a ~$2k mark), so the price-safety guard blocks every
+    /// volatile swap. While `false`, volatiles are *tracked, not traded*: excluded
+    /// from the rebalanceable base, drift, and the actionable target, so the
+    /// platform manages the stablecoin layer instead of dead-ending on
+    /// un-routable targets. Flip to `true` on mainnet where pools are real.
+    pub volatile_execution_enabled: bool,
+
     // ── Per-(symbol, chain) ERC-20 addresses ───────────────────────────────
     /// Built in `from_env` by iterating the token registry × its `Env`-sourced
     /// residencies and reading `{PREFIX}_{CHAIN}` (e.g. `WETH_BASE`, `WBTC_ETH`,
@@ -399,6 +408,7 @@ impl Config {
             usyc_teller_arc: std::env::var("USYC_TELLER_ARC").unwrap_or_default(),
             usyc_oracle_arc: std::env::var("USYC_ORACLE_ARC").unwrap_or_default(),
             usyc_enabled: parse_or("USYC_ENABLED", false)?,
+            volatile_execution_enabled: parse_or("VOLATILE_EXECUTION_ENABLED", false)?,
 
             token_addrs: token_addrs_from_env(),
             swap_liquid_tokens: swap_liquid_tokens_from_env(),
@@ -942,6 +952,7 @@ pub(crate) fn test_config() -> Config {
         usyc_teller_arc: String::new(),
         usyc_oracle_arc: String::new(),
         usyc_enabled: false,
+        volatile_execution_enabled: false,
         token_addrs: std::collections::HashMap::new(),
         swap_liquid_tokens: std::collections::HashMap::new(),
         swap_pool_depth_usd: std::collections::HashMap::new(),

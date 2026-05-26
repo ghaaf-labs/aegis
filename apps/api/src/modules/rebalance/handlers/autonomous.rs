@@ -69,9 +69,6 @@ pub async fn prepare_autonomous_plan(
             return Ok(AutonomousPlan::NoOp);
         }
     };
-    if shaped.blocked_message.is_some() {
-        return Ok(AutonomousPlan::NoOp);
-    }
     let input = shaped.input;
     let legs = shaped.legs;
     if legs.is_empty() {

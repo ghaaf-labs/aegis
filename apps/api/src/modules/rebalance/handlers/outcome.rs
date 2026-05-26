@@ -101,7 +101,7 @@ fn blocked_message(deferred: &[DeferredTarget]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "No plan was executed: {names} has no live execution route right now, so your deployable cash is held as USDC until a route opens. The intended allocation is shown so you can re-run once it is routable."
+        "Tracked on this network: {names}. Volatile sleeves have no reliable on-chain price on test networks, so they're held, not traded. Your USDC capital is managed normally — the intended allocation becomes tradeable on mainnet."
     )
 }
 

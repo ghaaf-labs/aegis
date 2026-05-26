@@ -4,13 +4,22 @@ use crate::config::Config;
 use crate::domain::token::native_chain;
 use crate::modules::rebalance::models::ChainKey;
 use crate::modules::rebalance::registry::{
-    executable_chain_for_token, executable_token_symbols, RuntimeCapabilities,
+    executable_chain_for_token, rebalanceable_token_symbols, RuntimeCapabilities,
 };
 
 use super::super::outcome::DeferredTarget;
 
-/// Fold any target weight for a non-executable sleeve into USDC before the
+/// Fold any target weight for a non-rebalanceable sleeve into USDC before the
 /// planner builds legs.
+///
+/// Returns the folded sleeves as `deferred` only when they were folded because a
+/// rail is *not ready* (a fixable blocker the review screen should surface).
+/// When volatiles are *tracked by design* on this network
+/// (`!volatile_execution_enabled`), folding them is expected policy, not a
+/// blocker — so we fold silently (empty `deferred`) and let the outcome reflect
+/// the stablecoin base (a calm on-target / reserve state) instead of dead-ending
+/// the whole plan as `Blocked`. The tracked sleeves stay visible as held
+/// positions in the portfolio view.
 pub(super) fn fold_nonexecutable_targets_into_usdc(
     cfg: &crate::config::Config,
     target_weights: &mut HashMap<String, f64>,
@@ -22,8 +31,13 @@ pub(super) fn fold_nonexecutable_targets_into_usdc(
     if !caps.real_mode {
         return Vec::new();
     }
-    let executable = executable_token_symbols(&caps, cfg);
-    retain_executable_targets(target_weights, &executable)
+    let rebalanceable = rebalanceable_token_symbols(&caps, cfg);
+    let deferred = retain_executable_targets(target_weights, &rebalanceable);
+    if cfg.volatile_execution_enabled {
+        deferred
+    } else {
+        Vec::new()
+    }
 }
 
 fn retain_executable_targets(
