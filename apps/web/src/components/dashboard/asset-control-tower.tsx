@@ -28,11 +28,8 @@ import type {
   DashboardTokenExposure,
 } from "@/lib/dashboard-balance-model";
 import { isTradeableSleeve } from "@/lib/route-capabilities";
+import { idleUsdcConsolidation } from "@/lib/wallet-routes";
 import { cn, formatCurrency, timeAgo } from "@/lib/utils";
-
-// Mirrors the backend `CONSOLIDATION_MIN_USD` (routing engine): a chain holding
-// less than this isn't worth a CCTP bridge, so it doesn't count as fragmentation.
-const CONSOLIDATION_MIN_USD = 5;
 
 interface AssetControlTowerProps {
   model: DashboardBalanceModel;
@@ -644,16 +641,21 @@ function actionState(
     };
   }
   // Idle USDC fragmented across chains is consolidatable (CCTP, no price risk),
-  // even when there's nothing else to trade. Mirrors the backend's per-source
-  // minimum so the card only appears when a real consolidation plan exists.
-  const fragmentedUsdcChains = Object.values(model.perChainUsdc).filter(
-    (amount) => amount >= CONSOLIDATION_MIN_USD,
-  ).length;
-  if (fragmentedUsdcChains >= 2) {
+  // even when there's nothing else to trade. The predicate mirrors the backend
+  // routing engine exactly (`idleUsdcConsolidation`), so the card appears
+  // whenever the backend would actually plan a sweep — including a single
+  // non-primary chain holding idle USDC, which the old "2+ funded chains"
+  // heuristic hid.
+  const consolidation = idleUsdcConsolidation(model.perChainUsdc);
+  if (consolidation.sources >= 1) {
+    const where =
+      consolidation.fundedChains >= 2
+        ? `Your USDC sits on ${consolidation.fundedChains} chains. `
+        : "Some idle USDC is stranded off your main execution chain. ";
     return {
       kind: "review",
       title: "Consolidate idle USDC",
-      body: `Your USDC sits on ${fragmentedUsdcChains} chains. Aegis can bridge it onto one chain over CCTP — no price risk — so it's ready to deploy. Review to approve.`,
+      body: `${where}Aegis can bridge it onto one chain over CCTP — no price risk — so it's ready to deploy. Review to approve.`,
       tone: "agent",
     };
   }

@@ -107,6 +107,51 @@ function normalizeWalletRouteKey(
   return null;
 }
 
+// Minimum idle USDC on a non-primary chain worth bridging. Mirrors the backend
+// routing engine's `CONSOLIDATION_MIN_USD` — below this the cash stays put.
+export const CONSOLIDATION_MIN_USD = 5;
+
+export interface IdleUsdcConsolidation {
+  /** Non-primary chains holding consolidatable idle USDC (the bridge sources). */
+  sources: number;
+  /** Chains holding consolidatable idle USDC, including the primary. */
+  fundedChains: number;
+}
+
+/**
+ * Mirror of the backend routing engine's idle-USDC consolidation rule
+ * (`apps/api/src/modules/rebalance/routing/mod.rs` → `append_consolidation_legs`):
+ * idle USDC stranded on any execution chain other than the *primary* (the
+ * Arc/Base chain holding the most idle USDC, defaulting to Base on a tie) is
+ * swept onto that primary over CCTP when the stranded amount clears
+ * {@link CONSOLIDATION_MIN_USD}. Kept beside the chain metadata so the
+ * dashboard's "Consolidate idle USDC" hint surfaces a card iff the backend would
+ * actually plan a leg — including the single-non-primary-chain case the old
+ * "2+ funded chains" heuristic missed.
+ */
+export function idleUsdcConsolidation(
+  perChainUsdc: Record<string, number>,
+): IdleUsdcConsolidation {
+  const byKey = new Map<ExplorerChain, number>();
+  for (const [rawKey, amount] of Object.entries(perChainUsdc)) {
+    const key = walletRouteKeyFromBlockchain(rawKey);
+    if (!key || !Number.isFinite(amount) || amount <= 0) continue;
+    byKey.set(key, (byKey.get(key) ?? 0) + amount);
+  }
+  // Primary picks the richer Arc/Base chain from *all* idle (matching the
+  // backend), ties → Base; the source/funded counts then apply the threshold.
+  const primary: ExplorerChain =
+    (byKey.get("arc") ?? 0) > (byKey.get("base") ?? 0) ? "arc" : "base";
+  let sources = 0;
+  let fundedChains = 0;
+  for (const [key, amount] of byKey) {
+    if (amount < CONSOLIDATION_MIN_USD) continue;
+    fundedChains += 1;
+    if (key !== primary) sources += 1;
+  }
+  return { sources, fundedChains };
+}
+
 export function walletRouteKeysFromNetworks(
   networks: Pick<WalletNetwork, "blockchain">[] | null | undefined,
 ): ExplorerChain[] {
