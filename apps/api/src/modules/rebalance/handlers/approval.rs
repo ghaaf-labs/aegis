@@ -36,6 +36,32 @@ pub(super) async fn approval_safety(
     state: &AppState,
     rebalance_id: Uuid,
 ) -> Result<ApprovalSafety> {
+    approval_safety_with_depth(state, rebalance_id, SafetyDepth::Final).await
+}
+
+pub(super) async fn approval_safety_preview(
+    state: &AppState,
+    rebalance_id: Uuid,
+) -> Result<ApprovalSafety> {
+    approval_safety_with_depth(state, rebalance_id, SafetyDepth::Preview).await
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SafetyDepth {
+    /// Cheap polling/read path: validate persisted legs against current static
+    /// capabilities. The actual approval call still runs the full live quote
+    /// and balance re-plan.
+    Preview,
+    /// Final approval gate: rebuild the input, run live route assessment, and
+    /// compare the current executable legs to the stored review.
+    Final,
+}
+
+async fn approval_safety_with_depth(
+    state: &AppState,
+    rebalance_id: Uuid,
+    depth: SafetyDepth,
+) -> Result<ApprovalSafety> {
     let plan: RebalanceView = sqlx::query_as(
         "SELECT id, portfolio_id, decision_id, status, total_legs, completed_legs,
                 total_gas_usdc, failure_reason, approved_at, completed_at,
@@ -119,6 +145,10 @@ pub(super) async fn approval_safety(
             message: "This plan has no executable legs. No approval is needed.".into(),
             missing_capabilities: None,
         });
+    }
+
+    if depth == SafetyDepth::Preview {
+        return Ok(static_approval_safety(state, &stored_legs));
     }
 
     let user_id: Uuid = sqlx::query_scalar("SELECT user_id FROM portfolios WHERE id = $1")
@@ -217,6 +247,29 @@ pub(super) async fn approval_safety(
     })
 }
 
+fn static_approval_safety(state: &AppState, stored_legs: &[LegView]) -> ApprovalSafety {
+    let real_mode = !state.config.execution_mock && !state.config.circle_mock;
+    if real_mode {
+        let missing_capabilities = route_blockers(&state.config, stored_legs);
+        if !missing_capabilities.is_empty() {
+            let message = execution_blocked_message(&missing_capabilities);
+            return ApprovalSafety {
+                approvable: false,
+                code: "EXECUTION_UNAVAILABLE".into(),
+                message,
+                missing_capabilities: Some(missing_capabilities),
+            };
+        }
+    }
+
+    ApprovalSafety {
+        approvable: true,
+        code: "APPROVABLE".into(),
+        message: "Plan is ready for approval. A final live balance and quote check runs when you approve.".into(),
+        missing_capabilities: None,
+    }
+}
+
 pub(super) async fn history_approval_safety(
     state: &AppState,
     plan: &RebalanceView,
@@ -243,7 +296,7 @@ pub(super) async fn history_approval_safety(
         });
     }
 
-    approval_safety(state, plan.id).await
+    approval_safety_preview(state, plan.id).await
 }
 
 pub(super) fn legs_match_current(stored: &[LegView], current: &[PlannedLeg]) -> bool {

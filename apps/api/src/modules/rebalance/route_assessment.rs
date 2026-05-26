@@ -16,7 +16,6 @@ use crate::router::AppState;
 use rust_decimal::prelude::ToPrimitive;
 
 const MAX_QUOTER_PRICE_GAP_BPS: f64 = 25.0;
-const LIVE_TOKEN_SPEND_MARGIN_BPS: u32 = 9_950;
 const USDC_DECIMALS: u8 = 6;
 
 fn leg_amount_usd(leg: &PlannedLeg) -> f64 {
@@ -375,7 +374,10 @@ async fn live_sell_context(
         spec.decimals,
     )
     .await?;
-    let spendable_units = apply_bps_margin(live_units, LIVE_TOKEN_SPEND_MARGIN_BPS);
+    let spendable_units = apply_bps_margin(
+        live_units,
+        crate::modules::rebalance::LIVE_TOKEN_SPEND_MARGIN_BPS,
+    );
     Ok(Some(LiveSellContext {
         symbol: symbol.to_string(),
         chain,

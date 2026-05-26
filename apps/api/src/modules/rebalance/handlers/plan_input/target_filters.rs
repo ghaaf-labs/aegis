@@ -1,9 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::config::Config;
 use crate::domain::token::native_chain;
 use crate::modules::rebalance::models::ChainKey;
-use crate::modules::rebalance::registry::{executable_token_symbols, RuntimeCapabilities};
-use crate::modules::wallet_routes;
+use crate::modules::rebalance::registry::{
+    executable_chain_for_token, executable_token_symbols, RuntimeCapabilities,
+};
 
 use super::super::outcome::DeferredTarget;
 
@@ -60,6 +62,7 @@ fn deferred_reason(symbol: &str) -> String {
 }
 
 pub(super) fn apply_route_preferences_to_targets(
+    cfg: &Config,
     goal: &serde_json::Value,
     target_weights: &mut HashMap<String, f64>,
 ) {
@@ -79,15 +82,39 @@ pub(super) fn apply_route_preferences_to_targets(
         return;
     }
 
-    let arc_allowed =
-        selected_networks.contains(wallet_routes::ARC_TESTNET) || selected_networks.contains("ARC");
-    let base_allowed = selected_networks.contains(wallet_routes::BASE_SEPOLIA)
-        || selected_networks.contains("BASE");
-    target_weights.retain(|symbol, _| match native_chain(symbol) {
-        ChainKey::Arc => arc_allowed,
-        ChainKey::Base => base_allowed,
-        _ => true,
+    let selected_chains: HashSet<ChainKey> = selected_networks
+        .iter()
+        .filter_map(|network| chain_from_route_preference(network))
+        .collect();
+    if selected_chains.is_empty() {
+        target_weights.retain(|symbol, _| symbol == "USDC");
+        return;
+    }
+    let caps = RuntimeCapabilities::from_config(cfg);
+    target_weights.retain(|symbol, _| {
+        symbol == "USDC"
+            || selected_chains.contains(&preferred_chain_for_target(&caps, cfg, symbol))
     });
+}
+
+fn preferred_chain_for_target(caps: &RuntimeCapabilities, cfg: &Config, symbol: &str) -> ChainKey {
+    if caps.real_mode {
+        executable_chain_for_token(caps, cfg, symbol).unwrap_or_else(|| native_chain(symbol))
+    } else {
+        native_chain(symbol)
+    }
+}
+
+fn chain_from_route_preference(network: &str) -> Option<ChainKey> {
+    match network {
+        "ARC" | "ARC-TESTNET" => Some(ChainKey::Arc),
+        "BASE" | "BASE-SEPOLIA" => Some(ChainKey::Base),
+        "ETH" | "ETH-SEPOLIA" | "ETHEREUM" => Some(ChainKey::EthSepolia),
+        "ARB" | "ARB-SEPOLIA" | "ARBITRUM" => Some(ChainKey::ArbSepolia),
+        "AVAX" | "AVAX-FUJI" | "AVALANCHE" => Some(ChainKey::AvaxFuji),
+        "OP" | "OP-SEPOLIA" | "OPTIMISM" => Some(ChainKey::OpSepolia),
+        _ => ChainKey::parse(network),
+    }
 }
 
 fn route_preference_set(route_preferences: &serde_json::Value, key: &str) -> HashSet<String> {
@@ -113,8 +140,13 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn test_cfg() -> Config {
+        crate::config::test_config()
+    }
+
     #[test]
     fn route_preferences_filter_unselected_target_tokens() {
+        let cfg = test_cfg();
         let goal = json!({
             "targetAllocation": {"USDC": 40, "BTC": 30, "ETH": 20, "USYC": 10},
             "routePreferences": {
@@ -130,7 +162,7 @@ mod tests {
             ("USYC".to_string(), 0.10),
         ]);
 
-        apply_route_preferences_to_targets(&goal, &mut targets);
+        apply_route_preferences_to_targets(&cfg, &goal, &mut targets);
 
         assert!(targets.contains_key("USDC"));
         assert!(targets.contains_key("USYC"));
@@ -140,6 +172,7 @@ mod tests {
 
     #[test]
     fn route_preferences_filter_targets_by_selected_execution_networks() {
+        let cfg = test_cfg();
         let goal = json!({
             "routePreferences": {
                 "networks": ["ARC-TESTNET"],
@@ -153,7 +186,7 @@ mod tests {
             ("EURC".to_string(), 0.20),
         ]);
 
-        apply_route_preferences_to_targets(&goal, &mut targets);
+        apply_route_preferences_to_targets(&cfg, &goal, &mut targets);
 
         assert_eq!(
             targets.keys().cloned().collect::<HashSet<_>>(),
@@ -163,6 +196,7 @@ mod tests {
 
     #[test]
     fn route_preferences_keep_eurc_when_base_selected() {
+        let cfg = test_cfg();
         let goal = json!({
             "routePreferences": {
                 "networks": ["BASE-SEPOLIA"],
@@ -171,10 +205,59 @@ mod tests {
         });
         let mut targets = HashMap::from([("USYC".to_string(), 0.50), ("EURC".to_string(), 0.50)]);
 
-        apply_route_preferences_to_targets(&goal, &mut targets);
+        apply_route_preferences_to_targets(&cfg, &goal, &mut targets);
 
         assert!(targets.contains_key("EURC"));
         assert!(!targets.contains_key("USYC"));
+    }
+
+    #[cfg(feature = "real-swap")]
+    #[test]
+    fn route_preferences_keep_token_on_non_native_executable_chain() {
+        let mut cfg = test_cfg();
+        cfg.execution_mock = false;
+        cfg.circle_mock = false;
+        cfg.circle_wallet_exec = true;
+        cfg.chains[ChainKey::ArbSepolia.index()].usdc =
+            "0x00000000000000000000000000000000000000a3".into();
+        cfg.chains[ChainKey::ArbSepolia.index()].swap_router =
+            "0x00000000000000000000000000000000000000b3".into();
+        cfg.chains[ChainKey::ArbSepolia.index()].swap_quoter =
+            "0x00000000000000000000000000000000000000c3".into();
+        cfg.set_token_address(
+            "ETH",
+            ChainKey::ArbSepolia,
+            "0x4200000000000000000000000000000000000006",
+        );
+        cfg.swap_liquid_tokens
+            .insert(ChainKey::ArbSepolia, vec!["ETH".into()]);
+        let goal = json!({
+            "routePreferences": {
+                "networks": ["ARB-SEPOLIA"],
+                "tokens": ["ETH"]
+            }
+        });
+        let mut targets = HashMap::from([("ETH".to_string(), 1.0)]);
+
+        apply_route_preferences_to_targets(&cfg, &goal, &mut targets);
+
+        assert_eq!(targets, HashMap::from([("ETH".to_string(), 1.0)]));
+    }
+
+    #[test]
+    fn route_preferences_drop_targets_when_selected_network_is_unknown() {
+        let cfg = test_cfg();
+        let goal = json!({
+            "routePreferences": {
+                "networks": ["NOT-A-CHAIN"],
+                "tokens": ["USDC", "ETH"]
+            }
+        });
+        let mut targets = HashMap::from([("USDC".to_string(), 0.50), ("ETH".to_string(), 0.50)]);
+
+        apply_route_preferences_to_targets(&cfg, &goal, &mut targets);
+
+        assert_eq!(targets, HashMap::from([("USDC".to_string(), 0.50)]));
     }
 
     #[test]

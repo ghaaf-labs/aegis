@@ -48,7 +48,7 @@ pub(super) async fn build_plan_input(
     .await?;
 
     let mut target_weights = target_weights_from_goal(&goal);
-    apply_route_preferences_to_targets(&goal, &mut target_weights);
+    apply_route_preferences_to_targets(&state.config, &goal, &mut target_weights);
     let deferred = fold_nonexecutable_targets_into_usdc(&state.config, &mut target_weights);
 
     let caps = RuntimeCapabilities::from_config(&state.config);

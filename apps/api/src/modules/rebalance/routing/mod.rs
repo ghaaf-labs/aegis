@@ -28,6 +28,9 @@ use crate::domain::chain::ChainKey;
 use crate::domain::token;
 use crate::modules::rebalance::models::{PlanInput, PlannedLeg, SellSources};
 use crate::modules::rebalance::planner::sorted_plan_deltas;
+use crate::modules::rebalance::registry::{
+    capabilities::RuntimeCapabilities, executable_chain_for_token,
+};
 use translate::{append_flow_plan, route_and_append};
 
 const ROUTING_DUST_USD: f64 = 0.01;
@@ -69,6 +72,16 @@ fn chain_from_id(id: ChainId) -> Option<ChainKey> {
 /// Build a routing-crate node for `(symbol, chain)`.
 fn asset(symbol: &str, chain: ChainKey) -> RouteAsset {
     RouteAsset::new(chain_id(chain), symbol)
+}
+
+fn target_chain_for_symbol(cfg: &Config, symbol: &str) -> ChainKey {
+    let caps = RuntimeCapabilities::from_config(cfg);
+    if caps.real_mode {
+        executable_chain_for_token(&caps, cfg, symbol)
+            .unwrap_or_else(|| token::native_chain(symbol))
+    } else {
+        token::native_chain(symbol)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -295,7 +308,7 @@ pub fn engine_plan(cfg: &Config, input: &PlanInput) -> EnginePlan {
         .filter(|d| d.value_delta_usd > 0.0)
         .map(|d| BuyDemand {
             symbol: d.symbol.clone(),
-            target_chain: token::native_chain(&d.symbol),
+            target_chain: target_chain_for_symbol(cfg, &d.symbol),
             remaining_usd: d.value_delta_usd,
         })
         .collect();
@@ -373,6 +386,10 @@ mod tests {
             for res in spec.residencies {
                 if matches!(res.addr, AddrSource::Env(_)) {
                     cfg.set_token_address(spec.symbol, res.chain, sentinel);
+                    cfg.swap_liquid_tokens
+                        .entry(res.chain)
+                        .or_default()
+                        .push(spec.symbol.to_string());
                 }
             }
         }
@@ -444,6 +461,25 @@ mod tests {
             liquidity_graph(&cfg).fingerprint(),
             liquidity_graph(&cfg).fingerprint(),
             "live graph must be deterministic for the same config"
+        );
+    }
+
+    #[test]
+    fn routing_graph_respects_swap_liquidity_allowlist() {
+        let sentinel = "0x1111111111111111111111111111111111111111";
+        let mut cfg = crate::config::test_config();
+        cfg.chains[ChainKey::Base.index()].usdc = sentinel.into();
+        cfg.set_token_address("ETH", ChainKey::Base, sentinel);
+        cfg.set_token_address("cbBTC", ChainKey::Base, sentinel);
+        cfg.swap_liquid_tokens
+            .insert(ChainKey::Base, vec!["ETH".into()]);
+
+        let graph = liquidity_graph(&cfg);
+
+        assert!(graph.contains(&asset("ETH", ChainKey::Base)));
+        assert!(
+            !graph.contains(&asset("cbBTC", ChainKey::Base)),
+            "a configured token address is not enough; the pool must be explicitly liquid"
         );
     }
 

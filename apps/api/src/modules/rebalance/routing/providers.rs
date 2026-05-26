@@ -106,6 +106,9 @@ impl RouteProvider for TokenMarketProvider<'_> {
                 // (volatiles + EURC) trades on a DEX. Both are token↔USDC edges,
                 // but USYC is a linear Teller rail, not an AMM with pool impact.
                 let yield_rail = spec.class == TokenClass::Yield;
+                if !yield_rail && !self.cfg.swap_token_has_venue(spec.symbol, chain) {
+                    continue;
+                }
                 let (buy_kind, sell_kind, provider) = if yield_rail {
                     (EdgeKind::UsycSubscribe, EdgeKind::UsycRedeem, usyc.clone())
                 } else {

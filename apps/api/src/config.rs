@@ -704,9 +704,16 @@ fn swap_pool_depth_usd_from_env() -> std::collections::HashMap<(String, ChainKey
                 spec.symbol
             );
             if let Ok(raw) = std::env::var(&key) {
-                if let Ok(depth) = raw.parse::<f64>() {
-                    if depth.is_finite() && depth > 0.0 {
+                match raw.parse::<f64>() {
+                    Ok(depth) if depth.is_finite() && depth > 0.0 => {
                         map.insert((spec.symbol.to_string(), chain), depth);
+                    }
+                    _ => {
+                        tracing::warn!(
+                            env_var = %key,
+                            value = %raw,
+                            "invalid swap pool depth ignored; using conservative default"
+                        );
                     }
                 }
             }

@@ -31,7 +31,6 @@ use super::legs::{blockchain_for_chain, quote_filled_qty, LegRow};
 /// cushion for gas/rounding so the clamped `amountIn` never tips back over the
 /// wallet's balance and re-triggers Circle's `INSUFFICIENT_TOKEN`.
 const LIVE_BALANCE_SPEND_MARGIN: f64 = 0.995;
-const LIVE_TOKEN_SPEND_MARGIN_BPS: u32 = 9_950;
 
 /// Outcome of dispatching one leg: the on-chain hashes plus the real, on-chain
 /// fill of the leg's non-USDC asset (whole token units) when the executed quote
@@ -59,6 +58,7 @@ pub(super) async fn dispatch(
     // APIs, so a synthetic hash can never stand in for a real transaction.
     if !caps.real_mode {
         let r = adapters::mock_receipt(kind, leg.id);
+        mark_leg_quoted(state, rebalance_id, leg.id, user_id, leg).await?;
         mark_leg_submitted(state, rebalance_id, leg.id, user_id, leg).await?;
         return Ok(LegDispatch {
             tx_hash: r.tx_hash,
@@ -318,7 +318,10 @@ async fn ensure_sell_quote_is_funded(
         spec.decimals,
     )
     .await?;
-    let spendable_units = apply_bps_margin(live_units, LIVE_TOKEN_SPEND_MARGIN_BPS);
+    let spendable_units = apply_bps_margin(
+        live_units,
+        crate::modules::rebalance::LIVE_TOKEN_SPEND_MARGIN_BPS,
+    );
     if quote.amount_in <= spendable_units {
         return Ok(());
     }

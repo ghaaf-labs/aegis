@@ -27,7 +27,7 @@ use crate::modules::agent::{models::AnalyzeRequest, service::analyze_portfolio};
 use crate::modules::rebalance::executor::{approve_and_execute, replace_planned_review};
 use crate::router::AppState;
 
-use approval::{approval_safety, history_approval_safety, ApprovalSafety};
+use approval::{approval_safety, approval_safety_preview, history_approval_safety, ApprovalSafety};
 use outcome::PlanOutcome;
 use plan_input::build_plan_input;
 use shared::{
@@ -285,7 +285,7 @@ pub async fn get(
     .fetch_all(&state.db)
     .await?;
 
-    let approval_safety = approval_safety(&state, rebalance_id).await?;
+    let approval_safety = approval_safety_preview(&state, rebalance_id).await?;
 
     Ok(Json(RebalanceDetail {
         plan,
