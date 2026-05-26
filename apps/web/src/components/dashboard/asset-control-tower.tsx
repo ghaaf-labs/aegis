@@ -27,7 +27,12 @@ import type {
   DashboardChainExposure,
   DashboardTokenExposure,
 } from "@/lib/dashboard-balance-model";
+import { isTradeableSleeve } from "@/lib/route-capabilities";
 import { cn, formatCurrency, timeAgo } from "@/lib/utils";
+
+// Mirrors the backend `CONSOLIDATION_MIN_USD` (routing engine): a chain holding
+// less than this isn't worth a CCTP bridge, so it doesn't count as fragmentation.
+const CONSOLIDATION_MIN_USD = 5;
 
 interface AssetControlTowerProps {
   model: DashboardBalanceModel;
@@ -431,10 +436,10 @@ function ActionPanel({
           )}
           {action.kind === "none" && (
             <Link
-              href="/wallets"
+              href="/portfolio"
               className="inline-flex min-h-11 items-center justify-center gap-2 border border-border-default bg-bg/70 px-3 text-xs font-semibold text-text-hi hover:bg-raised"
             >
-              Wallet details
+              Positions &amp; targets
               <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           )}
@@ -638,10 +643,37 @@ function actionState(
       tone: "warn",
     };
   }
+  // Idle USDC fragmented across chains is consolidatable (CCTP, no price risk),
+  // even when there's nothing else to trade. Mirrors the backend's per-source
+  // minimum so the card only appears when a real consolidation plan exists.
+  const fragmentedUsdcChains = Object.values(model.perChainUsdc).filter(
+    (amount) => amount >= CONSOLIDATION_MIN_USD,
+  ).length;
+  if (fragmentedUsdcChains >= 2) {
+    return {
+      kind: "review",
+      title: "Consolidate idle USDC",
+      body: `Your USDC sits on ${fragmentedUsdcChains} chains. Aegis can bridge it onto one chain over CCTP — no price risk — so it's ready to deploy. Review to approve.`,
+      tone: "agent",
+    };
+  }
+  const trackedUsd = model.tokens
+    .filter((token) => !isTradeableSleeve(token.symbol))
+    .reduce((sum, token) => sum + token.totalUsd, 0);
+  const trackedHeavy =
+    model.netWorthUsd > 0 && trackedUsd / model.netWorthUsd > 0.5;
+  if (trackedHeavy) {
+    return {
+      kind: "none",
+      title: "Tracked, not traded here",
+      body: "Most of your balance is volatile sleeves — tracked on this network, tradeable on mainnet. Aegis keeps your USDC managed and watches the market; there's no stablecoin move to make right now.",
+      tone: "agent",
+    };
+  }
   return {
     kind: "none",
-    title: "No action queued",
-    body: "Aegis is monitoring balances, drift, and market conditions.",
+    title: "On target",
+    body: "Aegis is monitoring balances, drift, and market conditions. Nothing to action right now.",
     tone: "muted",
   };
 }

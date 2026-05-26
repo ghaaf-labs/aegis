@@ -7,12 +7,40 @@ import type {
 import { deriveCashSplit } from "@/lib/cash-model";
 import { derivePortfolioPositionMetrics } from "@/lib/portfolio-values";
 import { targetAllocationsForPortfolio } from "@/lib/target-allocations";
+import { isTradeableSleeve } from "@/lib/route-capabilities";
 import {
   chainBalanceRows,
   walletRouteKeysFromNetworks,
 } from "@/lib/wallet-routes";
 
 type BalanceStatus = "idle" | "loading" | "ready" | "error";
+
+/**
+ * Drift the user can actually action on this network. Only tradeable sleeves can
+ * be rebalanced (volatiles are tracked-not-traded here), so drift is measured
+ * over them and renormalized to the tradeable base — comparing a tradeable
+ * sleeve's share of total net worth against a target that also spans tracked
+ * sleeves would report phantom drift the user can never close. A tracked-heavy
+ * portfolio whose tradeable slice (USDC) is on target reads as on target.
+ */
+function reviewableDriftPct(
+  tokens: { symbol: string; totalUsd: number; targetWeight: number }[],
+): number {
+  const tradeable = tokens.filter((token) => isTradeableSleeve(token.symbol));
+  const base = tradeable.reduce((sum, token) => sum + token.totalUsd, 0);
+  const targetSum = tradeable.reduce(
+    (sum, token) => sum + token.targetWeight,
+    0,
+  );
+  if (base <= 0.005 || targetSum <= 0) {
+    return 0;
+  }
+  return tradeable.reduce((max, token) => {
+    const actualShare = (token.totalUsd / base) * 100;
+    const targetShare = (token.targetWeight / targetSum) * 100;
+    return Math.max(max, Math.abs(actualShare - targetShare));
+  }, 0);
+}
 
 export interface DashboardBalanceInput {
   portfolio: Portfolio | null | undefined;
@@ -78,6 +106,8 @@ export interface DashboardBalanceModel {
   gatewayBalanceError: string | null;
   gatewayBalanceUpdatedAt: number | null;
   status: DashboardStatus;
+  /** Idle USDC per chain (Circle Gateway) — drives consolidation detection. */
+  perChainUsdc: Record<string, number>;
   tokens: DashboardTokenExposure[];
   chains: DashboardChainExposure[];
   matrixRows: DashboardMatrixRow[];
@@ -315,9 +345,7 @@ export function deriveDashboardBalanceModel({
   const hasInvestedPositions = investedUsd > 0.5;
   const hasIdleCash = gatewayBalanceStatus === "ready" && walletValueUsd > 0.5;
   const maxTargetDriftPct = hasLiveInvestedBalances
-    ? tokens.reduce((max, token) => {
-        return Math.max(max, Math.abs(token.weightPct - token.targetWeight));
-      }, 0)
+    ? reviewableDriftPct(tokens)
     : positionMetrics.maxDriftPct;
   const hasReviewableDrift = maxTargetDriftPct >= 5;
 
@@ -340,6 +368,7 @@ export function deriveDashboardBalanceModel({
     walletBalanceUnavailable,
     gatewayBalanceError,
     gatewayBalanceUpdatedAt,
+    perChainUsdc,
     status: deriveStatus({
       wallet,
       hasIdleCash,

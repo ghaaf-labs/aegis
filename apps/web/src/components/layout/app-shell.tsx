@@ -201,19 +201,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <Header />
         </div>
         <div
-          role="alert"
-          className="flex items-center gap-2 border-b border-risk/30 bg-risk/10 px-4 py-2"
+          role="status"
+          className="flex shrink-0 items-center gap-2 border-b border-accent-agent/25 bg-accent-agent/5 px-5 py-2"
         >
           <span
-            className="inline-block h-1.5 w-1.5 shrink-0 rounded-sharp bg-risk animate-pulse"
+            className="inline-block h-1.5 w-1.5 shrink-0 rounded-sharp bg-accent-agent"
             aria-hidden
           />
           <p className="font-mono text-[11px] text-text-hi">
-            <span className="font-semibold text-risk">
-              Execution degraded —
+            <span className="font-semibold text-accent-agent">
+              Execution is live.
             </span>{" "}
-            some rebalances may not process as expected. We&apos;re solving the
-            issue ASAP. No funds are at risk.
+            On test networks, volatile sleeves (ETH, cbBTC, …) have no reliable
+            on-chain price, so they&apos;re tracked, not traded — your USDC
+            capital is managed normally. No funds are at risk.
           </p>
         </div>
         <main className="flex-1 overflow-y-auto p-4 xl:p-6 scrollbar-thin">
