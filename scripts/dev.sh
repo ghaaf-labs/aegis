@@ -42,6 +42,13 @@ LOCK_DIR="$STATE_DIR/locks"
 STATUS_FILE="$STATE_DIR/status"
 mkdir -p "$LOG_DIR" "$LOCK_DIR"
 
+# Optional per-checkout overrides (gitignored). Lets a real-exec checkout pin
+# DEV_API_CMD (e.g. the real-cctp/real-usyc/real-swap feature build) so it
+# survives a plain `restart` instead of silently reverting to a featureless
+# binary. Only sourced if present, so other worktrees / CI are unaffected.
+# A real DEV_API_CMD already in the environment still wins (set before source).
+[ -f "$STATE_DIR/env" ] && . "$STATE_DIR/env"
+
 # The exact shell command each service's tmux pane runs. It carries its own PATH
 # (dev.sh runs with the user's PATH, so cargo/pnpm/node resolve) and execs the
 # server directly — no send-keys into an interactive shell, which a heavy zsh
