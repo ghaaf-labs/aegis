@@ -29,7 +29,7 @@ use super::constitution::{self, ClauseViolation, Tier};
 use super::critic as critic_mod;
 use super::decision_context::{
     build_decision_context, build_decision_snapshot, fetch_user_profile, format_allocations,
-    DecisionContext, UserProfile,
+    format_goal_block, DecisionContext, UserProfile,
 };
 use super::models::{AgentDecision, AnalyzeRequest, ProposeAllocationRequest};
 use super::tools;
@@ -397,6 +397,7 @@ async fn run_strategist_with_critic(
             &ctx.regime,
             &ctx.risk,
             &critic_executable,
+            &ctx.portfolio.goal,
         );
         let critic_prompt = state.prompts.render(PromptKey::Critic, &critic_ctx);
         let critic = ai
@@ -1256,12 +1257,17 @@ fn build_critic_context(
     regime: &RegimeClassification,
     risk: &crate::modules::risk_engine::RiskReport,
     executable: &[&str],
+    goal: &serde_json::Value,
 ) -> HashMap<&'static str, String> {
     let mut ctx = HashMap::new();
     ctx.insert(
         "proposal_json",
         serde_json::to_string_pretty(proposal).unwrap_or_default(),
     );
+    // Give the critic the user's stated intent so it can flag a proposal that
+    // drifts from the goal/objective, not just one that's risky in the abstract.
+    ctx.insert("objective", goal_objective(goal));
+    ctx.insert("goal_block", format_goal_block(goal));
     ctx.insert("regime", regime.regime.as_str().into());
     ctx.insert("regime_confidence", format!("{:.2}", regime.confidence));
     ctx.insert(
@@ -1886,6 +1892,7 @@ mod tests {
             &sample_regime(),
             &sample_risk(),
             &["USDC", "ETH"],
+            &json!({ "objective": "grow", "targetAllocation": { "USDC": 100 } }),
         );
         let rendered = reg.render(PromptKey::Critic, &ctx);
         assert!(

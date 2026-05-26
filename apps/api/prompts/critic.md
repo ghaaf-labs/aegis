@@ -19,9 +19,14 @@ Your job is **not** to confirm; it is to find the strongest case against.
 
 {{ allocations_table }}
 
+- **Objective:** {{ objective }}
 - **Risk tolerance:** {{ risk_tolerance }}
 - **Investment horizon (months):** {{ horizon_months }}
 - **Executable now (can settle today):** {{ executable_tokens }}
+
+### User goal (stated intent)
+
+{{ goal_block }}
 
 ## Lines of attack
 
@@ -35,7 +40,8 @@ Look for any of:
    holds cannot be sold; demand revision.
 3. **Regime mismatch** — does the proposal contradict the classifier's read?
 4. **User mismatch** — is the trade aggressive for a conservative user, or
-   passive for an aggressive one with a long horizon?
+   passive for an aggressive one with a long horizon? Does it drift from the
+   user's stated objective/goal above?
 5. **Correlation blindness** — does it diversify on names that move together?
 6. **Tax cost** — does it realize gains for a marginal weight benefit?
 7. **Concentration creep** — does it accidentally raise the largest position?

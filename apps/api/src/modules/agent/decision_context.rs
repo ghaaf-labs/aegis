@@ -136,14 +136,18 @@ pub(super) async fn build_decision_context(
 
     // 3b. Personalization signals: per-user memory, USYC rate, EURC basis.
     let memory_block = memory::build_memory_block(&state.db, portfolio_id).await?;
-    let usyc_rate = treasury::service::rate(&state.http, &state.config)
-        .await
-        .map(|r| r.annualized_yield)
-        .unwrap_or(0.0510);
-    let eurc_basis = fx::service::usdc_eurc_basis(state.prices.as_ref(), &state.config)
-        .await
-        .map(|b| b.mid_rate)
-        .unwrap_or(0.92);
+    // Carry provenance: a fallback estimate must read differently from a live
+    // feed so the model never treats a default as a real market signal
+    // (provenance is a hard rule in this codebase).
+    let usyc_rate_str = match treasury::service::rate(&state.http, &state.config).await {
+        Ok(rate) => format!("{:.4} (live)", rate.annualized_yield),
+        Err(_) => "0.0510 (estimate — live yield feed unavailable)".to_string(),
+    };
+    let eurc_basis_str =
+        match fx::service::usdc_eurc_basis(state.prices.as_ref(), &state.config).await {
+            Ok(basis) => format!("{:.4} (live)", basis.mid_rate),
+            Err(_) => "0.9200 (estimate — live FX feed unavailable)".to_string(),
+        };
 
     // 4. Strategist proposal context.
     let mut strategist_ctx = build_strategist_context(
@@ -155,8 +159,8 @@ pub(super) async fn build_decision_context(
         &risk,
     );
     strategist_ctx.insert("memory", memory_block);
-    strategist_ctx.insert("usyc_rate", format!("{:.4}", usyc_rate));
-    strategist_ctx.insert("usdc_eurc_basis", format!("{:.4}", eurc_basis));
+    strategist_ctx.insert("usyc_rate", usyc_rate_str);
+    strategist_ctx.insert("usdc_eurc_basis", eurc_basis_str);
     strategist_ctx.insert("goal_block", format_goal_block(&portfolio.goal));
 
     // Wallet awareness: the strategist used to see only `portfolios.total_value_usd`
@@ -275,39 +279,47 @@ pub(super) async fn previous_regime(state: &AppState, portfolio_id: Uuid) -> Opt
 // ── Context builders ───────────────────────────────────────────────────────
 
 /// Render the route-capability block shared by the strategist and allocator
-/// prompts. It separates designable allocation targets from routes that can
-/// execute right now, so Gate-1 does not silently collapse a target to USDC
-/// just because a rail is temporarily not ready.
+/// prompts. It states what the planner can actually **trade** right now (the
+/// rebalanceable set) versus what is **tracked only** (held, not traded on this
+/// network), so the model designs within what it can execute instead of
+/// proposing targets that silently fold to USDC.
 pub(super) fn format_route_capabilities(cfg: &crate::config::Config) -> String {
     use crate::modules::rebalance::registry::{
-        allocation_target_symbols, capabilities::RuntimeCapabilities,
-        designable_allocation_symbols, executable_token_symbols,
+        capabilities::RuntimeCapabilities, designable_allocation_symbols,
+        rebalanceable_token_symbols,
     };
     let caps = RuntimeCapabilities::from_config(cfg);
-    let targets = allocation_target_symbols(cfg);
     let designable = designable_allocation_symbols(cfg);
-    let executable = if caps.real_mode {
-        executable_token_symbols(&caps, cfg)
+    // The sleeves the planner can actually rebalance into right now. In mock/demo
+    // mode every designable sleeve is tradeable; in real mode it's the
+    // rebalanceable set (stablecoins, plus volatiles only when their execution is
+    // enabled — see `volatile_execution_enabled`).
+    let tradeable = if caps.real_mode {
+        rebalanceable_token_symbols(&caps, cfg)
     } else {
-        targets.clone()
+        designable.clone()
     };
-    let pending: Vec<&str> = designable
+    let tracked: Vec<&str> = designable
         .iter()
         .copied()
-        .filter(|s| !executable.iter().any(|e| e.eq_ignore_ascii_case(s)))
+        .filter(|s| !tradeable.iter().any(|t| t.eq_ignore_ascii_case(s)))
         .collect();
-    let target_mode = if caps.real_mode {
-        "designable sleeves; approval gate verifies execution readiness"
+    let directive = if caps.real_mode && !cfg.volatile_execution_enabled {
+        "\n- **Volatile sleeves cannot be traded on this network** — test-network AMM \
+         prices are detached from real marks, so the price-safety guard blocks every \
+         volatile swap. Put the actionable weight on the tradeable sleeves above and \
+         keep the rest in USDC; do NOT assign new target weight to a tracked-only \
+         sleeve (the plan would just hold it as USDC). You may name the ideal mainnet \
+         mix in your reasoning, but the recommended allocation/trades must use \
+         tradeable sleeves only."
     } else {
-        "mock/demo designable sleeves"
+        ""
     };
     format!(
-        "- **Allocation targets** ({target_mode}; allocator may assign target weight only here): {}\n\
-         - **Executable now** (rails accepted by the planner and approval gate today): {}\n\
-         - **Needs route before execution** (may be targeted, but auto-pilot must leave it as a review until ready): {}",
-        targets.join(", "),
-        executable.join(", "),
-        if pending.is_empty() { "none".to_string() } else { pending.join(", ") },
+        "- **Tradeable now** (assign target weight here — the planner executes it today): {}\n\
+         - **Tracked only** (held, not traded on this network — context, not a target): {}{directive}",
+        tradeable.join(", "),
+        if tracked.is_empty() { "none".to_string() } else { tracked.join(", ") },
     )
 }
 
@@ -329,6 +341,10 @@ pub(super) fn build_strategist_context(
     ctx.insert("pnl_pct", format!("{:.2}", portfolio.total_pnl_pct));
     ctx.insert("risk_tolerance", user.risk_tolerance.clone());
     ctx.insert("horizon_months", user.investment_horizon_months.to_string());
+    ctx.insert(
+        "objective",
+        super::allocation::goal_objective(&portfolio.goal),
+    );
     let live_prices: HashMap<String, f64> = snapshot
         .assets
         .iter()
@@ -350,12 +366,27 @@ pub(super) fn build_strategist_context(
     ctx.insert("fear_greed", snapshot.fear_greed_index.to_string());
     ctx.insert("btc_dominance", format!("{:.2}", snapshot.btc_dominance));
     ctx.insert(
+        "prices_as_of",
+        format_snapshot_freshness(snapshot.captured_at),
+    );
+    ctx.insert(
         "concentration_risk",
         format!("{:.3}", risk.concentration_risk),
     );
     ctx.insert("volatility_score", format!("{:.3}", risk.volatility_score));
     ctx.insert("drift_score", format!("{:.3}", risk.drift_score));
     ctx
+}
+
+/// How fresh the injected market prices are, so the model can discount a stale
+/// snapshot instead of trusting it blindly (provenance is a hard rule here).
+fn format_snapshot_freshness(captured_at: chrono::DateTime<chrono::Utc>) -> String {
+    let age_secs = (chrono::Utc::now() - captured_at).num_seconds().max(0);
+    if age_secs < 90 {
+        format!("{age_secs}s ago (live)")
+    } else {
+        format!("{}m ago — treat as stale", age_secs / 60)
+    }
 }
 
 /// Render a snapshot of the user's Circle Gateway balance for the strategist.
