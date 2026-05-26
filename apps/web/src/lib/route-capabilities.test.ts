@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { allocationDisplayMeta } from "./route-capabilities";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { allocationDisplayMeta, isTradeableSleeve } from "./route-capabilities";
 
 describe("allocationDisplayMeta", () => {
   it("maps backend execution symbols to friendly display labels", () => {
@@ -36,5 +36,38 @@ describe("allocationDisplayMeta", () => {
     expect(allocationDisplayMeta("cbBTC").badge).toBe(
       "Executes when rail live",
     );
+  });
+});
+
+describe("isTradeableSleeve", () => {
+  const original = process.env.NEXT_PUBLIC_VOLATILE_EXECUTION_ENABLED;
+  afterEach(() => {
+    process.env.NEXT_PUBLIC_VOLATILE_EXECUTION_ENABLED = original;
+    vi.resetModules();
+  });
+
+  it("treats stablecoins as tradeable and non-stables as tracked while volatile execution is off", () => {
+    // Default deployment (testnet): only the stablecoin layer rebalances.
+    expect(isTradeableSleeve("USDC")).toBe(true);
+    expect(isTradeableSleeve("ETH")).toBe(false);
+    expect(isTradeableSleeve("cbBTC")).toBe(false);
+    expect(isTradeableSleeve("EURC")).toBe(false);
+    // Coming-soon / gated sleeves are never tradeable.
+    expect(isTradeableSleeve("USYC")).toBe(false);
+    // Unknown symbols never crash and are not tradeable.
+    expect(isTradeableSleeve("XYZ")).toBe(false);
+  });
+
+  it("flips volatile sleeves to tradeable when VOLATILE_EXECUTION_ENABLED is on (mainnet)", async () => {
+    process.env.NEXT_PUBLIC_VOLATILE_EXECUTION_ENABLED = "true";
+    vi.resetModules();
+    const mod = await import("./route-capabilities");
+
+    expect(mod.isTradeableSleeve("USDC")).toBe(true);
+    expect(mod.isTradeableSleeve("ETH")).toBe(true);
+    expect(mod.isTradeableSleeve("cbBTC")).toBe(true);
+    expect(mod.isTradeableSleeve("EURC")).toBe(true);
+    // Coming-soon stays excluded even with volatile execution on.
+    expect(mod.isTradeableSleeve("USYC")).toBe(false);
   });
 });

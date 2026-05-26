@@ -1,19 +1,23 @@
 import { TOKENS, type RouteReadiness } from "@aegis/shared";
 
+import { VOLATILE_EXECUTION_ENABLED } from "@/lib/flags";
+
 export const COMING_SOON_TOKEN_IDS = TOKENS.filter(
   (token) => token.designable && token.comingSoon,
 ).map((token) => token.symbol);
 
 // A sleeve the planner can actually trade/rebalance on this deployment. Mirrors
-// the backend `rebalanceable_token_symbols` (stablecoins are tradeable; volatile
-// sleeves are tracked-not-traded while their execution is gated off). Used for
-// route badges *and* for honest drift — drift in a tracked sleeve is not
-// reviewable because the user cannot action it here.
+// the backend `rebalanceable_token_symbols`: stablecoins are always tradeable
+// (1:1, no AMM price gap); every non-stable sleeve is tracked-not-traded until
+// the deployment turns on volatile execution (`VOLATILE_EXECUTION_ENABLED`),
+// which mainnet does. Used for route badges *and* for honest drift — drift in a
+// tracked sleeve is not reviewable because the user cannot action it here.
 export function isTradeableSleeve(tokenId: string): boolean {
   const token = TOKENS.find((candidate) => candidate.symbol === tokenId);
-  return (
-    token?.designable === true && token.class === "stable" && !token.comingSoon
-  );
+  if (token?.designable !== true || token.comingSoon === true) {
+    return false;
+  }
+  return token.class === "stable" || VOLATILE_EXECUTION_ENABLED;
 }
 
 function tokenComingSoon(tokenId: string): boolean {

@@ -12,3 +12,13 @@ function readFlag(name: string): boolean {
 }
 
 export const PRICING_UI_ENABLED = readFlag("NEXT_PUBLIC_PRICING_UI_ENABLED");
+
+/**
+ * Mirrors the backend `VOLATILE_EXECUTION_ENABLED` (default off). While off,
+ * volatile sleeves are tracked-not-traded (testnet AMM pools are detached from
+ * real marks); mainnet flips this on so volatiles become tradeable/rebalanceable.
+ * The deployment must set both the API var and this `NEXT_PUBLIC_` var together.
+ */
+export const VOLATILE_EXECUTION_ENABLED = readFlag(
+  "NEXT_PUBLIC_VOLATILE_EXECUTION_ENABLED",
+);
