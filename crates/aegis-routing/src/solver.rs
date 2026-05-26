@@ -282,10 +282,10 @@ fn path_nodes(graph: &LiquidityGraph, source: NodeIdx, path: &[EdgeIdx]) -> Vec<
 /// bounded for production-sized graphs, but unlike the previous edge-disjoint
 /// seeding it does not forbid shared bridges or USDC hubs. Shared edge costs are
 /// accounted later by `edge_flow`, so convex splits across routes with common
-/// prefixes/suffixes are valid candidates. This is canonical Yen: each
-/// iteration spurs from the latest accepted path, removes every accepted path's
-/// next edge when it shares the same root, keeps a global candidate pool, and
-/// accepts the cheapest deterministic candidate.
+/// prefixes/suffixes are valid candidates. This is a full Yen candidate pass:
+/// every accepted route is re-spurred on each iteration, every accepted path's
+/// next edge is removed when it shares the same root, and the global `seen` set
+/// keeps the candidate pool bounded and duplicate-free.
 fn candidate_routes(
     graph: &LiquidityGraph,
     s: NodeIdx,
@@ -309,44 +309,43 @@ fn candidate_routes(
     let limit = k.max(1) as usize;
 
     while routes.len() < limit {
-        let previous = routes
-            .last()
-            .cloned()
-            .expect("at least the first route is present");
-        let previous_nodes = path_nodes(graph, s, &previous);
+        let accepted_routes = routes.clone();
+        for route in &accepted_routes {
+            let route_nodes = path_nodes(graph, s, route);
 
-        for spur_pos in 0..previous.len() {
-            let spur_node = previous_nodes[spur_pos];
-            let root = &previous[..spur_pos];
+            for spur_pos in 0..route.len() {
+                let spur_node = route_nodes[spur_pos];
+                let root = &route[..spur_pos];
 
-            let mut forbidden_edges: HashSet<EdgeIdx> = HashSet::new();
-            for accepted in &routes {
-                if accepted.len() > spur_pos && accepted[..spur_pos] == *root {
-                    forbidden_edges.insert(accepted[spur_pos]);
+                let mut forbidden_edges: HashSet<EdgeIdx> = HashSet::new();
+                for accepted in &routes {
+                    if accepted.len() > spur_pos && accepted[..spur_pos] == *root {
+                        forbidden_edges.insert(accepted[spur_pos]);
+                    }
                 }
-            }
 
-            let mut forbidden_nodes: HashSet<NodeIdx> =
-                previous_nodes[..spur_pos].iter().copied().collect();
-            forbidden_nodes.remove(&spur_node);
+                let mut forbidden_nodes: HashSet<NodeIdx> =
+                    route_nodes[..spur_pos].iter().copied().collect();
+                forbidden_nodes.remove(&spur_node);
 
-            let Some(spur) = dijkstra(
-                graph,
-                spur_node,
-                t,
-                weight,
-                &forbidden_edges,
-                &forbidden_nodes,
-            ) else {
-                continue;
-            };
-            if spur.is_empty() {
-                continue;
-            }
-            let mut candidate = root.to_vec();
-            candidate.extend(spur);
-            if seen.insert(candidate.clone()) {
-                candidate_pool.push(candidate);
+                let Some(spur) = dijkstra(
+                    graph,
+                    spur_node,
+                    t,
+                    weight,
+                    &forbidden_edges,
+                    &forbidden_nodes,
+                ) else {
+                    continue;
+                };
+                if spur.is_empty() {
+                    continue;
+                }
+                let mut candidate = root.to_vec();
+                candidate.extend(spur);
+                if seen.insert(candidate.clone()) {
+                    candidate_pool.push(candidate);
+                }
             }
         }
 

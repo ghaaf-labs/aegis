@@ -27,6 +27,8 @@ pub(super) struct LegRow {
     pub(super) min_out: Option<Decimal>,
     /// Per-leg state-machine status (`pending`/`submitted`/`confirmed`/`failed`).
     pub(super) status: String,
+    /// Fine-grained funds-location state (`bridge_in_flight`, `confirmed`, ...).
+    pub(super) leg_state: String,
     /// How many times this leg has been submitted (bumped before each dispatch).
     pub(super) attempt_count: i32,
 }
@@ -140,6 +142,7 @@ pub(super) mod test_helpers {
             amount_usdc: Decimal::from_f64(amount_usdc).unwrap_or_default(),
             min_out: None,
             status: "pending".into(),
+            leg_state: "pending".into(),
             attempt_count: 0,
         }
     }
@@ -157,6 +160,7 @@ pub(super) mod test_helpers {
             amount_usdc: Decimal::from_f64(600.0).unwrap_or_default(),
             min_out: None,
             status: "pending".into(),
+            leg_state: "pending".into(),
             attempt_count: 0,
         }
     }
@@ -174,6 +178,7 @@ pub(super) mod test_helpers {
             amount_usdc: Decimal::from_f64(amount).unwrap_or_default(),
             min_out: None,
             status: "confirmed".into(),
+            leg_state: "bridge_landed".into(),
             attempt_count: 0,
         }
     }

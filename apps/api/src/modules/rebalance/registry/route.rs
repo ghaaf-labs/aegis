@@ -255,6 +255,7 @@ pub fn validate_legs(
                             ),
                         ));
                     }
+                    push_hook_swap_blocker(leg, sym, &mut blockers, cfg);
                 }
             }
             LegKind::CrossChainMint => push_cctp_blocker(cfg, leg, false, &mut blockers),
@@ -268,6 +269,26 @@ pub fn validate_legs(
     }
 
     dedup_by_code(blockers)
+}
+
+fn push_hook_swap_blocker(
+    bridge_leg: &RouteLeg,
+    dest_symbol: &str,
+    out: &mut Vec<RouteBlocker>,
+    cfg: &Config,
+) {
+    let Some(dest_chain) = bridge_leg.dest_chain.clone() else {
+        return;
+    };
+    let swap_leg = RouteLeg {
+        kind: LegKind::LocalSwap,
+        src_chain: Some(dest_chain.clone()),
+        dest_chain: Some(dest_chain),
+        src_symbol: Some(USDC.to_string()),
+        dest_symbol: Some(dest_symbol.to_string()),
+        amount_usdc: bridge_leg.amount_usdc,
+    };
+    push_swap_blocker(cfg, &swap_leg, out);
 }
 
 /// Validate a CCTP burn/mint leg against the *specific* chains it touches, not
@@ -793,8 +814,9 @@ mod tests {
     #[test]
     fn cross_chain_hook_swap_allowed_with_dest_erc20() {
         // With a configured Base ERC-20 for the target token, the dedicated
-        // CrossChainTokenSwap blocker no longer fires (CCTP feature gating is a
-        // separate blocker and is allowed to remain).
+        // CrossChainTokenSwap blocker no longer fires. Swap venue gating is
+        // still evaluated separately so a hook cannot burn funds into an
+        // unexecutable destination swap.
         let mut cfg = real_cfg();
         cfg.set_token_address(
             "ETH",
@@ -807,6 +829,10 @@ mod tests {
         assert!(!blockers
             .iter()
             .any(|b| b.code == BlockerCode::CrossChainTokenSwap));
+        assert!(blockers.iter().any(|b| matches!(
+            b.code,
+            BlockerCode::RealSwapFeature | BlockerCode::LocalSwapAdapter
+        )));
     }
 
     #[test]

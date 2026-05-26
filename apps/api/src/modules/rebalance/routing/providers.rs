@@ -6,8 +6,8 @@
 
 use aegis_routing::cost::BridgeComponent;
 use aegis_routing::{
-    assemble, BridgeCurve, ConstProductCurve, EdgeKind, GraphBuilder, LiquidityGraph, ProviderId,
-    RouteProvider,
+    assemble, BridgeCurve, BucketedCurve, ConstProductCurve, CostCurve, EdgeKind, GraphBuilder,
+    LiquidityGraph, ProviderId, RouteProvider,
 };
 use rust_decimal::Decimal;
 
@@ -23,14 +23,43 @@ use crate::domain::token::{self, TokenClass, TOKEN_REGISTRY};
 const AMM_FEE_BPS: i64 = 5;
 const CCTP_FEE_BPS: i64 = 1;
 
-fn nominal_depth() -> Decimal {
-    Decimal::from(5_000_000)
+fn planning_amm_depth() -> Decimal {
+    // Testnet pools are frequently thin. Planning with a conservative depth
+    // makes the engine prefer fewer marginal swaps instead of producing a plan
+    // the live quote gate will immediately reject.
+    Decimal::from(50_000)
 }
 fn amm_gas() -> Decimal {
     Decimal::new(40, 2)
 }
 fn bridge_gas() -> Decimal {
     Decimal::new(30, 2)
+}
+
+fn amm_curve() -> Box<dyn CostCurve> {
+    let truth = ConstProductCurve::new(planning_amm_depth(), Decimal::from(AMM_FEE_BPS), amm_gas());
+    let buckets = [
+        Decimal::ZERO,
+        Decimal::from(100),
+        Decimal::from(500),
+        Decimal::from(1_000),
+        Decimal::from(5_000),
+        Decimal::from(10_000),
+        Decimal::from(25_000),
+    ];
+    Box::new(
+        BucketedCurve::calibrate(&truth, &buckets, Decimal::from(AMM_FEE_BPS), amm_gas())
+            .expect("static AMM bucket samples are convex"),
+    )
+}
+
+fn usyc_curve() -> Box<dyn CostCurve> {
+    Box::new(BridgeCurve::new(
+        Decimal::ZERO,
+        Decimal::ZERO,
+        amm_gas(),
+        BridgeComponent::Gateway,
+    ))
 }
 
 fn usdc_on(cfg: &Config, chain: ChainKey) -> bool {
@@ -75,17 +104,11 @@ impl RouteProvider for TokenMarketProvider<'_> {
                 if spec.address_for(self.cfg, chain).is_none() || !usdc_on(self.cfg, chain) {
                     continue;
                 }
-                let amm_curve = || {
-                    Box::new(ConstProductCurve::new(
-                        nominal_depth(),
-                        Decimal::from(AMM_FEE_BPS),
-                        amm_gas(),
-                    ))
-                };
                 // USYC parks/redeems through the Hashnote Teller; everything else
-                // (volatiles + EURC) trades on a DEX. Both are token↔USDC edges;
-                // only the EdgeKind + provider differ — the solver treats them uniformly.
-                let (buy_kind, sell_kind, provider) = if spec.class == TokenClass::Yield {
+                // (volatiles + EURC) trades on a DEX. Both are token↔USDC edges,
+                // but USYC is a linear Teller rail, not an AMM with pool impact.
+                let yield_rail = spec.class == TokenClass::Yield;
+                let (buy_kind, sell_kind, provider) = if yield_rail {
                     (EdgeKind::UsycSubscribe, EdgeKind::UsycRedeem, usyc.clone())
                 } else {
                     (EdgeKind::AmmSwap, EdgeKind::AmmSwap, amm.clone())
@@ -95,14 +118,22 @@ impl RouteProvider for TokenMarketProvider<'_> {
                     asset(spec.symbol, chain),
                     buy_kind,
                     provider.clone(),
-                    amm_curve(),
+                    if yield_rail {
+                        usyc_curve()
+                    } else {
+                        amm_curve()
+                    },
                 );
                 b.add_edge(
                     asset(spec.symbol, chain),
                     asset(token::USDC, chain),
                     sell_kind,
                     provider,
-                    amm_curve(),
+                    if yield_rail {
+                        usyc_curve()
+                    } else {
+                        amm_curve()
+                    },
                 );
             }
         }

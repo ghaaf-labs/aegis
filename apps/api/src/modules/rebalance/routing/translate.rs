@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 
-use aegis_routing::{
-    dag::LegDag, min_cost_flow, Asset as RouteAsset, EdgeKind, FlowConfig, ValueUsd,
-};
+use aegis_routing::{dag::LegDag, Asset as RouteAsset, EdgeKind, FlowAllocation, FlowPlan};
 use rust_decimal::prelude::FromPrimitive;
 use rust_decimal::Decimal;
 
@@ -135,23 +133,18 @@ fn translate_dag(
     Ok(out)
 }
 
-pub(super) fn route_and_append(
+fn append_allocations(
     graph: &aegis_routing::LiquidityGraph,
-    from: &RouteAsset,
-    to: &RouteAsset,
-    size: Decimal,
+    allocations: &[FlowAllocation],
     prices: &HashMap<String, f64>,
     out: &mut Vec<PlannedLeg>,
 ) -> bool {
-    let Ok(plan) = min_cost_flow(graph, from, to, ValueUsd::usd(size), FlowConfig::default())
-    else {
-        return false;
-    };
-    if plan.allocations.is_empty() {
+    if allocations.is_empty() {
         return false;
     }
     let offset = out.len() as i32;
-    let dag = LegDag::compile(graph, &plan.allocations);
+    let dag = LegDag::compile(graph, allocations);
+    debug_assert!(dag.check_conservation(Decimal::new(1, 4)).is_ok());
     let new_legs = match translate_dag(&dag, prices, offset) {
         Ok(legs) => legs,
         Err(e) => {
@@ -162,4 +155,33 @@ pub(super) fn route_and_append(
     let added = !new_legs.is_empty();
     out.extend(new_legs);
     added
+}
+
+pub(super) fn route_and_append(
+    graph: &aegis_routing::LiquidityGraph,
+    from: &RouteAsset,
+    to: &RouteAsset,
+    size: Decimal,
+    prices: &HashMap<String, f64>,
+    out: &mut Vec<PlannedLeg>,
+) -> bool {
+    let Ok(plan) = aegis_routing::min_cost_flow(
+        graph,
+        from,
+        to,
+        aegis_routing::ValueUsd::usd(size),
+        aegis_routing::FlowConfig::default(),
+    ) else {
+        return false;
+    };
+    append_flow_plan(graph, &plan, prices, out)
+}
+
+pub(super) fn append_flow_plan(
+    graph: &aegis_routing::LiquidityGraph,
+    plan: &FlowPlan,
+    prices: &HashMap<String, f64>,
+    out: &mut Vec<PlannedLeg>,
+) -> bool {
+    append_allocations(graph, &plan.allocations, prices, out)
 }

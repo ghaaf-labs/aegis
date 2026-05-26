@@ -21,10 +21,7 @@ use crate::modules::rebalance::cross_chain::build_hook_payload;
 use crate::modules::rebalance::models::{ChainKey, LegKind};
 use crate::modules::rebalance::quote::ValidatedQuote;
 use crate::modules::rebalance::registry::{
-    capabilities::RuntimeCapabilities,
-    route::{executable_token_symbols, RouteLeg},
-    ticket::ExecutionTicket,
-    tokens,
+    capabilities::RuntimeCapabilities, route::RouteLeg, ticket::ExecutionTicket, tokens,
 };
 use crate::modules::wallet_routes;
 use crate::router::AppState;
@@ -50,23 +47,6 @@ pub(super) struct LegDispatch {
     pub(super) filled_qty: Option<f64>,
 }
 
-/// The non-USDC symbol a swap leg trades, if any. A local swap is always
-/// token↔USDC, so the traded asset is whichever side isn't USDC. Returns `None`
-/// for a degenerate USDC-only leg (nothing to gate).
-fn swap_traded_symbol<'a>(
-    dest_symbol: Option<&'a str>,
-    src_symbol: Option<&'a str>,
-) -> Option<&'a str> {
-    let dest = dest_symbol.unwrap_or_default();
-    let src = src_symbol.unwrap_or_default();
-    let traded = if dest.eq_ignore_ascii_case("USDC") {
-        src
-    } else {
-        dest
-    };
-    (!traded.is_empty() && !traded.eq_ignore_ascii_case("USDC")).then_some(traded)
-}
-
 pub(super) async fn dispatch(
     state: &AppState,
     rebalance_id: Uuid,
@@ -87,25 +67,6 @@ pub(super) async fn dispatch(
             executed_amount_usdc: leg.amount_usdc,
             filled_qty: None,
         });
-    }
-
-    // Bulletproof execution guard: never quote/swap into a token that isn't on
-    // the live executable set right now. The planner already folds
-    // non-executable sleeves into USDC, but a stale/reused `planned` rebalance,
-    // a sleeve whose rail went away, or any future code path could otherwise
-    // feed e.g. a `USDC→EURC` leg to the AMM and revert ("no pool with
-    // liquidity"). Fail closed here with a clear reason instead.
-    if matches!(kind, LegKind::LocalSwap) {
-        if let Some(traded) =
-            swap_traded_symbol(leg.dest_symbol.as_deref(), leg.src_symbol.as_deref())
-        {
-            let executable = executable_token_symbols(&caps, &state.config);
-            if !executable.iter().any(|e| e.eq_ignore_ascii_case(traded)) {
-                return Err(AppError::Conflict(format!(
-                    "{traded} has no executable route on its chain right now (track-only); refusing a swap that would revert"
-                )));
-            }
-        }
     }
 
     // Real mode: the leg must clear the route registry and (for swaps) carry a
@@ -227,12 +188,21 @@ pub(super) async fn dispatch(
             // bridge (tokenOut == dest USDC → the RebalanceExecutor forwards the
             // minted USDC). A non-USDC destination is a hooked swap: the
             // destination RebalanceExecutor swaps USDC→token atomically on mint.
+            let pool_fee = hook_pool_fee(
+                state,
+                ticket.dest_chain(),
+                leg.dest_symbol.as_deref(),
+                amount_usdc_f64,
+                now,
+            )
+            .await?;
             let hook = build_cross_chain_hook(
                 &state.config,
                 &recipient,
                 ticket.dest_chain(),
                 leg.dest_symbol.as_deref(),
                 leg.min_out.and_then(|d| d.to_f64()),
+                pool_fee,
                 now,
             )?;
             let r = adapters::cctp::burn(
@@ -369,6 +339,35 @@ fn usdc_decimal_to_base_units(amount_usdc: Decimal) -> Result<u128> {
         .ok_or_else(|| AppError::BadRequest("USDC amount is outside executable range".into()))
 }
 
+async fn hook_pool_fee(
+    state: &AppState,
+    dest_chain: ChainKey,
+    dest_symbol: Option<&str>,
+    amount_usdc: f64,
+    now: chrono::DateTime<Utc>,
+) -> Result<u32> {
+    let symbol = dest_symbol.unwrap_or(tokens::USDC);
+    if symbol.eq_ignore_ascii_case(tokens::USDC) {
+        return Ok(3000);
+    }
+    let route_leg = RouteLeg::from_parts(
+        "local_swap",
+        Some(dest_chain.as_str().to_string()),
+        Some(dest_chain.as_str().to_string()),
+        Some(tokens::USDC.to_string()),
+        Some(symbol.to_string()),
+        amount_usdc,
+    )
+    .ok_or_else(|| AppError::Internal(anyhow::anyhow!("unparsable hook swap leg")))?;
+    let quote = adapters::swap::quote(&state.config, &route_leg, now).await?;
+    quote.fee_tier.ok_or_else(|| {
+        AppError::BadRequest(format!(
+            "{symbol} hook swap on {} did not return a V3 pool fee tier",
+            dest_chain.as_str()
+        ))
+    })
+}
+
 /// Build the 160-byte CCTP V2 hook payload for a cross-chain burn.
 ///
 /// USDC destination (or unset symbol): tokenOut = the destination chain's USDC
@@ -386,6 +385,7 @@ fn build_cross_chain_hook(
     dest_chain: ChainKey,
     dest_symbol: Option<&str>,
     min_out: Option<f64>,
+    pool_fee: u32,
     now: chrono::DateTime<Utc>,
 ) -> Result<crate::modules::rebalance::cross_chain::HookPayload> {
     use crate::modules::rebalance::registry::tokens;
@@ -403,7 +403,7 @@ fn build_cross_chain_hook(
                     "USDC address unconfigured on {dest_chain:?}; cannot route bridge hook"
                 ))
             })?;
-        return Ok(build_hook_payload(recipient, usdc, 3000, 0, deadline));
+        return Ok(build_hook_payload(recipient, usdc, pool_fee, 0, deadline));
     }
 
     let spec = tokens::token(symbol)
@@ -426,7 +426,7 @@ fn build_cross_chain_hook(
     Ok(build_hook_payload(
         recipient,
         token_addr,
-        3000,
+        pool_fee,
         min_out_base,
         deadline,
     ))
@@ -440,18 +440,7 @@ mod tests {
     use crate::error::AppError;
     use crate::modules::rebalance::models::ChainKey;
 
-    use super::{build_cross_chain_hook, swap_traded_symbol};
-
-    #[test]
-    fn swap_traded_symbol_picks_the_non_usdc_side() {
-        // Buy: USDC -> EURC  ⇒ traded asset is EURC.
-        assert_eq!(swap_traded_symbol(Some("EURC"), Some("USDC")), Some("EURC"));
-        // Sell: ETH -> USDC  ⇒ traded asset is ETH.
-        assert_eq!(swap_traded_symbol(Some("USDC"), Some("ETH")), Some("ETH"));
-        // Degenerate USDC-only / missing sides ⇒ nothing to gate.
-        assert_eq!(swap_traded_symbol(Some("USDC"), Some("USDC")), None);
-        assert_eq!(swap_traded_symbol(None, None), None);
-    }
+    use super::build_cross_chain_hook;
 
     fn hook_cfg() -> Config {
         let mut cfg = crate::config::test_config();
@@ -474,6 +463,7 @@ mod tests {
             ChainKey::Base,
             Some("USDC"),
             None,
+            3000,
             Utc::now(),
         )
         .unwrap();
@@ -486,7 +476,8 @@ mod tests {
     fn cross_chain_hook_none_symbol_defaults_to_usdc() {
         let cfg = hook_cfg();
         let hook =
-            build_cross_chain_hook(&cfg, "0xR", ChainKey::Base, None, None, Utc::now()).unwrap();
+            build_cross_chain_hook(&cfg, "0xR", ChainKey::Base, None, None, 3000, Utc::now())
+                .unwrap();
         assert_eq!(hook.token_out, cfg.chain(ChainKey::Base).usdc);
     }
 
@@ -500,12 +491,13 @@ mod tests {
             ChainKey::Base,
             Some("ETH"),
             Some(0.5),
+            500,
             Utc::now(),
         )
         .unwrap();
         assert_eq!(hook.token_out, "0x4200000000000000000000000000000000000006");
         assert_eq!(hook.min_out, 500_000_000_000_000_000);
-        assert_eq!(hook.pool_fee, 3000);
+        assert_eq!(hook.pool_fee, 500);
     }
 
     #[test]
@@ -518,6 +510,7 @@ mod tests {
             ChainKey::Base,
             Some("ETH"),
             Some(0.5),
+            3000,
             Utc::now(),
         )
         .unwrap_err();
@@ -527,10 +520,18 @@ mod tests {
     #[test]
     fn cross_chain_hook_missing_min_out_defaults_to_zero() {
         let cfg = hook_cfg();
-        let hook =
-            build_cross_chain_hook(&cfg, "0xR", ChainKey::Base, Some("ETH"), None, Utc::now())
-                .unwrap();
+        let hook = build_cross_chain_hook(
+            &cfg,
+            "0xR",
+            ChainKey::Base,
+            Some("ETH"),
+            None,
+            10000,
+            Utc::now(),
+        )
+        .unwrap();
         assert_eq!(hook.token_out, "0x4200000000000000000000000000000000000006");
         assert_eq!(hook.min_out, 0);
+        assert_eq!(hook.pool_fee, 10000);
     }
 }

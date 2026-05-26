@@ -19,7 +19,7 @@ use std::{
     collections::{HashMap, HashSet},
 };
 
-use aegis_routing::{min_cost_flow, Asset as RouteAsset, ChainId, FlowConfig, ValueUsd};
+use aegis_routing::{min_cost_flow, Asset as RouteAsset, ChainId, FlowConfig, FlowPlan, ValueUsd};
 use rust_decimal::prelude::FromPrimitive;
 use rust_decimal::Decimal;
 
@@ -28,7 +28,7 @@ use crate::domain::chain::ChainKey;
 use crate::domain::token;
 use crate::modules::rebalance::models::{PlanInput, PlannedLeg, SellSources};
 use crate::modules::rebalance::planner::sorted_plan_deltas;
-use translate::route_and_append;
+use translate::{append_flow_plan, route_and_append};
 
 const ROUTING_DUST_USD: f64 = 0.01;
 
@@ -137,14 +137,15 @@ struct SourceTargetCandidate {
     demand_idx: usize,
     amount_usd: f64,
     cost_bps: Decimal,
+    plan: FlowPlan,
 }
 
-fn route_cost_bps(
+fn route_plan_cost_bps(
     graph: &aegis_routing::LiquidityGraph,
     from: &RouteAsset,
     to: &RouteAsset,
     amount_usd: f64,
-) -> Option<Decimal> {
+) -> Option<(Decimal, FlowPlan)> {
     if amount_usd < ROUTING_DUST_USD {
         return None;
     }
@@ -153,7 +154,8 @@ fn route_cost_bps(
     if plan.allocations.is_empty() {
         return None;
     }
-    Some(plan.total_cost / size * Decimal::from(10_000))
+    let cost_bps = plan.total_cost / size * Decimal::from(10_000);
+    Some((cost_bps, plan))
 }
 
 fn best_source_target_candidate(
@@ -177,7 +179,7 @@ fn best_source_target_candidate(
             let amount_usd = available.min(demand.remaining_usd);
             let from = asset(token::USDC, source_chain);
             let to = asset(&demand.symbol, demand.target_chain);
-            let Some(cost_bps) = route_cost_bps(graph, &from, &to, amount_usd) else {
+            let Some((cost_bps, plan)) = route_plan_cost_bps(graph, &from, &to, amount_usd) else {
                 continue;
             };
             let candidate = SourceTargetCandidate {
@@ -185,6 +187,7 @@ fn best_source_target_candidate(
                 demand_idx,
                 amount_usd,
                 cost_bps,
+                plan,
             };
             let replace = best.as_ref().is_none_or(|b| {
                 (
@@ -301,17 +304,7 @@ pub fn engine_plan(cfg: &Config, input: &PlanInput) -> EnginePlan {
         best_source_target_candidate(&graph, &usdc_pool, &demands, &failed_buy_pairs)
     {
         let demand = &demands[candidate.demand_idx];
-        let source_asset = asset(token::USDC, candidate.source_chain);
-        let target_asset = asset(&demand.symbol, demand.target_chain);
-        let size = Decimal::from_f64(candidate.amount_usd).unwrap_or_default();
-        if route_and_append(
-            &graph,
-            &source_asset,
-            &target_asset,
-            size,
-            prices,
-            &mut all_legs,
-        ) {
+        if append_flow_plan(&graph, &candidate.plan, prices, &mut all_legs) {
             let remaining_pool = (*usdc_pool.entry(candidate.source_chain).or_insert(0.0)
                 - candidate.amount_usd)
                 .max(0.0);

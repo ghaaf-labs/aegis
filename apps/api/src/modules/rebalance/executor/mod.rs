@@ -37,7 +37,8 @@ use crate::modules::sse::{RebalancePlanPayload, SseEvent};
 use crate::router::AppState;
 
 use leg_status::{
-    bump_attempt_count, mark_leg_confirmed, mark_leg_failed, mark_leg_stranded, mark_leg_submitted,
+    bump_attempt_count, confirmed_leg_state, mark_leg_confirmed, mark_leg_failed,
+    mark_leg_stranded, mark_leg_submitted,
 };
 use legs::{parse_kind, LegRow, MAX_LEG_ATTEMPTS};
 use stranding::{
@@ -312,11 +313,10 @@ fn topological_leg_order(legs: &[LegRow]) -> Result<Vec<usize>> {
 
     // Start with all legs that have no unmet deps (sorted for determinism).
     let mut ready: Vec<usize> = (0..n).filter(|&i| indegree[i] == 0).collect();
-    ready.sort_unstable();
+    ready.sort_unstable_by(|a, b| b.cmp(a));
     let mut order = Vec::with_capacity(n);
 
-    while let Some(&pos) = ready.first() {
-        ready.remove(0);
+    while let Some(pos) = ready.pop() {
         order.push(pos);
         let mut newly_ready: Vec<usize> = dependents[pos]
             .iter()
@@ -326,9 +326,9 @@ fn topological_leg_order(legs: &[LegRow]) -> Result<Vec<usize>> {
                 indegree[d] == 0
             })
             .collect();
-        newly_ready.sort_unstable();
+        newly_ready.sort_unstable_by(|a, b| b.cmp(a));
         ready.extend(newly_ready);
-        ready.sort_unstable();
+        ready.sort_unstable_by(|a, b| b.cmp(a));
     }
 
     if order.len() != n {
@@ -348,7 +348,7 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
 
     let legs: Vec<LegRow> = sqlx::query_as(
         "SELECT id, leg_index, depends_on, kind, src_chain, dest_chain, src_symbol,
-                dest_symbol, amount_usdc, min_out, status, attempt_count
+                dest_symbol, amount_usdc, min_out, status, leg_state, attempt_count
          FROM rebalance_legs
          WHERE rebalance_id = $1
          ORDER BY leg_index ASC",
@@ -376,6 +376,17 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
         // double-submitted. (Stranded legs also confirmed their fund movement;
         // they're left as-is for the follow-up replan, not retried here.)
         if leg.status == "confirmed" {
+            let expected_state = confirmed_leg_state(&leg.kind).as_str();
+            if leg.leg_state != expected_state {
+                tracing::warn!(
+                    leg_id = %leg.id,
+                    kind = %leg.kind,
+                    status = %leg.status,
+                    leg_state = %leg.leg_state,
+                    expected_state,
+                    "confirmed leg has inconsistent fine-grained state; preserving confirmed coarse status on resume"
+                );
+            }
             confirmed_so_far.push(leg.clone());
             continue;
         }

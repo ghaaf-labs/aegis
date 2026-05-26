@@ -137,7 +137,7 @@ pub(super) async fn mark_leg_failed(
 /// (local swap / USYC park / FX) reaches the target asset. This makes the
 /// per-leg state honest for cross-chain plans instead of flattening every
 /// confirmed leg to `Confirmed`.
-fn confirmed_leg_state(kind: &str) -> LegState {
+pub(super) fn confirmed_leg_state(kind: &str) -> LegState {
     match kind {
         "cross_chain_burn" => LegState::BridgeInFlight,
         "cross_chain_mint" => LegState::BridgeLanded,

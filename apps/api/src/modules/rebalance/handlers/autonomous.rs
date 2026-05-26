@@ -193,7 +193,7 @@ pub(super) async fn planner_agent_decision(
     .bind(portfolio_id)
     .bind(reasoning)
     .bind(&rec)
-    .bind(0.92_f64)
+    .bind(1.0_f64)
     .bind("user_request")
     .bind("aegis/rebalance-planner-v1")
     .bind("neutral")
@@ -209,7 +209,7 @@ pub(super) async fn planner_agent_decision(
         "portfolioValueUsd": input.portfolio_value_usd,
         "idleUsdc": idle_usdc
     }))
-    .bind(0.92_f64)
+    .bind(None::<f64>)
     .bind(None::<f64>)
     .bind(Some("If drift or idle cash changes, the deterministic planner will build a different approval plan.".to_string()))
     .fetch_one(&state.db)
