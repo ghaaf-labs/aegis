@@ -4,12 +4,14 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  ArrowRight,
   CircleAlert,
   Loader2,
   RefreshCw,
   TrendingUp,
   TrendingDown,
 } from "lucide-react";
+import { PRICING_UI_ENABLED } from "@/lib/flags";
 import { BrutalButton, BrutalBadge as Badge } from "@aegis/ui";
 import {
   Dialog,
@@ -432,7 +434,10 @@ export function RebalanceModal({ open, onClose }: Props) {
 
 function friendlyPlanError(error: unknown) {
   const raw = (error as Error).message || "Plan creation failed";
-  const message = raw.replace(/^\d{3}:\s*/, "").replace(/^conflict:\s*/i, "");
+  const message = raw
+    .replace(/^\d{3}:\s*/, "")
+    .replace(/^conflict:\s*/i, "")
+    .replace(/^payment required:\s*/i, "");
   if (message.toLowerCase().includes("no rebalance plan was created")) {
     return message;
   }
@@ -466,6 +471,13 @@ function isNoPlanError(message: string | null) {
 
 function isWalletSetupError(message: string | null) {
   return message?.toLowerCase().includes("complete account setup") ?? false;
+}
+
+// A tier cap (HTTP 402): the user hit their monthly decision / portfolio / AUM
+// limit. Not a failure — an upgrade prompt, so it gets its own clear path.
+function isPaymentRequiredError(message: string | null) {
+  const m = message?.toLowerCase() ?? "";
+  return m.includes("payment required") || m.includes("upgrade to continue");
 }
 
 function BlockedPlanPanel({
@@ -566,7 +578,41 @@ function BlockedPlanPanel({
   );
 }
 
+// A tier cap is a billing prompt, not a failure: green (money) tone, the usage
+// fact, and a path forward. When the upgrade UI is gated off we don't dangle a
+// dead CTA — we say plainly when the allowance resets.
+function UpgradePrompt({ message }: { message: string }) {
+  // Drop the backend's generic "Upgrade to continue." tail; the panel provides
+  // the actual path so the sentence shouldn't promise one that may be gated.
+  const usage = message.replace(/\s*upgrade to continue\.?\s*$/i, "").trim();
+  return (
+    <div className="rounded-sharp border border-accent-pnl/40 bg-accent-pnl/5 p-3 text-xs">
+      <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-accent-pnl">
+        Monthly limit reached
+      </p>
+      <p className="leading-relaxed text-text-hi">{usage}.</p>
+      {PRICING_UI_ENABLED ? (
+        <Link
+          href="/settings/billing"
+          className="mt-3 inline-flex min-h-9 items-center gap-2 rounded-sharp border-brutal border-black bg-accent-pnl px-3 font-mono text-[11px] font-semibold text-black shadow-brutal-sm hover:shadow-brutal"
+        >
+          Compare &amp; upgrade
+          <ArrowRight className="h-3.5 w-3.5" />
+        </Link>
+      ) : (
+        <p className="mt-2 text-[11px] leading-relaxed text-text-mut">
+          Your free decisions reset at the start of next month. Paid plans open
+          soon — Free stays active with no card on file.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function PlanErrorMessage({ message }: { message: string }) {
+  if (isPaymentRequiredError(message)) {
+    return <UpgradePrompt message={message} />;
+  }
   const noPlan = isNoPlanError(message);
   const walletSetup = isWalletSetupError(message);
   return (
