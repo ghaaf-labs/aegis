@@ -12,6 +12,8 @@ use chrono::{DateTime, Duration, Utc};
 #[cfg(feature = "real-swap")]
 use crate::config::Config;
 #[cfg(feature = "real-swap")]
+use crate::domain::units::usdc_to_base_units;
+#[cfg(feature = "real-swap")]
 use crate::error::{AppError, Result};
 
 #[cfg(feature = "real-swap")]
@@ -24,8 +26,8 @@ use super::super::RealReceipt;
 use super::SwapDir;
 #[cfg(feature = "real-swap")]
 use super::{
-    address_to_hex, confirm_allowance, swap_addresses, IERC20Swap, ILBQuoter, ILBRouter,
-    SLIPPAGE_BPS,
+    address_to_hex, confirm_allowance, swap_addresses, ExactInputSellQuote, IERC20Swap, ILBQuoter,
+    ILBRouter, SLIPPAGE_BPS,
 };
 
 /// Resolved args for a Trader Joe LB swap, bundled so `lb_execute` keeps a small
@@ -54,7 +56,7 @@ pub(super) async fn lb_quote(
         SwapDir::Buy(t) | SwapDir::Sell(t) => t.as_str(),
     };
     let (usdc, token, _router, quoter) = swap_addresses(cfg, chain, token_symbol)?;
-    let amount_units = (amount_usdc * 1_000_000.0) as u128;
+    let amount_units = usdc_to_base_units(amount_usdc);
 
     let provider = ProviderBuilder::new().connect_http(
         cfg.chain(chain)
@@ -125,6 +127,62 @@ pub(super) async fn lb_quote(
             })
         }
     }
+}
+
+/// Price the best Trader Joe LB token→USDC route for an exact token input. This
+/// mirrors the V3 exact-input assessment path so Avax sells can be evaluated
+/// against the wallet's finite token balance before any approval review exists.
+#[cfg(feature = "real-swap")]
+pub(super) async fn lb_quote_sell_exact_input(
+    cfg: &Config,
+    chain: ChainKey,
+    token_symbol: &str,
+    amount_in_token: u128,
+    now: DateTime<Utc>,
+) -> Result<ExactInputSellQuote> {
+    if amount_in_token == 0 {
+        return Err(AppError::BadRequest(
+            "exact-input LB sell amount must be greater than zero".into(),
+        ));
+    }
+
+    let (usdc, token, _router, quoter) = swap_addresses(cfg, chain, token_symbol)?;
+    let provider = ProviderBuilder::new().connect_http(
+        cfg.chain(chain)
+            .rpc_url
+            .parse()
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
+    );
+    let q = ILBQuoter::new(quoter, &provider);
+    let quote = q
+        .findBestPathFromAmountIn(vec![token, usdc], amount_in_token)
+        .call()
+        .await
+        .map_err(|e| {
+            AppError::Internal(anyhow::anyhow!("LB quoter (exact-input sell) failed: {e}"))
+        })?;
+    let amount_out_usdc = lb_last_amount(&quote.amounts)?;
+    let min_out = amount_out_usdc.saturating_mul((10_000 - SLIPPAGE_BPS) as u128) / 10_000;
+
+    Ok(ExactInputSellQuote {
+        quote: ValidatedQuote {
+            quote_id: uuid::Uuid::new_v4(),
+            issued_at: now,
+            expires_at: now + Duration::seconds(MAX_QUOTE_TTL_SECS),
+            src_token: token_symbol.to_string(),
+            dest_token: "USDC".into(),
+            src_chain: chain,
+            dest_chain: chain,
+            amount_in: amount_in_token,
+            min_out: min_out.max(1),
+            expected_asset_units: amount_in_token,
+            slippage_bps: SLIPPAGE_BPS,
+            deadline: (now + Duration::seconds(600)).timestamp() as u64,
+            provider: "trader-joe-lb".into(),
+            fee_tier: None,
+        },
+        expected_usdc_units: amount_out_usdc,
+    })
 }
 
 /// The final swap output the LB quoter reports (`amounts.last()`), rejecting an

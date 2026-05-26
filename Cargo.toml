@@ -1,0 +1,11 @@
+# Root workspace for the standalone Rust crates that are not part of the
+# apps/api package's own build. apps/api is deliberately EXCLUDED: it is built
+# in CI from its own directory with `cargo build --locked --offline` and keeps
+# its own Cargo.lock, so it must remain a standalone package. This workspace
+# exists so `cargo {build,test,tree} -p aegis-routing` resolve from the repo
+# root (a path dependency that needs dev-dependencies must be a workspace member
+# to be tested).
+[workspace]
+resolver = "2"
+members = ["crates/aegis-routing"]
+exclude = ["apps/api", "apps/web", "packages", "infra"]

@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use rust_decimal::prelude::FromPrimitive;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -91,13 +92,44 @@ impl LegKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlannedLeg {
     pub leg_index: i32,
+    /// Explicit DAG dependencies: leg_index values that must confirm before
+    /// this leg can be dispatched. Within a CCTP transfer the mint depends
+    /// on the burn; a post-bridge swap depends on the mint. Empty means no
+    /// prerequisite (the leg can start immediately).
+    pub deps: Vec<i32>,
     pub kind: LegKind,
     pub src_chain: Option<ChainKey>,
     pub dest_chain: Option<ChainKey>,
     pub src_symbol: Option<String>,
     pub dest_symbol: Option<String>,
-    pub amount_usdc: f64,
-    pub min_out: Option<f64>,
+    pub amount_usdc: Decimal,
+    pub min_out: Option<Decimal>,
+}
+
+pub fn decimal_usd(amount: f64) -> Decimal {
+    Decimal::from_f64(amount).unwrap_or(Decimal::ZERO)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SellSources {
+    /// Mock/offline path: no live chain-level token balance is known, so route a
+    /// sell from the token's canonical execution chain.
+    CanonicalFallback,
+    /// Real wallet path: sell only from the chains where live wallet value exists.
+    ByChain(std::collections::HashMap<ChainKey, f64>),
+    /// Live route assessment froze this symbol because every known source failed
+    /// a quote/balance safety check. Do not fall back to the canonical chain.
+    Frozen,
+}
+
+impl SellSources {
+    pub fn by_chain(values: std::collections::HashMap<ChainKey, f64>) -> Self {
+        if values.is_empty() {
+            Self::Frozen
+        } else {
+            Self::ByChain(values)
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -105,6 +137,10 @@ pub struct PlanInput {
     pub portfolio_value_usd: f64,
     /// Current allocation weights by symbol — what the user holds today.
     pub current_weights: std::collections::HashMap<String, f64>,
+    /// Sell source model by symbol. Absence is interpreted as
+    /// `CanonicalFallback`; explicit `Frozen` means route assessment removed all
+    /// safe sources and the planner must not invent a canonical-chain sell.
+    pub sell_sources: std::collections::HashMap<String, SellSources>,
     /// Target allocation weights by symbol — from `portfolios.goal.targetAllocation`.
     pub target_weights: std::collections::HashMap<String, f64>,
     /// Unified USDC available across chains (from Gateway).

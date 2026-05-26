@@ -34,6 +34,17 @@ interface ExecutionTraceProps {
   onStatusChange?: (status: string) => void;
 }
 
+type LegState =
+  | "pending"
+  | "quoted"
+  | "submitted"
+  | "bridge_in_flight"
+  | "bridge_landed"
+  | "confirmed"
+  | "failed"
+  | "stranded_reserve"
+  | "compensated_to_usdc";
+
 interface InternalLeg {
   id: string;
   legIndex: number;
@@ -44,8 +55,48 @@ interface InternalLeg {
   destSymbol: string | null;
   amountUsdc: number;
   status: LegStatus;
+  legState: LegState;
   txHash: string | null;
   failureReason: string | null;
+}
+
+/** Human label for the FSM phase, shown when it adds information beyond the
+ *  coarse `status` (i.e. the cross-chain in-flight/landed phases). */
+function legPhaseLabel(legState: LegState, status: LegStatus): string | null {
+  switch (legState) {
+    case "bridge_in_flight":
+      return "bridging — USDC in flight";
+    case "bridge_landed":
+      return "USDC landed on destination";
+    case "stranded_reserve":
+      return "held as USDC reserve";
+    case "compensated_to_usdc":
+      return "refunded to USDC";
+    case "confirmed":
+      return status === "confirmed" ? "target acquired" : null;
+    case "pending":
+    case "quoted":
+    case "submitted":
+    case "failed":
+      return null;
+  }
+}
+
+function legStateFromWire(value: unknown, fallback: LegState = "pending") {
+  switch (value) {
+    case "pending":
+    case "quoted":
+    case "submitted":
+    case "bridge_in_flight":
+    case "bridge_landed":
+    case "confirmed":
+    case "failed":
+    case "stranded_reserve":
+    case "compensated_to_usdc":
+      return value;
+    default:
+      return fallback;
+  }
 }
 
 /**
@@ -112,6 +163,7 @@ export function ExecutionTrace({
           destSymbol: l.destSymbol,
           amountUsdc: l.amountUsdc,
           status: l.status as LegStatus,
+          legState: legStateFromWire(l.legState),
           txHash: l.txHash,
           failureReason: l.failureReason,
         })),
@@ -134,6 +186,7 @@ export function ExecutionTrace({
             ? {
                 ...leg,
                 status: data.status as LegStatus,
+                legState: legStateFromWire(data.legState, leg.legState),
                 txHash: (data.txHash ?? leg.txHash) as string | null,
                 failureReason: data.failureReason ?? leg.failureReason,
               }
@@ -270,6 +323,7 @@ export function ExecutionTrace({
                 destSymbol={leg.destSymbol}
                 amountUsdc={leg.amountUsdc}
                 status={leg.status}
+                phase={legPhaseLabel(leg.legState, leg.status)}
                 txHash={leg.txHash}
                 failureReason={leg.failureReason}
               />

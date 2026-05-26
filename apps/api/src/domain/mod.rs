@@ -8,7 +8,9 @@
 //! here, so existing import paths keep compiling.
 
 pub mod chain;
+pub mod rebalance;
 pub mod token;
+pub mod units;
 
 pub use chain::ChainKey;
 pub use token::TokenClass;

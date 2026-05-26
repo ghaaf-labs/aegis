@@ -175,6 +175,13 @@ pub struct Config {
     /// Resolve via [`Config::swap_token_has_venue`].
     pub swap_liquid_tokens: std::collections::HashMap<ChainKey, Vec<String>>,
 
+    /// Conservative planning-time AMM depth assumptions by `(symbol, chain)`.
+    /// Built from `SWAP_POOL_DEPTH_USD_{CHAIN}_{SYMBOL}`. These are not live
+    /// reserves; the live quote gate still prices executable reviews. They keep
+    /// the pure routing graph from treating every AMM pool as cost-identical
+    /// when a deployment knows one pool is materially thinner/deeper.
+    pub swap_pool_depth_usd: std::collections::HashMap<(String, ChainKey), f64>,
+
     // ── Nanopayments (x402) for 25bps protocol fee + referrals ────────────
     #[allow(dead_code)]
     pub nanopayments_facilitator_url: String,
@@ -395,6 +402,7 @@ impl Config {
 
             token_addrs: token_addrs_from_env(),
             swap_liquid_tokens: swap_liquid_tokens_from_env(),
+            swap_pool_depth_usd: swap_pool_depth_usd_from_env(),
 
             // Nanopayments (x402) for protocol fee (25bps) and referral payouts.
             nanopayments_facilitator_url: std::env::var("NANOPAYMENTS_FACILITATOR_URL")
@@ -618,6 +626,14 @@ impl Config {
             _ => default_swap_liquid_token(symbol, chain),
         }
     }
+
+    pub fn swap_pool_depth_usd(&self, symbol: &str, chain: ChainKey) -> f64 {
+        self.swap_pool_depth_usd
+            .iter()
+            .find(|((sym, ch), _)| sym.eq_ignore_ascii_case(symbol) && *ch == chain)
+            .map(|(_, depth)| *depth)
+            .unwrap_or_else(|| default_swap_pool_depth_usd(symbol, chain))
+    }
 }
 
 fn required(key: &str) -> anyhow::Result<String> {
@@ -673,6 +689,48 @@ fn default_swap_liquid_token(symbol: &str, chain: ChainKey) -> bool {
     chain == ChainKey::Base && symbol.eq_ignore_ascii_case("ETH")
 }
 
+fn swap_pool_depth_usd_from_env() -> std::collections::HashMap<(String, ChainKey), f64> {
+    use crate::domain::token::TOKEN_REGISTRY;
+
+    let mut map = std::collections::HashMap::new();
+    for chain in ChainKey::ALL {
+        for spec in TOKEN_REGISTRY {
+            if spec.symbol == "USDC" {
+                continue;
+            }
+            let key = format!(
+                "SWAP_POOL_DEPTH_USD_{}_{}",
+                chain_env_suffix(chain),
+                spec.symbol
+            );
+            if let Ok(raw) = std::env::var(&key) {
+                match raw.parse::<f64>() {
+                    Ok(depth) if depth.is_finite() && depth > 0.0 => {
+                        map.insert((spec.symbol.to_string(), chain), depth);
+                    }
+                    _ => {
+                        tracing::warn!(
+                            env_var = %key,
+                            value = %raw,
+                            "invalid swap pool depth ignored; using conservative default"
+                        );
+                    }
+                }
+            }
+        }
+    }
+    map
+}
+
+fn default_swap_pool_depth_usd(symbol: &str, chain: ChainKey) -> f64 {
+    match (chain, symbol) {
+        (ChainKey::Base, "ETH") => 50_000.0,
+        (_, "EURC") => 100_000.0,
+        (_, "cbBTC" | "cbETH") => 25_000.0,
+        _ => 10_000.0,
+    }
+}
+
 /// The env-var chain suffix matching the historical `{PREFIX}_{CHAIN}` names.
 fn chain_env_suffix(chain: ChainKey) -> &'static str {
     match chain {
@@ -687,12 +745,12 @@ fn chain_env_suffix(chain: ChainKey) -> &'static str {
 
 /// Build the per-chain config array from env, indexed by [`ChainKey::index`].
 /// Env var names are unchanged (`{KNOB}_{CHAIN}`). The swap venue mapping
-/// mirrors the old `swap_router_for`/`swap_quoter_for`: Base = Aerodrome
-/// Slipstream, OP = Velodrome, Eth/Arb = Uniswap V3 (all share the V3-style
-/// router + QuoterV2 surface, so they read `UNISWAP_V3_{ROUTER,QUOTER}_*`); Avax
-/// = Trader Joe LB (its own bin-step `Path` ABI — `TRADER_JOE_LB_*`); Arc has no
-/// AMM venue, so its swap addresses stay empty and fail closed. Only Arc/Base
-/// have a deployed RebalanceExecutor; the rest leave it empty.
+/// mirrors the old `swap_router_for`/`swap_quoter_for`: Base/Eth/Arb/OP use
+/// Uniswap V3-compatible router + QuoterV2 surfaces, so they read
+/// `UNISWAP_V3_{ROUTER,QUOTER}_*`; Avax = Trader Joe LB (its own bin-step
+/// `Path` ABI — `TRADER_JOE_LB_*`); Arc has no AMM venue, so its swap addresses
+/// stay empty and fail closed. Only Arc/Base have a deployed RebalanceExecutor;
+/// the rest leave it empty.
 fn chain_configs_from_env() -> [ChainConfig; 6] {
     let env = |key: &str| std::env::var(key).unwrap_or_default();
     [
@@ -886,6 +944,7 @@ pub(crate) fn test_config() -> Config {
         usyc_enabled: false,
         token_addrs: std::collections::HashMap::new(),
         swap_liquid_tokens: std::collections::HashMap::new(),
+        swap_pool_depth_usd: std::collections::HashMap::new(),
         nanopayments_facilitator_url: "https://gateway-api-testnet.circle.com".into(),
         nanopayments_seller_address: String::new(),
         nanopayments_treasury_address: String::new(),

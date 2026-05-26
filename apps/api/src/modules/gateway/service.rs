@@ -7,12 +7,13 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use crate::db::Db;
+use crate::domain::units::decimal_str_to_base_units;
 use crate::error::AppError;
 use crate::modules::rebalance::models::ChainKey;
 use crate::modules::sse::{GatewayBalance as SseGatewayBalance, SseEvent, SseSender};
 use crate::modules::wallet_routes::SUPPORTED_WALLET_BLOCKCHAINS;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GatewayBalance {
     /// Sum of USDC across every chain the user holds a wallet on.
@@ -106,6 +107,12 @@ pub async fn fetch_balance(
                     balance.unified_eurc += amount;
                 }
                 _ => {
+                    let Some(chain) = ChainKey::parse(&chain_key) else {
+                        continue;
+                    };
+                    if !wallet_token_matches_registry(config, chain, &symbol, tb) {
+                        continue;
+                    }
                     *balance
                         .token_balances_by_chain
                         .entry(chain_key.clone())
@@ -148,6 +155,71 @@ pub async fn fetch_chain_usdc(
     // Dedupe Arc's native==ERC-20 USDC double-count (see `wallet_usdc_total`),
     // so the executor's clamp sizes against the real spendable balance.
     Ok(wallet_usdc_total(&tokens, chain == ChainKey::Arc))
+}
+
+/// Live balance for one non-cash ERC-20 on a user's Circle wallet.
+///
+/// Symbol alone is not enough here: Circle may expose native gas assets and
+/// wrapped/ERC-20 assets with related symbols. Execution spends the registry
+/// ERC-20 address, so the balance guard must only count rows whose token address
+/// matches that contract on the requested chain.
+pub async fn fetch_chain_token_balance(
+    http: &reqwest::Client,
+    config: &Config,
+    db: &Db,
+    user_id: Uuid,
+    chain: ChainKey,
+    symbol: &str,
+) -> crate::error::Result<f64> {
+    if symbol.eq_ignore_ascii_case("USDC") {
+        return fetch_chain_usdc(http, config, db, user_id, chain).await;
+    }
+    let blockchain = crate::modules::wallet_routes::blockchain_for_chain(chain);
+    let Some(wallet_id) = crate::modules::wallet_routes::wallet_id_for_user(
+        db,
+        user_id,
+        blockchain,
+        &config.circle_wallet_set_id,
+    )
+    .await?
+    else {
+        return Ok(0.0);
+    };
+    let tokens = fetch_wallet_tokens(http, config, &wallet_id).await?;
+    Ok(tokens
+        .iter()
+        .filter(|tb| wallet_token_matches_registry(config, chain, symbol, tb))
+        .filter_map(|tb| tb.amount.parse::<f64>().ok())
+        .filter(|amount| amount.is_finite() && *amount > 0.0)
+        .sum())
+}
+
+pub async fn fetch_chain_token_balance_units(
+    http: &reqwest::Client,
+    config: &Config,
+    db: &Db,
+    user_id: Uuid,
+    chain: ChainKey,
+    symbol: &str,
+    decimals: u8,
+) -> crate::error::Result<u128> {
+    let blockchain = crate::modules::wallet_routes::blockchain_for_chain(chain);
+    let Some(wallet_id) = crate::modules::wallet_routes::wallet_id_for_user(
+        db,
+        user_id,
+        blockchain,
+        &config.circle_wallet_set_id,
+    )
+    .await?
+    else {
+        return Ok(0);
+    };
+    let tokens = fetch_wallet_tokens(http, config, &wallet_id).await?;
+    Ok(tokens
+        .iter()
+        .filter(|tb| wallet_token_matches_registry(config, chain, symbol, tb))
+        .filter_map(|tb| decimal_str_to_base_units(&tb.amount, decimals))
+        .fold(0_u128, u128::saturating_add))
 }
 
 pub async fn fetch_balance_for_user(
@@ -315,6 +387,10 @@ struct TokenBalance {
 struct TokenMeta {
     #[serde(default)]
     symbol: String,
+    #[serde(default, rename = "tokenAddress")]
+    token_address: Option<String>,
+    #[serde(default, rename = "isNative")]
+    is_native: Option<bool>,
 }
 
 async fn list_user_wallets(
@@ -499,6 +575,33 @@ fn normalize_balance_symbol(symbol: &str) -> Option<String> {
     Some(normalized.to_string())
 }
 
+fn wallet_token_matches_registry(
+    config: &Config,
+    chain: ChainKey,
+    symbol: &str,
+    balance: &TokenBalance,
+) -> bool {
+    let Some(normalized) = normalize_balance_symbol(&balance.token.symbol) else {
+        return false;
+    };
+    if !normalized.eq_ignore_ascii_case(symbol) {
+        return false;
+    }
+    if balance.token.is_native == Some(true) {
+        return false;
+    }
+    let Some(expected) =
+        crate::domain::token::token(symbol).and_then(|token| token.address_for(config, chain))
+    else {
+        return false;
+    };
+    balance
+        .token
+        .token_address
+        .as_deref()
+        .is_some_and(|actual| actual.eq_ignore_ascii_case(expected))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -522,6 +625,8 @@ mod tests {
             amount: a.into(),
             token: TokenMeta {
                 symbol: "USDC".into(),
+                token_address: None,
+                is_native: None,
             },
         };
         let arc = [usdc("38.839682"), usdc("38.839682")];
@@ -575,6 +680,45 @@ mod tests {
             base_address: Some("0x2222222222222222222222222222222222222222".into()),
         };
         assert!(!circle_returned_no_wallets(&b));
+    }
+
+    #[test]
+    fn wallet_token_match_counts_weth_not_native_eth() {
+        let mut cfg = crate::config::test_config();
+        cfg.set_token_address(
+            "ETH",
+            ChainKey::Base,
+            "0x4200000000000000000000000000000000000006",
+        );
+        let native_eth = TokenBalance {
+            amount: "0.5".into(),
+            token: TokenMeta {
+                symbol: "ETH".into(),
+                token_address: None,
+                is_native: Some(true),
+            },
+        };
+        let weth = TokenBalance {
+            amount: "0.5".into(),
+            token: TokenMeta {
+                symbol: "WETH".into(),
+                token_address: Some("0x4200000000000000000000000000000000000006".into()),
+                is_native: Some(false),
+            },
+        };
+
+        assert!(!wallet_token_matches_registry(
+            &cfg,
+            ChainKey::Base,
+            "ETH",
+            &native_eth
+        ));
+        assert!(wallet_token_matches_registry(
+            &cfg,
+            ChainKey::Base,
+            "ETH",
+            &weth
+        ));
     }
 
     #[test]

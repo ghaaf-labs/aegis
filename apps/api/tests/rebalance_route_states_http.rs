@@ -153,7 +153,9 @@ fn eurc_routes_as_base_local_swap_not_stablefx() {
     // The EUR sleeve now executes through the Base USDC/EURC DEX pool, so a
     // USDC→EURC buy is a local_swap on Base — it must clear the swap rail (here
     // just the feature gate), never the gated StableFX blocker.
-    let cfg = real_config();
+    let mut cfg = real_config();
+    cfg.swap_liquid_tokens
+        .insert(ChainKey::Base, vec!["EURC".into()]);
     let caps = RuntimeCapabilities::from_config(&cfg);
     let blockers = validate_legs(
         &caps,
@@ -179,6 +181,8 @@ fn eurc_base_swap_is_executable_when_configured() {
         ChainKey::Base,
         "0x60a3E35Cc302bFA44Cb288Bc5a4F316Fdb1adb42",
     );
+    cfg.swap_liquid_tokens
+        .insert(ChainKey::Base, vec!["EURC".into()]);
     let caps = RuntimeCapabilities::from_config(&cfg);
     let blockers = validate_legs(
         &caps,
@@ -380,6 +384,7 @@ fn base_config() -> Config {
         usyc_enabled: false,
         token_addrs: std::collections::HashMap::new(),
         swap_liquid_tokens: std::collections::HashMap::new(),
+        swap_pool_depth_usd: std::collections::HashMap::new(),
         nanopayments_facilitator_url: "https://gateway-api-testnet.circle.com".into(),
         nanopayments_seller_address: String::new(),
         nanopayments_treasury_address: String::new(),

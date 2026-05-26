@@ -187,6 +187,39 @@ contract RebalanceExecutorTest is Test {
         assertEq(usdc.balanceOf(address(executor)), 0);
     }
 
+    /// @dev Fund-Safety Theorem (spec §17), encoded on-chain: across *every*
+    ///      destination-side failure mode, the recipient ends with the full
+    ///      minted USDC and the executor holds nothing — funds are never
+    ///      stranded in the contract or an intermediate token.
+    function test_fund_safety_theorem_failure_modes_always_refund_full_usdc() public {
+        uint256 amountIn = 1_000_000; // 1 USDC per mode
+
+        // Mode 1 — the swap router reverts.
+        router.setShouldRevert(true);
+        _assertRefundsFull(amountIn, _hookPayload(user, address(weth), 3000, 0));
+        router.setShouldRevert(false);
+
+        // Mode 2 — min-out cannot be met (slippage).
+        _assertRefundsFull(amountIn, _hookPayload(user, address(weth), 3000, type(uint256).max));
+
+        // Mode 3 — tokenOut is not on the allowlist.
+        MockTokenOut other = new MockTokenOut();
+        _assertRefundsFull(amountIn, _hookPayload(user, address(other), 3000, 0));
+    }
+
+    /// Mint `amountIn` to the executor, run the hook, and assert the full amount
+    /// landed back with the user and nothing is stranded in the executor.
+    function _assertRefundsFull(uint256 amountIn, bytes memory payload) internal {
+        uint256 userBefore = usdc.balanceOf(user);
+        usdc.mint(address(executor), amountIn);
+
+        vm.prank(messageTransmitter);
+        executor.handleReceiveMessage(6, bytes32(0), payload);
+
+        assertEq(usdc.balanceOf(user) - userBefore, amountIn, "full USDC refunded (no strand)");
+        assertEq(usdc.balanceOf(address(executor)), 0, "executor holds no stranded USDC");
+    }
+
     function test_minout_miss_refunds_usdc_to_user() public {
         usdc.mint(address(executor), 1_000_000);
 

@@ -215,6 +215,10 @@ pub struct RebalanceLegPayload {
     pub dest_symbol: Option<String>,
     pub amount_usdc: f64,
     pub status: String,
+    /// Typed FSM state (bridge_in_flight / bridge_landed / confirmed / …) so the
+    /// live trace can distinguish a confirmed burn (funds in flight) from a
+    /// confirmed acquire (target reached), which coarse `status` cannot.
+    pub leg_state: String,
     pub tx_hash: Option<String>,
     pub failure_reason: Option<String>,
     pub updated_at: DateTime<Utc>,

@@ -474,13 +474,62 @@ export interface RebalancePlanResponse {
   totalLegs: number;
   legs: Array<{
     legIndex: number;
+    deps?: number[];
     kind: string;
     srcChain: ChainKey | null;
     destChain: ChainKey | null;
     srcSymbol: string | null;
     destSymbol: string | null;
     amountUsdc: number;
+    minOut?: number | null;
   }>;
+}
+
+/** The plan endpoint returns 200 with a typed outcome — a no-op is not an error. */
+export type RebalancePlanNoopStatus =
+  | "on_target_noop"
+  | "reserve_fallback"
+  | "blocked"
+  | "unfunded"
+  | "dust_only"
+  | "balance_unavailable";
+
+/** A target sleeve the agent wanted but could not route now — held as USDC
+ *  reserve and shown as intent rather than silently dropped. */
+export interface DeferredTarget {
+  symbol: string;
+  targetWeight: number;
+  reason: string;
+}
+
+export interface ExecutablePlan extends RebalancePlanResponse {
+  status: "executable";
+}
+
+export interface PartialDeferredPlan extends RebalancePlanResponse {
+  status: "partial_deferred";
+  deferred: DeferredTarget[];
+}
+
+export interface RebalancePlanNoop {
+  status: RebalancePlanNoopStatus;
+  message: string;
+  /** Present on `blocked`: the intended sleeves with no live route. */
+  deferred?: DeferredTarget[];
+}
+
+export type RebalancePlanOutcome =
+  | ExecutablePlan
+  | PartialDeferredPlan
+  | RebalancePlanNoop;
+
+/** `executable`/`partial_deferred` carry real legs to review; `unfunded`/
+ *  `dust_only`/`blocked` are actionable; `on_target`/`reserve` are calm success.
+ *  None are errors — callers must render them, never throw. */
+export function isExecutablePlan(
+  o: RebalancePlanOutcome,
+): o is ExecutablePlan | PartialDeferredPlan {
+  return o.status === "executable" || o.status === "partial_deferred";
 }
 
 export interface RebalanceApprovalSafety {
@@ -496,13 +545,10 @@ export interface RebalanceApprovalSafety {
 
 export const rebalanceApi = {
   plan: (portfolioId: string) =>
-    request<RebalancePlanResponse>(
-      `/portfolios/${portfolioId}/rebalance/plan`,
-      {
-        method: "POST",
-        authed: true,
-      },
-    ),
+    request<RebalancePlanOutcome>(`/portfolios/${portfolioId}/rebalance/plan`, {
+      method: "POST",
+      authed: true,
+    }),
   execute: (rebalanceId: string) =>
     request<void>(`/rebalance/${rebalanceId}/execute`, {
       method: "POST",
@@ -530,13 +576,16 @@ export const rebalanceApi = {
         id: string;
         rebalanceId: string;
         legIndex: number;
+        dependsOn?: number[];
         kind: string;
         srcChain: ChainKey | null;
         destChain: ChainKey | null;
         srcSymbol: string | null;
         destSymbol: string | null;
         amountUsdc: number;
+        minOut?: number | null;
         status: string;
+        legState: string;
         txHash: string | null;
         failureReason: string | null;
         submittedAt: string | null;

@@ -15,6 +15,9 @@ interface LegCardProps {
   destSymbol?: string | null;
   amountUsdc: number;
   status: LegStatus;
+  /** Optional FSM phase label (e.g. "bridging — USDC in flight") shown when it
+   *  adds detail beyond the coarse status. */
+  phase?: string | null;
   txHash?: string | null;
   failureReason?: string | null;
 }
@@ -44,6 +47,7 @@ export function LegCard({
   destSymbol,
   amountUsdc,
   status,
+  phase,
   txHash,
   failureReason,
 }: LegCardProps) {
@@ -83,6 +87,11 @@ export function LegCard({
           {kind === "cross_chain_burn" && status === "confirmed" && (
             <span className="text-[10px] px-1.5 py-0.5 bg-cyan-500/10 border border-cyan-500/30 text-accent-agent font-mono tracking-wider">
               Hook payload sent
+            </span>
+          )}
+          {phase && (
+            <span className="text-[10px] px-1.5 py-0.5 bg-white/5 border border-white/10 text-text-lo font-mono tracking-wider">
+              {phase}
             </span>
           )}
         </div>

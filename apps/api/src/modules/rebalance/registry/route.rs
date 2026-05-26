@@ -5,10 +5,11 @@
 //! missing a feature, address, adapter, or signer produces a blocker.
 
 use crate::config::Config;
+use rust_decimal::prelude::ToPrimitive;
 
 use super::super::models::{ChainKey, LegKind, PlannedLeg, TokenClass};
 use super::capabilities::{AdapterCapability, RuntimeCapabilities};
-use super::tokens::{self, USDC, USYC};
+use super::tokens::{self, USDC};
 
 /// Plain-language route state surfaced to the UI for a token. One-to-one with
 /// the user-facing labels: Ready, Track only, Needs route, Needs quote,
@@ -121,7 +122,7 @@ impl RouteLeg {
             dest_chain: p.dest_chain.map(|c| c.as_str().to_string()),
             src_symbol: p.src_symbol.clone(),
             dest_symbol: p.dest_symbol.clone(),
-            amount_usdc: p.amount_usdc,
+            amount_usdc: p.amount_usdc.to_f64().unwrap_or(0.0),
         }
     }
 
@@ -254,6 +255,7 @@ pub fn validate_legs(
                             ),
                         ));
                     }
+                    push_hook_swap_blocker(leg, sym, &mut blockers, cfg);
                 }
             }
             LegKind::CrossChainMint => push_cctp_blocker(cfg, leg, false, &mut blockers),
@@ -267,6 +269,26 @@ pub fn validate_legs(
     }
 
     dedup_by_code(blockers)
+}
+
+fn push_hook_swap_blocker(
+    bridge_leg: &RouteLeg,
+    dest_symbol: &str,
+    out: &mut Vec<RouteBlocker>,
+    cfg: &Config,
+) {
+    let Some(dest_chain) = bridge_leg.dest_chain.clone() else {
+        return;
+    };
+    let swap_leg = RouteLeg {
+        kind: LegKind::LocalSwap,
+        src_chain: Some(dest_chain.clone()),
+        dest_chain: Some(dest_chain),
+        src_symbol: Some(USDC.to_string()),
+        dest_symbol: Some(dest_symbol.to_string()),
+        amount_usdc: bridge_leg.amount_usdc,
+    };
+    push_swap_blocker(cfg, &swap_leg, out);
 }
 
 /// Validate a CCTP burn/mint leg against the *specific* chains it touches, not
@@ -315,11 +337,38 @@ fn push_cctp_blocker(cfg: &Config, leg: &RouteLeg, hooked: bool, out: &mut Vec<R
 }
 
 fn push_swap_blocker(cfg: &Config, leg: &RouteLeg, out: &mut Vec<RouteBlocker>) {
-    // A swap is same-chain; resolve the leg's execution chain (fall back to Base,
-    // the chain whose venue is wired today, for a chain-less leg) and validate
-    // *that* chain's venue rather than the Base aggregate, so a swap on a chain
-    // with no configured router/quoter fails closed at approval.
-    let chain = swap_leg_chain(leg).unwrap_or(ChainKey::Base);
+    let Some(chain) = swap_leg_chain(leg) else {
+        out.push(RouteBlocker::new(
+            BlockerCode::NonExecutionChain,
+            "Swap leg has no Arc or Base execution chain set.",
+        ));
+        return;
+    };
+    if let Some(symbol) = swap_token_symbol(leg) {
+        let has_addr = tokens::token(symbol)
+            .and_then(|t| t.address_for(cfg, chain))
+            .is_some();
+        if !has_addr {
+            out.push(RouteBlocker::new(
+                BlockerCode::SwapTokenAddress,
+                format!(
+                    "{symbol} has no configured {} ERC-20 with a swap pool, so it can only be tracked.",
+                    chain.as_str(),
+                ),
+            ));
+            return;
+        }
+        if !cfg.swap_token_has_venue(symbol, chain) {
+            out.push(RouteBlocker::new(
+                BlockerCode::LocalSwapAdapter,
+                format!(
+                    "{symbol} has no configured liquid {} swap venue, so it can only be tracked.",
+                    chain.as_str(),
+                ),
+            ));
+            return;
+        }
+    }
     match crate::modules::rebalance::adapters::swap::capability_for(cfg, chain) {
         AdapterCapability::NeedsFeature => out.push(RouteBlocker::new(
             BlockerCode::RealSwapFeature,
@@ -342,25 +391,7 @@ fn push_swap_blocker(cfg: &Config, leg: &RouteLeg, out: &mut Vec<RouteBlocker>) 
         AdapterCapability::Disabled | AdapterCapability::Unavailable(_) => out.push(
             RouteBlocker::new(BlockerCode::LocalSwapAdapter, "Swap route is unavailable."),
         ),
-        AdapterCapability::Live => {
-            // Venue is live — the specific token still needs an ERC-20 on the
-            // swap leg's chain.
-            let symbol = swap_token_symbol(leg);
-            let has_addr = symbol
-                .and_then(tokens::token)
-                .and_then(|t| t.address_for(cfg, chain))
-                .is_some();
-            if !has_addr {
-                out.push(RouteBlocker::new(
-                    BlockerCode::SwapTokenAddress,
-                    format!(
-                        "{} has no configured {} ERC-20 with a swap pool, so it can only be tracked.",
-                        symbol.unwrap_or("This token"),
-                        chain.as_str(),
-                    ),
-                ));
-            }
-        }
+        AdapterCapability::Live => {}
     }
 }
 
@@ -423,29 +454,76 @@ fn dedup_by_code(mut blockers: Vec<RouteBlocker>) -> Vec<RouteBlocker> {
     blockers
 }
 
-/// The plain-language route state for a token, for wallet/onboarding UI.
-pub fn route_state_for_token(caps: &RuntimeCapabilities, cfg: &Config, symbol: &str) -> RouteState {
+/// The plain-language route state for a token on one chain.
+pub fn route_state_for_token_on(
+    caps: &RuntimeCapabilities,
+    cfg: &Config,
+    symbol: &str,
+    chain: ChainKey,
+) -> RouteState {
     let Some(spec) = tokens::token(symbol) else {
         return RouteState::TrackOnly;
     };
     match spec.class {
         // USDC is the settlement unit — always holdable/transferable.
         TokenClass::Stable => RouteState::Ready,
-        TokenClass::Yield => cap_to_state(caps.usyc, true),
-        // EURC (the only FxStable) trades on the permissionless USDC/EURC pool on
-        // Base, so it routes through the swap adapter exactly like a volatile —
-        // the gated Arc StableFX rail (`caps.stablefx`) is superseded.
+        TokenClass::Yield => cap_to_state(caps.usyc, spec.address_for(cfg, chain).is_some()),
         TokenClass::FxStable | TokenClass::Volatile => {
-            let has_addr = spec.address_for(cfg, ChainKey::Base).is_some();
+            let has_addr = spec.address_for(cfg, chain).is_some();
             // An ERC-20 is configured but the deployment's liquidity allowlist
-            // says there's no tradeable pool here (e.g. EURC/LINK/cbBTC on Base
-            // Sepolia) → honest track-only, never an execution target that would
-            // revert at gas-estimation.
-            if has_addr && !cfg.swap_token_has_venue(symbol, ChainKey::Base) {
+            // says there's no tradeable pool here → honest track-only, never an
+            // execution target that would revert at gas-estimation.
+            if has_addr && !cfg.swap_token_has_venue(symbol, chain) {
                 return RouteState::TrackOnly;
             }
-            cap_to_state(caps.swap, has_addr)
+            let cap = if chain == ChainKey::Base {
+                caps.swap
+            } else {
+                crate::modules::rebalance::adapters::swap::capability_for(cfg, chain)
+            };
+            cap_to_state(cap, has_addr)
         }
+    }
+}
+
+/// The plain-language route state for a token, for wallet/onboarding UI.
+pub fn route_state_for_token(caps: &RuntimeCapabilities, cfg: &Config, symbol: &str) -> RouteState {
+    executable_chain_for_token(caps, cfg, symbol)
+        .map(|chain| route_state_for_token_on(caps, cfg, symbol, chain))
+        .unwrap_or_else(|| best_non_ready_state(caps, cfg, symbol))
+}
+
+pub fn executable_chain_for_token(
+    caps: &RuntimeCapabilities,
+    cfg: &Config,
+    symbol: &str,
+) -> Option<ChainKey> {
+    let spec = tokens::token(symbol)?;
+    if spec.class == TokenClass::Stable {
+        return Some(ChainKey::Base);
+    }
+    spec.canonical_chain()
+        .into_iter()
+        .chain(spec.supported_chains())
+        .find(|&chain| route_state_for_token_on(caps, cfg, symbol, chain) == RouteState::Ready)
+}
+
+fn best_non_ready_state(caps: &RuntimeCapabilities, cfg: &Config, symbol: &str) -> RouteState {
+    let Some(spec) = tokens::token(symbol) else {
+        return RouteState::TrackOnly;
+    };
+    let states: Vec<RouteState> = spec
+        .canonical_chain()
+        .into_iter()
+        .chain(spec.supported_chains())
+        .map(|chain| route_state_for_token_on(caps, cfg, symbol, chain))
+        .collect();
+    if states.contains(&RouteState::NeedsAddress) {
+        RouteState::NeedsAddress
+    } else if states.contains(&RouteState::NeedsRoute) {
+        RouteState::NeedsRoute
+    } else {
+        RouteState::TrackOnly
     }
 }
 
@@ -461,27 +539,25 @@ fn cap_to_state(cap: AdapterCapability, has_addr: bool) -> RouteState {
     }
 }
 
-/// Symbols the agent may actually move funds into. Always USDC; USYC only when
-/// its adapter is live; every swap-acquired token (volatiles + EURC, which now
-/// trades on the Base USDC/EURC pool) only when the swap adapter is live and the
-/// token has a configured Base ERC-20.
+/// THE single executability authority: a token is executable iff its live route
+/// state is `Ready`. Both the agent's executable set (`executable_token_symbols`)
+/// and the executor's fail-closed dispatch guard derive from this one predicate,
+/// which in turn derives from `route_state_for_token` — so "executable" can never
+/// mean two different things in two places (the old divergent-gates risk).
+pub fn is_executable(caps: &RuntimeCapabilities, cfg: &Config, symbol: &str) -> bool {
+    route_state_for_token(caps, cfg, symbol) == RouteState::Ready
+}
+
+/// Symbols the agent may actually move funds into — every registry token whose
+/// live route state is `Ready`. Derived from the single `is_executable` authority
+/// (USDC is `Ready` as the settlement unit; USYC only when its adapter is live;
+/// swap-acquired tokens only with a Base ERC-20 + live venue + live swap rail).
 pub fn executable_token_symbols(caps: &RuntimeCapabilities, cfg: &Config) -> Vec<&'static str> {
-    let mut out = vec![USDC];
-    if caps.usyc.is_live() {
-        out.push(USYC);
-    }
-    if caps.swap.is_live() {
-        for spec in tokens::TOKEN_REGISTRY {
-            let swap_acquired = matches!(spec.class, TokenClass::Volatile | TokenClass::FxStable);
-            if swap_acquired
-                && spec.address_for(cfg, ChainKey::Base).is_some()
-                && cfg.swap_token_has_venue(spec.symbol, ChainKey::Base)
-            {
-                out.push(spec.symbol);
-            }
-        }
-    }
-    out
+    tokens::TOKEN_REGISTRY
+        .iter()
+        .map(|spec| spec.symbol)
+        .filter(|symbol| is_executable(caps, cfg, symbol))
+        .collect()
 }
 
 /// Symbols the allocator may place in a target allocation.
@@ -512,6 +588,7 @@ pub fn designable_allocation_symbols(cfg: &Config) -> Vec<&'static str> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::tokens::USYC;
     use super::*;
 
     #[test]
@@ -776,6 +853,59 @@ mod tests {
     }
 
     #[test]
+    fn local_swap_is_blocked_when_token_is_not_in_liquidity_allowlist() {
+        let mut cfg = real_cfg();
+        cfg.set_token_address(
+            "cbBTC",
+            ChainKey::Base,
+            "0xcbb7c0006f23900c38eb856149f799620fcb8a4a",
+        );
+        cfg.swap_liquid_tokens
+            .insert(ChainKey::Base, vec!["ETH".into()]);
+        let mut caps = RuntimeCapabilities::from_config(&cfg);
+        caps.swap = AdapterCapability::Live;
+
+        let blockers = validate_legs(
+            &caps,
+            &cfg,
+            &[leg(LegKind::LocalSwap, "base", "base", tokens::CBBTC)],
+        );
+
+        assert!(blockers
+            .iter()
+            .any(|b| b.code == BlockerCode::LocalSwapAdapter));
+    }
+
+    #[test]
+    fn route_state_can_be_ready_on_a_non_base_liquid_venue() {
+        let mut cfg = real_cfg();
+        cfg.set_token_address(
+            "ETH",
+            ChainKey::ArbSepolia,
+            "0x4200000000000000000000000000000000000006",
+        );
+        cfg.chains[ChainKey::ArbSepolia.index()].usdc =
+            "0x00000000000000000000000000000000000000a3".into();
+        cfg.chains[ChainKey::ArbSepolia.index()].swap_router =
+            "0x00000000000000000000000000000000000000b3".into();
+        cfg.chains[ChainKey::ArbSepolia.index()].swap_quoter =
+            "0x00000000000000000000000000000000000000c3".into();
+        cfg.circle_wallet_exec = true;
+        cfg.swap_liquid_tokens
+            .insert(ChainKey::ArbSepolia, vec!["ETH".into()]);
+        let caps = RuntimeCapabilities::from_config(&cfg);
+
+        assert_eq!(
+            route_state_for_token_on(&caps, &cfg, "ETH", ChainKey::ArbSepolia),
+            if cfg!(feature = "real-swap") {
+                RouteState::Ready
+            } else {
+                RouteState::NeedsRoute
+            }
+        );
+    }
+
+    #[test]
     fn cross_chain_hook_swap_blocked_without_dest_erc20() {
         // ETH has no configured Base ERC-20 in this cfg → the hook swap cannot
         // route, so the CrossChainTokenSwap blocker fires.
@@ -791,8 +921,9 @@ mod tests {
     #[test]
     fn cross_chain_hook_swap_allowed_with_dest_erc20() {
         // With a configured Base ERC-20 for the target token, the dedicated
-        // CrossChainTokenSwap blocker no longer fires (CCTP feature gating is a
-        // separate blocker and is allowed to remain).
+        // CrossChainTokenSwap blocker no longer fires. Swap venue gating is
+        // still evaluated separately so a hook cannot burn funds into an
+        // unexecutable destination swap.
         let mut cfg = real_cfg();
         cfg.set_token_address(
             "ETH",
@@ -805,6 +936,10 @@ mod tests {
         assert!(!blockers
             .iter()
             .any(|b| b.code == BlockerCode::CrossChainTokenSwap));
+        assert!(blockers.iter().any(|b| matches!(
+            b.code,
+            BlockerCode::RealSwapFeature | BlockerCode::LocalSwapAdapter
+        )));
     }
 
     #[test]

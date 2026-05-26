@@ -279,11 +279,7 @@ async fn poll_until_settled(
                 });
             }
             Some("FAILED") | Some("CANCELLED") | Some("DENIED") => {
-                let reason = tx
-                    .error_reason
-                    .as_deref()
-                    .map(|r| format!(" ({r})"))
-                    .unwrap_or_default();
+                let reason = circle_failure_detail(&tx);
                 return Err(AppError::Internal(anyhow::anyhow!(
                     "circle contractExecution {transaction_id} ended in state {:?}{reason}",
                     tx.state
@@ -441,6 +437,19 @@ struct TransactionData {
     /// failure reason so the ledger shows the real cause, not just "FAILED".
     #[serde(rename = "errorReason", default)]
     error_reason: Option<String>,
+    #[serde(rename = "errorDetails", default)]
+    error_details: Option<String>,
+}
+
+fn circle_failure_detail(tx: &TransactionData) -> String {
+    match (tx.error_reason.as_deref(), tx.error_details.as_deref()) {
+        (Some(reason), Some(details)) if !details.trim().is_empty() => {
+            format!(" ({reason}: {details})")
+        }
+        (Some(reason), _) => format!(" ({reason})"),
+        (None, Some(details)) if !details.trim().is_empty() => format!(" ({details})"),
+        _ => String::new(),
+    }
 }
 
 /// GET `/v1/w3s/transactions/{id}` nests the transaction under

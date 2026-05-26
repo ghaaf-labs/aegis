@@ -21,9 +21,11 @@ import { DashboardSkeleton } from "../dashboard-loading";
 import {
   agentApi,
   gatewayApi,
+  isExecutablePlan,
   portfolioApi,
   rebalanceApi,
   userAgentApi,
+  type DeferredTarget,
   type RebalanceApprovalSafety,
   type RebalancePlanResponse,
 } from "@/lib/api";
@@ -87,6 +89,8 @@ export default function PortfolioDashboardPage() {
   const [reviewPlan, setReviewPlan] = useState<RebalancePlanResponse | null>(
     null,
   );
+  // Sleeves the plan wanted but couldn't route — shown as intent in the review.
+  const [reviewDeferred, setReviewDeferred] = useState<DeferredTarget[]>([]);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewDecision, setReviewDecision] = useState<AgentDecision | null>(
     null,
@@ -496,8 +500,22 @@ export default function PortfolioDashboardPage() {
         rebalanceApi.plan(activePortfolio.id),
         "Plan creation is taking longer than expected. Try again in a moment.",
       );
+      if (!isExecutablePlan(planned)) {
+        // A no-op (on-target / USDC reserve / unfunded / dust) is a calm or
+        // actionable outcome, never a red error. Surface it as an agent notice.
+        setExecutionProgress(null);
+        setReviewPlan(null);
+        setReviewDeferred([]);
+        setReviewOpen(false);
+        setDeployError(null);
+        setReviewMessage(planned.message);
+        return;
+      }
       setExecutionProgress(null);
       setReviewPlan(planned);
+      // PartialDeferred carries the sleeves held back as USDC reserve; surface
+      // them in the approval review as intent (spec §12).
+      setReviewDeferred("deferred" in planned ? planned.deferred : []);
       setReviewOpen(true);
       setReviewMessage(null);
       try {
@@ -700,6 +718,7 @@ export default function PortfolioDashboardPage() {
       <ApprovalModal
         open={reviewOpen}
         plan={reviewPlan}
+        deferred={reviewDeferred}
         portfolioId={activePortfolio.id}
         portfolioName={portfolioTitle}
         estimatedFeeUsdc={estimatedFeeUsdc}

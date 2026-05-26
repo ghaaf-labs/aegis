@@ -33,6 +33,11 @@ once_cell = "1"
 # MySQL/SQLite driver crates never enter Cargo.lock.
 sqlx = { version = "0.9.0-aegis.1", path = "crates/sqlx-pg" }
 
+# The pure n→m liquidity-routing engine (typed graph, convex cost model,
+# min-cost-flow solver, leg DAG). apps/api owns no graph/solver logic of its own;
+# it adapts ChainKey/TokenSpec/Config into this crate and reads routes back.
+aegis-routing = { version = "0.1.0", path = "../../crates/aegis-routing" }
+
 # Auth
 async-trait = "0.1"
 

@@ -14,45 +14,36 @@
 //! already-`confirmed` legs and caps per-leg submit attempts so a persistently
 //! reverting leg can't spin forever.
 
+mod dispatch;
 mod ledger;
+// Public so the formally-verified leg state machine is reachable as crate API
+// (the live executor adopts it as it migrates off the boolean `stranded` flag).
+pub mod leg_state;
 mod leg_status;
 mod legs;
 mod stranding;
 
 pub use stranding::{remaining_delta_after_strand, RemainingDelta, StrandedLeg};
 
+use dispatch::{dispatch, LegDispatch};
+
 use chrono::Utc;
-use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::Decimal;
 use uuid::Uuid;
 
-use crate::config::Config;
 use crate::error::{AppError, Result};
-use crate::modules::rebalance::adapters;
-use crate::modules::rebalance::cross_chain::build_hook_payload;
-use crate::modules::rebalance::models::{ChainKey, LegKind, PlannedLeg};
-use crate::modules::rebalance::quote::ValidatedQuote;
-use crate::modules::rebalance::registry::{
-    capabilities::RuntimeCapabilities,
-    route::{executable_token_symbols, RouteLeg},
-    ticket::ExecutionTicket,
-};
+use crate::modules::rebalance::models::{ChainKey, PlannedLeg};
 use crate::modules::sse::{RebalancePlanPayload, SseEvent};
-use crate::modules::wallet_routes;
 use crate::router::AppState;
 
 use leg_status::{
-    bump_attempt_count, mark_leg_confirmed, mark_leg_failed, mark_leg_stranded, mark_leg_submitted,
+    bump_attempt_count, confirmed_leg_state, mark_leg_confirmed, mark_leg_failed, mark_leg_stranded,
 };
-use legs::{blockchain_for_chain, parse_kind, quote_filled_qty, LegRow, MAX_LEG_ATTEMPTS};
+use legs::{parse_kind, LegRow, MAX_LEG_ATTEMPTS};
 use stranding::{
     idempotency_key_for_leg, leg_strands_funds_on_failure, pending_funding_dependency,
     protocol_fee_notional_from_legs,
 };
-
-/// Fraction of the live USDC balance a buy-swap may spend, leaving a small
-/// cushion for gas/rounding so the clamped `amountIn` never tips back over the
-/// wallet's balance and re-triggers Circle's `INSUFFICIENT_TOKEN`.
-const LIVE_BALANCE_SPEND_MARGIN: f64 = 0.995;
 
 /// Persist a planned set of legs as a new `rebalances` + `rebalance_legs`
 /// rows. Status starts as `planned`; the user must approve via
@@ -61,7 +52,7 @@ const LIVE_BALANCE_SPEND_MARGIN: f64 = 0.995;
 /// `total_gas_usdc` is the sum of the Paymaster fee estimate across each
 /// distinct destination chain in the plan — what the user sees in the
 /// approval modal before signing.
-pub async fn create_plan(
+pub async fn replace_planned_review(
     state: &AppState,
     portfolio_id: Uuid,
     decision_id: Uuid,
@@ -78,6 +69,24 @@ pub async fn create_plan(
     };
 
     let mut tx = state.db.begin().await?;
+    // Serialize review creation per portfolio. If two plan requests race, the
+    // later committed review supersedes the older draft before it can be
+    // approved, so there is never more than one approval-eligible planned
+    // rebalance competing for the same wallet cash.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))")
+        .bind(portfolio_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        "UPDATE rebalances
+            SET status = 'cancelled',
+                failure_reason = 'Superseded by a newer review.'
+          WHERE portfolio_id = $1 AND status = 'planned'",
+    )
+    .bind(portfolio_id)
+    .execute(&mut *tx)
+    .await?;
+
     let rebalance_id: Uuid = sqlx::query_scalar(
         "INSERT INTO rebalances (portfolio_id, decision_id, status, total_legs, total_gas_usdc, execution_mode)
          VALUES ($1, $2, 'planned', $3, $4, $5)
@@ -92,10 +101,6 @@ pub async fn create_plan(
     .await?;
 
     for leg in legs {
-        // Stamp the deterministic idempotency key at plan time so a resumed or
-        // retried walk recomputes the same value and the UNIQUE index rejects a
-        // double-submit. The key is fixed by the plan, not by the submit, so it
-        // is stable across attempts.
         let idempotency_key = idempotency_key_for_leg(
             rebalance_id,
             leg.leg_index,
@@ -106,12 +111,13 @@ pub async fn create_plan(
         );
         sqlx::query(
             "INSERT INTO rebalance_legs
-               (rebalance_id, leg_index, kind, src_chain, dest_chain,
+               (rebalance_id, leg_index, depends_on, kind, src_chain, dest_chain,
                 src_symbol, dest_symbol, amount_usdc, min_out, status, idempotency_key)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', $10)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11)",
         )
         .bind(rebalance_id)
         .bind(leg.leg_index)
+        .bind(&leg.deps)
         .bind(leg.kind.as_str())
         .bind(leg.src_chain.map(|c| c.as_str()))
         .bind(leg.dest_chain.map(|c| c.as_str()))
@@ -143,6 +149,12 @@ pub async fn create_plan(
         }));
 
     Ok(rebalance_id)
+}
+
+fn leg_with_executed_amount(leg: &LegRow, executed_amount_usdc: Decimal) -> LegRow {
+    let mut out = leg.clone();
+    out.amount_usdc = executed_amount_usdc;
+    out
 }
 
 /// Sum the Paymaster fee estimate across distinct chains a plan touches.
@@ -269,6 +281,63 @@ pub(super) async fn user_for_portfolio(state: &AppState, portfolio_id: Uuid) -> 
     Ok(user_id)
 }
 
+/// Kahn's topological sort over `legs` using `LegRow::depends_on`. Returns
+/// the positions in `legs` in a valid execution order (all deps before their
+/// dependents). Returns `Err` if the depends_on graph has a cycle (cannot
+/// happen with well-formed plans — would indicate a planning bug).
+fn topological_leg_order(legs: &[LegRow]) -> Result<Vec<usize>> {
+    // Map: leg_index → position in `legs` array.
+    let idx_to_pos: std::collections::HashMap<i32, usize> = legs
+        .iter()
+        .enumerate()
+        .map(|(pos, l)| (l.leg_index, pos))
+        .collect();
+
+    let n = legs.len();
+    let mut indegree = vec![0usize; n];
+    let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); n];
+
+    for (pos, leg) in legs.iter().enumerate() {
+        for &dep_idx in &leg.depends_on {
+            let Some(&dep_pos) = idx_to_pos.get(&dep_idx) else {
+                return Err(AppError::Internal(anyhow::anyhow!(
+                    "rebalance leg {} depends on missing leg {dep_idx}",
+                    leg.leg_index
+                )));
+            };
+            indegree[pos] += 1;
+            dependents[dep_pos].push(pos);
+        }
+    }
+
+    // Start with all legs that have no unmet deps (sorted for determinism).
+    let mut ready: Vec<usize> = (0..n).filter(|&i| indegree[i] == 0).collect();
+    ready.sort_unstable_by(|a, b| b.cmp(a));
+    let mut order = Vec::with_capacity(n);
+
+    while let Some(pos) = ready.pop() {
+        order.push(pos);
+        let mut newly_ready: Vec<usize> = dependents[pos]
+            .iter()
+            .copied()
+            .filter(|&d| {
+                indegree[d] -= 1;
+                indegree[d] == 0
+            })
+            .collect();
+        newly_ready.sort_unstable_by(|a, b| b.cmp(a));
+        ready.extend(newly_ready);
+        ready.sort_unstable_by(|a, b| b.cmp(a));
+    }
+
+    if order.len() != n {
+        return Err(AppError::Internal(anyhow::anyhow!(
+            "rebalance leg DAG has a cycle — plan is malformed"
+        )));
+    }
+    Ok(order)
+}
+
 async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Result<()> {
     let portfolio_id: Uuid =
         sqlx::query_scalar("SELECT portfolio_id FROM rebalances WHERE id = $1")
@@ -277,8 +346,8 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
             .await?;
 
     let legs: Vec<LegRow> = sqlx::query_as(
-        "SELECT id, leg_index, kind, src_chain, dest_chain, src_symbol,
-                dest_symbol, amount_usdc, min_out, status, attempt_count
+        "SELECT id, leg_index, depends_on, kind, src_chain, dest_chain, src_symbol,
+                dest_symbol, amount_usdc, status, leg_state, attempt_count
          FROM rebalance_legs
          WHERE rebalance_id = $1
          ORDER BY leg_index ASC",
@@ -287,11 +356,17 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
     .fetch_all(&state.db)
     .await?;
 
-    // Track which legs have already settled this run so a failure can decide
-    // whether funds moved (and the leg should strand) or not.
+    // Build a topological execution order from the explicit `depends_on` DAG.
+    // Legs with no deps start immediately; a leg becomes ready once every leg
+    // in its `depends_on` list has been processed. This replaces the implicit
+    // `leg_index` ordering and allows honest concurrency within independent
+    // routes (future work) while guaranteeing CCTP mint waits on its burn.
+    let topo_order = topological_leg_order(&legs)?;
+
     let mut confirmed_so_far: Vec<LegRow> = Vec::new();
 
-    for leg in &legs {
+    for pos in topo_order {
+        let leg = &legs[pos];
         let kind = parse_kind(&leg.kind)?;
 
         // Reconcile-on-restart: a resumed or retried walk must never re-submit a
@@ -300,6 +375,17 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
         // double-submitted. (Stranded legs also confirmed their fund movement;
         // they're left as-is for the follow-up replan, not retried here.)
         if leg.status == "confirmed" {
+            let expected_state = confirmed_leg_state(&leg.kind).as_str();
+            if leg.leg_state != expected_state {
+                tracing::warn!(
+                    leg_id = %leg.id,
+                    kind = %leg.kind,
+                    status = %leg.status,
+                    leg_state = %leg.leg_state,
+                    expected_state,
+                    "confirmed leg has inconsistent fine-grained state; preserving confirmed coarse status on resume"
+                );
+            }
             confirmed_so_far.push(leg.clone());
             continue;
         }
@@ -355,11 +441,11 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
         // a runaway leg can be capped. Done before the network call so a crash
         // mid-submit still records the attempt.
         bump_attempt_count(state, leg.id).await?;
-        mark_leg_submitted(state, rebalance_id, leg.id, user_id, leg).await?;
 
         let LegDispatch {
             tx_hash,
             cctp_hash,
+            executed_amount_usdc,
             filled_qty,
         } = match dispatch(state, rebalance_id, kind, leg, user_id).await {
             Ok(v) => v,
@@ -380,23 +466,24 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
                 return Err(e);
             }
         };
+        let executed_leg = leg_with_executed_amount(leg, executed_amount_usdc);
 
         mark_leg_confirmed(
             state,
             rebalance_id,
             leg.id,
             user_id,
-            leg,
+            &executed_leg,
             &tx_hash,
             cctp_hash.as_deref(),
         )
         .await?;
-        confirmed_so_far.push(leg.clone());
+        confirmed_so_far.push(executed_leg.clone());
 
         // Mirror the confirmed leg into the holdings ledger (sell reduces /
         // buy increments the allocation, recompute totals once). Without this
         // Portfolio Value stays $0 after real swaps confirm.
-        ledger::apply_leg_writeback(state, portfolio_id, kind, leg, filled_qty).await;
+        ledger::apply_leg_writeback(state, portfolio_id, kind, &executed_leg, filled_qty).await;
 
         sqlx::query(
             "UPDATE rebalances
@@ -421,428 +508,89 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
     // CCTP mint legs are the receive-side accounting event for a burn leg, not
     // a second user-initiated movement. Billing them would double-charge bridge
     // plans and disagree with the review UI/history totals.
-    let plan_total = protocol_fee_notional_from_legs(&legs);
+    let plan_total = protocol_fee_notional_from_legs(&confirmed_so_far);
     crate::modules::observability::counters::record_rebalance_succeeded(plan_total);
     ledger::settle_protocol_fee(state, rebalance_id, portfolio_id, plan_total).await?;
 
     Ok(())
 }
 
-/// Outcome of dispatching one leg: the on-chain hashes plus the real, on-chain
-/// fill of the leg's non-USDC asset (whole token units) when the executed quote
-/// can supply it. `filled_qty` is the source of truth for the holdings
-/// writeback — `None` falls back to the price-derived estimate (mock mode, or a
-/// cross-chain hook swap whose destination fill isn't known pre-execution).
-struct LegDispatch {
-    tx_hash: String,
-    cctp_hash: Option<String>,
-    filled_qty: Option<f64>,
-}
-
-/// The non-USDC symbol a swap leg trades, if any. A local swap is always
-/// token↔USDC, so the traded asset is whichever side isn't USDC. Returns `None`
-/// for a degenerate USDC-only leg (nothing to gate).
-fn swap_traded_symbol<'a>(
-    dest_symbol: Option<&'a str>,
-    src_symbol: Option<&'a str>,
-) -> Option<&'a str> {
-    let dest = dest_symbol.unwrap_or_default();
-    let src = src_symbol.unwrap_or_default();
-    let traded = if dest.eq_ignore_ascii_case("USDC") {
-        src
-    } else {
-        dest
-    };
-    (!traded.is_empty() && !traded.eq_ignore_ascii_case("USDC")).then_some(traded)
-}
-
-async fn dispatch(
-    state: &AppState,
-    rebalance_id: Uuid,
-    kind: LegKind,
-    leg: &LegRow,
-    user_id: Uuid,
-) -> Result<LegDispatch> {
-    let _ = rebalance_id;
-    let caps = RuntimeCapabilities::from_config(&state.config);
-
-    // Opt-in mock mode (tests/CI/offline dev): simulate every leg with a
-    // clearly-labelled mock receipt. Unreachable when running against real
-    // APIs, so a synthetic hash can never stand in for a real transaction.
-    if !caps.real_mode {
-        let r = adapters::mock_receipt(kind, leg.id);
-        return Ok(LegDispatch {
-            tx_hash: r.tx_hash,
-            cctp_hash: None,
-            filled_qty: None,
-        });
-    }
-
-    // Bulletproof execution guard: never quote/swap into a token that isn't on
-    // the live executable set right now. The planner already folds
-    // non-executable sleeves into USDC, but a stale/reused `planned` rebalance,
-    // a sleeve whose rail went away, or any future code path could otherwise
-    // feed e.g. a `USDC→EURC` leg to the AMM and revert ("no pool with
-    // liquidity"). Fail closed here with a clear reason instead.
-    if matches!(kind, LegKind::LocalSwap) {
-        if let Some(traded) =
-            swap_traded_symbol(leg.dest_symbol.as_deref(), leg.src_symbol.as_deref())
-        {
-            let executable = executable_token_symbols(&caps, &state.config);
-            if !executable.iter().any(|e| e.eq_ignore_ascii_case(traded)) {
-                return Err(AppError::Conflict(format!(
-                    "{traded} has no executable route on its chain right now (track-only); refusing a swap that would revert"
-                )));
-            }
-        }
-    }
-
-    // Real mode: the leg must clear the route registry and (for swaps) carry a
-    // fresh on-chain quote before an `ExecutionTicket` can be minted. There is
-    // no real dispatch path without a ticket, so a fake hash cannot be produced
-    // here by construction. Blocked routes (USYC disabled, StableFX KYB-gated,
-    // missing address/feature/signer) fail closed at `mint`.
-    let mut amount_usdc_f64 = leg.amount_usdc.to_f64().unwrap_or(0.0);
-
-    // Clamp a USDC-spending leg's amount to the wallet's *live* balance on the
-    // chain it debits, before quoting/minting. Leg amounts are sized once at plan
-    // time from a Gateway snapshot; by the time a leg runs, CCTP fees on a prior
-    // bridge (minted USDC < planned), earlier spends, a stale snapshot, or an
-    // interrupted prior plan can leave less USDC than planned — Circle then
-    // rejects with INSUFFICIENT_TOKEN. Re-reading and spending min(planned, live)
-    // under-deploys at worst instead of failing the whole plan. Covers BOTH the
-    // post-bridge buy-swap and the cross-chain burn (both debit USDC from a
-    // wallet). Non-custodial (Circle) path only — that's where `fetch_chain_usdc`
-    // reflects the wallet the leg actually spends from.
-    if state.config.circle_wallet_exec {
-        let spend_chain = match kind {
-            LegKind::LocalSwap if leg.src_symbol.as_deref() == Some("USDC") => {
-                leg.dest_chain.as_deref().or(leg.src_chain.as_deref())
-            }
-            LegKind::CrossChainBurn => leg.src_chain.as_deref(),
-            _ => None,
-        }
-        .and_then(ChainKey::parse);
-        if let Some(chain) = spend_chain {
-            if let Ok(live) = crate::modules::gateway::service::fetch_chain_usdc(
-                &state.http,
-                &state.config,
-                &state.db,
-                user_id,
-                chain,
-            )
-            .await
-            {
-                let spendable = live * LIVE_BALANCE_SPEND_MARGIN;
-                if spendable < amount_usdc_f64 {
-                    tracing::info!(
-                        chain = chain.as_str(),
-                        kind = kind.as_str(),
-                        planned = amount_usdc_f64,
-                        spendable,
-                        "clamping USDC-spending leg to live balance"
-                    );
-                    amount_usdc_f64 = spendable;
-                }
-            }
-        }
-    }
-
-    let route_leg = RouteLeg::from_parts(
-        kind.as_str(),
-        leg.src_chain.clone(),
-        leg.dest_chain.clone(),
-        leg.src_symbol.clone(),
-        leg.dest_symbol.clone(),
-        amount_usdc_f64,
-    )
-    .ok_or_else(|| AppError::Internal(anyhow::anyhow!("unparsable leg kind")))?;
-
-    let now = Utc::now();
-    let src_chain = ChainKey::parse(leg.src_chain.as_deref().unwrap_or(""))
-        .or_else(|| ChainKey::parse(leg.dest_chain.as_deref().unwrap_or("")));
-    let dest_chain = ChainKey::parse(leg.dest_chain.as_deref().unwrap_or("")).or(src_chain);
-    let amount_base = (amount_usdc_f64 * 1_000_000.0) as u128;
-
-    let quote = match kind {
-        LegKind::LocalSwap => adapters::swap::quote(&state.config, &route_leg, now).await?,
-        _ => {
-            let s = src_chain.ok_or_else(|| AppError::BadRequest("missing src_chain".into()))?;
-            let d = dest_chain.ok_or_else(|| AppError::BadRequest("missing dest_chain".into()))?;
-            ValidatedQuote::cctp_one_to_one(s, d, amount_base, now)
-        }
-    };
-
-    let ticket = ExecutionTicket::mint(&caps, &state.config, leg.id, &route_leg, quote, now)
-        .map_err(|e| AppError::BadRequest(e.detail()))?;
-
-    // The real on-chain fill (from the executed quote) drives the holdings
-    // writeback. A USDC↔USDC bridge leg yields `None` here naturally.
-    let filled_qty = quote_filled_qty(ticket.quote());
-
-    match kind {
-        LegKind::CrossChainBurn => {
-            // Recipient embedded in the hook payload: where the destination
-            // RebalanceExecutor forwards the minted (and optionally swapped)
-            // funds. Non-custodial path → the user's Circle wallet on the dest
-            // chain; custodial (EOA) path → the backend signer that holds funds
-            // in motion and runs the destination swap (a synthetic/EOA user has
-            // no Circle wallet route, so the lookup would be empty).
-            let recipient = if state.config.circle_wallet_exec {
-                wallet_routes::address_for_user(
-                    &state.db,
-                    user_id,
-                    blockchain_for_chain(ticket.dest_chain()),
-                    &state.config.circle_wallet_set_id,
-                )
-                .await
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("recipient lookup: {e}")))?
-                .unwrap_or_default()
-            } else {
-                adapters::cctp::eoa_address_for(&state.config, ticket.dest_chain())
-                    .unwrap_or_default()
-            };
-            if recipient.is_empty() {
-                return Err(AppError::Internal(anyhow::anyhow!(
-                    "destination wallet address is empty; cannot route mint"
-                )));
-            }
-            // Build the hook from the planned leg. A USDC destination is a plain
-            // bridge (tokenOut == dest USDC → the RebalanceExecutor forwards the
-            // minted USDC). A non-USDC destination is a hooked swap: the
-            // destination RebalanceExecutor swaps USDC→token atomically on mint.
-            let hook = build_cross_chain_hook(
-                &state.config,
-                &recipient,
-                ticket.dest_chain(),
-                leg.dest_symbol.as_deref(),
-                leg.min_out.and_then(|d| d.to_f64()),
-                now,
-            )?;
-            let r = adapters::cctp::burn(
-                &state.config,
-                &state.http,
-                &state.db,
-                user_id,
-                &ticket,
-                &hook,
-            )
-            .await?;
-            Ok(LegDispatch {
-                tx_hash: r.tx_hash,
-                cctp_hash: r.cctp_message_hash,
-                filled_qty,
-            })
-        }
-        LegKind::CrossChainMint => {
-            // The companion burn leg already produced a tx_hash; read it back.
-            let burn_hash = sqlx::query_scalar::<_, Option<String>>(
-                "SELECT tx_hash FROM rebalance_legs
-                 WHERE rebalance_id = (SELECT rebalance_id FROM rebalance_legs WHERE id = $1)
-                   AND kind = 'cross_chain_burn'
-                   AND leg_index = $2 - 1",
-            )
-            .bind(leg.id)
-            .bind(leg.leg_index)
-            .fetch_optional(&state.db)
-            .await?
-            .flatten()
-            .unwrap_or_default();
-            let r = adapters::cctp::mint(
-                &state.config,
-                &state.http,
-                &state.db,
-                user_id,
-                &ticket,
-                &burn_hash,
-            )
-            .await?;
-            Ok(LegDispatch {
-                tx_hash: r.tx_hash,
-                cctp_hash: None,
-                filled_qty,
-            })
-        }
-        LegKind::LocalSwap => {
-            let r =
-                adapters::swap::execute(&state.config, &state.http, &state.db, user_id, &ticket)
-                    .await?;
-            Ok(LegDispatch {
-                tx_hash: r.tx_hash,
-                cctp_hash: r.cctp_message_hash,
-                filled_qty,
-            })
-        }
-        // Unreachable: USYC (disabled) and StableFX (KYB-gated) legs fail closed
-        // at `mint` above, so real dispatch never reaches them.
-        LegKind::ParkUsyc | LegKind::RedeemUsyc | LegKind::FxStablefx => {
-            Err(AppError::BadRequest("route is not executable".into()))
-        }
-    }
-}
-
-/// Build the 160-byte CCTP V2 hook payload for a cross-chain burn.
-///
-/// USDC destination (or unset symbol): tokenOut = the destination chain's USDC
-/// so the RebalanceExecutor takes its passthrough fast path (no swap, minOut
-/// irrelevant). Non-USDC destination: tokenOut = the token's destination ERC-20
-/// so the executor performs the atomic USDC→token swap on mint. `min_out` is the
-/// planner's slippage-protected target in token units, converted to base units.
-///
-/// Fails closed: a non-USDC destination with no configured ERC-20 (or an
-/// unconfigured destination USDC) returns an error rather than emitting a hook
-/// with a zero tokenOut that the hardened contract would reject/refund anyway.
-fn build_cross_chain_hook(
-    cfg: &Config,
-    recipient: &str,
-    dest_chain: ChainKey,
-    dest_symbol: Option<&str>,
-    min_out: Option<f64>,
-    now: chrono::DateTime<Utc>,
-) -> Result<crate::modules::rebalance::cross_chain::HookPayload> {
-    use crate::modules::rebalance::registry::tokens;
-
-    let deadline = (now.timestamp() + 600) as u64;
-    let symbol = dest_symbol.unwrap_or(tokens::USDC);
-
-    if symbol.eq_ignore_ascii_case(tokens::USDC) {
-        // Plain USDC bridge — tokenOut is the destination USDC; the executor
-        // forwards it directly. minOut is unused on the passthrough path.
-        let usdc = tokens::token(tokens::USDC)
-            .and_then(|t| t.address_for(cfg, dest_chain))
-            .ok_or_else(|| {
-                AppError::Internal(anyhow::anyhow!(
-                    "USDC address unconfigured on {dest_chain:?}; cannot route bridge hook"
-                ))
-            })?;
-        return Ok(build_hook_payload(recipient, usdc, 3000, 0, deadline));
-    }
-
-    let spec = tokens::token(symbol)
-        .ok_or_else(|| AppError::BadRequest(format!("unknown destination token {symbol}")))?;
-    let token_addr = spec.address_for(cfg, dest_chain).ok_or_else(|| {
-        AppError::BadRequest(format!(
-            "{symbol} has no configured ERC-20 on {dest_chain:?}; cross-chain swap cannot route"
-        ))
-    })?;
-
-    // Planner min_out is in whole token units; the contract compares against the
-    // raw on-chain amount, so scale by the token's decimals. Default to 0 when
-    // the planner could not price the leg (the contract still refunds on a real
-    // slippage miss, but a priced min_out is the first line of defense).
-    let min_out_base = min_out
-        .filter(|m| m.is_finite() && *m > 0.0)
-        .map(|m| (m * 10f64.powi(spec.decimals as i32)) as u128)
-        .unwrap_or(0);
-
-    Ok(build_hook_payload(
-        recipient,
-        token_addr,
-        3000,
-        min_out_base,
-        deadline,
-    ))
-}
-
 #[cfg(test)]
-mod tests {
-    use chrono::Utc;
+mod dependency_tests {
+    use rust_decimal::prelude::{FromPrimitive, ToPrimitive};
 
-    use crate::config::Config;
-    use crate::error::AppError;
-    use crate::modules::rebalance::models::ChainKey;
+    use crate::modules::rebalance::models::LegKind;
 
-    use super::{build_cross_chain_hook, swap_traded_symbol};
+    use super::{
+        leg_with_executed_amount,
+        legs::test_helpers::{make_leg, make_swap_leg},
+        stranding::protocol_fee_notional_from_legs,
+        topological_leg_order,
+    };
 
     #[test]
-    fn swap_traded_symbol_picks_the_non_usdc_side() {
-        // Buy: USDC -> EURC  ⇒ traded asset is EURC.
-        assert_eq!(swap_traded_symbol(Some("EURC"), Some("USDC")), Some("EURC"));
-        // Sell: ETH -> USDC  ⇒ traded asset is ETH.
-        assert_eq!(swap_traded_symbol(Some("USDC"), Some("ETH")), Some("ETH"));
-        // Degenerate USDC-only / missing sides ⇒ nothing to gate.
-        assert_eq!(swap_traded_symbol(Some("USDC"), Some("USDC")), None);
-        assert_eq!(swap_traded_symbol(None, None), None);
-    }
+    fn topological_order_respects_explicit_dependencies() {
+        let mut burn = make_leg(LegKind::CrossChainBurn, 100.0);
+        burn.leg_index = 10;
+        let mut mint = make_leg(LegKind::CrossChainMint, 100.0);
+        mint.leg_index = 20;
+        mint.depends_on = vec![10];
 
-    fn hook_cfg() -> Config {
-        let mut cfg = crate::config::test_config();
-        cfg.chains[ChainKey::Base.index()].usdc =
-            "0x036CbD53842c5426634e7929541eC2318f3dCF7e".into();
-        cfg.set_token_address(
-            "ETH",
-            ChainKey::Base,
-            "0x4200000000000000000000000000000000000006",
+        let order = topological_leg_order(&[mint, burn]).expect("valid DAG");
+        assert_eq!(
+            order,
+            vec![1, 0],
+            "burn position must precede mint position"
         );
-        cfg
     }
 
     #[test]
-    fn cross_chain_hook_usdc_dest_uses_passthrough() {
-        let cfg = hook_cfg();
-        let hook = build_cross_chain_hook(
-            &cfg,
-            "0xRecipient",
-            ChainKey::Base,
-            Some("USDC"),
-            None,
-            Utc::now(),
-        )
-        .unwrap();
-        // tokenOut == dest USDC → contract takes the passthrough fast path.
-        assert_eq!(hook.token_out, cfg.chain(ChainKey::Base).usdc);
-        assert_eq!(hook.min_out, 0);
+    fn topological_order_rejects_missing_dependencies() {
+        let mut mint = make_leg(LegKind::CrossChainMint, 100.0);
+        mint.leg_index = 1;
+        mint.depends_on = vec![999];
+
+        let err = topological_leg_order(&[mint]).expect_err("missing dep must fail closed");
+        assert!(
+            format!("{err}").contains("missing leg 999"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
-    fn cross_chain_hook_none_symbol_defaults_to_usdc() {
-        let cfg = hook_cfg();
-        let hook =
-            build_cross_chain_hook(&cfg, "0xR", ChainKey::Base, None, None, Utc::now()).unwrap();
-        assert_eq!(hook.token_out, cfg.chain(ChainKey::Base).usdc);
+    fn topological_order_rejects_cycles() {
+        let mut a = make_leg(LegKind::LocalSwap, 100.0);
+        a.leg_index = 1;
+        a.depends_on = vec![2];
+        let mut b = make_leg(LegKind::LocalSwap, 100.0);
+        b.leg_index = 2;
+        b.depends_on = vec![1];
+
+        let err = topological_leg_order(&[a, b]).expect_err("cycle must fail closed");
+        assert!(
+            format!("{err}").contains("cycle"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
-    fn cross_chain_hook_volatile_dest_uses_token_and_scales_min_out() {
-        let cfg = hook_cfg();
-        // ETH = 18 decimals; planner min_out of 0.5 ETH → 5e17 base units.
-        let hook = build_cross_chain_hook(
-            &cfg,
-            "0xR",
-            ChainKey::Base,
-            Some("ETH"),
-            Some(0.5),
-            Utc::now(),
-        )
-        .unwrap();
-        assert_eq!(hook.token_out, "0x4200000000000000000000000000000000000006");
-        assert_eq!(hook.min_out, 500_000_000_000_000_000);
-        assert_eq!(hook.pool_fee, 3000);
-    }
+    fn executed_amount_replaces_planned_amount_for_confirmed_accounting() {
+        let planned_burn = make_leg(LegKind::CrossChainBurn, 100.0);
+        let planned_mint = make_leg(LegKind::CrossChainMint, 100.0);
+        let planned_swap = make_swap_leg("USDC", "ETH");
+        let actual = rust_decimal::Decimal::from_f64(87.5).unwrap();
 
-    #[test]
-    fn cross_chain_hook_fails_closed_without_dest_erc20() {
-        let mut cfg = hook_cfg();
-        cfg.set_token_address("ETH", ChainKey::Base, "");
-        let err = build_cross_chain_hook(
-            &cfg,
-            "0xR",
-            ChainKey::Base,
-            Some("ETH"),
-            Some(0.5),
-            Utc::now(),
-        )
-        .unwrap_err();
-        assert!(matches!(err, AppError::BadRequest(_)));
-    }
+        let burn = leg_with_executed_amount(&planned_burn, actual);
+        let mint = leg_with_executed_amount(&planned_mint, actual);
+        let swap = leg_with_executed_amount(&planned_swap, actual);
 
-    #[test]
-    fn cross_chain_hook_missing_min_out_defaults_to_zero() {
-        let cfg = hook_cfg();
-        let hook =
-            build_cross_chain_hook(&cfg, "0xR", ChainKey::Base, Some("ETH"), None, Utc::now())
-                .unwrap();
-        assert_eq!(hook.token_out, "0x4200000000000000000000000000000000000006");
-        assert_eq!(hook.min_out, 0);
+        assert_eq!(burn.amount_usdc.to_f64(), Some(87.5));
+        assert_eq!(mint.amount_usdc.to_f64(), Some(87.5));
+        assert_eq!(swap.amount_usdc.to_f64(), Some(87.5));
+        assert_eq!(
+            protocol_fee_notional_from_legs(&[burn, mint, swap]),
+            175.0,
+            "confirmed accounting must bill the executed burn+swap, not the original planned 100+100"
+        );
     }
 }

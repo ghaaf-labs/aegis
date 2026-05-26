@@ -30,7 +30,7 @@ use aegis_api::{
     modules::{
         ai::PromptRegistry,
         rebalance::{
-            executor::{approve_and_execute, create_plan},
+            executor::{approve_and_execute, replace_planned_review},
             models::{ChainKey, PlanInput},
             planner::plan_legs,
         },
@@ -172,6 +172,7 @@ async fn main() -> anyhow::Result<()> {
     let input = PlanInput {
         portfolio_value_usd: total_value_usd,
         current_weights,
+        sell_sources: HashMap::new(),
         target_weights,
         usdc_per_chain,
         drift_threshold: 0.05,
@@ -202,7 +203,7 @@ async fn main() -> anyhow::Result<()> {
     .await?;
     info!(%decision_id, "anchored agent decision");
 
-    let rebalance_id = create_plan(&state, portfolio_id, decision_id, &legs).await?;
+    let rebalance_id = replace_planned_review(&state, portfolio_id, decision_id, &legs).await?;
     println!();
     println!("rebalance_id = {rebalance_id}");
 

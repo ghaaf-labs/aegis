@@ -1,18 +1,22 @@
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::error::Result;
+use rust_decimal::prelude::ToPrimitive;
+
+use crate::error::{AppError, Result};
 use crate::modules::rebalance::{
-    executor::create_plan,
+    executor::replace_planned_review,
     models::{PlanInput, PlannedLeg},
-    planner::plan_legs,
 };
 use crate::router::AppState;
 
 use super::{
     approval::{approval_safety, ApprovalSafety},
     plan_input::build_plan_input,
-    shared::reusable_planned_rebalance,
+    shared::{
+        ensure_no_active_execution, reusable_planned_rebalance, route_shaped_plan,
+        stamp_routable_snapshot,
+    },
 };
 
 /// Outcome of the auto-pilot plan preparation. `NoOp` ⇒ nothing to move
@@ -36,34 +40,82 @@ pub async fn prepare_autonomous_plan(
     state: &AppState,
     portfolio_id: Uuid,
 ) -> Result<AutonomousPlan> {
-    let input = build_plan_input(state, portfolio_id).await?;
-    let legs = plan_legs(&input);
+    match ensure_no_active_execution(state, portfolio_id).await {
+        Ok(()) => {}
+        Err(AppError::Conflict(message)) => {
+            tracing::info!(
+                portfolio_id = %portfolio_id,
+                reason = %message,
+                "skipping autonomous rebalance while another plan is executing"
+            );
+            return Ok(AutonomousPlan::NoOp);
+        }
+        Err(e) => return Err(e),
+    }
+
+    // Auto-pilot plans only the executable legs; deferred sleeves stay as USDC
+    // reserve (the `create` handler surfaces them to the user, the scheduler
+    // does not need them).
+    let (input, _deferred) = build_plan_input(state, portfolio_id).await?;
+    let user_id = portfolio_id_user(state, portfolio_id).await?;
+    let shaped = match route_shaped_plan(state, user_id, input).await {
+        Ok(shaped) => shaped,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                portfolio_id = %portfolio_id,
+                "live route assessment failed while preparing autonomous plan"
+            );
+            return Ok(AutonomousPlan::NoOp);
+        }
+    };
+    if shaped.blocked_message.is_some() {
+        return Ok(AutonomousPlan::NoOp);
+    }
+    let input = shaped.input;
+    let legs = shaped.legs;
     if legs.is_empty() {
         // On-target or sub-$5 dust — the planner drops it. Nothing to execute.
         return Ok(AutonomousPlan::NoOp);
     }
 
-    let rebalance_id =
-        if let Some(existing) = reusable_planned_rebalance(state, portfolio_id, &legs).await? {
-            existing.rebalance_id
+    let rebalance_id = if let Some(existing) =
+        reusable_planned_rebalance(state, portfolio_id, &legs).await?
+    {
+        existing.rebalance_id
+    } else {
+        // Auto-pilot is a real-execution control path; record the same
+        // deterministic planner decision the manual `create` route does so the
+        // approval-safety gate (which rejects mock/legacy decisions in real
+        // mode) accepts it.
+        let decision = if state.config.execution_mock || state.config.circle_mock {
+            mock_agent_decision(state, portfolio_id).await?
         } else {
-            // Auto-pilot is a real-execution control path; record the same
-            // deterministic planner decision the manual `create` route does so the
-            // approval-safety gate (which rejects mock/legacy decisions in real
-            // mode) accepts it.
-            let decision = if state.config.execution_mock || state.config.circle_mock {
-                mock_agent_decision(state, portfolio_id).await?
-            } else {
-                planner_agent_decision(state, portfolio_id, &input, &legs).await?
-            };
-            create_plan(state, portfolio_id, decision.id, &legs).await?
+            planner_agent_decision(state, portfolio_id, &input, &legs).await?
         };
+        let rebalance_id = replace_planned_review(state, portfolio_id, decision.id, &legs).await?;
+        // INV-6 must hold for auto-pilot too: bind the freshly-created plan
+        // to its routability so the scheduler's approval gate refuses it if a
+        // rail flipped Ready⇄track-only after planning (manual `create` does
+        // the same). Reused plans keep the hash from their own creation.
+        stamp_routable_snapshot(state, rebalance_id, &input.prices, &legs).await?;
+        rebalance_id
+    };
 
     let safety = approval_safety(state, rebalance_id).await?;
     Ok(AutonomousPlan::Prepared {
         rebalance_id,
         safety,
     })
+}
+
+async fn portfolio_id_user(state: &AppState, portfolio_id: Uuid) -> Result<Uuid> {
+    Ok(
+        sqlx::query_scalar("SELECT user_id FROM portfolios WHERE id = $1")
+            .bind(portfolio_id)
+            .fetch_one(&state.db)
+            .await?,
+    )
 }
 
 /// Insert a canned agent decision for mock-backed local/demo mode. Lets the
@@ -144,11 +196,6 @@ pub(super) async fn planner_agent_decision(
         "expectedImpact": { "riskDelta": 0.0, "diversificationScore": 0.5 }
     });
     let invested_value_usd = (input.portfolio_value_usd - idle_usdc).max(0.0);
-    let critic_verdict = json!({
-        "verdict": "approved",
-        "notes": "Deterministic planner matched confirmed holdings, target weights, and Gateway balances; approval remains the final execution gate.",
-        "confidence": 0.92
-    });
     let decision = sqlx::query_as(
         r#"INSERT INTO agent_decisions
            (id, portfolio_id, reasoning, recommendation, confidence,
@@ -162,14 +209,14 @@ pub(super) async fn planner_agent_decision(
     .bind(portfolio_id)
     .bind(reasoning)
     .bind(&rec)
-    .bind(0.92_f64)
+    .bind(1.0_f64)
     .bind("user_request")
     .bind("aegis/rebalance-planner-v1")
     .bind("neutral")
     .bind(0_i32)
     .bind(0_i32)
     .bind(0_i32)
-    .bind(critic_verdict)
+    .bind(None::<serde_json::Value>)
     .bind(json!({
         "planner": "deterministic",
         "legs": legs.len(),
@@ -178,7 +225,7 @@ pub(super) async fn planner_agent_decision(
         "portfolioValueUsd": input.portfolio_value_usd,
         "idleUsdc": idle_usdc
     }))
-    .bind(0.92_f64)
+    .bind(None::<f64>)
     .bind(None::<f64>)
     .bind(Some("If drift or idle cash changes, the deterministic planner will build a different approval plan.".to_string()))
     .fetch_one(&state.db)
@@ -197,13 +244,14 @@ pub(super) fn planned_trade(input: &PlanInput, leg: &PlannedLeg) -> Option<serde
         _ => return None,
     };
     let price = input.prices.get(symbol).copied().unwrap_or(1.0).max(0.01);
-    let quantity = leg.amount_usdc / price;
+    let value_usd = leg.amount_usdc.to_f64().unwrap_or(0.0);
+    let quantity = value_usd / price;
     Some(json!({
         "assetId": symbol,
         "symbol": symbol,
         "action": action,
         "quantity": quantity,
-        "valueUsd": leg.amount_usdc,
+        "valueUsd": value_usd,
         "reason": format!("{} on {}", leg.kind.as_str(), leg.dest_chain.or(leg.src_chain).map(|c| c.as_str()).unwrap_or("gateway"))
     }))
 }
@@ -237,17 +285,18 @@ pub(super) fn plan_route_surface(legs: &[PlannedLeg]) -> String {
 mod tests {
     use super::*;
 
-    use crate::modules::rebalance::models::{ChainKey, LegKind, PlannedLeg};
+    use crate::modules::rebalance::models::{decimal_usd, ChainKey, LegKind, PlannedLeg};
 
     fn planned_leg(kind: LegKind, chain: ChainKey) -> PlannedLeg {
         PlannedLeg {
             leg_index: 0,
+            deps: vec![],
             kind,
             src_chain: Some(chain),
             dest_chain: Some(chain),
             src_symbol: Some("USDC".into()),
             dest_symbol: Some("ETH".into()),
-            amount_usdc: 10.0,
+            amount_usdc: decimal_usd(10.0),
             min_out: None,
         }
     }

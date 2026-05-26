@@ -9,6 +9,8 @@ use chrono::{DateTime, Duration, Utc};
 #[cfg(feature = "real-swap")]
 use crate::config::Config;
 #[cfg(feature = "real-swap")]
+use crate::domain::units::usdc_to_base_units;
+#[cfg(feature = "real-swap")]
 use crate::error::{AppError, Result};
 
 #[cfg(feature = "real-swap")]
@@ -22,7 +24,8 @@ use super::super::RealReceipt;
 #[cfg(feature = "real-swap")]
 use super::{
     best_buy_tier, best_sell_tier, swap_addresses, swap_direction, swap_venue, CircleSwapArgs,
-    IQuoterV2, ISwapRouter02, LbSwapArgs, SwapDir, SwapVenue, FEE_TIERS, POOL_FEE, SLIPPAGE_BPS,
+    ExactInputSellQuote, IQuoterV2, ISwapRouter02, LbSwapArgs, SwapDir, SwapVenue, FEE_TIERS,
+    POOL_FEE, SLIPPAGE_BPS,
 };
 
 #[cfg(feature = "real-swap")]
@@ -34,7 +37,7 @@ pub(super) async fn real_quote_buy(
     now: DateTime<Utc>,
 ) -> Result<ValidatedQuote> {
     let (usdc, token, _router, quoter) = swap_addresses(cfg, chain, token_symbol)?;
-    let amount_in = (amount_usdc * 1_000_000.0) as u128;
+    let amount_in = usdc_to_base_units(amount_usdc);
 
     let provider = ProviderBuilder::new().connect_http(
         cfg.chain(chain)
@@ -106,7 +109,7 @@ pub(super) async fn real_quote_sell(
     let (usdc, token, _router, quoter) = swap_addresses(cfg, chain, token_symbol)?;
     // Realize ~`amount_usdc` of USDC; size the sell by exact-output so we never
     // need the token's spot price.
-    let amount_out_usdc = (amount_usdc * 1_000_000.0) as u128;
+    let amount_out_usdc = usdc_to_base_units(amount_usdc);
 
     let provider = ProviderBuilder::new().connect_http(
         cfg.chain(chain)
@@ -163,6 +166,78 @@ pub(super) async fn real_quote_sell(
         deadline: (now + Duration::seconds(600)).timestamp() as u64,
         provider: "uniswap-v3".into(),
         fee_tier: Some(fee_tier),
+    })
+}
+
+#[cfg(feature = "real-swap")]
+pub(super) async fn real_quote_sell_exact_input(
+    cfg: &Config,
+    chain: ChainKey,
+    token_symbol: &str,
+    amount_in_token: u128,
+    now: DateTime<Utc>,
+) -> Result<ExactInputSellQuote> {
+    if amount_in_token == 0 {
+        return Err(AppError::BadRequest(
+            "exact-input sell amount must be greater than zero".into(),
+        ));
+    }
+
+    let (usdc, token, _router, quoter) = swap_addresses(cfg, chain, token_symbol)?;
+    let provider = ProviderBuilder::new().connect_http(
+        cfg.chain(chain)
+            .rpc_url
+            .parse()
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("bad rpc url: {e}")))?,
+    );
+    let q = IQuoterV2::new(quoter, &provider);
+
+    let mut quotes: Vec<(u32, u128)> = Vec::new();
+    let mut last_err: Option<String> = None;
+    for &fee in &FEE_TIERS {
+        let params = IQuoterV2::QuoteExactInputSingleParams {
+            tokenIn: token,
+            tokenOut: usdc,
+            amountIn: U256::from(amount_in_token),
+            fee: fee.try_into().expect("fee fits uint24"),
+            sqrtPriceLimitX96: alloy::primitives::Uint::<160, 3>::ZERO,
+        };
+        match q.quoteExactInputSingle(params).call().await {
+            Ok(out) => match out.amountOut.try_into() {
+                Ok(amount_out) => quotes.push((fee, amount_out)),
+                Err(_) => last_err = Some(format!("amountOut overflow on fee {fee}")),
+            },
+            Err(e) => last_err = Some(e.to_string()),
+        }
+    }
+
+    let (fee_tier, amount_out_usdc) = best_buy_tier(&quotes).ok_or_else(|| {
+        AppError::Internal(anyhow::anyhow!(
+            "no Uniswap V3 pool with liquidity for exact-input {token_symbol}→USDC on {} across fee tiers {FEE_TIERS:?}{}",
+            chain.as_str(),
+            last_err.map(|e| format!(" (last error: {e})")).unwrap_or_default(),
+        ))
+    })?;
+    let min_out = amount_out_usdc.saturating_mul((10_000 - SLIPPAGE_BPS) as u128) / 10_000;
+
+    Ok(ExactInputSellQuote {
+        quote: ValidatedQuote {
+            quote_id: uuid::Uuid::new_v4(),
+            issued_at: now,
+            expires_at: now + Duration::seconds(MAX_QUOTE_TTL_SECS),
+            src_token: token_symbol.to_string(),
+            dest_token: "USDC".into(),
+            src_chain: chain,
+            dest_chain: chain,
+            amount_in: amount_in_token,
+            min_out: min_out.max(1),
+            expected_asset_units: amount_in_token,
+            slippage_bps: SLIPPAGE_BPS,
+            deadline: (now + Duration::seconds(600)).timestamp() as u64,
+            provider: "uniswap-v3".into(),
+            fee_tier: Some(fee_tier),
+        },
+        expected_usdc_units: amount_out_usdc,
     })
 }
 

@@ -1,4 +1,5 @@
 use rust_decimal::prelude::ToPrimitive;
+use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::modules::rebalance::models::{ChainKey, LegKind};
@@ -74,18 +75,14 @@ pub(super) fn leg_strands_funds_on_failure(
 ) -> bool {
     match kind {
         // Plain-bridge baseline: burn → mint → local swap. The mint is the leg
-        // that *lands* the destination USDC, so a same-chain swap strands its
-        // input USDC only when a companion `CrossChainMint` already confirmed on
-        // this swap's chain. Without that preceding bridge, a revert returns the
-        // USDC atomically — nothing stranded. (Pairs by chain to the same mint
-        // `pending_funding_dependency` waits on.)
+        // that *lands* the destination USDC, so a swap only strands funds when it
+        // explicitly depends on a confirmed mint for the same chain. Independent
+        // same-chain swaps revert atomically and leave no bridged cash stranded.
         LegKind::LocalSwap => {
             let chain = leg.src_chain.as_deref().and_then(ChainKey::parse);
-            chain.is_some()
-                && prior_confirmed.iter().any(|l| {
-                    l.kind == LegKind::CrossChainMint.as_str()
-                        && l.dest_chain.as_deref().and_then(ChainKey::parse) == chain
-                })
+            chain.is_some_and(|chain| {
+                depends_on_confirmed_mint_to_chain(leg, prior_confirmed, chain)
+            })
         }
         // A failed mint means the destination USDC never landed (it's still in
         // CCTP transit, recoverable by re-mint via the existing attestation), and
@@ -106,7 +103,8 @@ pub(super) fn leg_strands_funds_on_failure(
 /// new USDC, so a swap that spends it would fail closed.
 ///
 /// Pure (DB-free) so the dependency decision is unit-testable. Returns `None`
-/// when the leg doesn't spend USDC or no prior mint targeted its spend chain.
+/// when the leg doesn't spend USDC or no explicit mint dependency targeted its
+/// spend chain.
 pub(super) fn pending_funding_dependency(
     leg: &LegRow,
     confirmed: &[LegRow],
@@ -116,14 +114,18 @@ pub(super) fn pending_funding_dependency(
         return None;
     }
     let spend_chain = leg.src_chain.as_deref().and_then(ChainKey::parse)?;
-    let delivered_here = confirmed.iter().any(|c| {
-        c.kind == LegKind::CrossChainMint.as_str()
-            && c.dest_chain.as_deref().and_then(ChainKey::parse) == Some(spend_chain)
-    });
-    if !delivered_here {
+    if !depends_on_confirmed_mint_to_chain(leg, confirmed, spend_chain) {
         return None;
     }
     Some((spend_chain, leg.amount_usdc.to_f64().unwrap_or(0.0)))
+}
+
+fn depends_on_confirmed_mint_to_chain(leg: &LegRow, confirmed: &[LegRow], chain: ChainKey) -> bool {
+    confirmed.iter().any(|c| {
+        c.kind == LegKind::CrossChainMint.as_str()
+            && leg.depends_on.contains(&c.leg_index)
+            && c.dest_chain.as_deref().and_then(ChainKey::parse) == Some(chain)
+    })
 }
 
 pub(super) fn protocol_fee_notional_from_legs(legs: &[LegRow]) -> f64 {
@@ -150,16 +152,20 @@ pub(super) fn idempotency_key_for_leg(
     kind: &str,
     src_symbol: Option<&str>,
     dest_symbol: Option<&str>,
-    amount_usdc: f64,
+    amount_usdc: Decimal,
 ) -> String {
     let src = src_symbol.unwrap_or("none");
     let dest = dest_symbol.unwrap_or("none");
-    let rounded_cents = (amount_usdc * 100.0).round() as i64;
+    let rounded_cents = (amount_usdc * Decimal::from(100))
+        .round()
+        .to_i64()
+        .unwrap_or(0);
     format!("{rebalance_id}:{leg_index}:{kind}:{src}>{dest}:{rounded_cents}")
 }
 
 #[cfg(test)]
 mod tests {
+    use rust_decimal::prelude::FromPrimitive;
     use uuid::Uuid;
 
     use crate::modules::rebalance::models::{ChainKey, LegKind};
@@ -172,6 +178,10 @@ mod tests {
             dest_symbol: dest.to_string(),
             amount_usdc: amount,
         }
+    }
+
+    fn usd(amount: f64) -> Decimal {
+        Decimal::from_f64(amount).unwrap()
     }
 
     #[test]
@@ -201,8 +211,8 @@ mod tests {
     #[test]
     fn idempotency_key_is_deterministic_for_same_leg() {
         let id = Uuid::new_v4();
-        let a = idempotency_key_for_leg(id, 2, "local_swap", Some("USDC"), Some("ETH"), 600.0);
-        let b = idempotency_key_for_leg(id, 2, "local_swap", Some("USDC"), Some("ETH"), 600.0);
+        let a = idempotency_key_for_leg(id, 2, "local_swap", Some("USDC"), Some("ETH"), usd(600.0));
+        let b = idempotency_key_for_leg(id, 2, "local_swap", Some("USDC"), Some("ETH"), usd(600.0));
         assert_eq!(a, b, "same logical leg must derive the same key");
         assert_eq!(a, format!("{id}:2:local_swap:USDC>ETH:60000"));
     }
@@ -212,8 +222,10 @@ mod tests {
         // A price re-fetch nudges the notional by a fraction of a cent on a
         // resume; the rounded key must still match so we don't double-submit.
         let id = Uuid::new_v4();
-        let a = idempotency_key_for_leg(id, 0, "local_swap", Some("USDC"), Some("BTC"), 600.001);
-        let b = idempotency_key_for_leg(id, 0, "local_swap", Some("USDC"), Some("BTC"), 599.999);
+        let a =
+            idempotency_key_for_leg(id, 0, "local_swap", Some("USDC"), Some("BTC"), usd(600.001));
+        let b =
+            idempotency_key_for_leg(id, 0, "local_swap", Some("USDC"), Some("BTC"), usd(599.999));
         assert_eq!(a, b, "sub-cent drift must collapse to the same key");
     }
 
@@ -221,38 +233,46 @@ mod tests {
     fn idempotency_key_differs_across_legs_and_plans() {
         let id1 = Uuid::new_v4();
         let id2 = Uuid::new_v4();
-        let base = idempotency_key_for_leg(id1, 0, "local_swap", Some("USDC"), Some("ETH"), 100.0);
+        let base =
+            idempotency_key_for_leg(id1, 0, "local_swap", Some("USDC"), Some("ETH"), usd(100.0));
         // Different leg index.
         assert_ne!(
             base,
-            idempotency_key_for_leg(id1, 1, "local_swap", Some("USDC"), Some("ETH"), 100.0)
+            idempotency_key_for_leg(id1, 1, "local_swap", Some("USDC"), Some("ETH"), usd(100.0))
         );
         // Different kind.
         assert_ne!(
             base,
-            idempotency_key_for_leg(id1, 0, "cross_chain_burn", Some("USDC"), Some("ETH"), 100.0)
+            idempotency_key_for_leg(
+                id1,
+                0,
+                "cross_chain_burn",
+                Some("USDC"),
+                Some("ETH"),
+                usd(100.0)
+            )
         );
         // Different token pair.
         assert_ne!(
             base,
-            idempotency_key_for_leg(id1, 0, "local_swap", Some("USDC"), Some("BTC"), 100.0)
+            idempotency_key_for_leg(id1, 0, "local_swap", Some("USDC"), Some("BTC"), usd(100.0))
         );
         // Different amount (≥ 1 cent).
         assert_ne!(
             base,
-            idempotency_key_for_leg(id1, 0, "local_swap", Some("USDC"), Some("ETH"), 100.5)
+            idempotency_key_for_leg(id1, 0, "local_swap", Some("USDC"), Some("ETH"), usd(100.5))
         );
         // Different rebalance.
         assert_ne!(
             base,
-            idempotency_key_for_leg(id2, 0, "local_swap", Some("USDC"), Some("ETH"), 100.0)
+            idempotency_key_for_leg(id2, 0, "local_swap", Some("USDC"), Some("ETH"), usd(100.0))
         );
     }
 
     #[test]
     fn idempotency_key_handles_missing_symbols() {
         let id = Uuid::new_v4();
-        let k = idempotency_key_for_leg(id, 3, "cross_chain_mint", None, None, 250.0);
+        let k = idempotency_key_for_leg(id, 3, "cross_chain_mint", None, None, usd(250.0));
         assert_eq!(k, format!("{id}:3:cross_chain_mint:none>none:25000"));
     }
 
@@ -262,7 +282,8 @@ mod tests {
     fn dependent_swap_waits_for_minted_usdc_on_same_chain() {
         // Mint delivered USDC to Base; the next leg is a USDC→ETH swap on Base.
         let confirmed = vec![make_mint_leg(ChainKey::Base, 40.0)];
-        let dep = make_swap_leg("USDC", "ETH"); // Base→Base, amount 600
+        let mut dep = make_swap_leg("USDC", "ETH"); // Base→Base, amount 600
+        dep.depends_on = vec![1];
         assert_eq!(
             pending_funding_dependency(&dep, &confirmed),
             Some((ChainKey::Base, 600.0))
@@ -288,6 +309,14 @@ mod tests {
     }
 
     #[test]
+    fn independent_same_chain_swap_does_not_wait_for_unrelated_mint() {
+        let confirmed = vec![make_mint_leg(ChainKey::Base, 40.0)];
+        let dep = make_swap_leg("USDC", "ETH");
+
+        assert_eq!(pending_funding_dependency(&dep, &confirmed), None);
+    }
+
+    #[test]
     fn mint_failure_does_not_strand_even_after_burn() {
         // A failed mint means the destination USDC never landed (still in CCTP
         // transit, re-mintable) — a source-burn confirmation does NOT imply idle
@@ -306,8 +335,21 @@ mod tests {
         // burn → mint (confirmed on Base) → local swap on Base fails: the bridged
         // USDC is now idle cash on Base, so the swap leg strands for the replan.
         let confirmed = vec![make_mint_leg(ChainKey::Base, 600.0)];
-        let swap = make_swap_leg("USDC", "ETH"); // Base → Base
+        let mut swap = make_swap_leg("USDC", "ETH"); // Base → Base
+        swap.depends_on = vec![1];
         assert!(leg_strands_funds_on_failure(
+            LegKind::LocalSwap,
+            &swap,
+            &confirmed
+        ));
+    }
+
+    #[test]
+    fn independent_same_chain_swap_failure_after_unrelated_mint_does_not_strand() {
+        let confirmed = vec![make_mint_leg(ChainKey::Base, 600.0)];
+        let swap = make_swap_leg("USDC", "ETH");
+
+        assert!(!leg_strands_funds_on_failure(
             LegKind::LocalSwap,
             &swap,
             &confirmed

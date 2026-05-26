@@ -59,6 +59,20 @@ Circle's recovery file somewhere offline. `create` writes only
 `CIRCLE_WALLET_SET_ID` to `.env.local`; it never logs the API key or entity
 secret.
 
+### Swap venue controls
+
+Swap executability is chain-aware and requires both a token address and an
+explicit liquid-venue signal. `SWAP_LIQUID_TOKENS_{CHAIN}` is the allowlist for
+real swap planning, for example `SWAP_LIQUID_TOKENS_BASE=ETH,EURC`. If it is
+absent, the API falls back to a tiny testnet default instead of assuming every
+configured ERC-20 has a tradeable pool.
+
+`SWAP_POOL_DEPTH_USD_{CHAIN}_{SYMBOL}` is only a conservative planning-time
+cost hint for the pure routing graph. It is not live reserve data and it is not
+QuoterV2 bucket sampling. Real reviews still run the live quote gate before
+approval/execution. Invalid depth values are ignored with a warning and the
+conservative default is used.
+
 ## 3. The four pitfalls we hit live
 
 ### 3.1 OpenRouter tilde-prefix slugs crash `source .env`

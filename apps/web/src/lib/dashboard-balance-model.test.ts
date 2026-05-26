@@ -73,7 +73,7 @@ describe("deriveDashboardBalanceModel", () => {
     expect(model.matrixTotalUsd).toBeCloseTo(292.01, 2);
   });
 
-  it("values live wallet token balances with the economic ledger notional", () => {
+  it("values live wallet token balances from wallet quantity and market price", () => {
     const economicPortfolio = {
       ...portfolio(),
       totalValueUsd: 160,
@@ -105,12 +105,83 @@ describe("deriveDashboardBalanceModel", () => {
       },
     });
 
-    expect(model.investedUsd).toBeCloseTo(160, 2);
-    expect(model.netWorthUsd).toBeCloseTo(260, 2);
+    expect(model.investedUsd).toBeCloseTo(966, 2);
+    expect(model.netWorthUsd).toBeCloseTo(1066, 2);
     expect(model.matrixRows.map((row) => row.symbol)).toEqual(["ETH", "USDC"]);
     expect(
       model.tokens.find((token) => token.symbol === "ETH")?.totalUsd,
-    ).toBeCloseTo(160, 2);
+    ).toBeCloseTo(966, 2);
+  });
+
+  it("does not invent live token holdings from the stale portfolio ledger", () => {
+    const economicPortfolio = {
+      ...portfolio(),
+      totalValueUsd: 160,
+      allocations: [
+        {
+          assetId: "ETH",
+          symbol: "ETH",
+          quantity: 0.4,
+          targetWeight: 30,
+          currentWeight: 100,
+          valueUsd: 160,
+        },
+      ],
+    };
+
+    const model = deriveDashboardBalanceModel({
+      portfolio: economicPortfolio,
+      snapshot: snapshot(),
+      wallet: wallet(),
+      unifiedUsdc: 100,
+      unifiedEurc: 0,
+      perChainUsdc: { arc: 100 },
+      perChainEurc: {},
+      gatewayBalanceStatus: "ready",
+      gatewayBalanceError: null,
+      gatewayBalanceUpdatedAt: null,
+      extraTokenBalancesByChain: {},
+    });
+
+    expect(model.investedUsd).toBe(0);
+    expect(model.matrixRows.map((row) => row.symbol)).toEqual(["USDC"]);
+    expect(model.tokens.find((token) => token.symbol === "ETH")?.totalUsd).toBe(
+      0,
+    );
+  });
+
+  it("surfaces sell-only target drift even when deployable cash is zero", () => {
+    const model = deriveDashboardBalanceModel({
+      portfolio: {
+        ...portfolio(),
+        allocations: [
+          {
+            assetId: "ETH",
+            symbol: "ETH",
+            quantity: 0.5,
+            targetWeight: 20,
+            currentWeight: 100,
+            valueUsd: 1_050,
+          },
+        ],
+      },
+      snapshot: snapshot(),
+      wallet: wallet(),
+      unifiedUsdc: 0,
+      unifiedEurc: 0,
+      perChainUsdc: {},
+      perChainEurc: {},
+      gatewayBalanceStatus: "ready",
+      gatewayBalanceError: null,
+      gatewayBalanceUpdatedAt: null,
+      extraTokenBalancesByChain: {
+        base: { ETH: 0.5 },
+      },
+    });
+
+    expect(model.deployableUsd).toBe(0);
+    expect(model.hasReviewableDrift).toBe(true);
+    expect(model.status.label).toBe("Drift needs review");
   });
 });
 

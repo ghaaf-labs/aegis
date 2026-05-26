@@ -6,7 +6,34 @@ use crate::error::Result;
 use crate::modules::sse::{RebalanceLegPayload, SseEvent};
 use crate::router::AppState;
 
+use super::leg_state::LegState;
 use super::legs::LegRow;
+
+pub(super) async fn mark_leg_quoted(
+    state: &AppState,
+    rebalance_id: Uuid,
+    leg_id: Uuid,
+    user_id: Uuid,
+    leg: &LegRow,
+) -> Result<()> {
+    sqlx::query("UPDATE rebalance_legs SET leg_state = $2 WHERE id = $1")
+        .bind(leg_id)
+        .bind(LegState::Quoted.as_str())
+        .execute(&state.db)
+        .await?;
+    broadcast_leg(
+        state,
+        rebalance_id,
+        leg_id,
+        user_id,
+        leg,
+        "pending",
+        LegState::Quoted.as_str(),
+        None,
+        None,
+    );
+    Ok(())
+}
 
 pub(super) async fn mark_leg_submitted(
     state: &AppState,
@@ -16,9 +43,10 @@ pub(super) async fn mark_leg_submitted(
     leg: &LegRow,
 ) -> Result<()> {
     sqlx::query(
-        "UPDATE rebalance_legs SET status = 'submitted', submitted_at = NOW() WHERE id = $1",
+        "UPDATE rebalance_legs SET status = 'submitted', leg_state = $2, submitted_at = NOW() WHERE id = $1",
     )
     .bind(leg_id)
+    .bind(LegState::Submitted.as_str())
     .execute(&state.db)
     .await?;
     broadcast_leg(
@@ -28,6 +56,7 @@ pub(super) async fn mark_leg_submitted(
         user_id,
         leg,
         "submitted",
+        LegState::Submitted.as_str(),
         None,
         None,
     );
@@ -44,13 +73,15 @@ pub(super) async fn mark_leg_confirmed(
     cctp_hash: Option<&str>,
 ) -> Result<()> {
     sqlx::query(
-        "UPDATE rebalance_legs SET status = 'confirmed', confirmed_at = NOW(),
-                                  tx_hash = $2, cctp_message_hash = $3
+        "UPDATE rebalance_legs SET status = 'confirmed', leg_state = $4, confirmed_at = NOW(),
+                                  tx_hash = $2, cctp_message_hash = $3, amount_usdc = $5
          WHERE id = $1",
     )
     .bind(leg_id)
     .bind(tx_hash)
     .bind(cctp_hash)
+    .bind(confirmed_leg_state(&leg.kind).as_str())
+    .bind(leg.amount_usdc)
     .execute(&state.db)
     .await?;
 
@@ -61,6 +92,7 @@ pub(super) async fn mark_leg_confirmed(
         user_id,
         leg,
         "confirmed",
+        confirmed_leg_state(&leg.kind).as_str(),
         Some(tx_hash),
         None,
     );
@@ -75,11 +107,14 @@ pub(super) async fn mark_leg_failed(
     leg: &LegRow,
     reason: &str,
 ) -> Result<()> {
-    sqlx::query("UPDATE rebalance_legs SET status = 'failed', failure_reason = $2 WHERE id = $1")
-        .bind(leg_id)
-        .bind(reason)
-        .execute(&state.db)
-        .await?;
+    sqlx::query(
+        "UPDATE rebalance_legs SET status = 'failed', leg_state = $3, failure_reason = $2 WHERE id = $1",
+    )
+    .bind(leg_id)
+    .bind(reason)
+    .bind(LegState::Failed.as_str())
+    .execute(&state.db)
+    .await?;
     broadcast_leg(
         state,
         rebalance_id,
@@ -87,10 +122,27 @@ pub(super) async fn mark_leg_failed(
         user_id,
         leg,
         "failed",
+        LegState::Failed.as_str(),
         None,
         Some(reason),
     );
     Ok(())
+}
+
+/// The `leg_state` a confirmed leg records, by kind. A cross-chain transfer is
+/// three leg rows (burn → mint → acquire) in this executor, so the persisted
+/// state reflects where the funds are after each phase (the FSM funds-location
+/// model, §8/§17): a confirmed **burn** leaves funds in flight, a confirmed
+/// **mint** lands them as USDC on the destination, and only an **acquire**
+/// (local swap / USYC park / FX) reaches the target asset. This makes the
+/// per-leg state honest for cross-chain plans instead of flattening every
+/// confirmed leg to `Confirmed`.
+pub(super) fn confirmed_leg_state(kind: &str) -> LegState {
+    match kind {
+        "cross_chain_burn" => LegState::BridgeInFlight,
+        "cross_chain_mint" => LegState::BridgeLanded,
+        _ => LegState::Confirmed,
+    }
 }
 
 /// Increment the leg's submit attempt counter. Called before each network
@@ -117,11 +169,12 @@ pub(super) async fn mark_leg_stranded(
 ) -> Result<()> {
     sqlx::query(
         "UPDATE rebalance_legs
-            SET status = 'failed', stranded_asset = TRUE, failure_reason = $2
+            SET status = 'failed', stranded_asset = TRUE, leg_state = $3, failure_reason = $2
           WHERE id = $1",
     )
     .bind(leg_id)
     .bind(reason)
+    .bind(LegState::StrandedReserve.as_str())
     .execute(&state.db)
     .await?;
     broadcast_leg(
@@ -131,6 +184,7 @@ pub(super) async fn mark_leg_stranded(
         user_id,
         leg,
         "failed",
+        LegState::StrandedReserve.as_str(),
         None,
         Some(reason),
     );
@@ -145,6 +199,7 @@ pub(super) fn broadcast_leg(
     user_id: Uuid,
     leg: &LegRow,
     status: &str,
+    leg_state: &str,
     tx_hash: Option<&str>,
     failure_reason: Option<&str>,
 ) {
@@ -160,9 +215,47 @@ pub(super) fn broadcast_leg(
         dest_symbol: leg.dest_symbol.clone(),
         amount_usdc: leg.amount_usdc.to_f64().unwrap_or(0.0),
         status: status.to_string(),
+        leg_state: leg_state.to_string(),
         tx_hash: tx_hash.map(str::to_string),
         failure_reason: failure_reason.map(str::to_string),
         updated_at: Utc::now(),
     };
     let _ = state.sse.send(SseEvent::RebalanceLegUpdate(payload));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::confirmed_leg_state;
+    use crate::modules::rebalance::executor::leg_state::{FundsLocation, LegState};
+
+    #[test]
+    fn confirmed_leg_state_reflects_funds_location_by_kind() {
+        // The persisted state for a confirmed leg must match where the funds
+        // physically are (the fund-safety model), per cross-chain phase.
+        assert_eq!(
+            confirmed_leg_state("cross_chain_burn"),
+            LegState::BridgeInFlight
+        );
+        assert_eq!(
+            confirmed_leg_state("cross_chain_mint"),
+            LegState::BridgeLanded
+        );
+        assert_eq!(confirmed_leg_state("local_swap"), LegState::Confirmed);
+        assert_eq!(confirmed_leg_state("park_usyc"), LegState::Confirmed);
+
+        assert_eq!(
+            confirmed_leg_state("cross_chain_burn").funds_location(),
+            FundsLocation::InFlight,
+            "a confirmed burn has funds in flight, not at the target"
+        );
+        assert_eq!(
+            confirmed_leg_state("cross_chain_mint").funds_location(),
+            FundsLocation::Usdc,
+            "a confirmed mint has landed USDC on the destination"
+        );
+        assert_eq!(
+            confirmed_leg_state("local_swap").funds_location(),
+            FundsLocation::TargetAsset
+        );
+    }
 }

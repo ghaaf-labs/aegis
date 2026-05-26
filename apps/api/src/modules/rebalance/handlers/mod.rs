@@ -6,6 +6,7 @@
 
 mod approval;
 mod autonomous;
+mod outcome;
 mod plan_input;
 mod shared;
 
@@ -23,18 +24,16 @@ use uuid::Uuid;
 use crate::error::{AppError, Result};
 use crate::middleware::auth::Claims;
 use crate::modules::agent::{models::AnalyzeRequest, service::analyze_portfolio};
-use crate::modules::rebalance::{
-    executor::{approve_and_execute, create_plan},
-    planner::plan_legs,
-};
+use crate::modules::rebalance::executor::{approve_and_execute, replace_planned_review};
 use crate::router::AppState;
 
-use approval::{approval_safety, history_approval_safety, ApprovalSafety};
+use approval::{approval_safety, approval_safety_preview, history_approval_safety, ApprovalSafety};
+use outcome::PlanOutcome;
 use plan_input::build_plan_input;
 use shared::{
-    ensure_no_active_execution, ensure_rebalance_wallet_ready, execution_mode, noop_plan_message,
+    ensure_no_active_execution, ensure_rebalance_wallet_ready, execution_mode,
     own_portfolio_or_404, own_rebalance_or_404, plan_leg_view, rebalance_totals_by_id,
-    reusable_planned_rebalance,
+    reusable_planned_rebalance, route_shaped_plan,
 };
 
 use autonomous::{mock_agent_decision, planner_agent_decision};
@@ -72,12 +71,14 @@ pub struct PlanResponse {
 #[serde(rename_all = "camelCase")]
 pub struct PlanLegView {
     pub leg_index: i32,
+    pub deps: Vec<i32>,
     pub kind: String,
     pub src_chain: Option<String>,
     pub dest_chain: Option<String>,
     pub src_symbol: Option<String>,
     pub dest_symbol: Option<String>,
     pub amount_usdc: f64,
+    pub min_out: Option<f64>,
 }
 
 /// Build an agent decision *and* a concrete rebalance plan for that
@@ -87,17 +88,43 @@ pub async fn create(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
     Path(portfolio_id): Path<Uuid>,
-) -> Result<Json<PlanResponse>> {
+) -> Result<Json<PlanOutcome>> {
     own_portfolio_or_404(&state, claims.sub, portfolio_id).await?;
     ensure_rebalance_wallet_ready(&state, claims.sub).await?;
     ensure_no_active_execution(&state, portfolio_id).await?;
-    let input = build_plan_input(&state, portfolio_id).await?;
-    let legs = plan_legs(&input);
+    // A balance read can transiently fail (Circle Gateway slow/unavailable).
+    // That is the only `Conflict` `build_plan_input` raises — surface it as a
+    // typed, retryable 200 instead of the dead-end 409 the UI renders in red.
+    let (input, mut deferred) = match build_plan_input(&state, portfolio_id).await {
+        Ok(built) => built,
+        Err(AppError::Conflict(message)) => {
+            return Ok(Json(PlanOutcome::BalanceUnavailable { message }))
+        }
+        Err(e) => return Err(e),
+    };
+    let shaped = match route_shaped_plan(&state, claims.sub, input).await {
+        Ok(shaped) => shaped,
+        Err(e) => {
+            tracing::warn!(error = %e, "live route assessment failed while creating review plan");
+            return Ok(Json(PlanOutcome::BalanceUnavailable {
+                message: "Live route quotes are temporarily unavailable, so Aegis cannot build a real review safely. Retry once the route providers respond.".into(),
+            }));
+        }
+    };
+    let input = shaped.input;
+    let legs = shaped.legs;
+    deferred.extend(shaped.route_deferred);
+    if let Some(message) = shaped.blocked_message {
+        return Ok(Json(PlanOutcome::Blocked { message, deferred }));
+    }
     if legs.is_empty() {
-        return Err(AppError::Conflict(noop_plan_message(&input)));
+        // A no-op is not an error: classify it into a typed 200 outcome the UI
+        // renders calmly (on-target / reserve), actionably (unfunded / dust), or
+        // as `Blocked` when cash is idle only because every sleeve was deferred.
+        return Ok(Json(PlanOutcome::from_noop(&input, &deferred)));
     }
     if let Some(existing) = reusable_planned_rebalance(&state, portfolio_id, &legs).await? {
-        return Ok(Json(existing));
+        return Ok(Json(PlanOutcome::executable(existing, deferred)));
     }
     // Plan creation is an execution-control path, not a model-chat path. It
     // must stay fast in real mode so users can reach the approval screen even
@@ -109,21 +136,25 @@ pub async fn create(
     } else {
         planner_agent_decision(&state, portfolio_id, &input, &legs).await?
     };
-    let rebalance_id = create_plan(&state, portfolio_id, decision.id, &legs).await?;
+    let rebalance_id = replace_planned_review(&state, portfolio_id, decision.id, &legs).await?;
 
-    Ok(Json(PlanResponse {
+    // Bind the plan to the routability it was built against (INV-6): approval
+    // re-captures and refuses if a rail flipped Ready⇄track-only meanwhile.
+    shared::stamp_routable_snapshot(&state, rebalance_id, &input.prices, &legs).await?;
+
+    let plan = PlanResponse {
         rebalance_id,
         decision_id: decision.id,
         execution_mode: execution_mode(&state).to_string(),
         total_legs: legs.len() as i32,
         legs: legs.iter().map(plan_leg_view).collect(),
-    }))
+    };
+    Ok(Json(PlanOutcome::executable(plan, deferred)))
 }
 
 #[derive(Debug, Default, Deserialize)]
 pub struct ExecuteBody {
-    /// Optional user-provided slippage tolerance override in bps.
-    #[allow(dead_code)]
+    /// Rejected explicitly if present. Slippage is fixed in the reviewed plan.
     #[serde(default)]
     pub max_slippage_bps: Option<u32>,
 }
@@ -134,7 +165,14 @@ pub async fn execute(
     Path(rebalance_id): Path<Uuid>,
     body: Option<Json<ExecuteBody>>,
 ) -> Result<StatusCode> {
-    let _ = body; // body fields are reserved; accept missing/empty body gracefully
+    if body
+        .as_ref()
+        .is_some_and(|Json(body)| body.max_slippage_bps.is_some())
+    {
+        return Err(AppError::BadRequest(
+            "max_slippage_bps is not supported on execute; slippage protection is fixed in the reviewed plan. Build a fresh review instead.".into(),
+        ));
+    }
     own_rebalance_or_404(&state, claims.sub, rebalance_id).await?;
     ensure_rebalance_wallet_ready(&state, claims.sub).await?;
     let safety = approval_safety(&state, rebalance_id).await?;
@@ -173,6 +211,7 @@ pub struct LegView {
     pub id: Uuid,
     pub rebalance_id: Uuid,
     pub leg_index: i32,
+    pub depends_on: Vec<i32>,
     pub kind: String,
     pub src_chain: Option<String>,
     pub dest_chain: Option<String>,
@@ -180,7 +219,14 @@ pub struct LegView {
     pub dest_symbol: Option<String>,
     #[serde(with = "rust_decimal::serde::float")]
     pub amount_usdc: Decimal,
+    #[serde(with = "rust_decimal::serde::float_option")]
+    pub min_out: Option<Decimal>,
     pub status: String,
+    /// Typed FSM state (pending/submitted/bridge_in_flight/bridge_landed/
+    /// confirmed/failed/stranded_reserve/compensated_to_usdc) — lets the trace
+    /// distinguish a confirmed burn (funds in flight) from a confirmed swap
+    /// (target acquired), which the coarse `status` cannot.
+    pub leg_state: String,
     pub tx_hash: Option<String>,
     pub failure_reason: Option<String>,
     pub submitted_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -238,8 +284,8 @@ pub async fn get(
     }
 
     let legs: Vec<LegView> = sqlx::query_as(
-        "SELECT id, rebalance_id, leg_index, kind, src_chain, dest_chain,
-                src_symbol, dest_symbol, amount_usdc, status, tx_hash,
+        "SELECT id, rebalance_id, leg_index, depends_on, kind, src_chain, dest_chain,
+                src_symbol, dest_symbol, amount_usdc, min_out, status, leg_state, tx_hash,
                 failure_reason, submitted_at, confirmed_at
          FROM rebalance_legs WHERE rebalance_id = $1
          ORDER BY leg_index ASC",
@@ -248,7 +294,7 @@ pub async fn get(
     .fetch_all(&state.db)
     .await?;
 
-    let approval_safety = approval_safety(&state, rebalance_id).await?;
+    let approval_safety = approval_safety_preview(&state, rebalance_id).await?;
 
     Ok(Json(RebalanceDetail {
         plan,
@@ -304,6 +350,7 @@ mod tests {
         let empty = PlanInput {
             portfolio_value_usd: 0.0,
             current_weights: HashMap::new(),
+            sell_sources: HashMap::new(),
             target_weights: HashMap::new(),
             usdc_per_chain: HashMap::new(),
             drift_threshold: 0.05,
@@ -320,6 +367,7 @@ mod tests {
             portfolio_value_usd: 100.0,
             target_weights: current_weights.clone(),
             current_weights,
+            sell_sources: HashMap::new(),
             usdc_per_chain: HashMap::new(),
             drift_threshold: 0.05,
             dust_threshold_usd: 5.0,

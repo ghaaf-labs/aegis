@@ -19,7 +19,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
-import { agentApi, rebalanceApi } from "@/lib/api";
+import { agentApi, isExecutablePlan, rebalanceApi } from "@/lib/api";
 import { pollDecisionReady } from "@/lib/decision-poll";
 import type { AgentDecision } from "@/types";
 import { formatCurrency } from "@/lib/utils";
@@ -68,6 +68,10 @@ export function RebalanceModal({ open, onClose }: Props) {
   const [error, setError] = useState<string | null>(null);
   const analyzed = decision !== null;
   const recommendation = decision?.recommendation;
+  const deterministicTrades =
+    decision?.modelSlug === "aegis/rebalance-planner-v1"
+      ? recommendation?.trades
+      : null;
   const criticBlocked =
     decision?.criticVerdict?.demandsRevision === true ||
     decision?.criticVerdict?.verdict === "revised" ||
@@ -161,6 +165,13 @@ export function RebalanceModal({ open, onClose }: Props) {
         "Plan creation is taking longer than expected. Try again in a moment.",
         PLAN_TIMEOUT_MS,
       );
+      if (!isExecutablePlan(planned)) {
+        // Nothing to execute (on-target / reserve / unfunded / dust): surface
+        // the friendly message in place; there is no review page to open.
+        setError(planned.message);
+        setIsRebalancing(false);
+        return;
+      }
       onClose();
       router.push(`/rebalance/${planned.rebalanceId}`);
     } catch (e) {
@@ -298,8 +309,8 @@ export function RebalanceModal({ open, onClose }: Props) {
               <p className="text-xs text-text-mut font-medium uppercase tracking-wider">
                 Proposed trades
               </p>
-              {recommendation?.trades?.length ? (
-                recommendation.trades.map((trade, index) => {
+              {deterministicTrades?.length ? (
+                deterministicTrades.map((trade, index) => {
                   const rawAction = (trade as { action?: unknown }).action;
                   const action =
                     rawAction === "buy" || rawAction === "sell"
@@ -348,9 +359,8 @@ export function RebalanceModal({ open, onClose }: Props) {
                 })
               ) : (
                 <div className="p-3 rounded-sharp bg-raised border border-border-default text-xs text-text-lo">
-                  The analysis did not produce explicit trades. You can still
-                  build a review plan from the target allocation and wallet
-                  balance.
+                  Concrete trade rows are built from live wallet balances in the
+                  review plan. This commentary is not used for execution sizing.
                 </div>
               )}
             </div>
