@@ -212,7 +212,7 @@ pub(super) async fn route_shaped_plan(
     mut input: PlanInput,
 ) -> Result<RouteShapedPlan> {
     let mut frozen_deferred: Vec<DeferredTarget> = Vec::new();
-    let max_passes = input.target_weights.len() + input.sell_sources.len() + 1;
+    let max_passes = max_route_shaping_passes(&input);
     let mut plan = crate::modules::rebalance::routing::engine_plan(&state.config, &input);
 
     for _ in 0..max_passes {
@@ -237,6 +237,25 @@ pub(super) async fn route_shaped_plan(
     tracing::warn!(%user_id, "route shaping did not converge; deferring all legs");
     plan.legs.clear();
     Ok(shaped_plan(input, plan, frozen_deferred))
+}
+
+/// Upper bound on route-shaping passes. Each pass freezes at least one blocked
+/// route: a blocked buy (pinned to its current weight — one per target) or one
+/// blocked sell *chain*. Sells are frozen per-chain (`freeze_blocked_sell_source`
+/// removes a single `ByChain` entry at a time), so a multi-chain blocked symbol
+/// needs one pass per chain. Counting sell *symbols* would undercount and trip
+/// the global "defer all legs" fallback before the safe legs converge. The `+ 1`
+/// is the final clean assessment pass that confirms no blocks remain.
+fn max_route_shaping_passes(input: &PlanInput) -> usize {
+    let sell_source_slots: usize = input
+        .sell_sources
+        .values()
+        .map(|sources| match sources {
+            SellSources::ByChain(by_chain) => by_chain.len().max(1),
+            SellSources::CanonicalFallback | SellSources::Frozen => 1,
+        })
+        .sum();
+    input.target_weights.len() + sell_source_slots + 1
 }
 
 /// Assemble the final shaped plan: safe legs + the frozen sleeves and the
@@ -475,7 +494,7 @@ mod tests {
     };
 
     use super::super::outcome::DeferredTarget;
-    use super::{dedup_deferred, freeze_blocked_routes};
+    use super::{dedup_deferred, freeze_blocked_routes, max_route_shaping_passes};
 
     fn deferred(symbol: &str, weight: f64) -> DeferredTarget {
         DeferredTarget {
@@ -522,6 +541,38 @@ mod tests {
             prices: HashMap::new(),
             regime: None,
         }
+    }
+
+    #[test]
+    fn max_passes_counts_sell_sources_per_chain_not_per_symbol() {
+        // One symbol blocked across three chains must allow three freeze passes —
+        // sells are frozen one chain at a time. The old `sell_sources.len()` cap
+        // counted the symbol once, exhausting the budget and tripping the global
+        // defer-all fallback before the safe legs converged.
+        let mut input = input();
+        input.sell_sources.insert(
+            "ETH".into(),
+            SellSources::ByChain(HashMap::from([
+                (ChainKey::Base, 100.0),
+                (ChainKey::ArbSepolia, 100.0),
+                (ChainKey::AvaxFuji, 100.0),
+            ])),
+        );
+
+        // 2 target weights (ETH, cbBTC) + 3 sell chains + 1 final clean pass.
+        assert_eq!(max_route_shaping_passes(&input), 2 + 3 + 1);
+    }
+
+    #[test]
+    fn max_passes_counts_frozen_and_canonical_sources_as_one_slot_each() {
+        let mut input = input();
+        input.sell_sources.insert("ETH".into(), SellSources::Frozen);
+        input
+            .sell_sources
+            .insert("cbBTC".into(), SellSources::CanonicalFallback);
+
+        // 2 target weights + (1 + 1) single-slot sources + 1 final pass.
+        assert_eq!(max_route_shaping_passes(&input), 2 + 2 + 1);
     }
 
     #[test]
