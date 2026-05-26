@@ -423,14 +423,25 @@ fn append_consolidation_legs(
         let Some(size) = Decimal::from_f64(amount) else {
             continue;
         };
-        route_and_append(
+        // A USDC→USDC CCTP leg should always route on an execution chain, but if
+        // the engine can't build/translate it the cash simply stays put. Don't
+        // let that failure vanish silently — surface it for observability the
+        // same way the sell/buy paths log their routing misses.
+        if !route_and_append(
             graph,
             &asset(token::USDC, chain),
             &asset(token::USDC, primary),
             size,
             prices,
             out,
-        );
+        ) {
+            tracing::warn!(
+                source_chain = %chain.as_str(),
+                dest_chain = %primary.as_str(),
+                amount_usd = amount,
+                "routing engine: no consolidation route for idle USDC; leaving it in place"
+            );
+        }
     }
 }
 
