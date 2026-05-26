@@ -21,10 +21,6 @@ pub(super) struct LegRow {
     pub(super) src_symbol: Option<String>,
     pub(super) dest_symbol: Option<String>,
     pub(super) amount_usdc: Decimal,
-    /// Planner-computed minimum destination output (token units, slippage
-    /// applied). Set on CrossChainBurn hook-swap legs; `None` for plain
-    /// USDC bridges. Used to size the hook's `min_out`.
-    pub(super) min_out: Option<Decimal>,
     /// Per-leg state-machine status (`pending`/`submitted`/`confirmed`/`failed`).
     pub(super) status: String,
     /// Fine-grained funds-location state (`bridge_in_flight`, `confirmed`, ...).
@@ -140,7 +136,6 @@ pub(super) mod test_helpers {
             src_symbol: None,
             dest_symbol: None,
             amount_usdc: Decimal::from_f64(amount_usdc).unwrap_or_default(),
-            min_out: None,
             status: "pending".into(),
             leg_state: "pending".into(),
             attempt_count: 0,
@@ -158,7 +153,6 @@ pub(super) mod test_helpers {
             src_symbol: Some(src.to_string()),
             dest_symbol: Some(dest.to_string()),
             amount_usdc: Decimal::from_f64(600.0).unwrap_or_default(),
-            min_out: None,
             status: "pending".into(),
             leg_state: "pending".into(),
             attempt_count: 0,
@@ -176,7 +170,6 @@ pub(super) mod test_helpers {
             src_symbol: Some("USDC".into()),
             dest_symbol: Some("USDC".into()),
             amount_usdc: Decimal::from_f64(amount).unwrap_or_default(),
-            min_out: None,
             status: "confirmed".into(),
             leg_state: "bridge_landed".into(),
             attempt_count: 0,

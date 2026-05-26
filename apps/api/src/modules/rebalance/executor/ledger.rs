@@ -26,7 +26,7 @@ pub(super) async fn latest_spot_price(state: &AppState, symbol: &str) -> Option<
 
 pub(super) async fn latest_spot_price_with_stable_fallback(state: &AppState, symbol: &str) -> f64 {
     latest_spot_price(state, symbol).await.unwrap_or({
-        if matches!(symbol, "USYC" | "USDC" | "EURC") {
+        if matches!(symbol, "USDC" | "EURC") {
             1.0
         } else {
             0.0

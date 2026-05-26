@@ -59,7 +59,7 @@ pub(super) fn marked_allocation_value(
 
 pub(super) fn stable_planning_price(symbol: &str) -> Option<f64> {
     match symbol {
-        "USDC" | "USYC" | "EURC" => Some(1.0),
+        "USDC" | "EURC" => Some(1.0),
         _ => None,
     }
 }

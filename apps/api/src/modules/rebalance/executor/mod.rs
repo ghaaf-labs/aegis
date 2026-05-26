@@ -37,8 +37,7 @@ use crate::modules::sse::{RebalancePlanPayload, SseEvent};
 use crate::router::AppState;
 
 use leg_status::{
-    bump_attempt_count, confirmed_leg_state, mark_leg_confirmed, mark_leg_failed,
-    mark_leg_stranded, mark_leg_submitted,
+    bump_attempt_count, confirmed_leg_state, mark_leg_confirmed, mark_leg_failed, mark_leg_stranded,
 };
 use legs::{parse_kind, LegRow, MAX_LEG_ATTEMPTS};
 use stranding::{
@@ -348,7 +347,7 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
 
     let legs: Vec<LegRow> = sqlx::query_as(
         "SELECT id, leg_index, depends_on, kind, src_chain, dest_chain, src_symbol,
-                dest_symbol, amount_usdc, min_out, status, leg_state, attempt_count
+                dest_symbol, amount_usdc, status, leg_state, attempt_count
          FROM rebalance_legs
          WHERE rebalance_id = $1
          ORDER BY leg_index ASC",
@@ -442,7 +441,6 @@ async fn walk_legs(state: &AppState, rebalance_id: Uuid, user_id: Uuid) -> Resul
         // a runaway leg can be capped. Done before the network call so a crash
         // mid-submit still records the attempt.
         bump_attempt_count(state, leg.id).await?;
-        mark_leg_submitted(state, rebalance_id, leg.id, user_id, leg).await?;
 
         let LegDispatch {
             tx_hash,

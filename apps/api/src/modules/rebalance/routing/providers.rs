@@ -9,6 +9,7 @@ use aegis_routing::{
     assemble, BridgeCurve, BucketedCurve, ConstProductCurve, CostCurve, EdgeKind, GraphBuilder,
     LiquidityGraph, ProviderId, RouteProvider,
 };
+use rust_decimal::prelude::FromPrimitive;
 use rust_decimal::Decimal;
 
 use super::asset;
@@ -23,12 +24,6 @@ use crate::domain::token::{self, TokenClass, TOKEN_REGISTRY};
 const AMM_FEE_BPS: i64 = 5;
 const CCTP_FEE_BPS: i64 = 1;
 
-fn planning_amm_depth() -> Decimal {
-    // Testnet pools are frequently thin. Planning with a conservative depth
-    // makes the engine prefer fewer marginal swaps instead of producing a plan
-    // the live quote gate will immediately reject.
-    Decimal::from(50_000)
-}
 fn amm_gas() -> Decimal {
     Decimal::new(40, 2)
 }
@@ -36,8 +31,11 @@ fn bridge_gas() -> Decimal {
     Decimal::new(30, 2)
 }
 
-fn amm_curve() -> Box<dyn CostCurve> {
-    let truth = ConstProductCurve::new(planning_amm_depth(), Decimal::from(AMM_FEE_BPS), amm_gas());
+fn amm_curve(cfg: &Config, symbol: &str, chain: ChainKey) -> Box<dyn CostCurve> {
+    let depth = Decimal::from_f64(cfg.swap_pool_depth_usd(symbol, chain))
+        .filter(|d| *d > Decimal::ZERO)
+        .unwrap_or_else(|| Decimal::from(10_000));
+    let truth = ConstProductCurve::new(depth, Decimal::from(AMM_FEE_BPS), amm_gas());
     let buckets = [
         Decimal::ZERO,
         Decimal::from(100),
@@ -121,7 +119,7 @@ impl RouteProvider for TokenMarketProvider<'_> {
                     if yield_rail {
                         usyc_curve()
                     } else {
-                        amm_curve()
+                        amm_curve(self.cfg, spec.symbol, chain)
                     },
                 );
                 b.add_edge(
@@ -132,7 +130,7 @@ impl RouteProvider for TokenMarketProvider<'_> {
                     if yield_rail {
                         usyc_curve()
                     } else {
-                        amm_curve()
+                        amm_curve(self.cfg, spec.symbol, chain)
                     },
                 );
             }

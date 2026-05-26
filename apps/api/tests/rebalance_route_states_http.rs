@@ -380,6 +380,7 @@ fn base_config() -> Config {
         usyc_enabled: false,
         token_addrs: std::collections::HashMap::new(),
         swap_liquid_tokens: std::collections::HashMap::new(),
+        swap_pool_depth_usd: std::collections::HashMap::new(),
         nanopayments_facilitator_url: "https://gateway-api-testnet.circle.com".into(),
         nanopayments_seller_address: String::new(),
         nanopayments_treasury_address: String::new(),

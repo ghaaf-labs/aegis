@@ -12,9 +12,7 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::config::Config;
-use crate::domain::units::{
-    apply_bps_margin, base_units_to_whole_token, whole_token_to_base_units,
-};
+use crate::domain::units::{apply_bps_margin, base_units_to_whole_token};
 use crate::error::{AppError, Result};
 use crate::modules::rebalance::adapters;
 use crate::modules::rebalance::cross_chain::build_hook_payload;
@@ -26,7 +24,7 @@ use crate::modules::rebalance::registry::{
 use crate::modules::wallet_routes;
 use crate::router::AppState;
 
-use super::leg_status::mark_leg_quoted;
+use super::leg_status::{mark_leg_quoted, mark_leg_submitted};
 use super::legs::{blockchain_for_chain, quote_filled_qty, LegRow};
 
 /// Fraction of the live USDC balance a buy-swap may spend, leaving a small
@@ -61,6 +59,7 @@ pub(super) async fn dispatch(
     // APIs, so a synthetic hash can never stand in for a real transaction.
     if !caps.real_mode {
         let r = adapters::mock_receipt(kind, leg.id);
+        mark_leg_submitted(state, rebalance_id, leg.id, user_id, leg).await?;
         return Ok(LegDispatch {
             tx_hash: r.tx_hash,
             cctp_hash: None,
@@ -152,6 +151,7 @@ pub(super) async fn dispatch(
     let ticket = ExecutionTicket::mint(&caps, &state.config, leg.id, &route_leg, quote, now)
         .map_err(|e| AppError::BadRequest(e.detail()))?;
     mark_leg_quoted(state, rebalance_id, leg.id, user_id, leg).await?;
+    mark_leg_submitted(state, rebalance_id, leg.id, user_id, leg).await?;
 
     // The real on-chain fill (from the executed quote) drives the holdings
     // writeback. A USDC↔USDC bridge leg yields `None` here naturally.
@@ -188,7 +188,7 @@ pub(super) async fn dispatch(
             // bridge (tokenOut == dest USDC → the RebalanceExecutor forwards the
             // minted USDC). A non-USDC destination is a hooked swap: the
             // destination RebalanceExecutor swaps USDC→token atomically on mint.
-            let pool_fee = hook_pool_fee(
+            let hook_quote = quote_hook_swap(
                 state,
                 ticket.dest_chain(),
                 leg.dest_symbol.as_deref(),
@@ -201,8 +201,8 @@ pub(super) async fn dispatch(
                 &recipient,
                 ticket.dest_chain(),
                 leg.dest_symbol.as_deref(),
-                leg.min_out.and_then(|d| d.to_f64()),
-                pool_fee,
+                hook_quote.min_out_base,
+                hook_quote.pool_fee,
                 now,
             )?;
             let r = adapters::cctp::burn(
@@ -339,16 +339,24 @@ fn usdc_decimal_to_base_units(amount_usdc: Decimal) -> Result<u128> {
         .ok_or_else(|| AppError::BadRequest("USDC amount is outside executable range".into()))
 }
 
-async fn hook_pool_fee(
+struct HookSwapQuote {
+    pool_fee: u32,
+    min_out_base: u128,
+}
+
+async fn quote_hook_swap(
     state: &AppState,
     dest_chain: ChainKey,
     dest_symbol: Option<&str>,
     amount_usdc: f64,
     now: chrono::DateTime<Utc>,
-) -> Result<u32> {
+) -> Result<HookSwapQuote> {
     let symbol = dest_symbol.unwrap_or(tokens::USDC);
     if symbol.eq_ignore_ascii_case(tokens::USDC) {
-        return Ok(3000);
+        return Ok(HookSwapQuote {
+            pool_fee: 3000,
+            min_out_base: 0,
+        });
     }
     let route_leg = RouteLeg::from_parts(
         "local_swap",
@@ -360,11 +368,15 @@ async fn hook_pool_fee(
     )
     .ok_or_else(|| AppError::Internal(anyhow::anyhow!("unparsable hook swap leg")))?;
     let quote = adapters::swap::quote(&state.config, &route_leg, now).await?;
-    quote.fee_tier.ok_or_else(|| {
+    let pool_fee = quote.fee_tier.ok_or_else(|| {
         AppError::BadRequest(format!(
             "{symbol} hook swap on {} did not return a V3 pool fee tier",
             dest_chain.as_str()
         ))
+    })?;
+    Ok(HookSwapQuote {
+        pool_fee,
+        min_out_base: quote.min_out,
     })
 }
 
@@ -373,8 +385,8 @@ async fn hook_pool_fee(
 /// USDC destination (or unset symbol): tokenOut = the destination chain's USDC
 /// so the RebalanceExecutor takes its passthrough fast path (no swap, minOut
 /// irrelevant). Non-USDC destination: tokenOut = the token's destination ERC-20
-/// so the executor performs the atomic USDC→token swap on mint. `min_out` is the
-/// planner's slippage-protected target in token units, converted to base units.
+/// so the executor performs the atomic USDC→token swap on mint. `min_out_base`
+/// comes from the fresh destination-chain quote used for the hook payload.
 ///
 /// Fails closed: a non-USDC destination with no configured ERC-20 (or an
 /// unconfigured destination USDC) returns an error rather than emitting a hook
@@ -384,7 +396,7 @@ fn build_cross_chain_hook(
     recipient: &str,
     dest_chain: ChainKey,
     dest_symbol: Option<&str>,
-    min_out: Option<f64>,
+    min_out_base: u128,
     pool_fee: u32,
     now: chrono::DateTime<Utc>,
 ) -> Result<crate::modules::rebalance::cross_chain::HookPayload> {
@@ -413,15 +425,6 @@ fn build_cross_chain_hook(
             "{symbol} has no configured ERC-20 on {dest_chain:?}; cross-chain swap cannot route"
         ))
     })?;
-
-    // Planner min_out is in whole token units; the contract compares against the
-    // raw on-chain amount, so scale by the token's decimals. Default to 0 when
-    // the planner could not price the leg (the contract still refunds on a real
-    // slippage miss, but a priced min_out is the first line of defense).
-    let min_out_base = min_out
-        .filter(|m| m.is_finite() && *m > 0.0)
-        .map(|m| whole_token_to_base_units(m, spec.decimals))
-        .unwrap_or(0);
 
     Ok(build_hook_payload(
         recipient,
@@ -462,7 +465,7 @@ mod tests {
             "0xRecipient",
             ChainKey::Base,
             Some("USDC"),
-            None,
+            0,
             3000,
             Utc::now(),
         )
@@ -476,21 +479,19 @@ mod tests {
     fn cross_chain_hook_none_symbol_defaults_to_usdc() {
         let cfg = hook_cfg();
         let hook =
-            build_cross_chain_hook(&cfg, "0xR", ChainKey::Base, None, None, 3000, Utc::now())
-                .unwrap();
+            build_cross_chain_hook(&cfg, "0xR", ChainKey::Base, None, 0, 3000, Utc::now()).unwrap();
         assert_eq!(hook.token_out, cfg.chain(ChainKey::Base).usdc);
     }
 
     #[test]
-    fn cross_chain_hook_volatile_dest_uses_token_and_scales_min_out() {
+    fn cross_chain_hook_volatile_dest_uses_token_quote_min_out() {
         let cfg = hook_cfg();
-        // ETH = 18 decimals; planner min_out of 0.5 ETH → 5e17 base units.
         let hook = build_cross_chain_hook(
             &cfg,
             "0xR",
             ChainKey::Base,
             Some("ETH"),
-            Some(0.5),
+            500_000_000_000_000_000,
             500,
             Utc::now(),
         )
@@ -509,7 +510,7 @@ mod tests {
             "0xR",
             ChainKey::Base,
             Some("ETH"),
-            Some(0.5),
+            500_000_000_000_000_000,
             3000,
             Utc::now(),
         )
@@ -525,7 +526,7 @@ mod tests {
             "0xR",
             ChainKey::Base,
             Some("ETH"),
-            None,
+            0,
             10000,
             Utc::now(),
         )
