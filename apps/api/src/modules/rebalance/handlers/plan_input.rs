@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use rust_decimal::prelude::{FromPrimitive, ToPrimitive};
+use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::error::Result;
@@ -56,9 +58,16 @@ pub(super) async fn build_plan_input(
     let real_circle = real_circle_wallet_planning(&state.config);
 
     let balance = load_gateway_balance(state, user_id).await?;
-    let mut usdc_per_chain = usdc_pool_from_balance(&balance);
-    subtract_active_reservations(state, user_id, &mut usdc_per_chain).await?;
-    reserve_real_execution_usdc_buffer(&state.config, &mut usdc_per_chain);
+    let mut usdc_per_chain_decimal = usdc_pool_from_balance(&balance)
+        .into_iter()
+        .map(|(chain, amount)| (chain, Decimal::from_f64(amount).unwrap_or(Decimal::ZERO)))
+        .collect::<HashMap<_, _>>();
+    subtract_active_reservations(state, user_id, &mut usdc_per_chain_decimal).await?;
+    reserve_real_execution_usdc_buffer(&state.config, &mut usdc_per_chain_decimal);
+    let usdc_per_chain = usdc_per_chain_decimal
+        .into_iter()
+        .map(|(chain, amount)| (chain, amount.to_f64().unwrap_or(0.0)))
+        .collect::<HashMap<_, _>>();
     let idle_usdc: f64 = usdc_per_chain.values().copied().sum();
 
     let prices = load_planning_prices(

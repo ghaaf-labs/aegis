@@ -310,6 +310,7 @@ pub(super) fn legs_match_current(stored: &[LegView], current: &[PlannedLeg]) -> 
             && a.dest_chain.as_deref() == b.dest_chain.map(|c| c.as_str())
             && a.src_symbol.as_deref() == b.src_symbol.as_deref()
             && a.dest_symbol.as_deref() == b.dest_symbol.as_deref()
+            && a.depends_on == b.deps
             && amount_matches(a.amount_usdc, b.amount_usdc)
             && min_out_matches(a.min_out, b.min_out)
     })
@@ -369,5 +370,66 @@ fn min_out_matches(stored: Option<Decimal>, current: Option<Decimal>) -> bool {
         (None, None) => true,
         (Some(stored), Some(current)) => amount_matches(stored, current),
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    use super::*;
+    use crate::modules::rebalance::models::{ChainKey, LegKind};
+
+    fn stored_leg(depends_on: Vec<i32>) -> LegView {
+        LegView {
+            id: Uuid::new_v4(),
+            rebalance_id: Uuid::new_v4(),
+            leg_index: 1,
+            depends_on,
+            kind: "cross_chain_mint".to_string(),
+            src_chain: Some("arc".to_string()),
+            dest_chain: Some("base".to_string()),
+            src_symbol: Some("USDC".to_string()),
+            dest_symbol: Some("USDC".to_string()),
+            amount_usdc: Decimal::new(100, 0),
+            min_out: None,
+            status: "pending".to_string(),
+            leg_state: "pending".to_string(),
+            tx_hash: None,
+            failure_reason: None,
+            submitted_at: Some(Utc::now()),
+            confirmed_at: None,
+        }
+    }
+
+    fn planned_leg(deps: Vec<i32>) -> PlannedLeg {
+        PlannedLeg {
+            leg_index: 1,
+            deps,
+            kind: LegKind::CrossChainMint,
+            src_chain: Some(ChainKey::Arc),
+            dest_chain: Some(ChainKey::Base),
+            src_symbol: Some("USDC".to_string()),
+            dest_symbol: Some("USDC".to_string()),
+            amount_usdc: Decimal::new(100, 0),
+            min_out: None,
+        }
+    }
+
+    #[test]
+    fn legs_match_current_rejects_changed_dependencies() {
+        assert!(!legs_match_current(
+            &[stored_leg(vec![])],
+            &[planned_leg(vec![0])]
+        ));
+    }
+
+    #[test]
+    fn legs_match_current_accepts_same_dependencies() {
+        assert!(legs_match_current(
+            &[stored_leg(vec![0])],
+            &[planned_leg(vec![0])]
+        ));
     }
 }

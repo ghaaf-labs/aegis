@@ -289,7 +289,12 @@ pub(crate) fn default_defensive_target(
             return (*candidate).to_string();
         }
     }
-    "USDC".to_string()
+    PREFERENCE
+        .iter()
+        .find(|candidate| !candidate.eq_ignore_ascii_case(depegged_asset))
+        .copied()
+        .unwrap_or("USDC")
+        .to_string()
 }
 
 pub(crate) fn build_defensive_target(
@@ -297,6 +302,9 @@ pub(crate) fn build_defensive_target(
     depegged_asset: &str,
     target_asset: &str,
 ) -> Option<(HashMap<String, f64>, f64)> {
+    if target_asset.eq_ignore_ascii_case(depegged_asset) {
+        return None;
+    }
     let depegged_weight = *current_weights.get(depegged_asset).unwrap_or(&0.0);
     if depegged_weight < 0.01 {
         return None;
@@ -410,6 +418,14 @@ mod tests {
         current.insert("BTC".to_string(), 1.0);
 
         assert!(build_defensive_target(&current, "USDC", "USYC").is_none());
+    }
+
+    #[test]
+    fn peg_rule_no_op_when_defensive_target_matches_depegged_asset() {
+        let mut current = HashMap::new();
+        current.insert("USDC".to_string(), 1.0);
+
+        assert!(build_defensive_target(&current, "USDC", "USDC").is_none());
     }
 
     #[test]

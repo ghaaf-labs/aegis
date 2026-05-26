@@ -40,6 +40,7 @@ harness = false
 # This crate holds itself to the pedantic bar (apps/api's ratchet does not reach
 # path dependencies, so we opt in here explicitly). Kept clean, not allowed-back.
 pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
 # Decimal math + bps conversions are inherently lossy at the f64/stat boundary;
 # these mirror apps/api's allow-backs so the shared style holds.
 cast_precision_loss = "allow"
@@ -48,6 +49,9 @@ cast_sign_loss = "allow"
 must_use_candidate = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+missing_const_for_fn = "allow"
 module_name_repetitions = "allow"
+option_if_let_else = "allow"
 # Stylistic — code identifiers in prose; mirrors apps/api's allow-back.
 doc_markdown = "allow"
+too_long_first_doc_paragraph = "allow"

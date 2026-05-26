@@ -34,6 +34,17 @@ interface ExecutionTraceProps {
   onStatusChange?: (status: string) => void;
 }
 
+type LegState =
+  | "pending"
+  | "quoted"
+  | "submitted"
+  | "bridge_in_flight"
+  | "bridge_landed"
+  | "confirmed"
+  | "failed"
+  | "stranded_reserve"
+  | "compensated_to_usdc";
+
 interface InternalLeg {
   id: string;
   legIndex: number;
@@ -44,16 +55,14 @@ interface InternalLeg {
   destSymbol: string | null;
   amountUsdc: number;
   status: LegStatus;
-  /** Typed FSM phase (bridge_in_flight / bridge_landed / confirmed / …): lets a
-   *  confirmed cross-chain burn read as "in flight" rather than fully done. */
-  legState: string;
+  legState: LegState;
   txHash: string | null;
   failureReason: string | null;
 }
 
 /** Human label for the FSM phase, shown when it adds information beyond the
  *  coarse `status` (i.e. the cross-chain in-flight/landed phases). */
-function legPhaseLabel(legState: string, status: LegStatus): string | null {
+function legPhaseLabel(legState: LegState, status: LegStatus): string | null {
   switch (legState) {
     case "bridge_in_flight":
       return "bridging — USDC in flight";
@@ -63,11 +72,30 @@ function legPhaseLabel(legState: string, status: LegStatus): string | null {
       return "held as USDC reserve";
     case "compensated_to_usdc":
       return "refunded to USDC";
+    case "confirmed":
+      return status === "confirmed" ? "target acquired" : null;
+    case "pending":
+    case "quoted":
+    case "submitted":
+    case "failed":
+      return null;
+  }
+}
+
+function legStateFromWire(value: unknown, fallback: LegState = "pending") {
+  switch (value) {
+    case "pending":
+    case "quoted":
+    case "submitted":
+    case "bridge_in_flight":
+    case "bridge_landed":
+    case "confirmed":
+    case "failed":
+    case "stranded_reserve":
+    case "compensated_to_usdc":
+      return value;
     default:
-      // pending/submitted/confirmed/failed are already conveyed by `status`.
-      return status === "confirmed" && legState === "confirmed"
-        ? "target acquired"
-        : null;
+      return fallback;
   }
 }
 
@@ -135,7 +163,7 @@ export function ExecutionTrace({
           destSymbol: l.destSymbol,
           amountUsdc: l.amountUsdc,
           status: l.status as LegStatus,
-          legState: l.legState,
+          legState: legStateFromWire(l.legState),
           txHash: l.txHash,
           failureReason: l.failureReason,
         })),
@@ -158,7 +186,7 @@ export function ExecutionTrace({
             ? {
                 ...leg,
                 status: data.status as LegStatus,
-                legState: (data.legState ?? leg.legState) as string,
+                legState: legStateFromWire(data.legState, leg.legState),
                 txHash: (data.txHash ?? leg.txHash) as string | null,
                 failureReason: data.failureReason ?? leg.failureReason,
               }
