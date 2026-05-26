@@ -94,6 +94,13 @@ impl PlanOutcome {
     }
 }
 
+/// `Blocked` only ever carries *genuine* routing blockers: tracked-by-design
+/// volatile sleeves are folded silently upstream (see
+/// `fold_nonexecutable_targets_into_usdc`), so the deferred set here is a mix of
+/// no-route, rail-not-ready, unsupported-sleeve (e.g. EURC), *and* route-shaping
+/// blocks where a route exists but is unsafe right now (a stale/wide live quote
+/// or a price-safety rejection). The headline stays broad enough to be honest
+/// for all of them — the per-sleeve specifics ride along in `deferred[].reason`.
 fn blocked_message(deferred: &[DeferredTarget]) -> String {
     let names = deferred
         .iter()
@@ -101,7 +108,7 @@ fn blocked_message(deferred: &[DeferredTarget]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "No plan was executed: {names} has no live execution route right now, so your deployable cash is held as USDC until a route opens. The intended allocation is shown so you can re-run once it is routable."
+        "Not tradeable right now on this network: {names}. There's no safe execution route for them at the moment, so their intended allocation is held as USDC reserve until one is available — your USDC capital is still managed normally."
     )
 }
 

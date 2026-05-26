@@ -150,7 +150,11 @@ describe("deriveDashboardBalanceModel", () => {
     );
   });
 
-  it("surfaces sell-only target drift even when deployable cash is zero", () => {
+  it("does not flag reviewable drift for an untradeable (tracked) holding", () => {
+    // ETH is a volatile sleeve: tracked-not-traded on this network (no reliable
+    // on-chain price), so an overweight ETH position the user cannot sell here
+    // must NOT raise "Drift needs review" — that would nag for an action the
+    // platform can't take. It reads as calm monitoring instead.
     const model = deriveDashboardBalanceModel({
       portfolio: {
         ...portfolio(),
@@ -180,8 +184,8 @@ describe("deriveDashboardBalanceModel", () => {
     });
 
     expect(model.deployableUsd).toBe(0);
-    expect(model.hasReviewableDrift).toBe(true);
-    expect(model.status.label).toBe("Drift needs review");
+    expect(model.hasReviewableDrift).toBe(false);
+    expect(model.status.label).toBe("Monitoring");
   });
 });
 

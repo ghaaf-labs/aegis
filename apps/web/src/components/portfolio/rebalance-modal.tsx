@@ -4,12 +4,14 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  ArrowRight,
   CircleAlert,
   Loader2,
   RefreshCw,
   TrendingUp,
   TrendingDown,
 } from "lucide-react";
+import { PRICING_UI_ENABLED } from "@/lib/flags";
 import { BrutalButton, BrutalBadge as Badge } from "@aegis/ui";
 import {
   Dialog,
@@ -19,7 +21,12 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { usePortfolioStore, useActivePortfolio } from "@/stores/portfolio";
-import { agentApi, isExecutablePlan, rebalanceApi } from "@/lib/api";
+import {
+  agentApi,
+  isExecutablePlan,
+  rebalanceApi,
+  type RebalancePlanNoopStatus,
+} from "@/lib/api";
 import { pollDecisionReady } from "@/lib/decision-poll";
 import type { AgentDecision } from "@/types";
 import { formatCurrency } from "@/lib/utils";
@@ -66,6 +73,12 @@ export function RebalanceModal({ open, onClose }: Props) {
   const [now, setNow] = useState(Date.now());
   const [decision, setDecision] = useState<AgentDecision | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // A non-executable plan (on-target / reserve / tracked / dust / unfunded) is
+  // not an error — it's an informational outcome rendered by tone, never red.
+  const [planNotice, setPlanNotice] = useState<{
+    status: RebalancePlanNoopStatus;
+    message: string;
+  } | null>(null);
   const analyzed = decision !== null;
   const recommendation = decision?.recommendation;
   const deterministicTrades =
@@ -130,6 +143,7 @@ export function RebalanceModal({ open, onClose }: Props) {
     setStartedAt(Date.now());
     setNow(Date.now());
     setError(null);
+    setPlanNotice(null);
     try {
       // Async: analyze enqueues the job (returns immediately); poll the
       // decision until the worker finishes. The timeout wraps the poll, not the
@@ -159,6 +173,7 @@ export function RebalanceModal({ open, onClose }: Props) {
     setStartedAt(Date.now());
     setNow(Date.now());
     setError(null);
+    setPlanNotice(null);
     try {
       const planned = await withTimeout(
         rebalanceApi.plan(active.id),
@@ -166,9 +181,9 @@ export function RebalanceModal({ open, onClose }: Props) {
         PLAN_TIMEOUT_MS,
       );
       if (!isExecutablePlan(planned)) {
-        // Nothing to execute (on-target / reserve / unfunded / dust): surface
-        // the friendly message in place; there is no review page to open.
-        setError(planned.message);
+        // Nothing to execute (on-target / reserve / tracked / unfunded / dust):
+        // a calm informational outcome, not an error — render it by tone.
+        setPlanNotice({ status: planned.status, message: planned.message });
         setIsRebalancing(false);
         return;
       }
@@ -231,6 +246,7 @@ export function RebalanceModal({ open, onClose }: Props) {
             )}
 
             {error && <PlanErrorMessage message={error} />}
+            {planNotice && <PlanNotice notice={planNotice} />}
 
             <BrutalButton
               variant={planBlocked ? "ghost" : "pnl"}
@@ -375,6 +391,7 @@ export function RebalanceModal({ open, onClose }: Props) {
             )}
 
             {error && <PlanErrorMessage message={error} />}
+            {planNotice && <PlanNotice notice={planNotice} />}
 
             <div className="flex gap-3">
               <BrutalButton
@@ -417,7 +434,10 @@ export function RebalanceModal({ open, onClose }: Props) {
 
 function friendlyPlanError(error: unknown) {
   const raw = (error as Error).message || "Plan creation failed";
-  const message = raw.replace(/^\d{3}:\s*/, "").replace(/^conflict:\s*/i, "");
+  const message = raw
+    .replace(/^\d{3}:\s*/, "")
+    .replace(/^conflict:\s*/i, "")
+    .replace(/^payment required:\s*/i, "");
   if (message.toLowerCase().includes("no rebalance plan was created")) {
     return message;
   }
@@ -451,6 +471,13 @@ function isNoPlanError(message: string | null) {
 
 function isWalletSetupError(message: string | null) {
   return message?.toLowerCase().includes("complete account setup") ?? false;
+}
+
+// A tier cap (HTTP 402): the user hit their monthly decision / portfolio / AUM
+// limit. Not a failure — an upgrade prompt, so it gets its own clear path.
+function isPaymentRequiredError(message: string | null) {
+  const m = message?.toLowerCase() ?? "";
+  return m.includes("payment required") || m.includes("upgrade to continue");
 }
 
 function BlockedPlanPanel({
@@ -551,7 +578,41 @@ function BlockedPlanPanel({
   );
 }
 
+// A tier cap is a billing prompt, not a failure: green (money) tone, the usage
+// fact, and a path forward. When the upgrade UI is gated off we don't dangle a
+// dead CTA — we say plainly when the allowance resets.
+function UpgradePrompt({ message }: { message: string }) {
+  // Drop the backend's generic "Upgrade to continue." tail; the panel provides
+  // the actual path so the sentence shouldn't promise one that may be gated.
+  const usage = message.replace(/\s*upgrade to continue\.?\s*$/i, "").trim();
+  return (
+    <div className="rounded-sharp border border-accent-pnl/40 bg-accent-pnl/5 p-3 text-xs">
+      <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-accent-pnl">
+        Monthly limit reached
+      </p>
+      <p className="leading-relaxed text-text-hi">{usage}.</p>
+      {PRICING_UI_ENABLED ? (
+        <Link
+          href="/settings/billing"
+          className="mt-3 inline-flex min-h-9 items-center gap-2 rounded-sharp border-brutal border-black bg-accent-pnl px-3 font-mono text-[11px] font-semibold text-black shadow-brutal-sm hover:shadow-brutal"
+        >
+          Compare &amp; upgrade
+          <ArrowRight className="h-3.5 w-3.5" />
+        </Link>
+      ) : (
+        <p className="mt-2 text-[11px] leading-relaxed text-text-mut">
+          Your free decisions reset at the start of next month. Paid plans open
+          soon — Free stays active with no card on file.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function PlanErrorMessage({ message }: { message: string }) {
+  if (isPaymentRequiredError(message)) {
+    return <UpgradePrompt message={message} />;
+  }
   const noPlan = isNoPlanError(message);
   const walletSetup = isWalletSetupError(message);
   return (
@@ -591,6 +652,68 @@ function PlanErrorMessage({ message }: { message: string }) {
       )}
     </div>
   );
+}
+
+// A non-executable plan is an informational outcome, not a failure — styled by
+// status so a calm "on target" never reads as an alarming red error. `blocked`
+// here means volatile sleeves are tracked-not-traded on this network (held),
+// which is expected, so it reads calm/agent too.
+function PlanNotice({
+  notice,
+}: {
+  notice: { status: RebalancePlanNoopStatus; message: string };
+}) {
+  const tone = planNoticeTone(notice.status);
+  return (
+    <div className={`rounded-sharp border p-3 text-xs ${tone.cls}`}>
+      <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest opacity-80">
+        {tone.label}
+      </p>
+      <p className="leading-relaxed">{notice.message}</p>
+      {notice.status === "unfunded" && (
+        <Link
+          href="/wallets"
+          className="mt-2 inline-flex border border-warn/40 px-2 py-1 text-[11px] font-semibold text-warn hover:bg-warn/10"
+        >
+          Add wallet cash
+        </Link>
+      )}
+    </div>
+  );
+}
+
+function planNoticeTone(status: RebalancePlanNoopStatus): {
+  cls: string;
+  label: string;
+} {
+  switch (status) {
+    case "on_target_noop":
+    case "reserve_fallback":
+      return {
+        cls: "bg-accent-agent/10 border-accent-agent/30 text-accent-agent",
+        label: "On target",
+      };
+    case "blocked":
+      return {
+        cls: "bg-accent-agent/10 border-accent-agent/30 text-accent-agent",
+        label: "Tracked, not traded",
+      };
+    case "dust_only":
+      return {
+        cls: "bg-bg border-border-default text-text-lo",
+        label: "Below move threshold",
+      };
+    case "unfunded":
+      return {
+        cls: "bg-warn/10 border-warn/40 text-warn",
+        label: "Fund wallet to begin",
+      };
+    case "balance_unavailable":
+      return {
+        cls: "bg-warn/10 border-warn/40 text-warn",
+        label: "Balance unavailable — retry",
+      };
+  }
 }
 
 function activityCopy(elapsedSeconds: number) {

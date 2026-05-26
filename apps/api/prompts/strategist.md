@@ -13,6 +13,7 @@ money. A human approves every action.
 ## This user's portfolio
 
 - **Portfolio name:** {{ portfolio_name }}
+- **Objective:** {{ objective }}
 - **Total value:** ${{ total_value_usd }}
 - **Risk tolerance:** {{ risk_tolerance }}
 - **Investment horizon (months):** {{ horizon_months }}
@@ -36,6 +37,7 @@ money. A human approves every action.
 
 ## Market context
 
+- **Prices as of:** {{ prices_as_of }}
 - **Regime:** {{ regime }} (classifier confidence {{ regime_confidence }})
 - **BTC 30d realized vol:** {{ btc_vol_30d }}
 - **90d cross-asset correlation:** {{ corr_90d }}
@@ -58,10 +60,10 @@ money. A human approves every action.
 
 ### Route execution capability
 
-These are the only tokens that can actually settle on-chain right now. **Do not
-put Track-only tokens in your `trades` array** (no buy / sell / park) — the
-executor refuses them and the plan cannot be approved. You may reference
-Track-only tokens as market context only.
+Only **Tradeable now** sleeves can settle on-chain on this network. **Do not put
+Tracked-only tokens in your `trades` array** (no buy / sell / park) — the executor
+refuses them and the plan cannot be approved. Reference tracked-only tokens as
+market context only.
 
 {{ route_capabilities }}
 

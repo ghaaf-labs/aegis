@@ -27,6 +27,8 @@ import type {
   DashboardChainExposure,
   DashboardTokenExposure,
 } from "@/lib/dashboard-balance-model";
+import { isTradeableSleeve } from "@/lib/route-capabilities";
+import { idleUsdcConsolidation } from "@/lib/wallet-routes";
 import { cn, formatCurrency, timeAgo } from "@/lib/utils";
 
 interface AssetControlTowerProps {
@@ -431,10 +433,10 @@ function ActionPanel({
           )}
           {action.kind === "none" && (
             <Link
-              href="/wallets"
+              href="/portfolio"
               className="inline-flex min-h-11 items-center justify-center gap-2 border border-border-default bg-bg/70 px-3 text-xs font-semibold text-text-hi hover:bg-raised"
             >
-              Wallet details
+              Positions &amp; targets
               <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           )}
@@ -638,10 +640,44 @@ function actionState(
       tone: "warn",
     };
   }
+  // Idle USDC fragmented across chains is consolidatable (CCTP, no price risk),
+  // even when there's nothing else to trade. The predicate mirrors the backend
+  // routing engine exactly (`idleUsdcConsolidation`), so the card appears
+  // whenever the backend would actually plan a sweep — including a single
+  // non-primary chain holding idle USDC, which the old "2+ funded chains"
+  // heuristic hid.
+  const consolidation = idleUsdcConsolidation(model.perChainUsdc);
+  if (consolidation.sources >= 1) {
+    const where =
+      consolidation.fundedChains >= 2
+        ? `Your USDC sits on ${consolidation.fundedChains} chains. `
+        : "Some idle USDC is stranded off your main execution chain. ";
+    return {
+      kind: "review",
+      title: "Consolidate idle USDC",
+      body: `${where}Aegis can bridge it onto one chain over CCTP — no price risk — so it's ready to deploy. Review to approve.`,
+      // Money accent: this is a cash-management step to review/approve (like the
+      // deployable-surplus action), not agent activity — dual-accent rule.
+      tone: "pnl",
+    };
+  }
+  const trackedUsd = model.tokens
+    .filter((token) => !isTradeableSleeve(token.symbol))
+    .reduce((sum, token) => sum + token.totalUsd, 0);
+  const trackedHeavy =
+    model.netWorthUsd > 0 && trackedUsd / model.netWorthUsd > 0.5;
+  if (trackedHeavy) {
+    return {
+      kind: "none",
+      title: "Tracked, not traded here",
+      body: "Most of your balance is volatile sleeves — tracked on this network, tradeable on mainnet. Aegis keeps your USDC managed and watches the market; there's no stablecoin move to make right now.",
+      tone: "agent",
+    };
+  }
   return {
     kind: "none",
-    title: "No action queued",
-    body: "Aegis is monitoring balances, drift, and market conditions.",
+    title: "On target",
+    body: "Aegis is monitoring balances, drift, and market conditions. Nothing to action right now.",
     tone: "muted",
   };
 }

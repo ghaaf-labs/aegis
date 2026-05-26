@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   chainBalanceRows,
+  idleUsdcConsolidation,
   walletRouteFromBlockchain,
   walletRouteKeysFromNetworks,
   walletRouteLabel,
@@ -54,5 +55,49 @@ describe("wallet route helpers", () => {
       ["arb-sepolia", 0],
       ["avax-fuji", 2.2],
     ]);
+  });
+});
+
+describe("idleUsdcConsolidation (mirrors the backend routing engine)", () => {
+  it("counts every non-primary chain above the bridge minimum as a source", () => {
+    // Same shape as the Rust `engine_plan_consolidates_fragmented_idle_usdc_to_primary`
+    // test: Arc is the primary (most idle); Base/Eth/Avax consolidate; the $1 on
+    // Arbitrum is below the minimum and stays put.
+    const result = idleUsdcConsolidation({
+      arc: 100,
+      base: 20,
+      "eth-sepolia": 6,
+      "avax-fuji": 5.42,
+      "arb-sepolia": 1,
+    });
+    expect(result.sources).toBe(3);
+    expect(result.fundedChains).toBe(4); // includes Arc (the primary)
+  });
+
+  it("shows no consolidation when the reserve already sits on one chain", () => {
+    expect(idleUsdcConsolidation({ arc: 50, base: 1 })).toEqual({
+      sources: 0,
+      fundedChains: 1,
+    });
+  });
+
+  it("consolidates a single non-primary chain (the case the 2+ heuristic missed)", () => {
+    // Only Ethereum Sepolia holds cash; primary defaults to Base, so the backend
+    // bridges eth → base and the card must appear.
+    expect(idleUsdcConsolidation({ "eth-sepolia": 10 })).toEqual({
+      sources: 1,
+      fundedChains: 1,
+    });
+  });
+
+  it("normalizes blockchain aliases and ignores unknown chains / dust", () => {
+    expect(
+      idleUsdcConsolidation({
+        "ARC-TESTNET": 100,
+        "BASE-SEPOLIA": 9,
+        solana: 50, // unknown route → not a CCTP execution chain here
+        "arb-sepolia": 0.4, // dust below the minimum
+      }),
+    ).toEqual({ sources: 1, fundedChains: 2 }); // Arc primary, Base is the source
   });
 });

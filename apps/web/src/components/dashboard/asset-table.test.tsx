@@ -237,6 +237,7 @@ function makeBalanceModel(): DashboardBalanceModel {
     walletBalanceUnavailable: false,
     gatewayBalanceError: null,
     gatewayBalanceUpdatedAt: Date.now(),
+    perChainUsdc: { base: 260.35 },
     status: {
       label: "Monitoring",
       detail: "No cash is queued.",

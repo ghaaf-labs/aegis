@@ -79,7 +79,7 @@ export function Header() {
   ]);
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between border-b-brutal border-border-default bg-surface px-5">
+    <header className="flex h-16 shrink-0 items-center justify-between border-b border-border-default bg-surface px-5">
       <div aria-hidden="true" />
 
       <div className="flex items-center gap-3 ml-auto">

@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::error::Result;
 use crate::modules::rebalance::models::{PlanInput, SellSources};
-use crate::modules::rebalance::registry::{executable_token_symbols, RuntimeCapabilities};
+use crate::modules::rebalance::registry::{rebalanceable_token_symbols, RuntimeCapabilities};
 use crate::router::AppState;
 
 use super::outcome::DeferredTarget;
@@ -54,7 +54,11 @@ pub(super) async fn build_plan_input(
     let deferred = fold_nonexecutable_targets_into_usdc(&state.config, &mut target_weights);
 
     let caps = RuntimeCapabilities::from_config(&state.config);
-    let executable = executable_token_symbols(&caps, &state.config);
+    // The rebalanceable set (executable minus tracked-only volatiles) is the base
+    // the planner sells from and marks as invested. Tracked volatiles fall through
+    // to `frozen_holdings_value` — held, not traded — so a portfolio dominated by
+    // un-routable assets still rebalances its stablecoin layer instead of dead-ending.
+    let rebalanceable = rebalanceable_token_symbols(&caps, &state.config);
     let real_circle = real_circle_wallet_planning(&state.config);
 
     let balance = load_gateway_balance(state, user_id).await?;
@@ -77,7 +81,7 @@ pub(super) async fn build_plan_input(
     .await;
 
     let sell_source_values = if real_circle {
-        wallet_holding_values_by_chain(&balance, &prices, &executable)
+        wallet_holding_values_by_chain(&balance, &prices, &rebalanceable)
     } else {
         HashMap::new()
     };
@@ -89,7 +93,7 @@ pub(super) async fn build_plan_input(
         (
             ValuationMode::WalletHoldings,
             wallet_holdings_marked(&sell_sources),
-            frozen_holdings_value(&balance, &prices, &executable),
+            frozen_holdings_value(&balance, &prices, &rebalanceable),
         )
     } else {
         let marked = allocations

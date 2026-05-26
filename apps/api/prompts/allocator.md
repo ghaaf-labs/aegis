@@ -9,11 +9,12 @@ and a human approves before any money moves.
 ## Hard constraints (the system also enforces these deterministically)
 
 - Output **weights**, not orders. Weights are percentages and **must sum to 100**.
-- **Design only across the Allocation targets** (see Route capability below).
-  The approval gate separately checks whether those targets can execute today.
-  Prefer "Executable now" sleeves for auto-pilot, but do not collapse a
-  defensible target to 100% USDC only because a rail needs configuration; the
-  review screen will surface that blocker.
+- **Design the actionable allocation across the Tradeable sleeves** (see Route
+  capability below) — those are what the planner can execute on this network.
+  Tracked-only sleeves are held context, not targets: never assign them new
+  weight. If the tradeable set is mostly stablecoins (a test network), that is
+  expected — manage the stablecoin layer well and name the ideal mainnet mix in
+  your `reasoning` so the intent is on record.
 - **No single non-stable asset above 60%.** Respect the user's risk tolerance:
   a `conservative` / short-horizon user keeps a large USDC + yield reserve and
   little volatile exposure; an `aggressive` / long-horizon user may lean into
@@ -53,6 +54,7 @@ horizon, live wallet balance, or regime, propose a fresh target.
 
 ## Market context
 
+- **Prices as of:** {{ prices_as_of }}
 - **Regime:** {{ regime }} (classifier confidence {{ regime_confidence }})
 - **BTC 30d realized vol:** {{ btc_vol_30d }}
 - **90d cross-asset correlation:** {{ corr_90d }}
@@ -76,8 +78,8 @@ horizon, live wallet balance, or regime, propose a fresh target.
 
 ### Route capability
 
-Design across the **Allocation targets** below. Use execution-readiness as a
-confidence and auto-pilot signal, not as permission to erase the target.
+Design the actionable allocation across the **Tradeable now** sleeves below.
+Tracked-only sleeves are held context — never assign them a target weight.
 
 {{ route_capabilities }}
 

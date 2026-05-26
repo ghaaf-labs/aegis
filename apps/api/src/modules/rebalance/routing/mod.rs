@@ -35,6 +35,10 @@ use translate::{append_flow_plan, route_and_append};
 
 const ROUTING_DUST_USD: f64 = 0.01;
 
+/// Minimum idle USDC on a non-primary chain worth consolidating. Bridging a few
+/// cents over CCTP is not worth the leg; below this the cash stays put.
+const CONSOLIDATION_MIN_USD: f64 = 5.0;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeferredSide {
     Buy,
@@ -233,7 +237,9 @@ fn best_source_target_candidate(
 /// funding across chains when that is cheaper than a single source.
 pub fn engine_plan(cfg: &Config, input: &PlanInput) -> EnginePlan {
     let deltas = sorted_plan_deltas(input);
-    if deltas.is_empty() {
+    // No weight change to make — but idle reserve fragmented across chains is
+    // still worth consolidating, so don't short-circuit on that alone.
+    if deltas.is_empty() && !has_consolidatable_reserve(&input.usdc_per_chain) {
         return EnginePlan::default();
     }
 
@@ -349,6 +355,13 @@ pub fn engine_plan(cfg: &Config, input: &PlanInput) -> EnginePlan {
         }
     }
 
+    // Consolidate the residual idle USDC onto one primary execution chain, so
+    // fragmented reserve cash becomes a single deployable position. Plain
+    // USDC→USDC over CCTP carries no AMM price gap, so it executes even when
+    // volatile swaps cannot — this is the baseline the execution-chain set
+    // (Arc/Base full path + Eth/Arb/Avax CCTP source/dest) is built for.
+    append_consolidation_legs(&graph, &usdc_pool, prices, &mut all_legs);
+
     // Re-number leg_index to match position (the translate step produces
     // contiguous indices within each allocation, but across allocations the
     // offset is already tracked — verify here for safety).
@@ -359,6 +372,76 @@ pub fn engine_plan(cfg: &Config, input: &PlanInput) -> EnginePlan {
     EnginePlan {
         legs: all_legs,
         deferred,
+    }
+}
+
+/// Whether any execution chain other than the primary holds idle USDC worth
+/// bridging — the gate that lets a zero-delta plan still consolidate the reserve.
+fn has_consolidatable_reserve(usdc_pool: &HashMap<ChainKey, f64>) -> bool {
+    let primary = consolidation_primary(usdc_pool);
+    usdc_pool.iter().any(|(&chain, &amount)| {
+        chain != primary && chain.is_execution() && amount >= CONSOLIDATION_MIN_USD
+    })
+}
+
+/// The chain idle reserve consolidates onto: the full-path chain (Arc/Base) that
+/// already holds the most idle USDC, so the move is minimal and the consolidated
+/// cash lands where it can be deployed. Defaults to Base when neither holds any.
+fn consolidation_primary(usdc_pool: &HashMap<ChainKey, f64>) -> ChainKey {
+    let idle = |chain: ChainKey| usdc_pool.get(&chain).copied().unwrap_or(0.0);
+    if idle(ChainKey::Arc) > idle(ChainKey::Base) {
+        ChainKey::Arc
+    } else {
+        ChainKey::Base
+    }
+}
+
+/// Emit CCTP USDC→USDC legs that sweep idle USDC from every other execution
+/// chain (above [`CONSOLIDATION_MIN_USD`]) onto the primary chain. A no-op when
+/// the reserve is already on one chain or only dust is stranded elsewhere.
+fn append_consolidation_legs(
+    graph: &aegis_routing::LiquidityGraph,
+    usdc_pool: &HashMap<ChainKey, f64>,
+    prices: &HashMap<String, f64>,
+    out: &mut Vec<PlannedLeg>,
+) {
+    let primary = consolidation_primary(usdc_pool);
+    let mut sources: Vec<(ChainKey, f64)> = usdc_pool
+        .iter()
+        .filter(|(&chain, &amount)| {
+            chain != primary && chain.is_execution() && amount >= CONSOLIDATION_MIN_USD
+        })
+        .map(|(&chain, &amount)| (chain, amount))
+        .collect();
+    // Largest first, then by name — deterministic leg ordering.
+    sources.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| a.0.as_str().cmp(b.0.as_str()))
+    });
+    for (chain, amount) in sources {
+        let Some(size) = Decimal::from_f64(amount) else {
+            continue;
+        };
+        // A USDC→USDC CCTP leg should always route on an execution chain, but if
+        // the engine can't build/translate it the cash simply stays put. Don't
+        // let that failure vanish silently — surface it for observability the
+        // same way the sell/buy paths log their routing misses.
+        if !route_and_append(
+            graph,
+            &asset(token::USDC, chain),
+            &asset(token::USDC, primary),
+            size,
+            prices,
+            out,
+        ) {
+            tracing::warn!(
+                source_chain = %chain.as_str(),
+                dest_chain = %primary.as_str(),
+                amount_usd = amount,
+                "routing engine: no consolidation route for idle USDC; leaving it in place"
+            );
+        }
     }
 }
 
@@ -713,6 +796,90 @@ mod tests {
             legs.iter()
                 .all(|l| !(l.kind == LegKind::LocalSwap && l.src_symbol.as_deref() == Some("ETH"))),
             "a frozen live-wallet sell source must not fall back to ETH's native chain"
+        );
+    }
+
+    #[test]
+    fn engine_plan_consolidates_fragmented_idle_usdc_to_primary() {
+        let cfg = seeded_config();
+        let mut usdc_per_chain = HashMap::new();
+        usdc_per_chain.insert(ChainKey::Arc, 100.0); // primary: holds the most
+        usdc_per_chain.insert(ChainKey::Base, 20.0);
+        usdc_per_chain.insert(ChainKey::EthSepolia, 6.0);
+        usdc_per_chain.insert(ChainKey::AvaxFuji, 5.42);
+        usdc_per_chain.insert(ChainKey::ArbSepolia, 1.0); // below the bridge min
+        let input = PlanInput {
+            portfolio_value_usd: 132.42,
+            current_weights: HashMap::new(),
+            sell_sources: HashMap::new(),
+            target_weights: HashMap::new(), // no weight change — pure consolidation
+            usdc_per_chain,
+            drift_threshold: 0.05,
+            dust_threshold_usd: 5.0,
+            prices: HashMap::new(),
+            regime: None,
+        };
+
+        let legs = engine_plan_legs(&cfg, &input);
+
+        let burns: Vec<&PlannedLeg> = legs
+            .iter()
+            .filter(|l| l.kind == LegKind::CrossChainBurn)
+            .collect();
+        assert!(
+            !burns.is_empty(),
+            "fragmented idle USDC must produce consolidation legs"
+        );
+        assert!(
+            burns.iter().all(|l| l.dest_chain == Some(ChainKey::Arc)),
+            "every consolidation leg targets the primary chain (Arc)"
+        );
+        let sources: std::collections::HashSet<ChainKey> =
+            burns.iter().filter_map(|l| l.src_chain).collect();
+        assert!(
+            sources.contains(&ChainKey::Base),
+            "Base reserve consolidates"
+        );
+        assert!(
+            sources.contains(&ChainKey::EthSepolia),
+            "Eth reserve consolidates"
+        );
+        assert!(
+            sources.contains(&ChainKey::AvaxFuji),
+            "Avax reserve consolidates"
+        );
+        assert!(
+            !sources.contains(&ChainKey::ArbSepolia),
+            "$1 on Arbitrum is below the bridge minimum and stays put"
+        );
+        assert!(
+            !sources.contains(&ChainKey::Arc),
+            "the primary chain is never a consolidation source"
+        );
+    }
+
+    #[test]
+    fn engine_plan_skips_consolidation_when_reserve_already_on_one_chain() {
+        let cfg = seeded_config();
+        let mut usdc_per_chain = HashMap::new();
+        usdc_per_chain.insert(ChainKey::Arc, 50.0);
+        usdc_per_chain.insert(ChainKey::Base, 1.0); // dust only elsewhere
+        let input = PlanInput {
+            portfolio_value_usd: 51.0,
+            current_weights: HashMap::new(),
+            sell_sources: HashMap::new(),
+            target_weights: HashMap::new(),
+            usdc_per_chain,
+            drift_threshold: 0.05,
+            dust_threshold_usd: 5.0,
+            prices: HashMap::new(),
+            regime: None,
+        };
+
+        let legs = engine_plan_legs(&cfg, &input);
+        assert!(
+            legs.is_empty(),
+            "no consolidation when only dust is stranded off the primary chain"
         );
     }
 }

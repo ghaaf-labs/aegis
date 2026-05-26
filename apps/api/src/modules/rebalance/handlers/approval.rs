@@ -184,14 +184,6 @@ async fn approval_safety_with_depth(
             });
         }
     };
-    if let Some(message) = shaped.blocked_message {
-        return Ok(ApprovalSafety {
-            approvable: false,
-            code: "QUOTE_UNSAFE".into(),
-            message,
-            missing_capabilities: None,
-        });
-    }
     let current_legs = shaped.legs;
     if !legs_match_current(&stored_legs, &current_legs) {
         return Ok(ApprovalSafety {
