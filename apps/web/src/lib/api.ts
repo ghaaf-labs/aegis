@@ -474,12 +474,14 @@ export interface RebalancePlanResponse {
   totalLegs: number;
   legs: Array<{
     legIndex: number;
+    deps?: number[];
     kind: string;
     srcChain: ChainKey | null;
     destChain: ChainKey | null;
     srcSymbol: string | null;
     destSymbol: string | null;
     amountUsdc: number;
+    minOut?: number | null;
   }>;
 }
 
@@ -574,12 +576,14 @@ export const rebalanceApi = {
         id: string;
         rebalanceId: string;
         legIndex: number;
+        dependsOn?: number[];
         kind: string;
         srcChain: ChainKey | null;
         destChain: ChainKey | null;
         srcSymbol: string | null;
         destSymbol: string | null;
         amountUsdc: number;
+        minOut?: number | null;
         status: string;
         legState: string;
         txHash: string | null;

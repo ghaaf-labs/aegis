@@ -71,12 +71,14 @@ pub struct PlanResponse {
 #[serde(rename_all = "camelCase")]
 pub struct PlanLegView {
     pub leg_index: i32,
+    pub deps: Vec<i32>,
     pub kind: String,
     pub src_chain: Option<String>,
     pub dest_chain: Option<String>,
     pub src_symbol: Option<String>,
     pub dest_symbol: Option<String>,
     pub amount_usdc: f64,
+    pub min_out: Option<f64>,
 }
 
 /// Build an agent decision *and* a concrete rebalance plan for that
@@ -152,8 +154,7 @@ pub async fn create(
 
 #[derive(Debug, Default, Deserialize)]
 pub struct ExecuteBody {
-    /// Optional user-provided slippage tolerance override in bps.
-    #[allow(dead_code)]
+    /// Rejected explicitly if present. Slippage is fixed in the reviewed plan.
     #[serde(default)]
     pub max_slippage_bps: Option<u32>,
 }
@@ -164,7 +165,14 @@ pub async fn execute(
     Path(rebalance_id): Path<Uuid>,
     body: Option<Json<ExecuteBody>>,
 ) -> Result<StatusCode> {
-    let _ = body; // body fields are reserved; accept missing/empty body gracefully
+    if body
+        .as_ref()
+        .is_some_and(|Json(body)| body.max_slippage_bps.is_some())
+    {
+        return Err(AppError::BadRequest(
+            "max_slippage_bps is not supported on execute; slippage protection is fixed in the reviewed plan. Build a fresh review instead.".into(),
+        ));
+    }
     own_rebalance_or_404(&state, claims.sub, rebalance_id).await?;
     ensure_rebalance_wallet_ready(&state, claims.sub).await?;
     let safety = approval_safety(&state, rebalance_id).await?;
@@ -203,6 +211,7 @@ pub struct LegView {
     pub id: Uuid,
     pub rebalance_id: Uuid,
     pub leg_index: i32,
+    pub depends_on: Vec<i32>,
     pub kind: String,
     pub src_chain: Option<String>,
     pub dest_chain: Option<String>,
@@ -275,7 +284,7 @@ pub async fn get(
     }
 
     let legs: Vec<LegView> = sqlx::query_as(
-        "SELECT id, rebalance_id, leg_index, kind, src_chain, dest_chain,
+        "SELECT id, rebalance_id, leg_index, depends_on, kind, src_chain, dest_chain,
                 src_symbol, dest_symbol, amount_usdc, min_out, status, leg_state, tx_hash,
                 failure_reason, submitted_at, confirmed_at
          FROM rebalance_legs WHERE rebalance_id = $1

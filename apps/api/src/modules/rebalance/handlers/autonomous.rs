@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use rust_decimal::prelude::ToPrimitive;
 
-use crate::error::Result;
+use crate::error::{AppError, Result};
 use crate::modules::rebalance::{
     executor::replace_planned_review,
     models::{PlanInput, PlannedLeg},
@@ -13,7 +13,10 @@ use crate::router::AppState;
 use super::{
     approval::{approval_safety, ApprovalSafety},
     plan_input::build_plan_input,
-    shared::{reusable_planned_rebalance, route_shaped_plan, stamp_routable_snapshot},
+    shared::{
+        ensure_no_active_execution, reusable_planned_rebalance, route_shaped_plan,
+        stamp_routable_snapshot,
+    },
 };
 
 /// Outcome of the auto-pilot plan preparation. `NoOp` ⇒ nothing to move
@@ -37,6 +40,19 @@ pub async fn prepare_autonomous_plan(
     state: &AppState,
     portfolio_id: Uuid,
 ) -> Result<AutonomousPlan> {
+    match ensure_no_active_execution(state, portfolio_id).await {
+        Ok(()) => {}
+        Err(AppError::Conflict(message)) => {
+            tracing::info!(
+                portfolio_id = %portfolio_id,
+                reason = %message,
+                "skipping autonomous rebalance while another plan is executing"
+            );
+            return Ok(AutonomousPlan::NoOp);
+        }
+        Err(e) => return Err(e),
+    }
+
     // Auto-pilot plans only the executable legs; deferred sleeves stay as USDC
     // reserve (the `create` handler surfaces them to the user, the scheduler
     // does not need them).

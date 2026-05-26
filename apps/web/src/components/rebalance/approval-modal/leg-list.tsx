@@ -25,21 +25,24 @@ export function LegList({ plan }: { plan: RebalancePlanResponse }) {
             <li
               key={leg.legIndex}
               data-testid="leg-card"
-              className="flex justify-between text-xs font-mono border border-white/5 p-2"
+              className="flex justify-between gap-3 text-xs font-mono border border-white/5 p-2"
             >
-              <span className="flex items-center gap-1.5">
-                <span className="text-text-mut">
-                  {String(leg.legIndex + 1).padStart(2, "0")}
+              <span className="min-w-0">
+                <span className="flex items-center gap-1.5">
+                  <span className="text-text-mut">
+                    {String(leg.legIndex + 1).padStart(2, "0")}
+                  </span>
+                  <span className="text-text-hi">
+                    {KIND_LABEL[leg.kind] ?? leg.kind}
+                  </span>
+                  {leg.srcChain && (
+                    <ChainBadge chain={toChainBadge(leg.srcChain)} />
+                  )}
+                  {leg.destChain && leg.destChain !== leg.srcChain && (
+                    <ChainBadge chain={toChainBadge(leg.destChain)} />
+                  )}
                 </span>
-                <span className="text-text-hi">
-                  {KIND_LABEL[leg.kind] ?? leg.kind}
-                </span>
-                {leg.srcChain && (
-                  <ChainBadge chain={toChainBadge(leg.srcChain)} />
-                )}
-                {leg.destChain && leg.destChain !== leg.srcChain && (
-                  <ChainBadge chain={toChainBadge(leg.destChain)} />
-                )}
+                <LegMeta leg={leg} />
               </span>
               <span className="text-text-lo">
                 {legRouteText(leg)}
@@ -52,5 +55,28 @@ export function LegList({ plan }: { plan: RebalancePlanResponse }) {
         </ol>
       )}
     </div>
+  );
+}
+
+function formatTokenFloor(value: number) {
+  return value >= 1 ? value.toFixed(4) : value.toFixed(8);
+}
+
+function LegMeta({ leg }: { leg: RebalancePlanResponse["legs"][number] }) {
+  const deps = leg.deps ?? [];
+  const minOutText = leg.minOut == null ? null : formatTokenFloor(leg.minOut);
+  const hasMinOut = minOutText != null;
+  const hasDeps = deps.length > 0;
+
+  if (!hasMinOut && !hasDeps) {
+    return null;
+  }
+
+  return (
+    <span className="mt-1 block text-text-mut">
+      {hasMinOut && <span>min out {minOutText}</span>}
+      {hasMinOut && hasDeps && <span className="mx-1">·</span>}
+      {hasDeps && <span>after {deps.map((dep) => dep + 1).join(", ")}</span>}
+    </span>
   );
 }

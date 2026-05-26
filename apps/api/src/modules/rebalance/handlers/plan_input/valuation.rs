@@ -22,7 +22,7 @@ pub(super) async fn load_planning_prices(
         })
         .unwrap_or_default();
 
-    if prices.len() < symbols.len() {
+    if symbols.iter().any(|symbol| !prices.contains_key(symbol)) {
         if let Ok(history) = crate::modules::market_data::service::get_historical_prices(
             &state.db,
             symbols,

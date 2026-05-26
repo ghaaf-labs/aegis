@@ -101,7 +101,7 @@ pub(super) async fn reusable_planned_rebalance(
     }
 
     let stored_legs: Vec<LegView> = sqlx::query_as(
-        "SELECT id, rebalance_id, leg_index, kind, src_chain, dest_chain,
+        "SELECT id, rebalance_id, leg_index, depends_on, kind, src_chain, dest_chain,
                 src_symbol, dest_symbol, amount_usdc, min_out, status, leg_state, tx_hash,
                 failure_reason, submitted_at, confirmed_at
          FROM rebalance_legs WHERE rebalance_id = $1
@@ -450,24 +450,28 @@ pub(super) async fn ensure_rebalance_wallet_ready(state: &AppState, user_id: Uui
 pub(super) fn plan_leg_view(leg: &PlannedLeg) -> PlanLegView {
     PlanLegView {
         leg_index: leg.leg_index,
+        deps: leg.deps.clone(),
         kind: leg.kind.as_str().to_string(),
         src_chain: leg.src_chain.map(|c| c.as_str().to_string()),
         dest_chain: leg.dest_chain.map(|c| c.as_str().to_string()),
         src_symbol: leg.src_symbol.clone(),
         dest_symbol: leg.dest_symbol.clone(),
         amount_usdc: leg.amount_usdc.to_f64().unwrap_or(0.0),
+        min_out: leg.min_out.and_then(|m| m.to_f64()),
     }
 }
 
 pub(super) fn plan_leg_view_from_row(leg: &LegView) -> PlanLegView {
     PlanLegView {
         leg_index: leg.leg_index,
+        deps: leg.depends_on.clone(),
         kind: leg.kind.clone(),
         src_chain: leg.src_chain.clone(),
         dest_chain: leg.dest_chain.clone(),
         src_symbol: leg.src_symbol.clone(),
         dest_symbol: leg.dest_symbol.clone(),
         amount_usdc: leg.amount_usdc.to_f64().unwrap_or(0.0),
+        min_out: leg.min_out.and_then(|m| m.to_f64()),
     }
 }
 

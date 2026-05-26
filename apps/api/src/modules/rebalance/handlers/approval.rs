@@ -128,7 +128,7 @@ async fn approval_safety_with_depth(
     }
 
     let stored_legs: Vec<LegView> = sqlx::query_as(
-        "SELECT id, rebalance_id, leg_index, kind, src_chain, dest_chain,
+        "SELECT id, rebalance_id, leg_index, depends_on, kind, src_chain, dest_chain,
                 src_symbol, dest_symbol, amount_usdc, min_out, status, leg_state, tx_hash,
                 failure_reason, submitted_at, confirmed_at
          FROM rebalance_legs WHERE rebalance_id = $1
