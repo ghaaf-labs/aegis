@@ -4,7 +4,8 @@ use crate::config::Config;
 use crate::domain::token::native_chain;
 use crate::modules::rebalance::models::ChainKey;
 use crate::modules::rebalance::registry::{
-    executable_chain_for_token, rebalanceable_token_symbols, RuntimeCapabilities,
+    executable_chain_for_token, is_volatile_sleeve, rebalanceable_token_symbols,
+    RuntimeCapabilities,
 };
 
 use super::super::outcome::DeferredTarget;
@@ -12,14 +13,16 @@ use super::super::outcome::DeferredTarget;
 /// Fold any target weight for a non-rebalanceable sleeve into USDC before the
 /// planner builds legs.
 ///
-/// Returns the folded sleeves as `deferred` only when they were folded because a
-/// rail is *not ready* (a fixable blocker the review screen should surface).
-/// When volatiles are *tracked by design* on this network
-/// (`!volatile_execution_enabled`), folding them is expected policy, not a
-/// blocker — so we fold silently (empty `deferred`) and let the outcome reflect
-/// the stablecoin base (a calm on-target / reserve state) instead of dead-ending
-/// the whole plan as `Blocked`. The tracked sleeves stay visible as held
-/// positions in the portfolio view.
+/// Returns the folded sleeves as `deferred` so the review screen can surface the
+/// intended-but-unroutable allocation. The one exception is *volatile* sleeves
+/// while volatile execution is off (`!volatile_execution_enabled`): those are
+/// tracked by design on this network, so folding them is expected policy, not a
+/// blocker — they drop out of `deferred` and the outcome reflects the stablecoin
+/// base (a calm on-target / reserve state) instead of dead-ending as `Blocked`.
+/// A folded *non-volatile* sleeve (e.g. EURC with no live StableFX route, or
+/// USYC while disabled) is a genuine routing blocker and stays in `deferred`
+/// even when volatile execution is off — collapsing it silently into USDC would
+/// misreport a real blocker as a calm reserve.
 pub(super) fn fold_nonexecutable_targets_into_usdc(
     cfg: &crate::config::Config,
     target_weights: &mut HashMap<String, f64>,
@@ -32,12 +35,11 @@ pub(super) fn fold_nonexecutable_targets_into_usdc(
         return Vec::new();
     }
     let rebalanceable = rebalanceable_token_symbols(&caps, cfg);
-    let deferred = retain_executable_targets(target_weights, &rebalanceable);
-    if cfg.volatile_execution_enabled {
-        deferred
-    } else {
-        Vec::new()
+    let mut deferred = retain_executable_targets(target_weights, &rebalanceable);
+    if !cfg.volatile_execution_enabled {
+        deferred.retain(|d| !is_volatile_sleeve(&d.symbol));
     }
+    deferred
 }
 
 fn retain_executable_targets(
@@ -302,5 +304,56 @@ mod tests {
         retain_executable_targets(&mut targets, &["USDC", "ETH"]);
 
         assert_eq!(targets, HashMap::from([("USDC".to_string(), 1.0)]));
+    }
+
+    fn real_mode_cfg() -> Config {
+        let mut cfg = test_cfg();
+        cfg.execution_mock = false;
+        cfg.circle_mock = false;
+        cfg
+    }
+
+    #[test]
+    fn fold_tracks_volatiles_but_keeps_nonvolatile_blockers_when_volatile_exec_off() {
+        // The default testnet stance: volatile ETH is tracked-not-traded (folded
+        // silently, no blocker), but a folded *non-volatile* sleeve (EURC has no
+        // live route here) is a genuine blocker the review screen must still show.
+        let mut cfg = real_mode_cfg();
+        cfg.volatile_execution_enabled = false;
+        let mut targets = HashMap::from([
+            ("ETH".to_string(), 0.3),
+            ("EURC".to_string(), 0.3),
+            ("USDC".to_string(), 0.4),
+        ]);
+
+        let deferred = fold_nonexecutable_targets_into_usdc(&cfg, &mut targets);
+
+        let symbols: Vec<&str> = deferred.iter().map(|d| d.symbol.as_str()).collect();
+        assert_eq!(
+            symbols,
+            vec!["EURC"],
+            "volatile ETH is tracked silently; the EURC routing blocker stays surfaced"
+        );
+        // Both still fold into the USDC reserve regardless of whether reported.
+        assert!(!targets.contains_key("ETH"));
+        assert!(!targets.contains_key("EURC"));
+    }
+
+    #[test]
+    fn fold_reports_every_blocker_when_volatile_exec_on() {
+        // On mainnet (flag on) volatiles are rebalanceable, so an unroutable
+        // volatile is a real blocker again — both sleeves surface as deferred.
+        let mut cfg = real_mode_cfg();
+        cfg.volatile_execution_enabled = true;
+        let mut targets = HashMap::from([
+            ("ETH".to_string(), 0.3),
+            ("EURC".to_string(), 0.3),
+            ("USDC".to_string(), 0.4),
+        ]);
+
+        let deferred = fold_nonexecutable_targets_into_usdc(&cfg, &mut targets);
+
+        let symbols: Vec<&str> = deferred.iter().map(|d| d.symbol.as_str()).collect();
+        assert_eq!(symbols, vec!["ETH", "EURC"]);
     }
 }

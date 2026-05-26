@@ -580,6 +580,16 @@ fn is_stable_sleeve(symbol: &str) -> bool {
     tokens::token(symbol).is_some_and(|spec| spec.class == TokenClass::Stable)
 }
 
+/// A volatile (non-stablecoin, non-FX, non-yield) sleeve. These are the sleeves
+/// *tracked, not traded* while `volatile_execution_enabled` is off: testnet AMM
+/// pools are detached from real-market marks, so every volatile swap trips the
+/// price-safety guard. Distinct from a genuinely-unroutable non-volatile sleeve
+/// (e.g. EURC with no live StableFX route, or USYC while disabled), which stays
+/// a real routing blocker rather than a by-design tracked hold.
+pub fn is_volatile_sleeve(symbol: &str) -> bool {
+    tokens::token(symbol).is_some_and(|spec| spec.class == TokenClass::Volatile)
+}
+
 /// Symbols the allocator may place in a target allocation.
 ///
 /// This is intentionally the product's designable sleeve menu, not the current

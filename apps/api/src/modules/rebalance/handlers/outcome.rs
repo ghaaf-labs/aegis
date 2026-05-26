@@ -94,6 +94,12 @@ impl PlanOutcome {
     }
 }
 
+/// `Blocked` only ever carries *genuine* routing blockers: tracked-by-design
+/// volatile sleeves are folded silently upstream (see
+/// `fold_nonexecutable_targets_into_usdc`), so the deferred set here is a mix of
+/// rail-not-ready / no-live-quote / unsupported-sleeve cases (e.g. EURC). The
+/// copy must stay true for all of them rather than asserting a testnet-volatile
+/// story that no longer applies — your USDC layer is still managed normally.
 fn blocked_message(deferred: &[DeferredTarget]) -> String {
     let names = deferred
         .iter()
@@ -101,7 +107,7 @@ fn blocked_message(deferred: &[DeferredTarget]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "Tracked on this network: {names}. Volatile sleeves have no reliable on-chain price on test networks, so they're held, not traded. Your USDC capital is managed normally — the intended allocation becomes tradeable on mainnet."
+        "Not tradeable right now on this network: {names}. These sleeves have no live execution route, so their intended allocation is held as USDC reserve until a route opens — your USDC capital is still managed normally."
     )
 }
 
