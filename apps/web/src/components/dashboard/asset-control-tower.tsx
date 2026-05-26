@@ -656,7 +656,9 @@ function actionState(
       kind: "review",
       title: "Consolidate idle USDC",
       body: `${where}Aegis can bridge it onto one chain over CCTP — no price risk — so it's ready to deploy. Review to approve.`,
-      tone: "agent",
+      // Money accent: this is a cash-management step to review/approve (like the
+      // deployable-surplus action), not agent activity — dual-accent rule.
+      tone: "pnl",
     };
   }
   const trackedUsd = model.tokens
