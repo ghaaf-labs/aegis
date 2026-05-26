@@ -9,6 +9,7 @@ WORKDIR /app/apps/api
 # Cache dependencies
 COPY apps/api/Cargo.toml apps/api/Cargo.lock ./
 COPY apps/api/crates ./crates
+COPY crates /app/crates
 RUN mkdir src && echo "fn main() {}" > src/main.rs
 RUN cargo build --release --features "$API_CARGO_FEATURES" 2>/dev/null; rm -rf src
 
